@@ -30,7 +30,6 @@ const S = {
   nhap: { mode: 'nhap', phi: null, qty: 0, khu: null, from: null, to: null, lines: [], done: null }, scrollSel: null,
   hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, legend: false, draftWarn: null, cmp: null, busy: false,
   stale: null, // thời điểm của số liệu lưu sẵn khi đang mất kết nối
-  forgot: null, // null | 'form' | { name, pin }
 };
 const fmtDay = (d) => String(d || '').split('-').reverse().join('/');
 
@@ -276,25 +275,6 @@ function head(title, sub, back) {
 
 function lastPhone() { try { return localStorage.getItem('kt:phone') || ''; } catch (e) { return ''; } }
 function vLogin() {
-  if (S.forgot && S.forgot.pin) {
-    return `<div class="login f1 scroll">
-      <div style="font-size:22px;font-weight:700">PIN tạm thời của ${esc(S.forgot.name)}</div>
-      <div class="muted" style="font-size:16px;line-height:1.5">Dùng PIN này để đăng nhập. Bạn sẽ được yêu cầu đổi PIN ngay sau khi vào.</div>
-      <div style="font-size:48px;font-weight:700;letter-spacing:12px;text-align:center;padding:16px 0">${esc(S.forgot.pin)}</div>
-      <div class="muted sm" style="text-align:center">Ghi lại PIN trước khi đóng trang này — chỉ hiện một lần.</div>
-      <button class="btn pri full" style="height:56px;font-size:18px" data-a="forgotback">Đã ghi lại → Đăng nhập</button>
-    </div>`;
-  }
-  if (S.forgot === 'form') {
-    return `<div class="login f1 scroll">
-      <div style="font-size:24px;font-weight:700">Đặt lại PIN</div>
-      <div class="muted" style="font-size:16px;line-height:1.5">Chỉ dành cho tài khoản <b>admin</b>. Nhập số điện thoại đã đăng ký để nhận PIN tạm.</div>
-      <label class="field">Số điện thoại admin<input id="fphone" type="tel" inputmode="numeric" data-enter="forgotsubmit" value="${esc(S.form.phone || lastPhone())}"></label>
-      <div class="err" id="err">${esc(S.err)}</div>
-      <button class="btn pri full" style="height:56px;font-size:18px" data-a="forgotsubmit">LẤY PIN TẠM</button>
-      <button class="btn full" data-a="forgotback">← Quay lại đăng nhập</button>
-    </div>`;
-  }
   return `<div class="login f1 scroll">
     <div class="col gap8"><div class="logo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
       <div style="font-size:30px;font-weight:700;line-height:1.2">Kho Thép Bãi</div>
@@ -303,8 +283,7 @@ function vLogin() {
     <label class="field">PIN 4 số<input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="current-password" data-enter="login"></label>
     <div class="err" id="err">${esc(S.err)}</div>
     <button class="btn pri full" style="height:60px;font-size:20px" data-a="login">ĐĂNG NHẬP</button>
-    <div class="muted" style="text-align:center;line-height:1.5">Máy sẽ nhớ đăng nhập 30 ngày.</div>
-    <button class="btn full" style="font-size:15px" data-a="forgotshow">Quên PIN?</button>
+    <div class="muted" style="text-align:center;line-height:1.5">Máy sẽ nhớ đăng nhập 30 ngày.<br>Quên PIN: nhờ admin đặt lại trong mục Người dùng.</div>
   </div>`;
 }
 function vForcePin() {
@@ -716,7 +695,7 @@ function fmtAudit(a) {
   const kn = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
   const M = {
     login: ['đăng nhập', 'login'], login_fail: ['nhập sai PIN (lần ' + d.n + ')', 'flag'], login_locked: ['bị khóa ' + (d.mins >= 60 ? d.mins / 60 + ' giờ' : (d.mins || 15) + ' phút') + ' do nhập sai PIN nhiều lần', 'flag'],
-    change_pin: ['đổi PIN', 'login'], forgot_pin: ['đặt lại PIN qua "Quên PIN"', 'flag'], setup: ['thiết lập hệ thống', 'admin'],
+    change_pin: ['đổi PIN', 'login'], setup: ['thiết lập hệ thống', 'admin'],
     receipt: ['nhập kho vào ' + kn(d.khu) + ': ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'nhap'],
     transfer: ['chuyển ' + kn(d.from) + ' → ' + kn(d.to) + ': ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'nhap'],
     receipt_void: ['hủy phiếu ' + (d.kind === 'chuyen' ? 'chuyển khu' : 'nhập') + ': ' + lineTxt({ ...d, lines: (d.lines || []).filter((l) => l.qty > 0) }), 'nhap'],
@@ -972,25 +951,14 @@ const ACTIONS = {
     try {
       const r = await api('POST', '/login', { phone, pin });
       try { localStorage.setItem('kt:phone', phone); } catch (e) { /* bỏ qua */ }
-      S.me = r.user; S.err = ''; S.forgot = null;
+      S.me = r.user; S.err = '';
       if (r.user.must_change) { S.screen = 'home'; return render(); }
       await loadBoot(); S.screen = 'home';
       flushPending();
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
     render();
   },
-  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.err = ''; S.forgot = null; render(); },
-  forgotshow() { S.forgot = 'form'; S.err = ''; render(); },
-  forgotback() { S.forgot = null; S.err = ''; render(); },
-  async forgotsubmit() {
-    const phone = val('fphone');
-    if (!phone) { S.err = 'Nhập số điện thoại'; return render(); }
-    try {
-      const r = await api('POST', '/forgot-pin', { phone });
-      S.forgot = { name: r.name, pin: r.pin }; S.err = '';
-    } catch (e) { S.err = e.message; }
-    render();
-  },
+  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.err = ''; render(); },
   async changepin() {
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
     if (n1 !== n2) { S.err = 'Hai lần nhập PIN mới không giống nhau'; return render(); }
