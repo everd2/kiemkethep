@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   locked INTEGER NOT NULL DEFAULT 0,
   fail_count INTEGER NOT NULL DEFAULT 0,
   locked_until INTEGER NOT NULL DEFAULT 0,
+  lock_level INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 
@@ -22,6 +23,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
+
+-- Đếm số lần nhập sai PIN theo IP mỗi ngày (chỉ ghi khi sai)
+CREATE TABLE IF NOT EXISTS login_fail (
+  ip TEXT NOT NULL,
+  day TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (ip, day)
+);
 
 CREATE TABLE IF NOT EXISTS phi (
   id TEXT PRIMARY KEY,
@@ -106,7 +116,19 @@ CREATE TABLE IF NOT EXISTS day_close (
   ts INTEGER NOT NULL,
   note TEXT,
   used_json TEXT,
-  exc_json TEXT
+  exc_json TEXT,
+  span INTEGER NOT NULL DEFAULT 1 -- số ngày gộp (quên chốt thì > 1)
+);
+
+-- Tổng hợp theo ngày đã chốt x phi: báo cáo theo kỳ đọc bảng này cho nhẹ hạn mức
+CREATE TABLE IF NOT EXISTS daily_summary (
+  day TEXT NOT NULL,
+  phi_id TEXT NOT NULL,
+  ton INTEGER NOT NULL,
+  nhap INTEGER NOT NULL DEFAULT 0,
+  dung INTEGER,
+  span INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (day, phi_id)
 );
 
 -- Tồn chuẩn theo từng ngày đã chốt (khu x phi)
@@ -138,6 +160,8 @@ CREATE TABLE IF NOT EXISTS meta (
   value INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
+-- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 2);
 
 -- Dữ liệu mặc định (kg/cây = 0,00617 x D x D x 11,7 m)
 INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock) VALUES
@@ -160,7 +184,8 @@ INSERT OR IGNORE INTO khu (id, name, sort, active) VALUES
 
 INSERT OR IGNORE INTO settings (key, value) VALUES
  ('hide_after_zero_days','3'),
- ('max_keep_streak','3');
+ ('max_keep_streak','3'),
+ ('auto_close','1');
 
 -- Nhật ký và lịch sử đếm chỉ được ghi thêm: database từ chối mọi lệnh sửa hoặc xóa
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'Nhat ky chi duoc ghi them'); END;

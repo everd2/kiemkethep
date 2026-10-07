@@ -8,7 +8,10 @@
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). Phi không có ở khu thì không hỏi, hệ thống hiểu là 0.
 - **Đã dùng = Tồn chuẩn hôm qua + Nhập trong ngày − Tổng đếm hôm nay** (tính ở cấp toàn bãi, không ai phải nhập phiếu xuất).
 - Admin duyệt theo ngoại lệ: khu chưa báo, hai người báo khác số, phi dùng âm hoặc dùng quá 3 lần mức bình thường. Ngày bình thường chỉ cần một lần bấm xác nhận.
-- Chốt ngày thì khóa số liệu, số đếm hôm đó trở thành **tồn chuẩn** cho ngày sau.
+- Chốt ngày thì khóa số liệu, số đếm hôm đó trở thành **tồn chuẩn** cho ngày sau. Chốt nhầm thì admin **mở lại** được trong ngày (bắt buộc ghi lý do).
+- **Tự chốt lúc 23:50** nếu ngày bình thường (đủ khu, không bất thường). Ngày có bất thường thì không tự chốt, nhật ký ghi lý do. Tắt/bật ở **Cài đặt**.
+- Quên chốt vài ngày: lượng dùng được gộp cho cả khoảng đó, cảnh báo "dùng nhiều" tự chia theo số ngày.
+- Mất mạng khi gửi báo cáo: app lưu báo cáo kèm **ngày đếm** và tự gửi lại khi có mạng. Nếu đã sang ngày mới, báo cáo hiện ở Tổng quan để người dùng chọn *Gửi làm số hôm nay* hoặc *Bỏ*, không tự ghi vào sai ngày.
 - Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xóa).
 
 Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Người đếm** (đếm + xem).
@@ -79,7 +82,8 @@ Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tê
 
 | Việc | Lệnh / cách làm |
 |---|---|
-| Cập nhật code sau khi sửa | `npx wrangler deploy` |
+| Cập nhật code sau khi sửa | Đẩy code lên GitHub (Cloudflare tự deploy), hoặc `npx wrangler deploy` |
+| Nâng cấp cấu trúc database | **Tự động**: Worker tự áp dụng thay đổi ở lần chạy đầu sau deploy (số phiên bản lưu ở bảng `meta`, khóa `schema`). Không cần chạy lại `schema.sql` |
 | Sao lưu dữ liệu ra file | `npx wrangler d1 export kho-thep --remote --output=backup.sql` |
 | Khôi phục về thời điểm cũ | Cloudflare Dashboard → Storage & Databases → D1 → kho-thep → **Time Travel** (khôi phục theo từng phút, thời hạn lưu tùy gói, xem trang giá D1 của Cloudflare) |
 | Xem lỗi trực tiếp | `npx wrangler tail` |
@@ -101,23 +105,25 @@ Mở http://localhost:8787/setup để tạo admin thử.
 
 | Hạng mục | Miễn phí | Ứng dụng này dùng |
 |---|---|---|
-| Workers | 100.000 yêu cầu/ngày | Khoảng vài chục nghìn nếu 50 người mở app cả ngày (máy chỉ hỏi số phiên bản mỗi 45 giây, chỉ tải lại khi có thay đổi) |
+| Workers | 100.000 yêu cầu/ngày (reset 7:00 sáng giờ VN) | Dưới 15.000: máy hỏi số phiên bản mỗi 60 giây khi đang dùng, 5 phút khi để yên, 15 phút ngoài giờ (20:00–6:00), không hỏi khi app chạy nền |
+| D1 truy vấn mỗi yêu cầu | 50 | Tối đa khoảng 15 (gửi báo cáo cả khu chỉ 12, ghi hàng loạt bằng một câu lệnh `json_each`) |
+| Cron | 5 | 1 (23:50 tự chốt + dọn dẹp) |
 | D1 đọc | 5 triệu dòng/ngày | Dưới 1 triệu |
 | D1 ghi | 100.000 dòng/ngày | Vài trăm đến vài nghìn |
-| D1 dung lượng | 5 GB | Rất nhỏ |
+| D1 dung lượng | 500 MB mỗi database | Khoảng 40 MB/năm |
 | Giao diện tĩnh | Không giới hạn | |
 
-Nếu sau này vượt hạn mức, gói Workers Paid 5 USD/tháng gỡ các giới hạn này, không cần sửa code.
+Nếu Cloudflare chặn do hết hạn mức trong ngày, app vẫn mở được và hiện số liệu lần tải gần nhất, báo cáo đếm được giữ lại để gửi sau. Nếu sau này thường xuyên vượt hạn mức, gói Workers Paid 5 USD/tháng gỡ các giới hạn này, không cần sửa code.
 
 ## Bảo mật đã có
-- PIN băm kèm PEPPER, không lưu PIN thật. Sai 5 lần khóa 15 phút. Cookie `HttpOnly`, `Secure`, `SameSite=Strict`.
+- PIN băm kèm PEPPER, không lưu PIN thật. Sai 5 lần khóa 15 phút, tái phạm khóa 1 giờ rồi 24 giờ. Một thiết bị (IP) sai quá 30 lần/ngày bị chặn đến hôm sau. Cookie `HttpOnly`, `Secure`, `SameSite=Strict`.
 - Quyền kiểm tra ở server cho từng thao tác, không chỉ ẩn nút trên giao diện.
 - Chặn gửi yêu cầu từ trang web lạ (kiểm tra Origin).
 - Mọi thao tác ghi vào nhật ký (ai, làm gì, số cũ → số mới, lúc nào).
 
-## Chưa có trong bản 1.0
+## Chưa có trong bản 1.1
 - Ảnh phiếu nhập (cần thêm Cloudflare R2).
-- Thông báo đẩy và nhắc tự động khi khu chưa báo (cần Cloudflare Cron + Web Push).
+- Thông báo đẩy nhắc khu chưa báo (Web Push; Cron đã có sẵn).
 - Báo cáo nhập-xuất-tồn theo kỳ dạng Excel đầy đủ (hiện có xuất bảng khu × phi và thống kê lượng dùng theo ngày).
 
 ## Cấu trúc thư mục
@@ -133,4 +139,4 @@ public/              giao diện: index.html, app.js, style.css, sw.js, manifest
 - *"Mã thiết lập sai"*: SETUP_TOKEN nhập không khớp với giá trị đã đặt.
 - *Đăng nhập báo sai dù đúng PIN sau khi đổi PEPPER*: PEPPER đã bị đổi, cần đặt lại PIN từng người.
 - *Lỗi khi chạy `d1 execute --remote`*: kiểm tra `database_id` trong wrangler.toml đã đúng chưa.
-- *Giao diện không cập nhật sau khi deploy*: đóng hẳn app rồi mở lại (service worker lấy bản mới từ mạng).
+- *Giao diện không cập nhật sau khi deploy*: đóng hẳn app rồi mở lại (service worker lấy bản mới từ mạng). Khi sửa giao diện, tăng số `CACHE` trong `public/sw.js`.

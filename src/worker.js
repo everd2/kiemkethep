@@ -2,7 +2,7 @@
 // Giao diện tĩnh nằm trong /public, mọi đường dẫn /api/* chạy qua file này.
 
 class HttpError extends Error {
-  constructor(status, msg) { super(msg); this.status = status; }
+  constructor(status, msg, code) { super(msg); this.status = status; this.code = code; }
 }
 const bad = (m) => new HttpError(400, m);
 
@@ -33,12 +33,52 @@ const json = (data, status = 200, headers = {}) =>
   });
 
 const vnDay = (ms = Date.now()) => new Date(ms + 7 * 3600e3).toISOString().slice(0, 10); // giờ Việt Nam
+const fmtDay = (d) => String(d).split('-').reverse().join('/');
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400e3);
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = ['dem', 'giu', 'zero'];
 const ROLES = ['admin', 'thukho', 'nguoidem'];
 const SESSION_MS = 30 * 24 * 3600e3;
 const LOCK_AFTER = 5;
-const LOCK_MS = 15 * 60e3;
+const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khóa lâu dần
+const IP_FAIL_MAX = 30; // số lần sai PIN tối đa mỗi ngày từ một địa chỉ IP
+const SYSTEM = { id: 0, name: 'Hệ thống' };
+
+/* ========================= TỰ NÂNG CẤP DATABASE =========================
+   Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
+   một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
+const SCHEMA_VERSION = 2;
+const MIGRATIONS = {
+  2: [
+    'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE users ADD COLUMN lock_level INTEGER NOT NULL DEFAULT 0',
+    `CREATE TABLE IF NOT EXISTS daily_summary (
+       day TEXT NOT NULL, phi_id TEXT NOT NULL, ton INTEGER NOT NULL, nhap INTEGER NOT NULL DEFAULT 0,
+       dung INTEGER, span INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (day, phi_id))`,
+    'CREATE TABLE IF NOT EXISTS login_fail (ip TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (ip, day))',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at)',
+    "INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_close', '1')",
+    // dựng lại bảng tổng hợp từ các ngày đã chốt trước đây
+    'INSERT OR IGNORE INTO daily_summary (day, phi_id, ton, nhap, dung, span) SELECT day, phi_id, SUM(v), 0, NULL, 1 FROM baseline GROUP BY day, phi_id',
+    "UPDATE daily_summary SET dung = (SELECT json_extract(dc.used_json, '$.' || daily_summary.phi_id) FROM day_close dc WHERE dc.day = daily_summary.day)",
+    'UPDATE daily_summary SET nhap = COALESCE((SELECT SUM(qty) FROM receipts r WHERE r.voided = 0 AND r.day = daily_summary.day AND r.phi_id = daily_summary.phi_id), 0)',
+  ],
+};
+let schemaReady = null;
+function ensureSchema(env) {
+  if (!schemaReady) schemaReady = migrate(env).catch((e) => { schemaReady = null; throw e; });
+  return schemaReady;
+}
+async function migrate(env) {
+  const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
+  for (let n = (r ? r.value : 1) + 1; n <= SCHEMA_VERSION; n++) {
+    for (const sql of MIGRATIONS[n]) {
+      // hai isolate có thể cùng nâng cấp: bỏ qua lỗi "cột đã tồn tại"
+      try { await env.DB.prepare(sql).run(); } catch (e) { if (!/duplicate column/i.test(String(e && e.message))) throw e; }
+    }
+    await env.DB.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(n).run();
+  }
+}
 
 function normPhone(p) {
   const d = String(p || '').replace(/\D/g, '');
@@ -73,7 +113,8 @@ function auditStmt(env, user, action, detail) {
     .bind(Date.now(), user ? user.id : null, user ? user.name : null, action, detail ? JSON.stringify(detail) : null);
 }
 
-async function auth(req, env, roles) {
+// renew = false cho các lần hỏi ngầm (/rev) để không phát sinh lượt ghi
+async function auth(req, env, renew = true) {
   const m = (req.headers.get('Cookie') || '').match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
   if (!m) throw new HttpError(401, 'Chưa đăng nhập');
   const th = await sha256(m[1]);
@@ -81,10 +122,9 @@ async function auth(req, env, roles) {
     'SELECT u.id, u.name, u.phone, u.role, u.locked, u.must_change, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?'
   ).bind(th).first();
   if (!row || row.expires_at < Date.now() || row.locked) throw new HttpError(401, 'Phiên đăng nhập hết hạn');
-  if (row.expires_at - Date.now() < SESSION_MS / 2) {
+  if (renew && row.expires_at - Date.now() < SESSION_MS / 2) {
     await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(Date.now() + SESSION_MS, th).run();
   }
-  if (roles && !roles.includes(row.role)) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này');
   return row;
 }
 
@@ -93,10 +133,11 @@ function sessionCookie(url, token, maxAge) {
   return `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
 }
 
-async function getSettings(env) {
-  const { results } = await env.DB.prepare('SELECT key, value FROM settings').all();
-  const o = { hide_after_zero_days: 3, max_keep_streak: 3 };
-  for (const r of results) o[r.key] = Number(r.value);
+const SETTINGS_SQL = 'SELECT key, value FROM settings';
+const SETTING_RANGE = { hide_after_zero_days: [1, 30], max_keep_streak: [1, 30], auto_close: [0, 1] };
+function parseSettings(rows) {
+  const o = { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 };
+  for (const r of rows) o[r.key] = Number(r.value);
   return o;
 }
 
@@ -136,32 +177,46 @@ async function login(req, env, url) {
   const phone = String(b.phone || '').replace(/\D/g, '');
   const pin = String(b.pin || '');
   const fail = () => new HttpError(401, 'Sai số điện thoại hoặc PIN');
-  const u = await env.DB.prepare('SELECT * FROM users WHERE phone = ?').bind(phone).first();
-  if (!u) throw fail();
+  const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
+  const today = vnDay();
+  const [uR, ipR] = await env.DB.batch([
+    env.DB.prepare('SELECT * FROM users WHERE phone = ?').bind(phone),
+    env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today),
+  ]);
+  if (ipR.results[0] && ipR.results[0].n >= IP_FAIL_MAX) throw new HttpError(429, 'Thiết bị này nhập sai quá nhiều lần hôm nay, hãy thử lại vào ngày mai hoặc báo admin');
+  // chỉ ghi khi nhập sai, đăng nhập đúng không tốn lượt ghi
+  const ipFail = env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today);
+  const u = uR.results[0];
+  if (!u) { await ipFail.run(); throw fail(); }
   if (u.locked) throw new HttpError(403, 'Tài khoản đã bị khóa, liên hệ admin');
   if (u.locked_until > Date.now()) {
     const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
-    throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins} phút`);
+    throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`);
   }
   const ok = safeEq(await hashPin(env, u.pin_salt, pin), u.pin_hash);
   if (!ok) {
     const n = u.fail_count + 1;
+    const ua = (req.headers.get('User-Agent') || '').slice(0, 80);
     if (n >= LOCK_AFTER) {
+      const level = u.lock_level || 0;
+      const ms = LOCK_STEPS[Math.min(level, LOCK_STEPS.length - 1)];
       await env.DB.batch([
-        env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = ? WHERE id = ?').bind(Date.now() + LOCK_MS, u.id),
-        auditStmt(env, u, 'login_locked', { phone }),
+        env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = ?, lock_level = ? WHERE id = ?').bind(Date.now() + ms, level + 1, u.id),
+        auditStmt(env, u, 'login_locked', { phone, mins: ms / 60e3, ip }),
+        ipFail,
       ]);
     } else {
       await env.DB.batch([
         env.DB.prepare('UPDATE users SET fail_count = ? WHERE id = ?').bind(n, u.id),
-        auditStmt(env, u, 'login_fail', { n, ua: (req.headers.get('User-Agent') || '').slice(0, 80) }),
+        auditStmt(env, u, 'login_fail', { n, ua, ip }),
+        ipFail,
       ]);
     }
     throw fail();
   }
   const cookie = await createSession(env, url, req, u.id);
   await env.DB.batch([
-    env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = 0 WHERE id = ?').bind(u.id),
+    env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = 0, lock_level = 0 WHERE id = ?').bind(u.id),
     auditStmt(env, u, 'login', { ua: (req.headers.get('User-Agent') || '').slice(0, 80) }),
   ]);
   return json({ user: { id: u.id, name: u.name, role: u.role, must_change: u.must_change } }, 200, { 'Set-Cookie': cookie });
@@ -194,16 +249,19 @@ async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innSince, settings] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, active, keep_streak FROM khu_phi'),
     env.DB.prepare('SELECT c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, u.name uname, c.ts FROM counts c JOIN users u ON u.id = c.user_id WHERE c.day = ?').bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     env.DB.prepare('SELECT r.khu_id, r.user_id, u.name uname, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
-    env.DB.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.ts, r.user_id, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? AND r.voided = 0 ORDER BY r.id DESC').bind(day),
+    env.DB.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.ts, r.user_id, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? AND r.voided = 0 ORDER BY r.id DESC').bind(day),
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
+    // nhập kho kể từ lần chốt gần nhất (gồm cả ngày quên chốt), giống cách màn Duyệt tính
+    env.DB.prepare('SELECT phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY phi_id').bind(last, day),
+    env.DB.prepare(SETTINGS_SQL),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -218,36 +276,47 @@ async function bootstrap(env, user) {
     baseline: baseline.results,
     reports: reports.results,
     receipts: receipts.results,
-    settings: await getSettings(env),
+    innSince: innSince.results,
+    settings: parseSettings(settings.results),
   };
 }
 
 /* ========================= BÁO CÁO ĐẾM ========================= */
 
+// Gói Free giới hạn khoảng 50 truy vấn D1 mỗi request: ghi cả danh sách bằng MỘT câu lệnh,
+// dữ liệu gửi dạng JSON trong một tham số rồi tách bằng json_each (số truy vấn không đổi dù thêm phi).
+const J = (f) => `json_extract(j.value, '$.${f}')`;
+
 async function putCounts(req, env, user) {
   const b = await readJson(req);
   const day = vnDay();
-  const closed = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
-  if (closed) throw new HttpError(409, 'Ngày hôm nay đã được chốt, không sửa được nữa');
+  if (b.day !== undefined && String(b.day) !== day) {
+    throw new HttpError(409, `Báo cáo này đếm ngày ${fmtDay(b.day)}, nay đã sang ngày mới nên không ghi vào ngày cũ được`, 'stale_day');
+  }
   const khuId = String(b.khu || '');
-  const k = await env.DB.prepare('SELECT id, active FROM khu WHERE id = ?').bind(khuId).first();
-  if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
   const items = Array.isArray(b.items) ? b.items : [];
   if (!items.length) throw bad('Chưa có số liệu nào');
-  const settings = await getSettings(env);
+  if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
-  const [phiR, kpR, prevR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT id, active FROM khu WHERE id = ?').bind(khuId),
+    env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT id FROM phi'),
     env.DB.prepare('SELECT phi_id, active, zero_days, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khuId),
-    env.DB.prepare('SELECT phi_id, v, user_id FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
+    env.DB.prepare('SELECT phi_id, v, kind, user_id FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
   ]);
+  if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã được chốt, không sửa được nữa', 'closed');
+  const k = khuR.results[0];
+  if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
+  const settings = parseSettings(setR.results);
   const phiSet = new Set(phiR.results.map((r) => r.id));
   const kp = Object.fromEntries(kpR.results.map((r) => [r.phi_id, r]));
   const prev = Object.fromEntries(prevR.results.map((r) => [r.phi_id, r]));
 
   const seen = new Set();
   const clean = items.map((it) => {
-    const phi = String(it.phi || '');
+    const phi = String((it && it.phi) || '');
     if (!phiSet.has(phi)) throw bad('Phi không hợp lệ: ' + phi);
     if (seen.has(phi)) throw bad('Trùng phi: ' + phi);
     seen.add(phi);
@@ -264,10 +333,9 @@ async function putCounts(req, env, user) {
   if (missing.length) throw bad('Còn phi chưa nhập: ' + missing.join(', '));
 
   const ts = Date.now();
-  const stmts = [];
   const changes = [];
   let conflict = 0;
-  for (const it of clean) {
+  const rows = clean.map((it) => {
     const old = kp[it.phi];
     const p = prev[it.phi];
     if (it.kind === 'giu' && old && !(p && p.kind === 'giu') && old.keep_streak >= settings.max_keep_streak) {
@@ -275,14 +343,6 @@ async function putCounts(req, env, user) {
     }
     if (p && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
-    stmts.push(
-      env.DB.prepare(
-        `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts) VALUES (?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET v=excluded.v, kind=excluded.kind, bo=excluded.bo, le=excluded.le, user_id=excluded.user_id, ts=excluded.ts`
-      ).bind(day, khuId, it.phi, it.v, it.kind, it.bo, it.le, user.id, ts),
-      env.DB.prepare('INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts) VALUES (?,?,?,?,?,?,?,?)')
-        .bind(day, khuId, it.phi, p ? p.v : null, it.v, it.kind, user.id, ts)
-    );
     let zero = old ? old.zero_days : 0;
     let keep = old ? old.keep_streak : 0;
     if (!p) { // chỉ tính chuỗi ngày ở lần báo đầu tiên trong ngày
@@ -290,14 +350,25 @@ async function putCounts(req, env, user) {
       keep = it.kind === 'giu' ? keep + 1 : 0;
     }
     const active = it.v === 0 && zero >= settings.hide_after_zero_days ? 0 : 1;
-    stmts.push(
-      env.DB.prepare(
-        `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak) VALUES (?,?,?,?,?)
-         ON CONFLICT(khu_id, phi_id) DO UPDATE SET active=excluded.active, zero_days=excluded.zero_days, keep_streak=excluded.keep_streak`
-      ).bind(khuId, it.phi, active, zero, keep)
-    );
-  }
-  stmts.push(
+    return { ...it, prev: p ? p.v : null, zero, keep, active };
+  });
+  const data = JSON.stringify(rows);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
+       SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4 FROM json_each(?5) j WHERE 1
+       ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET v=excluded.v, kind=excluded.kind, bo=excluded.bo, le=excluded.le, user_id=excluded.user_id, ts=excluded.ts`
+    ).bind(day, khuId, user.id, ts, data),
+    env.DB.prepare(
+      `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
+       SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
+    ).bind(day, khuId, user.id, ts, data),
+    env.DB.prepare(
+      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
+       SELECT ?1, ${J('phi')}, ${J('active')}, ${J('zero')}, ${J('keep')} FROM json_each(?2) j WHERE 1
+       ON CONFLICT(khu_id, phi_id) DO UPDATE SET active=excluded.active, zero_days=excluded.zero_days, keep_streak=excluded.keep_streak`
+    ).bind(khuId, data),
     env.DB.prepare(
       `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount) VALUES (?,?,?,?,?,0,0)
        ON CONFLICT(day, khu_id) DO UPDATE SET user_id=excluded.user_id, ts=excluded.ts,
@@ -306,9 +377,8 @@ async function putCounts(req, env, user) {
          recount = 0`
     ).bind(day, khuId, user.id, ts, conflict),
     auditStmt(env, user, 'count', { khu: khuId, n: clean.length, changes: changes.slice(0, 30), conflict: !!conflict }),
-    bump(env)
-  );
-  await env.DB.batch(stmts);
+    bump(env),
+  ]);
   return json({ ok: true, conflict: !!conflict });
 }
 
@@ -317,25 +387,31 @@ async function putCounts(req, env, user) {
 async function postReceipt(req, env, user) {
   const b = await readJson(req);
   const day = vnDay();
-  const closed = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
-  if (closed) throw new HttpError(409, 'Ngày hôm nay đã chốt');
-  const phi = await env.DB.prepare('SELECT id FROM phi WHERE id = ?').bind(String(b.phi || '')).first();
-  const khu = await env.DB.prepare('SELECT id FROM khu WHERE id = ? AND active = 1').bind(String(b.khu || '')).first();
+  const [closedR, phiR, khuR] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT id FROM phi WHERE id = ?').bind(String(b.phi || '')),
+    env.DB.prepare('SELECT id FROM khu WHERE id = ? AND active = 1').bind(String(b.khu || '')),
+  ]);
+  if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
+  const phi = phiR.results[0], khu = khuR.results[0];
   if (!phi) throw bad('Phi không hợp lệ');
   if (!khu) throw bad('Khu không hợp lệ');
   const qty = intIn(b.qty, 1, 99999, 'Số cây');
-  const note = String(b.note || '').slice(0, 200);
-  const r = await env.DB.prepare('INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts) VALUES (?,?,?,?,?,?,?)')
-    .bind(day, phi.id, khu.id, qty, note, user.id, Date.now()).run();
-  await env.DB.batch([
+  const note = String(b.note || '').trim().slice(0, 200);
+  const ts = Date.now();
+  // một batch (một giao dịch): phiếu, nhật ký (lấy id phiếu vừa tạo), bật phi ở khu, tăng phiên bản
+  const res = await env.DB.batch([
+    env.DB.prepare('INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts) VALUES (?,?,?,?,?,?,?)')
+      .bind(day, phi.id, khu.id, qty, note, user.id, ts),
+    env.DB.prepare("INSERT INTO audit (ts, user_id, user_name, action, detail) VALUES (?,?,?,'receipt', json_object('id', last_insert_rowid(), 'phi', ?, 'khu', ?, 'qty', ?, 'note', ?))")
+      .bind(ts, user.id, user.name, phi.id, khu.id, qty, note),
     env.DB.prepare(
       `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak) VALUES (?,?,1,0,0)
        ON CONFLICT(khu_id, phi_id) DO UPDATE SET active = 1, zero_days = 0`
     ).bind(khu.id, phi.id),
-    auditStmt(env, user, 'receipt', { id: r.meta.last_row_id, phi: phi.id, khu: khu.id, qty }),
     bump(env),
   ]);
-  return json({ ok: true, id: r.meta.last_row_id });
+  return json({ ok: true, id: res[0].meta.last_row_id });
 }
 
 async function voidReceipt(env, user, id) {
@@ -368,7 +444,7 @@ async function computeReview(env, day) {
     db.prepare('SELECT khu_id, phi_id, v FROM counts WHERE day = ?').bind(day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     db.prepare('SELECT phi_id, khu_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY phi_id, khu_id').bind(last, day),
-    db.prepare('SELECT used_json FROM day_close ORDER BY day DESC LIMIT 7'),
+    db.prepare('SELECT used_json, span FROM day_close ORDER BY day DESC LIMIT 7'),
     db.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
   ]);
   const cnt = {}, base = {}, inn = {};
@@ -377,12 +453,14 @@ async function computeReview(env, day) {
   rcR.results.forEach((r) => (inn[r.khu_id + '|' + r.phi_id] = r.q));
   const khuAct = khuR.results.filter((k) => k.active);
   const hasBase = !!last;
+  // quên chốt N ngày thì lượng dùng là của cả N ngày: chia đều khi so với mức bình thường
+  const span = hasBase ? Math.max(1, daysBetween(last, day)) : 1;
 
   const hist = {};
   usedR.results.forEach((r) => {
     try {
       const o = JSON.parse(r.used_json || '{}');
-      for (const p in o) (hist[p] = hist[p] || []).push(o[p]);
+      for (const p in o) (hist[p] = hist[p] || []).push(o[p] / Math.max(1, r.span || 1));
     } catch (e) { /* bỏ qua */ }
   });
 
@@ -401,7 +479,7 @@ async function computeReview(env, day) {
     const arr = (hist[p.id] || []).filter((x) => x > 0);
     const avg = arr.length ? arr.reduce((a, c) => a + c, 0) / arr.length : null;
     const neg = used !== null && used < 0;
-    const high = used !== null && avg !== null && used > 3 * avg && used > 10;
+    const high = used !== null && avg !== null && used / span > 3 * avg && used > 10;
     return { phi: p.id, kg: p.kg_per_cay, old, inn: innT, cnt: cn, used, avg: avg === null ? null : Math.round(avg * 10) / 10, neg, high, topKhu, topNet };
   });
 
@@ -421,21 +499,31 @@ async function computeReview(env, day) {
     if (r.neg) exceptions.push({ type: 'phi', phi: r.phi, reason: 'neg' });
     else if (r.high) exceptions.push({ type: 'phi', phi: r.phi, reason: 'high' });
   });
-  return { day, last: last || null, closed: closedR.results.length > 0, rows, exceptions, reports: repR.results, khu: khuR.results };
+  return { day, last: last || null, span, closed: closedR.results.length > 0, rows, exceptions, reports: repR.results, khu: khuR.results };
 }
 
 async function closeDay(req, env, user) {
   const b = await readJson(req);
-  const day = vnDay();
-  const rv = await computeReview(env, day);
-  if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã được chốt');
+  const rv = await computeReview(env, vnDay());
+  if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã được chốt', 'closed');
   const note = String(b.note || '').trim().slice(0, 500);
   if (rv.exceptions.length && !note) throw bad('Còn việc bất thường, cần ghi chú lý do trước khi chốt');
+  await doClose(env, user, rv, note, 'close_day');
+  return json({ ok: true });
+}
+
+async function doClose(env, user, rv, note, action) {
+  const day = rv.day;
   const used = {};
   rv.rows.forEach((r) => { if (r.used !== null) used[r.phi] = r.used; });
   await env.DB.batch([
-    env.DB.prepare('INSERT INTO day_close (day, closed_by, ts, note, used_json, exc_json) VALUES (?,?,?,?,?,?)')
-      .bind(day, user.id, Date.now(), note, JSON.stringify(used), JSON.stringify(rv.exceptions)),
+    env.DB.prepare('INSERT INTO day_close (day, closed_by, ts, note, used_json, exc_json, span) VALUES (?,?,?,?,?,?,?)')
+      .bind(day, user.id, Date.now(), note, JSON.stringify(used), JSON.stringify(rv.exceptions), rv.span),
+    // bảng tổng hợp theo ngày × phi: báo cáo theo kỳ chỉ đọc 12 dòng/ngày, không phải tính lại
+    env.DB.prepare(
+      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span)
+       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')}, ${J('used')}, ?2 FROM json_each(?3) j`
+    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, used: r.used })))),
     env.DB.prepare(
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kp.khu_id, kp.phi_id, COALESCE(c.v, b.v, 0)
@@ -444,10 +532,48 @@ async function closeDay(req, env, user) {
        LEFT JOIN baseline b ON b.day = ?2 AND b.khu_id = kp.khu_id AND b.phi_id = kp.phi_id
        WHERE kp.active = 1 OR COALESCE(c.v, b.v, 0) > 0`
     ).bind(day, rv.last || ''),
-    auditStmt(env, user, 'close_day', { day, exceptions: rv.exceptions.length, note }),
+    auditStmt(env, user, action, { day, exceptions: rv.exceptions.length, note }),
+    bump(env),
+  ]);
+}
+
+// Chỉ mở lại được ngày hôm nay (bấm chốt nhầm). Ngày cũ hơn đã thành tồn chuẩn cho ngày sau nên không mở.
+async function reopenDay(req, env, user) {
+  const b = await readJson(req);
+  const day = vnDay();
+  const note = String(b.note || '').trim().slice(0, 500);
+  if (!note) throw bad('Cần ghi lý do mở lại ngày');
+  const c = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
+  if (!c) throw bad('Hôm nay chưa chốt, không cần mở lại');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
+    env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
+    auditStmt(env, user, 'reopen_day', { day, note }),
     bump(env),
   ]);
   return json({ ok: true });
+}
+
+/* ========================= VIỆC TỰ ĐỘNG (CRON) =========================
+   Một Cron mỗi ngày lúc 23:50 giờ VN (16:50 UTC), chỉ dùng 1/5 Cron của gói Free. */
+async function nightly(env) {
+  const day = vnDay();
+  const [setR] = await env.DB.batch([env.DB.prepare(SETTINGS_SQL)]);
+  if (parseSettings(setR.results).auto_close) {
+    const rv = await computeReview(env, day);
+    if (!rv.closed) {
+      const reasons = [];
+      if (!rv.reports.length) reasons.push('chưa khu nào báo');
+      if (rv.exceptions.length) reasons.push(rv.exceptions.length + ' việc bất thường');
+      if (reasons.length) await auditStmt(env, SYSTEM, 'auto_close_skip', { day, reason: reasons.join(', ') }).run();
+      else await doClose(env, SYSTEM, rv, 'Tự chốt: ngày bình thường', 'auto_close');
+    }
+  }
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Date.now()),
+    env.DB.prepare('DELETE FROM login_fail WHERE day < ?').bind(day),
+  ]);
 }
 
 /* ========================= QUẢN TRỊ ========================= */
@@ -482,7 +608,7 @@ async function userAction(req, env, admin, id, action) {
     const pin = genPin();
     const salt = rand(16);
     await env.DB.batch([
-      env.DB.prepare('UPDATE users SET pin_salt = ?, pin_hash = ?, must_change = 1, fail_count = 0, locked_until = 0 WHERE id = ?').bind(salt, await hashPin(env, salt, pin), id),
+      env.DB.prepare('UPDATE users SET pin_salt = ?, pin_hash = ?, must_change = 1, fail_count = 0, locked_until = 0, lock_level = 0 WHERE id = ?').bind(salt, await hashPin(env, salt, pin), id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
       auditStmt(env, admin, 'user_reset_pin', { id, name: u.name }),
     ]);
@@ -572,14 +698,14 @@ async function phiUpdate(req, env, admin, id) {
 async function settingsUpdate(req, env, admin) {
   const b = await readJson(req);
   const stmts = [];
-  for (const key of ['hide_after_zero_days', 'max_keep_streak']) {
+  for (const key of Object.keys(SETTING_RANGE)) {
     if (b[key] !== undefined) {
-      const v = intIn(b[key], 1, 30, key);
+      const v = intIn(b[key], SETTING_RANGE[key][0], SETTING_RANGE[key][1], key);
       stmts.push(env.DB.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, String(v)));
     }
   }
   if (!stmts.length) throw bad('Không có gì để lưu');
-  stmts.push(auditStmt(env, admin, 'settings_update', b), bump(env));
+  stmts.push(auditStmt(env, admin, 'settings_update', Object.fromEntries(Object.keys(SETTING_RANGE).filter((k) => b[k] !== undefined).map((k) => [k, b[k]]))), bump(env));
   await env.DB.batch(stmts);
   return json({ ok: true });
 }
@@ -592,8 +718,8 @@ async function auditList(env, url) {
 
 async function usage(env, url) {
   const days = Math.min(Number(url.searchParams.get('days')) || 30, 180);
-  const { results } = await env.DB.prepare('SELECT day, used_json FROM day_close ORDER BY day DESC LIMIT ?').bind(days).all();
-  return json({ items: results.map((r) => ({ day: r.day, used: JSON.parse(r.used_json || '{}') })) });
+  const { results } = await env.DB.prepare('SELECT day, used_json, span FROM day_close ORDER BY day DESC LIMIT ?').bind(days).all();
+  return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used }; }) });
 }
 
 async function exportCsv(env, url) {
@@ -639,7 +765,11 @@ async function handle(req, env, url) {
   const method = req.method;
   if (method !== 'GET' && method !== 'HEAD') {
     const o = req.headers.get('Origin');
-    if (o && new URL(o).host !== url.host) throw new HttpError(403, 'Yêu cầu bị từ chối');
+    if (o) {
+      let host = null;
+      try { host = new URL(o).host; } catch (e) { /* Origin: null hoặc sai định dạng */ }
+      if (host !== url.host) throw new HttpError(403, 'Yêu cầu bị từ chối');
+    }
   }
   const p = url.pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
   const r0 = p[0] || '';
@@ -647,6 +777,14 @@ async function handle(req, env, url) {
   if (method === 'POST' && r0 === 'setup') return setup(req, env, url);
   if (method === 'POST' && r0 === 'login') return login(req, env, url);
   if (method === 'POST' && r0 === 'logout') return logout(req, env, url);
+
+  // hỏi phiên bản ngầm: nhẹ nhất có thể (không gia hạn phiên, không ghi)
+  if (r0 === 'rev' && method === 'GET') {
+    const u = await auth(req, env, false);
+    if (u.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
+    const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'").first();
+    return json({ rev: r ? r.value : 0, today: vnDay() });
+  }
 
   const user = await auth(req, env);
   if (r0 === 'me' && method === 'GET') return json({ user: { id: user.id, name: user.name, role: user.role, must_change: user.must_change } });
@@ -656,7 +794,6 @@ async function handle(req, env, url) {
   const ALL = ['admin', 'thukho', 'nguoidem'];
   const need = (roles) => { if (!roles.includes(user.role)) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này'); };
 
-  if (r0 === 'rev' && method === 'GET') { const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'").first(); return json({ rev: r ? r.value : 0 }); }
   if (r0 === 'bootstrap' && method === 'GET') return json(await bootstrap(env, user));
   if (r0 === 'counts' && method === 'PUT') { need(ALL); return putCounts(req, env, user); }
   if (r0 === 'usage' && method === 'GET') return usage(env, url);
@@ -671,6 +808,7 @@ async function handle(req, env, url) {
   need(['admin']);
   if (r0 === 'review' && method === 'GET') return json(await computeReview(env, vnDay()));
   if (r0 === 'close' && method === 'POST') return closeDay(req, env, user);
+  if (r0 === 'reopen' && method === 'POST') return reopenDay(req, env, user);
   if (r0 === 'recount' && method === 'POST') {
     const b = await readJson(req);
     const day = vnDay();
@@ -708,11 +846,15 @@ export default {
     const url = new URL(req.url);
     if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') return env.ASSETS.fetch(req);
     try {
+      await ensureSchema(env);
       return await handle(req, env, url);
     } catch (e) {
-      if (e instanceof HttpError) return json({ error: e.message }, e.status);
+      if (e instanceof HttpError) return json({ error: e.message, code: e.code }, e.status);
       console.error(e && e.stack ? e.stack : e);
       return json({ error: 'Lỗi máy chủ, thử lại sau' }, 500);
     }
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(ensureSchema(env).then(() => nightly(env)).catch((e) => console.error(e && e.stack ? e.stack : e)));
   },
 };

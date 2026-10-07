@@ -28,7 +28,9 @@ const S = {
   review: null, showNormal: false, audit: null, logFilter: 'all', users: null, pinShown: null,
   usage: null, usageDays: 30, statScope: 'all', expand: {},
   nhap: { phi: null, qty: 50, khu: null, done: null }, scrollSel: null,
+  stale: null, // thời điểm của số liệu lưu sẵn khi đang mất kết nối
 };
+const fmtDay = (d) => String(d || '').split('-').reverse().join('/');
 
 /* ===================== API ===================== */
 async function api(method, path, body) {
@@ -39,13 +41,15 @@ async function api(method, path, body) {
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-  } catch (e) { const er = new Error('Không có kết nối mạng'); er.net = true; throw er; }
+  } catch (e) { const er = new Error('Không có kết nối mạng'); er.net = true; er.retry = true; throw er; }
   let d = {};
   try { d = await r.json(); } catch (e) { /* không phải JSON */ }
   if (!r.ok) {
-    const er = new Error(d.error || 'Lỗi ' + r.status);
-    er.status = r.status;
-    if (r.status === 401 && S.me) { S.me = null; S.screen = 'login'; S.err = 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại'; render(); }
+    // 429 không có JSON là Cloudflare chặn (thường do hết hạn mức miễn phí trong ngày, tự phục hồi 7:00 sáng)
+    const quota = r.status === 429 && !d.error;
+    const er = new Error(d.error || (quota ? 'Hệ thống tạm quá tải hoặc hết hạn mức trong ngày, sẽ tự hoạt động lại (muộn nhất 7:00 sáng)' : 'Lỗi ' + r.status));
+    er.status = r.status; er.code = d.code; er.retry = quota || r.status >= 500;
+    if (r.status === 401 && S.me) { S.me = null; S.boot = null; S.screen = 'login'; S.err = 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại'; forgetBoot(); render(); }
     throw er;
   }
   return d;
@@ -62,9 +66,20 @@ function indexBoot(b) {
 }
 async function loadBoot() {
   const b = await api('GET', '/bootstrap');
+  try { localStorage.setItem('kt:boot', JSON.stringify({ at: Date.now(), b })); } catch (e) { /* đầy bộ nhớ */ }
   indexBoot(b);
-  S.boot = b; S.me = b.user;
+  S.boot = b; S.me = b.user; S.stale = null;
 }
+// Mất mạng hoặc hết hạn mức: vẫn mở được app với số liệu lần tải gần nhất (chỉ xem)
+function useCachedBoot() {
+  let c = null;
+  try { c = JSON.parse(localStorage.getItem('kt:boot') || 'null'); } catch (e) { c = null; }
+  if (!c || !c.b || !c.b.user) return false;
+  indexBoot(c.b);
+  S.boot = c.b; S.me = c.b.user; S.stale = c.at;
+  return true;
+}
+function forgetBoot() { try { localStorage.removeItem('kt:boot'); } catch (e) { /* bỏ qua */ } }
 const isAdmin = () => S.me && S.me.role === 'admin';
 const canIn = () => S.me && (S.me.role === 'admin' || S.me.role === 'thukho');
 
@@ -97,15 +112,18 @@ function totals() {
   const T = { cay: 0, kg: 0, perPhi: {}, perKhu: {}, used: {}, usedKg: null, inKg: 0 };
   b.phi.forEach((p) => (T.perPhi[p.id] = 0));
   b.khuAct.forEach((k) => (T.perKhu[k.id] = { cay: 0, kg: 0 }));
-  for (const k of b.khuAct) {
+  // cộng cả khu đang ẩn (nếu còn thép) để tổng khớp với màn Duyệt
+  for (const k of b.khu) {
     for (const p of b.phi) {
       const v = valOf(k.id, p.id);
-      T.perPhi[p.id] += v; T.perKhu[k.id].cay += v; T.perKhu[k.id].kg += v * p.kg_per_cay;
-      T.cay += v; T.kg += v * p.kg_per_cay;
+      T.perPhi[p.id] += v; T.cay += v; T.kg += v * p.kg_per_cay;
+      if (T.perKhu[k.id]) { T.perKhu[k.id].cay += v; T.perKhu[k.id].kg += v * p.kg_per_cay; }
     }
   }
+  b.receipts.forEach((r) => { const p = b.phiBy[r.phi_id]; if (p) T.inKg += r.qty * p.kg_per_cay; });
+  // nhập kể từ lần chốt gần nhất (gồm ngày quên chốt), giống cách server tính
   const inn = {};
-  b.receipts.forEach((r) => { inn[r.phi_id] = (inn[r.phi_id] || 0) + r.qty; T.inKg += r.qty * b.phiBy[r.phi_id].kg_per_cay; });
+  (b.innSince || []).forEach((r) => (inn[r.phi_id] = r.q));
   if (b.lastClosed) {
     T.usedKg = 0;
     for (const p of b.phi) {
@@ -153,41 +171,78 @@ function openDem(k) {
 function myPhiList() { return S.boot.phi.filter((p) => isPresent(S.khu, p.id)); }
 function pendingList() { return myPhiList().filter((p) => !S.draft.cells[p.id]); }
 
-function queuePending(job) {
-  let q = [];
-  try { q = JSON.parse(localStorage.getItem('kt:pending') || '[]'); } catch (e) { q = []; }
-  q = q.filter((x) => x.khu !== job.khu).concat([job]);
-  localStorage.setItem('kt:pending', JSON.stringify(q));
+/* Hàng chờ báo cáo: mỗi báo cáo ghi kèm NGÀY ĐẾM. Server từ chối nếu đã sang ngày khác,
+   khi đó báo cáo nằm lại kèm lý do để người dùng tự chọn "gửi làm số hôm nay" hoặc "bỏ". */
+const PKEY = 'kt:pending';
+function readPending() {
+  try { const q = JSON.parse(localStorage.getItem(PKEY) || '[]'); return Array.isArray(q) ? q : []; } catch (e) { return []; }
 }
+function writePending(q) { try { localStorage.setItem(PKEY, JSON.stringify(q)); } catch (e) { /* đầy bộ nhớ */ } }
+const sameJob = (a, b) => a.khu === b.khu && a.day === b.day && a.ts === b.ts;
+function queuePending(job) {
+  writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day)).concat([job]));
+}
+let flushing = false;
 async function flushPending() {
-  let q = [];
-  try { q = JSON.parse(localStorage.getItem('kt:pending') || '[]'); } catch (e) { q = []; }
-  if (!q.length || !S.me) return;
+  if (flushing || !S.me || S.me.must_change) return;
+  const q = readPending();
+  if (!q.some((j) => !j.err)) return;
+  flushing = true;
   const rest = [];
-  for (const job of q) {
-    try { await api('PUT', '/counts', job); }
-    catch (e) { if (e.net) rest.push(job); }
+  let sent = 0, failed = 0;
+  try {
+    for (const job of q) {
+      if (job.err) { rest.push(job); continue; }
+      if (!job.day) { rest.push({ ...job, err: 'Báo cáo lưu từ bản cũ, không rõ ngày đếm' }); failed++; continue; }
+      try { await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items }); sent++; }
+      catch (e) { if (e.retry) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
+    }
+  } finally {
+    // giữ các báo cáo mới được thêm trong lúc đang gửi
+    writePending(rest.concat(readPending().filter((x) => !q.some((j) => sameJob(j, x)))));
+    flushing = false;
   }
-  localStorage.setItem('kt:pending', JSON.stringify(rest));
-  if (rest.length < q.length) { await loadBoot(); say('Đã tự gửi lại báo cáo lưu khi mất mạng.'); render(); }
+  if (sent || failed) {
+    try { await loadBoot(); } catch (e) { /* bỏ qua */ }
+    if (sent) say('Đã tự gửi ' + sent + ' báo cáo lưu khi mất mạng.' + (failed ? ' Có báo cáo không gửi được, xem ở Tổng quan.' : ''), !!failed);
+    else say('Có báo cáo lưu khi mất mạng không gửi được, xem ở Tổng quan.', true);
+    render();
+  }
 }
 async function sendCounts() {
   const list = myPhiList();
   if (pendingList().length) return;
   const items = list.map((p) => { const c = S.draft.cells[p.id]; return { phi: p.id, v: c.v, kind: c.kind, bo: c.bo, le: c.le }; });
   const khuName = S.boot.khuBy[S.khu].name;
+  const job = { khu: S.khu, day: S.boot.today, items, ts: Date.now() };
   try {
-    const r = await api('PUT', '/counts', { khu: S.khu, items });
+    const r = await api('PUT', '/counts', { khu: job.khu, day: job.day, items });
     try { localStorage.removeItem(draftKey()); } catch (e) { /* bỏ qua */ }
     await loadBoot();
     S.sel = null; S.screen = 'home';
     say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, admin sẽ xem.' : '. Cảm ơn bạn!'));
   } catch (e) {
-    if (e.net) { queuePending({ khu: S.khu, items }); say('Mất mạng: đã lưu báo cáo, sẽ tự gửi khi có mạng.', true); }
-    else say(e.message, true);
+    if (e.retry) { queuePending(job); say('Chưa gửi được (' + e.message + '). Đã lưu báo cáo, sẽ tự gửi lại.', true); }
+    else if (e.code === 'stale_day') {
+      queuePending({ ...job, err: e.message });
+      S.sel = null; S.screen = 'home';
+      try { await loadBoot(); } catch (er) { /* bỏ qua */ }
+      say('Đã sang ngày mới. Báo cáo được giữ lại ở Tổng quan để bạn quyết định.', true);
+    } else say(e.message, true);
   }
   render();
 }
+function pendingHtml() {
+  const q = readPending();
+  if (!q.length) return '';
+  const kn = (id) => (S.boot && S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
+  const waiting = q.filter((j) => !j.err).length;
+  return (waiting ? `<div class="card warn sm b">${waiting} báo cáo đang chờ gửi (mất mạng), sẽ tự gửi khi có mạng.</div>` : '') +
+    q.map((j, i) => (j.err ? `<div class="card bad col gap8"><b style="font-size:17px">Báo cáo ${esc(kn(j.khu))}${j.day ? ' đếm ngày ' + esc(fmtDay(j.day)) : ''} chưa gửi được</b>
+      <span class="sm">${esc(j.err)}</span>
+      <div class="row gap6"><button class="btn s f1" data-a="pendsend" data-i="${i}">Gửi làm số hôm nay</button><button class="btn s bad f1" data-a="pendrm" data-i="${i}">Bỏ báo cáo</button></div></div>` : '')).join('');
+}
+
 
 /* ===================== MÀN HÌNH ===================== */
 function head(title, sub, back) {
@@ -250,16 +305,20 @@ function vHome() {
     const v = T.perPhi[p.id], low = v < p.min_stock;
     return `<div class="r"><span class="l">${p.id}</span><div class="t"><i class="${low ? 'low' : ''}" style="width:${Math.max(2, Math.round(v / maxCay * 100))}%"></i><u style="left:${Math.round(p.min_stock / maxCay * 100)}%"></u></div><span class="v ${low ? 'low' : ''}">${fmtInt(v)}</span></div>`;
   }).join('');
+  // quên chốt ngày trước thì "đã dùng" là lượng dùng gộp từ sau ngày chốt gần nhất
+  const yday = new Date(Date.parse(b.today) - 864e5).toISOString().slice(0, 10);
+  const usedLabel = b.lastClosed && b.lastClosed < yday ? 'Đã dùng từ sau ' + fmtDay(b.lastClosed).slice(0, 5) : 'Đã dùng hôm nay';
   const note = miss.length ? `Tạm tính: ${miss.length} khu chưa báo${b.lastClosed ? ' nên lấy số hôm qua' : ''}` : 'Đủ ' + b.khuAct.length + '/' + b.khuAct.length + ' khu đã báo hôm nay';
   return `<div class="f1 scroll" id="body">
     <div class="hero">
       <div class="row" style="justify-content:space-between"><span>Tổng quan · ${esc(b.today.split('-').reverse().join('/'))}</span><span class="badge" style="background:#fff;color:var(--pri)">${ROLE[S.me.role]}</span></div>
       <div class="row" style="justify-content:space-between;align-items:flex-end"><div class="col"><span style="font-size:15px">Tồn toàn bãi</span><span class="big">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;padding-bottom:6px">${fmtInt(T.cay)} cây</span></div>
       <div class="sm" style="color:#D6E0EE">${note}</div>
-      <div class="mini"><div><span>Nhập hôm nay</span><b>${fmtT(T.inKg)} tấn</b></div><div><span>Đã dùng hôm nay</span><b>${T.usedKg === null ? '—' : fmtT(T.usedKg) + ' tấn'}</b></div></div>
+      <div class="mini"><div><span>Nhập hôm nay</span><b>${fmtT(T.inKg)} tấn</b></div><div><span>${usedLabel}</span><b>${T.usedKg === null ? '—' : fmtT(T.usedKg) + ' tấn'}</b></div></div>
     </div>
     ${b.closed ? '<div class="toast" style="margin-top:12px">Ngày hôm nay đã được admin chốt.</div>' : ''}
     <div class="pad col gap12">
+      ${pendingHtml()}
       ${alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => `<button class="alertbtn ${a.bad ? 'bad' : 'warn'}" data-a="nav" data-s="${a.to}"><span class="f1 col" style="gap:2px"><b style="font-size:17px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>${IC.chev}</button>`).join('') : ''}
       <div class="row" style="justify-content:space-between;align-items:baseline"><h2 class="sec">Tồn theo khu và người báo</h2><span class="sm muted">${reportedCount()}/${b.khuAct.length} khu đã báo</span></div>
       ${khuCards}
@@ -352,7 +411,7 @@ function demView() {
       <div class="acts"><button class="btn ${streakOk ? '' : 'dis'}" data-a="keep">Giữ nguyên</button><button class="btn bad" data-a="zero">Hết (0)</button><button class="btn pri" data-a="next">TIẾP</button></div>
     </div>`;
   }
-  const pendingNote = (() => { try { return JSON.parse(localStorage.getItem('kt:pending') || '[]').length; } catch (e) { return 0; } })();
+  const pendingNote = readPending().length;
 
   return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Đếm ${esc(kname)}</h1><small>Bảng toàn bãi, nhập ngay trong bảng</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
     <div class="mxhead"><div><span>${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
@@ -365,28 +424,33 @@ function demView() {
       <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:14px;font-weight:700;color:var(--pri);line-height:1.1">${esc(kname)}<br>(bạn)</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtInt(colTot[k])}</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtInt(T.all)}</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
-    ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chờ gửi (mất mạng), sẽ tự gửi khi có mạng.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(kname.toUpperCase()) : 'Còn ' + pend.length + ' phi chưa nhập'}</button></div>`}`;
+    ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(kname.toUpperCase()) : 'Còn ' + pend.length + ' phi chưa nhập'}</button></div>`}`;
 }
 
 /* --- Nhập kho --- */
+const nkgText = (qty, p) => `= ${fmtInt(qty * p.kg_per_cay)} kg (${fmtT(qty * p.kg_per_cay)} tấn) · 1 bó = ${p.bo_size} cây`;
 function vNhap() {
   const b = S.boot, N = S.nhap;
   if (!N.phi) N.phi = b.phi[4] ? b.phi[4].id : b.phi[0].id;
-  if (!N.khu) N.khu = S.khu || b.khuAct[0].id;
+  if (!b.khuAct.length) return `${head('Nhập kho', '', 'home')}<div class="pad muted">Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.</div>`;
+  const okKhu = (id) => id && b.khuBy[id] && b.khuBy[id].active;
+  if (!okKhu(N.khu)) N.khu = okKhu(S.khu) ? S.khu : b.khuAct[0].id;
+  if (!b.phiBy[N.phi]) N.phi = b.phi[0].id;
   const p = b.phiBy[N.phi];
   const recs = b.receipts.map((r) => {
     const can = isAdmin() || (r.user_id === S.me.id && Date.now() - r.ts < 10 * 60e3);
-    return `<div class="li"><span><b>${esc(r.phi_id)}</b> · ${fmtInt(r.qty)} cây · ${esc(b.khuBy[r.khu_id] ? b.khuBy[r.khu_id].name : r.khu_id)}<br><span class="sm muted">${esc(r.uname)} · ${hhmm(r.ts)}</span></span>${can ? `<button class="btn s bad" data-a="void" data-id="${r.id}">Hủy</button>` : ''}</div>`;
+    return `<div class="li"><span><b>${esc(r.phi_id)}</b> · ${fmtInt(r.qty)} cây · ${esc(b.khuBy[r.khu_id] ? b.khuBy[r.khu_id].name : r.khu_id)}<br><span class="sm muted">${esc(r.uname)} · ${hhmm(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span></span>${can ? `<button class="btn s bad" data-a="void" data-id="${r.id}">Hủy</button>` : ''}</div>`;
   }).join('');
   return `${head('Nhập kho', 'Ghi phiếu thép mới về', 'home')}
   <div class="f1 scroll pad col gap12" id="body">
     ${N.done ? `<div class="card ok col gap8"><b style="font-size:18px">Đã lưu phiếu nhập</b><span style="font-size:17px">${esc(N.done.text)}</span><button class="btn s full" data-a="void" data-id="${N.done.id}">HOÀN TÁC</button></div>` : ''}
     <div class="col gap8"><b style="font-size:18px">1. Chọn phi</b><div class="grid4">${b.phi.map((x) => `<button class="chip ${x.id === N.phi ? 'on' : ''}" data-a="nphi" data-v="${x.id}">${x.id}</button>`).join('')}</div></div>
     <div class="col gap8"><b style="font-size:18px">2. Số cây</b>
-      <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><div class="f1" style="height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700">${N.qty}</div><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
-      <span class="muted">= ${fmtInt(N.qty * p.kg_per_cay)} kg (${fmtT(N.qty * p.kg_per_cay)} tấn) · 1 bó = ${p.bo_size} cây</span>
+      <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><input class="f1" id="nqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số cây" value="${N.qty}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
+      <span class="muted" id="nkg">${nkgText(N.qty, p)}</span>
       <div class="row gap6"><button class="btn s" data-a="nq" data-v="bo">+1 bó (${p.bo_size})</button><button class="btn s" data-a="nq" data-v="0">Về 0</button></div></div>
     <div class="col gap8"><b style="font-size:18px">3. Để vào khu</b><div class="grid4">${b.khuAct.map((k) => `<button class="chip ${k.id === N.khu ? 'on' : ''}" data-a="nkhu" data-v="${esc(k.id)}">${esc(k.id)}</button>`).join('')}</div></div>
+    <input class="inp s" id="nnote" maxlength="200" placeholder="Ghi chú: số phiếu, biển số xe... (không bắt buộc)" data-model="nnote" value="${esc(S.form.nnote || '')}">
     <button class="btn pri full" style="height:60px;font-size:20px" data-a="nconfirm">XÁC NHẬN NHẬP KHO</button>
     ${recs ? `<h2 class="sec">Phiếu nhập hôm nay</h2><div class="card" style="padding:0;overflow:hidden">${recs}</div>` : ''}
   </div>`;
@@ -433,12 +497,14 @@ function vDuyet() {
   const verdict = allOk
     ? `<div class="card ok col" style="gap:4px"><b style="font-size:19px">Ngày bình thường, đề xuất chốt</b><span style="font-size:16px;line-height:1.4">Đủ khu đã báo, không phi nào dùng âm hay bất thường. Bạn chỉ cần xác nhận một lần.</span></div>`
     : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Có ${R.exceptions.length} việc cần xem trước khi chốt</b><span class="sm" style="line-height:1.4">Tự đề xuất chốt khi: đủ khu, không phi dùng âm, không phi dùng quá 3 lần mức bình thường.</span></div>`;
+  const gap = R.span > 1 && !R.closed ? `<div class="card warn col" style="gap:4px"><b>Có ${R.span - 1} ngày chưa chốt</b><span class="sm" style="line-height:1.4">Lượng dùng dưới đây gộp ${R.span} ngày kể từ ngày chốt ${esc(fmtDay(R.last))}. Cảnh báo "dùng nhiều" đã chia theo số ngày.</span></div>` : '';
   const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Chốt ngày này để số đếm hôm nay trở thành tồn chuẩn đầu tiên.</span></div>` : '';
   const normalHtml = S.showNormal ? `<div class="card" style="padding:0;overflow:hidden">${normal.map((r) => `<div class="li"><b>${r.phi}</b><span class="sm">${R.last ? r.old + ' + ' + r.inn + ' − ' + r.cnt + ' = ' + r.used : 'đếm ' + r.cnt + ' cây'}</span></div>`).join('')}</div>` : '';
   return `${head('Duyệt ngày ' + b.today.split('-').reverse().slice(0, 2).join('/'), 'Chỉ hiện những gì cần xem', 'home')}
   <div class="f1 scroll pad col gap12" id="body">
     ${R.closed ? '<div class="card ok"><b>Đã chốt ngày hôm nay.</b> Số đếm hôm nay là tồn chuẩn mới, ngày này đã khóa.</div>' : verdict}
-    ${first}${items}${cards}
+    ${R.closed ? '<button class="btn s bad full" data-a="reopen">Mở lại ngày hôm nay (chốt nhầm)</button>' : ''}
+    ${gap}${first}${items}${cards}
     <button class="card b" style="text-align:left;min-height:52px;font-size:16px;border:2px solid #B9B4A8" data-a="toggle-normal">${normal.length} phi bình thường · ${S.showNormal ? 'bấm để ẩn' : 'bấm để xem'}</button>${normalHtml}
     <label class="col gap6" style="font-weight:600">Ghi chú lý do ${allOk ? '(không bắt buộc)' : '(bắt buộc khi còn việc bất thường)'}<input class="inp s" style="height:52px" id="note" data-model="note" placeholder="Ví dụ: nhập sót phiếu D16" value="${esc(S.form.note || '')}"></label>
   </div>
@@ -451,10 +517,13 @@ function fmtAudit(a) {
   try { d = a.detail ? JSON.parse(a.detail) : {}; } catch (e) { d = {}; }
   const kn = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
   const M = {
-    login: ['đăng nhập', 'login'], login_fail: ['nhập sai PIN (lần ' + d.n + ')', 'flag'], login_locked: ['bị khóa 15 phút do nhập sai PIN nhiều lần', 'flag'],
+    login: ['đăng nhập', 'login'], login_fail: ['nhập sai PIN (lần ' + d.n + ')', 'flag'], login_locked: ['bị khóa ' + (d.mins >= 60 ? d.mins / 60 + ' giờ' : (d.mins || 15) + ' phút') + ' do nhập sai PIN nhiều lần', 'flag'],
     change_pin: ['đổi PIN', 'login'], setup: ['thiết lập hệ thống', 'admin'],
-    receipt: ['nhập kho ' + d.phi + ': ' + d.qty + ' cây vào ' + kn(d.khu), 'nhap'], receipt_void: ['hủy phiếu nhập ' + d.phi + ' ' + d.qty + ' cây', 'nhap'],
-    close_day: ['chốt ngày ' + d.day + (d.note ? ' (' + d.note + ')' : ''), 'admin'], recount: ['yêu cầu ' + kn(d.khu) + ' đếm lại', 'admin'], conflict_resolve: ['chọn số báo sau cho ' + kn(d.khu), 'admin'],
+    receipt: ['nhập kho ' + d.phi + ': ' + d.qty + ' cây vào ' + kn(d.khu) + (d.note ? ' (' + d.note + ')' : ''), 'nhap'], receipt_void: ['hủy phiếu nhập ' + d.phi + ' ' + d.qty + ' cây', 'nhap'],
+    close_day: ['chốt ngày ' + fmtDay(d.day) + (d.note ? ' (' + d.note + ')' : ''), 'admin'],
+    auto_close: ['tự chốt ngày ' + fmtDay(d.day) + ' (ngày bình thường)', 'admin'],
+    auto_close_skip: ['không tự chốt ngày ' + fmtDay(d.day) + ': ' + d.reason, 'flag'],
+    reopen_day: ['mở lại ngày ' + fmtDay(d.day) + ' (' + d.note + ')', 'flag'], recount: ['yêu cầu ' + kn(d.khu) + ' đếm lại', 'admin'], conflict_resolve: ['chọn số báo sau cho ' + kn(d.khu), 'admin'],
     user_create: ['tạo tài khoản ' + d.name, 'admin'], user_reset_pin: ['đặt lại PIN cho ' + d.name, 'admin'], user_lock: ['khóa ' + d.name, 'admin'], user_unlock: ['mở khóa ' + d.name, 'admin'],
     user_role: ['đổi vai trò ' + d.name + ' thành ' + (ROLE[d.role] || d.role), 'admin'], user_logout: ['đăng xuất mọi máy của ' + d.name, 'admin'],
     khu_create: ['thêm ' + d.name, 'admin'], khu_update: ['sửa ' + d.name + (d.active ? '' : ' (ẩn)'), 'admin'], phi_update: ['sửa cấu hình ' + d.id, 'admin'], settings_update: ['sửa cài đặt', 'admin'],
@@ -515,7 +584,7 @@ function vMore() {
     <a class="menu" href="/api/export" download>Xuất Excel (CSV) bảng khu × phi</a>` : ''}
     <button class="menu" data-a="nav" data-s="pin">Đổi PIN của tôi</button>
     <button class="menu" style="color:var(--bad)" data-a="logout">Đăng xuất</button>
-    <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.0</div>
+    <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.1</div>
   </div>`;
 }
 function vPin() {
@@ -551,7 +620,8 @@ function vSettings() {
   return `${head('Cài đặt', 'Khu, phi và quy tắc', 'more')}<div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Quy tắc</h2>
     <div class="card col gap8"><label class="sm">Tự ẩn phi khỏi khu khi đếm bằng 0 liên tiếp (ngày)<input class="inp s" style="width:100%" id="s-zero" inputmode="numeric" value="${b.settings.hide_after_zero_days}"></label>
-    <label class="sm">Bắt buộc đếm lại khi "giữ nguyên" quá (ngày)<input class="inp s" style="width:100%" id="s-keep" inputmode="numeric" value="${b.settings.max_keep_streak}"></label><button class="btn s" data-a="ssave">Lưu quy tắc</button></div>
+    <label class="sm">Bắt buộc đếm lại khi "giữ nguyên" quá (ngày)<input class="inp s" style="width:100%" id="s-keep" inputmode="numeric" value="${b.settings.max_keep_streak}"></label>
+    <label class="sm">Tự chốt lúc 23:50 nếu ngày bình thường (đủ khu, không bất thường)<select class="inp s" style="width:100%" id="s-auto"><option value="1" ${b.settings.auto_close ? 'selected' : ''}>Bật</option><option value="0" ${b.settings.auto_close ? '' : 'selected'}>Tắt</option></select></label><button class="btn s" data-a="ssave">Lưu quy tắc</button></div>
     <h2 class="sec">Khu bãi</h2>${khu}
     <div class="card col gap6"><b>Thêm khu mới</b><input class="inp s" id="newk" placeholder="Tên khu, ví dụ: Khu I" data-model="newk" value="${esc(S.form.newk || '')}"><button class="btn s pri" data-a="kadd">Thêm khu</button></div>
     <h2 class="sec">Phi thép (D8 - D36)</h2>${phi}</div>`;
@@ -583,7 +653,8 @@ function vMain() {
   }
   const showToast = S.toast && S.screen !== 'dem';
   const noTabs = S.screen === 'dem' && S.sel;
-  return `${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}`;
+  const staleBar = S.stale ? `<div class="toast err" style="margin-top:calc(8px + env(safe-area-inset-top))">Mất kết nối: đang xem số liệu lưu lúc ${dmy(S.stale)}. Tự cập nhật khi có mạng.</div>` : '';
+  return `${staleBar}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}`;
 }
 
 function render() {
@@ -610,12 +681,19 @@ function render() {
 
 /* ===================== HÀNH ĐỘNG ===================== */
 const val = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+// số cây nhập kho gõ trực tiếp: đọc từ ô trước mỗi thao tác
+function syncQty() {
+  const e = document.getElementById('nqty');
+  if (e) S.nhap.qty = Math.min(99999, parseInt(e.value.replace(/\D/g, '') || '0', 10));
+}
 
 async function go(screen) {
   S.err = ''; S.sel = null;
   if (screen === 'dem') {
     const ok = (id) => id && S.boot.khuBy[id] && S.boot.khuBy[id].active;
-    const last = localStorage.getItem('kt:lastKhu');
+    if (!S.boot.khuAct.length) { say('Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.', true); S.screen = 'home'; return render(); }
+    let last = null;
+    try { last = localStorage.getItem('kt:lastKhu'); } catch (e) { /* bỏ qua */ }
     openDem(ok(S.khu) ? S.khu : ok(last) ? last : S.boot.khuAct[0].id);
   } else S.screen = screen;
   render();
@@ -687,7 +765,7 @@ const ACTIONS = {
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
     render();
   },
-  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } S.me = null; S.boot = null; S.screen = 'login'; S.form = {}; S.err = ''; render(); },
+  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.err = ''; render(); },
   async changepin() {
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
     if (n1 !== n2) { S.err = 'Hai lần nhập PIN mới không giống nhau'; return render(); }
@@ -725,19 +803,35 @@ const ACTIONS = {
     S.confirmKeep = false; saveDraft(); render();
   },
   send() { if (S.boot.closed) return; sendCounts(); },
+  pendsend(d) {
+    const q = readPending(), j = q[Number(d.i)];
+    if (!j) return;
+    if (!confirm('Gửi báo cáo này làm số đếm của HÔM NAY? Chỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.')) return;
+    q[Number(d.i)] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now() };
+    writePending(q); flushPending(); render();
+  },
+  pendrm(d) {
+    const q = readPending();
+    if (!q[Number(d.i)] || !confirm('Bỏ báo cáo này? Số liệu trong báo cáo sẽ mất.')) return;
+    q.splice(Number(d.i), 1); writePending(q); render();
+  },
 
-  nphi(d) { S.nhap.phi = d.v; S.nhap.done = null; render(); },
-  nkhu(d) { S.nhap.khu = d.v; S.nhap.done = null; render(); },
+  nphi(d) { syncQty(); S.nhap.phi = d.v; S.nhap.done = null; render(); },
+  nkhu(d) { syncQty(); S.nhap.khu = d.v; S.nhap.done = null; render(); },
   nq(d) {
     const N = S.nhap, v = d.v;
+    syncQty();
     if (v === 'bo') N.qty += S.boot.phiBy[N.phi].bo_size; else if (v === '0') N.qty = 0; else N.qty = Math.max(0, N.qty + Number(v));
     N.done = null; render();
   },
   nconfirm() {
     const N = S.nhap;
+    syncQty();
+    const note = val('nnote').trim();
     if (N.qty <= 0) return say('Nhập số cây lớn hơn 0.', true), render();
     act(async () => {
-      const r = await api('POST', '/receipts', { phi: N.phi, khu: N.khu, qty: N.qty });
+      const r = await api('POST', '/receipts', { phi: N.phi, khu: N.khu, qty: N.qty, note });
+      S.form.nnote = '';
       await loadBoot();
       N.done = { id: r.id, text: `${N.phi} · ${N.qty} cây · ${fmtT(N.qty * S.boot.phiBy[N.phi].kg_per_cay)} tấn · vào ${S.boot.khuBy[N.khu].name}` };
     });
@@ -754,6 +848,12 @@ const ACTIONS = {
     if (R.exceptions.length && !note.trim()) return say('Còn việc bất thường, hãy ghi chú lý do trước khi chốt.', true), render();
     if (!confirm('Chốt ngày? Sau khi chốt sẽ khóa số liệu hôm nay.')) return;
     act(async () => { await api('POST', '/close', { note }); S.form.note = ''; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã chốt ngày. Số đếm hôm nay là tồn chuẩn mới.');
+  },
+  reopen() {
+    const note = prompt('Lý do mở lại ngày hôm nay (bắt buộc):');
+    if (note === null) return;
+    if (!note.trim()) return say('Cần ghi lý do mở lại ngày.', true), render();
+    act(async () => { await api('POST', '/reopen', { note: note.trim() }); S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã mở lại ngày. Có thể sửa số và chốt lại.');
   },
   logf(d) { S.logFilter = d.v; render(); },
   sscope(d) { S.statScope = d.v; render(); },
@@ -776,7 +876,7 @@ const ACTIONS = {
   ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); await loadBoot(); }, 'Đã lưu tên khu.'); },
   khide(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.'); },
   kadd() { const name = val('newk'); act(async () => { await api('POST', '/khu', { name }); S.form.newk = ''; await loadBoot(); }, 'Đã thêm khu.'); },
-  ssave() { act(async () => { await api('PUT', '/settings', { hide_after_zero_days: val('s-zero'), max_keep_streak: val('s-keep') }); await loadBoot(); }, 'Đã lưu quy tắc.'); },
+  ssave() { act(async () => { await api('PUT', '/settings', { hide_after_zero_days: val('s-zero'), max_keep_streak: val('s-keep'), auto_close: val('s-auto') }); await loadBoot(); }, 'Đã lưu quy tắc.'); },
 };
 
 document.addEventListener('click', (e) => {
@@ -784,7 +884,15 @@ document.addEventListener('click', (e) => {
   if (!t || !ACTIONS[t.dataset.a]) return;
   ACTIONS[t.dataset.a](t.dataset, e);
 });
-document.addEventListener('input', (e) => { const m = e.target.dataset && e.target.dataset.model; if (m) S.form[m] = e.target.value; });
+document.addEventListener('input', (e) => {
+  const m = e.target.dataset && e.target.dataset.model;
+  if (m) S.form[m] = e.target.value;
+  if (e.target.id === 'nqty' && S.boot) { // cập nhật số kg ngay, không vẽ lại cả màn hình khi đang gõ
+    syncQty(); S.nhap.done = null;
+    const k = document.getElementById('nkg'), p = S.boot.phiBy[S.nhap.phi];
+    if (k && p) k.textContent = nkgText(S.nhap.qty, p);
+  }
+});
 document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.change === 'role') {
@@ -796,27 +904,63 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ===================== KHỞI ĐỘNG ===================== */
+/* Làm mới thích ứng để tiết kiệm hạn mức miễn phí:
+   - đang thao tác: hỏi phiên bản mỗi 60 giây; để yên quá 5 phút: mỗi 5 phút
+   - ngoài giờ làm (20:00 - 6:00): mỗi 15 phút; app chạy nền: không hỏi */
+let lastAct = Date.now(), lastPoll = 0;
+['click', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => { lastAct = Date.now(); }, { passive: true }));
+function pollEvery() {
+  const h = new Date().getHours();
+  if (h < 6 || h >= 20) return 15 * 60e3;
+  return Date.now() - lastAct > 5 * 60e3 ? 5 * 60e3 : 60e3;
+}
 async function refresh() {
   if (!S.me || document.hidden || S.me.must_change) return;
-  if (!['home', 'ton', 'khu'].includes(S.screen)) return;
+  lastPoll = Date.now();
   try {
-    // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi mới tải lại toàn bộ
+    // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ
     const r = await api('GET', '/rev');
-    if (!S.boot || r.rev !== S.boot.rev) { await loadBoot(); render(); }
+    if (readPending().some((j) => !j.err)) flushPending();
+    if (S.boot && r.today !== S.boot.today && S.screen === 'dem') {
+      // nháp đang đếm thuộc ngày cũ: không để lẫn sang ngày mới
+      S.screen = 'home'; S.sel = null;
+      say('Đã sang ngày mới, hãy mở lại màn Đếm để đếm cho hôm nay.', true);
+    }
+    const changed = !S.boot || S.stale || r.rev !== S.boot.rev || r.today !== S.boot.today;
+    // đang nhập số ở màn Đếm thì không vẽ lại giữa chừng (trừ khi sang ngày mới)
+    const busy = S.screen === 'dem' && S.sel && S.boot && r.today === S.boot.today;
+    if (changed && !busy && ['home', 'ton', 'khu', 'nhap', 'dem', 'stats'].includes(S.screen)) { await loadBoot(); render(); }
   } catch (e) { /* bỏ qua lỗi mạng khi làm mới ngầm */ }
+}
+function tick() {
+  if (Date.now() - lastPoll >= pollEvery()) refresh();
+  setTimeout(tick, 15000);
+}
+// xóa nháp đếm của các ngày trước để localStorage không phình mãi
+function cleanDrafts(today) {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const m = /^kt:(\d{4}-\d{2}-\d{2}):/.exec(localStorage.key(i) || '');
+      if (m && m[1] < today) localStorage.removeItem(localStorage.key(i));
+    }
+  } catch (e) { /* bỏ qua */ }
 }
 async function start() {
   render();
   try {
     const r = await api('GET', '/me');
     S.me = r.user;
-    if (!r.user.must_change) { await loadBoot(); S.screen = 'home'; flushPending(); }
-    else S.screen = 'home';
-  } catch (e) { S.me = null; S.screen = 'login'; S.err = ''; }
+    if (!r.user.must_change) { await loadBoot(); cleanDrafts(S.boot.today); flushPending(); }
+    S.screen = 'home';
+  } catch (e) {
+    if (e.retry && useCachedBoot()) S.screen = 'home';
+    else { S.me = null; S.screen = 'login'; S.err = e.retry ? e.message : ''; }
+  }
   render();
-  setInterval(refresh, 45000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-  window.addEventListener('online', flushPending);
+  lastPoll = Date.now();
+  setTimeout(tick, 15000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastPoll > 30e3) refresh(); });
+  window.addEventListener('online', () => { refresh(); flushPending(); });
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 start();

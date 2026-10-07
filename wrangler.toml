@@ -12,3 +12,8 @@ run_worker_first = ["/api/*"]
 binding = "DB"
 database_name = "kho-thep"
 database_id = "997fcdde-fa8f-4b94-9b20-620a920258c2"
+
+# Việc tự động mỗi đêm 23:50 giờ VN (= 16:50 UTC): tự chốt ngày bình thường, dọn phiên hết hạn.
+# Gói Free cho 5 Cron, app chỉ dùng 1.
+[triggers]
+crons = ["50 16 * * *"]
