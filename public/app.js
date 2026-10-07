@@ -695,7 +695,7 @@ function fmtAudit(a) {
   const kn = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
   const M = {
     login: ['đăng nhập', 'login'], login_fail: ['nhập sai PIN (lần ' + d.n + ')', 'flag'], login_locked: ['bị khóa ' + (d.mins >= 60 ? d.mins / 60 + ' giờ' : (d.mins || 15) + ' phút') + ' do nhập sai PIN nhiều lần', 'flag'],
-    change_pin: ['đổi PIN', 'login'], setup: ['thiết lập hệ thống', 'admin'],
+    change_pin: ['đổi PIN', 'login'], recover_pin: ['khôi phục PIN qua trang recovery', 'flag'], setup: ['thiết lập hệ thống', 'admin'],
     receipt: ['nhập kho vào ' + kn(d.khu) + ': ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'nhap'],
     transfer: ['chuyển ' + kn(d.from) + ' → ' + kn(d.to) + ': ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'nhap'],
     receipt_void: ['hủy phiếu ' + (d.kind === 'chuyen' ? 'chuyển khu' : 'nhập') + ': ' + lineTxt({ ...d, lines: (d.lines || []).filter((l) => l.qty > 0) }), 'nhap'],

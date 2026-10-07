@@ -244,6 +244,25 @@ async function logout(req, env, url) {
   return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(url, '', 0) });
 }
 
+async function recoverAdmin(req, env) {
+  if (!env.RECOVERY_TOKEN || !env.PEPPER) throw new HttpError(503, 'Chưa cấu hình recovery');
+  const b = await readJson(req);
+  if (!b.token || b.token !== env.RECOVERY_TOKEN) throw new HttpError(403, 'Token không đúng');
+  const phone = String(b.phone || '').replace(/\D/g, '');
+  if (!phone) throw bad('Thiếu số điện thoại');
+  const np = String(b.newPin || '');
+  checkPin(np);
+  const u = await env.DB.prepare('SELECT * FROM users WHERE phone = ? AND role = ?').bind(phone, 'admin').first();
+  if (!u) throw new HttpError(404, 'Không tìm thấy tài khoản admin với số điện thoại này');
+  const salt = rand(16);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET pin_salt=?, pin_hash=?, must_change=0, fail_count=0, locked_until=0, lock_level=0 WHERE id=?').bind(salt, await hashPin(env, salt, np), u.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(u.id),
+    auditStmt(env, u, 'recover_pin', { ip: req.headers.get('CF-Connecting-IP') || 'unknown' }),
+  ]);
+  return json({ ok: true, name: u.name });
+}
+
 async function changePin(req, env, user) {
   const b = await readJson(req);
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
@@ -1051,6 +1070,7 @@ async function handle(req, env, url) {
   if (method === 'POST' && r0 === 'setup') return setup(req, env, url);
   if (method === 'POST' && r0 === 'login') return login(req, env, url);
   if (method === 'POST' && r0 === 'logout') return logout(req, env, url);
+  if (method === 'POST' && r0 === 'recover') return recoverAdmin(req, env);
 
   // hỏi phiên bản ngầm: nhẹ nhất có thể (không gia hạn phiên, không ghi)
   if (r0 === 'rev' && method === 'GET') {
