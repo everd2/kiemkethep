@@ -244,6 +244,35 @@ async function logout(req, env, url) {
   return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(url, '', 0) });
 }
 
+async function forgotPin(req, env) {
+  if (!env.PEPPER) throw new HttpError(500, 'Chưa cấu hình PEPPER');
+  const b = await readJson(req);
+  const phone = String(b.phone || '').replace(/\D/g, '');
+  if (!phone) throw bad('Thiếu số điện thoại');
+  const today = vnDay();
+  const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
+  const [uR, ipR] = await env.DB.batch([
+    env.DB.prepare('SELECT * FROM users WHERE phone = ?').bind(phone),
+    env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today),
+  ]);
+  const ipFail = env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today);
+  const n = ipR.results[0]?.n || 0;
+  if (n >= IP_FAIL_MAX) throw new HttpError(429, 'Quá nhiều lần thử, hãy thử lại sau');
+  const u = uR.results[0];
+  if (!u || u.role !== 'admin') {
+    await env.DB.batch([ipFail]);
+    throw new HttpError(404, 'Không tìm thấy tài khoản admin với số điện thoại này');
+  }
+  const pin = genPin();
+  const salt = rand(16);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET pin_salt = ?, pin_hash = ?, must_change = 1, fail_count = 0, locked_until = 0, lock_level = 0 WHERE id = ?').bind(salt, await hashPin(env, salt, pin), u.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id),
+    auditStmt(env, u, 'forgot_pin', { ip }),
+  ]);
+  return json({ ok: true, name: u.name, pin });
+}
+
 async function changePin(req, env, user) {
   const b = await readJson(req);
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
@@ -1051,6 +1080,7 @@ async function handle(req, env, url) {
   if (method === 'POST' && r0 === 'setup') return setup(req, env, url);
   if (method === 'POST' && r0 === 'login') return login(req, env, url);
   if (method === 'POST' && r0 === 'logout') return logout(req, env, url);
+  if (method === 'POST' && r0 === 'forgot-pin') return forgotPin(req, env);
 
   // hỏi phiên bản ngầm: nhẹ nhất có thể (không gia hạn phiên, không ghi)
   if (r0 === 'rev' && method === 'GET') {
