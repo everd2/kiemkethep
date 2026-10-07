@@ -1,0 +1,14 @@
+{
+  "name": "kho-thep",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute kho-thep --local --file=schema.sql",
+    "db:remote": "wrangler d1 execute kho-thep --remote --file=schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

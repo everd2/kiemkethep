@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thiết lập Kho Thép Bãi</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <div class="login f1 scroll">
+    <div style="font-size:26px;font-weight:700">Thiết lập lần đầu</div>
+    <div class="muted" style="font-size:17px;line-height:1.5">Tạo tài khoản admin đầu tiên. Trang này chỉ dùng được một lần, sau khi có admin hệ thống sẽ tự từ chối.</div>
+    <label class="field">Mã thiết lập (SETUP_TOKEN bạn đã đặt)<input id="token" type="password" autocomplete="off"></label>
+    <label class="field">Họ tên admin<input id="name" type="text"></label>
+    <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric"></label>
+    <label class="field">PIN 4 số<input id="pin" type="password" inputmode="numeric" maxlength="4"></label>
+    <div class="err" id="msg"></div>
+    <button class="btn pri full" style="height:60px;font-size:20px" id="go">TẠO ADMIN</button>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+$('go').onclick = async () => {
+  const msg = $('msg'); msg.style.color = ''; msg.textContent = 'Đang tạo...';
+  try {
+    const r = await fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: $('token').value, name: $('name').value, phone: $('phone').value, pin: $('pin').value }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Lỗi ' + r.status);
+    msg.style.color = '#176B34'; msg.textContent = 'Đã tạo admin. Đang chuyển sang đăng nhập...';
+    setTimeout(() => (location.href = '/'), 1200);
+  } catch (e) { msg.style.color = ''; msg.textContent = e.message; }
+};
+</script>
+</body>
+</html>

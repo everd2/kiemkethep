@@ -1,0 +1,3 @@
+# Sao chép thành .dev.vars khi chạy thử trên máy (npm run dev). KHÔNG đưa file .dev.vars lên mạng.
+SETUP_TOKEN=doi-thanh-ma-bi-mat-cua-ban
+PEPPER=doi-thanh-chuoi-ngau-nhien-dai-it-nhat-32-ky-tu

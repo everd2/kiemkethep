@@ -1,0 +1,14 @@
+name = "kho-thep"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Giao diện (PWA) nằm trong thư mục public, /api/* chạy qua Worker
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kho-thep"
+database_id = "THAY_BANG_DATABASE_ID"
