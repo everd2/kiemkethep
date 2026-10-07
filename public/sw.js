@@ -1,6 +1,6 @@
 // Service worker: lưu giao diện để mở nhanh và mở được khi mất mạng (dữ liệu luôn lấy từ server)
 // Đổi số phiên bản CACHE mỗi khi sửa giao diện để máy cũ bỏ bản lưu cũ.
-const CACHE = 'kho-thep-v2';
+const CACHE = 'kho-thep-v3';
 const SHELL = ['/', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS counts_log (
   user_id INTEGER NOT NULL,
   ts INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_counts_log_dk ON counts_log(day, khu_id);
 
 CREATE TABLE IF NOT EXISTS khu_report (
   day TEXT NOT NULL,
@@ -105,9 +106,12 @@ CREATE TABLE IF NOT EXISTS receipts (
   note TEXT,
   user_id INTEGER NOT NULL,
   ts INTEGER NOT NULL,
-  voided INTEGER NOT NULL DEFAULT 0
+  voided INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL DEFAULT 'nhap', -- 'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến)
+  grp TEXT                            -- các dòng cùng một phiếu
 );
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
+CREATE INDEX IF NOT EXISTS idx_receipts_grp ON receipts(grp);
 
 -- Chốt ngày: khóa số liệu, lưu mức dùng để tính trung bình
 CREATE TABLE IF NOT EXISTS day_close (
@@ -129,6 +133,13 @@ CREATE TABLE IF NOT EXISTS daily_summary (
   dung INTEGER,
   span INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (day, phi_id)
+);
+
+-- Tốc độ dùng trung bình mỗi ngày của từng phi (28 ngày gần nhất), cập nhật khi chốt ngày
+CREATE TABLE IF NOT EXISTS phi_rate (
+  phi_id TEXT PRIMARY KEY,
+  per_day REAL NOT NULL,
+  days INTEGER NOT NULL
 );
 
 -- Tồn chuẩn theo từng ngày đã chốt (khu x phi)
@@ -161,7 +172,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 2);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 3);
 
 -- Dữ liệu mặc định (kg/cây = 0,00617 x D x D x 11,7 m)
 INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock) VALUES

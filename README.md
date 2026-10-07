@@ -12,6 +12,12 @@
 - **Tự chốt lúc 23:50** nếu ngày bình thường (đủ khu, không bất thường). Ngày có bất thường thì không tự chốt, nhật ký ghi lý do. Tắt/bật ở **Cài đặt**.
 - Quên chốt vài ngày: lượng dùng được gộp cho cả khoảng đó, cảnh báo "dùng nhiều" tự chia theo số ngày.
 - Mất mạng khi gửi báo cáo: app lưu báo cáo kèm **ngày đếm** và tự gửi lại khi có mạng. Nếu đã sang ngày mới, báo cáo hiện ở Tổng quan để người dùng chọn *Gửi làm số hôm nay* hoặc *Bỏ*, không tự ghi vào sai ngày.
+- **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu, hoàn tác cả phiếu trong 10 phút. Mọi nút lưu đều bị khóa trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
+- **Chuyển khu** (Nhập → Chuyển khu): ghi một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng.
+- Khi đếm, ô chưa nhập hiện **số dự kiến** = tồn hôm qua + nhập/chuyển. Phi có thép nhập/chuyển từ lần chốt trước **không được "giữ nguyên"**, bắt buộc đếm thực tế.
+- Duyệt cảnh báo **thép nhập/chuyển sau giờ khu báo** (số đếm chưa gồm lượng này). Khi 2 người báo khác số, admin xem **hai số cạnh nhau** và chọn từng phi.
+- Không ẩn được khu còn thép (phải chuyển đi hoặc đếm về 0 trước).
+- **Xem lại ngày cũ**, **báo cáo Nhập – Dùng – Tồn theo kỳ** (xuất CSV), và **dự báo số ngày còn đủ dùng** từng phi (theo lượng dùng trung bình 28 ngày).
 - Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xóa).
 
 Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Người đếm** (đếm + xem).
@@ -121,10 +127,9 @@ Nếu Cloudflare chặn do hết hạn mức trong ngày, app vẫn mở đượ
 - Chặn gửi yêu cầu từ trang web lạ (kiểm tra Origin).
 - Mọi thao tác ghi vào nhật ký (ai, làm gì, số cũ → số mới, lúc nào).
 
-## Chưa có trong bản 1.1
+## Chưa có trong bản 1.2
 - Ảnh phiếu nhập (cần thêm Cloudflare R2).
 - Thông báo đẩy nhắc khu chưa báo (Web Push; Cron đã có sẵn).
-- Báo cáo nhập-xuất-tồn theo kỳ dạng Excel đầy đủ (hiện có xuất bảng khu × phi và thống kê lượng dùng theo ngày).
 
 ## Cấu trúc thư mục
 ```

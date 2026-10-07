@@ -47,7 +47,7 @@ const SYSTEM = { id: 0, name: 'Hệ thống' };
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -63,7 +63,23 @@ const MIGRATIONS = {
     "UPDATE daily_summary SET dung = (SELECT json_extract(dc.used_json, '$.' || daily_summary.phi_id) FROM day_close dc WHERE dc.day = daily_summary.day)",
     'UPDATE daily_summary SET nhap = COALESCE((SELECT SUM(qty) FROM receipts r WHERE r.voided = 0 AND r.day = daily_summary.day AND r.phi_id = daily_summary.phi_id), 0)',
   ],
+  3: [
+    // kind: 'nhap' (thép về) hoặc 'chuyen' (chuyển khu: một dòng âm ở khu đi, một dòng dương ở khu đến)
+    "ALTER TABLE receipts ADD COLUMN kind TEXT NOT NULL DEFAULT 'nhap'",
+    // grp: các dòng cùng một phiếu (nhiều phi, hoặc cặp chuyển khu) để hoàn tác cả phiếu
+    'ALTER TABLE receipts ADD COLUMN grp TEXT',
+    'CREATE INDEX IF NOT EXISTS idx_receipts_grp ON receipts(grp)',
+    'CREATE INDEX IF NOT EXISTS idx_counts_log_dk ON counts_log(day, khu_id)',
+    // tốc độ dùng trung bình/ngày của từng phi (28 ngày gần nhất), cập nhật khi chốt ngày
+    'CREATE TABLE IF NOT EXISTS phi_rate (phi_id TEXT PRIMARY KEY, per_day REAL NOT NULL, days INTEGER NOT NULL)',
+    `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
+     SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
+     WHERE dung IS NOT NULL AND day > date((SELECT MAX(day) FROM daily_summary), '-28 days') GROUP BY phi_id`,
+  ],
 };
+const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
+  SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
+  WHERE dung IS NOT NULL AND day > date(?1, '-28 days') AND day <= ?1 GROUP BY phi_id`;
 let schemaReady = null;
 function ensureSchema(env) {
   if (!schemaReady) schemaReady = migrate(env).catch((e) => { schemaReady = null; throw e; });
@@ -249,19 +265,20 @@ async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innSince, settings] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, settings, rates] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, active, keep_streak FROM khu_phi'),
     env.DB.prepare('SELECT c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, u.name uname, c.ts FROM counts c JOIN users u ON u.id = c.user_id WHERE c.day = ?').bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     env.DB.prepare('SELECT r.khu_id, r.user_id, u.name uname, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
-    env.DB.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.ts, r.user_id, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? AND r.voided = 0 ORDER BY r.id DESC').bind(day),
+    env.DB.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.user_id, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? AND r.voided = 0 ORDER BY r.id DESC').bind(day),
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
-    // nhập kho kể từ lần chốt gần nhất (gồm cả ngày quên chốt), giống cách màn Duyệt tính
-    env.DB.prepare('SELECT phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY phi_id').bind(last, day),
+    // nhập/chuyển kể từ lần chốt gần nhất theo khu × phi (gồm cả ngày quên chốt), giống cách màn Duyệt tính
+    env.DB.prepare('SELECT khu_id, phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY khu_id, phi_id').bind(last, day),
     env.DB.prepare(SETTINGS_SQL),
+    env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -276,7 +293,8 @@ async function bootstrap(env, user) {
     baseline: baseline.results,
     reports: reports.results,
     receipts: receipts.results,
-    innSince: innSince.results,
+    innKhu: innKhu.results,
+    rates: rates.results,
     settings: parseSettings(settings.results),
   };
 }
@@ -298,14 +316,19 @@ async function putCounts(req, env, user) {
   if (!items.length) throw bad('Chưa có số liệu nào');
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
-  const [closedR, khuR, setR, phiR, kpR, prevR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR, innR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT id FROM phi'),
     env.DB.prepare('SELECT phi_id, active, zero_days, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khuId),
     env.DB.prepare('SELECT phi_id, v, kind, user_id FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
+    env.DB.prepare(
+      `SELECT phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND khu_id = ?1
+       AND day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND day <= ?2 GROUP BY phi_id HAVING SUM(qty) <> 0`
+    ).bind(khuId, day),
   ]);
+  const moved = Object.fromEntries(innR.results.map((r) => [r.phi_id, r.q]));
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã được chốt, không sửa được nữa', 'closed');
   const k = khuR.results[0];
   if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
@@ -340,6 +363,9 @@ async function putCounts(req, env, user) {
     const p = prev[it.phi];
     if (it.kind === 'giu' && old && !(p && p.kind === 'giu') && old.keep_streak >= settings.max_keep_streak) {
       throw bad(`Phi ${it.phi} đã giữ nguyên quá ${settings.max_keep_streak} ngày liên tiếp, hãy đếm lại`);
+    }
+    if (it.kind === 'giu' && moved[it.phi]) {
+      throw bad(`Phi ${it.phi} có thép ${moved[it.phi] > 0 ? 'nhập/chuyển vào' : 'chuyển đi'} khu này từ lần chốt trước, không giữ nguyên được, hãy đếm thực tế`);
     }
     if (p && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
@@ -384,47 +410,98 @@ async function putCounts(req, env, user) {
 
 /* ========================= NHẬP KHO ========================= */
 
-async function postReceipt(req, env, user) {
-  const b = await readJson(req);
+// Đọc danh sách dòng { phi, qty } của một phiếu; gộp các dòng trùng phi
+function parseLines(b, phiSet) {
+  const raw = Array.isArray(b.lines) ? b.lines : b.phi !== undefined ? [{ phi: b.phi, qty: b.qty }] : [];
+  if (!raw.length) throw bad('Phiếu chưa có dòng nào');
+  if (raw.length > 30) throw bad('Một phiếu tối đa 30 dòng');
+  const sum = {};
+  for (const it of raw) {
+    const phi = String((it && it.phi) || '');
+    if (!phiSet.has(phi)) throw bad('Phi không hợp lệ: ' + phi);
+    sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số cây của ' + phi);
+  }
+  return Object.entries(sum).map(([phi, qty]) => {
+    if (qty > 99999) throw bad('Số cây của ' + phi + ' quá lớn');
+    return { phi, qty };
+  });
+}
+
+async function receiptCtx(env, khuIds) {
   const day = vnDay();
   const [closedR, phiR, khuR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('SELECT id FROM phi WHERE id = ?').bind(String(b.phi || '')),
-    env.DB.prepare('SELECT id FROM khu WHERE id = ? AND active = 1').bind(String(b.khu || '')),
+    env.DB.prepare('SELECT id FROM phi'),
+    env.DB.prepare('SELECT id, name FROM khu WHERE active = 1'),
   ]);
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
-  const phi = phiR.results[0], khu = khuR.results[0];
-  if (!phi) throw bad('Phi không hợp lệ');
-  if (!khu) throw bad('Khu không hợp lệ');
-  const qty = intIn(b.qty, 1, 99999, 'Số cây');
-  const note = String(b.note || '').trim().slice(0, 200);
-  const ts = Date.now();
-  // một batch (một giao dịch): phiếu, nhật ký (lấy id phiếu vừa tạo), bật phi ở khu, tăng phiên bản
-  const res = await env.DB.batch([
-    env.DB.prepare('INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts) VALUES (?,?,?,?,?,?,?)')
-      .bind(day, phi.id, khu.id, qty, note, user.id, ts),
-    env.DB.prepare("INSERT INTO audit (ts, user_id, user_name, action, detail) VALUES (?,?,?,'receipt', json_object('id', last_insert_rowid(), 'phi', ?, 'khu', ?, 'qty', ?, 'note', ?))")
-      .bind(ts, user.id, user.name, phi.id, khu.id, qty, note),
-    env.DB.prepare(
-      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak) VALUES (?,?,1,0,0)
-       ON CONFLICT(khu_id, phi_id) DO UPDATE SET active = 1, zero_days = 0`
-    ).bind(khu.id, phi.id),
-    bump(env),
-  ]);
-  return json({ ok: true, id: res[0].meta.last_row_id });
+  const khu = Object.fromEntries(khuR.results.map((k) => [k.id, k]));
+  for (const id of khuIds) if (!khu[id]) throw bad('Khu không hợp lệ');
+  return { day, phiSet: new Set(phiR.results.map((r) => r.id)), khu };
 }
 
+// Ghi các dòng (đã có khu và qty có dấu) trong MỘT batch: phiếu, bật phi ở khu nhận, nhật ký, phiên bản
+async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
+  const grp = rand(8);
+  const ts = Date.now();
+  const data = JSON.stringify(rows);
+  const res = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, kind, grp)
+       SELECT ?1, ${J('phi')}, ${J('khu')}, ${J('qty')}, ?2, ?3, ?4, ?5, ?6 FROM json_each(?7) j`
+    ).bind(ctx.day, note, user.id, ts, kind, grp, data),
+    env.DB.prepare(
+      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
+       SELECT ${J('khu')}, ${J('phi')}, 1, 0, 0 FROM json_each(?1) j WHERE ${J('qty')} > 0
+       ON CONFLICT(khu_id, phi_id) DO UPDATE SET active = 1, zero_days = 0`
+    ).bind(data),
+    auditStmt(env, user, kind === 'chuyen' ? 'transfer' : 'receipt', { ...audit, grp, note }),
+    bump(env),
+    env.DB.prepare('SELECT id FROM receipts WHERE grp = ?').bind(grp),
+  ]);
+  return json({ ok: true, grp, ids: res[4].results.map((r) => r.id), id: res[4].results[0] ? res[4].results[0].id : null });
+}
+
+async function postReceipt(req, env, user) {
+  const b = await readJson(req);
+  const khuId = String(b.khu || '');
+  const ctx = await receiptCtx(env, [khuId]);
+  const lines = parseLines(b, ctx.phiSet);
+  const note = String(b.note || '').trim().slice(0, 200);
+  return writeReceipt(env, user, ctx, lines.map((l) => ({ ...l, khu: khuId })), 'nhap', note, { khu: khuId, lines });
+}
+
+// Chuyển khu: một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng,
+// nhưng số "dự kiến" của từng khu và cảnh báo khu biến động đúng hơn.
+async function postTransfer(req, env, user) {
+  const b = await readJson(req);
+  const from = String(b.from || ''), to = String(b.to || '');
+  if (from === to) throw bad('Khu đi và khu đến phải khác nhau');
+  const ctx = await receiptCtx(env, [from, to]);
+  const lines = parseLines(b, ctx.phiSet);
+  const note = String(b.note || '').trim().slice(0, 200);
+  const rows = [];
+  lines.forEach((l) => { rows.push({ phi: l.phi, khu: from, qty: -l.qty }, { phi: l.phi, khu: to, qty: l.qty }); });
+  return writeReceipt(env, user, ctx, rows, 'chuyen', note, { from, to, lines });
+}
+
+// Hủy theo phiếu: hủy cả các dòng cùng phiếu (nhiều phi, hoặc cả cặp chuyển khu)
 async function voidReceipt(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM receipts WHERE id = ? AND voided = 0').bind(id).first();
-  if (!r) throw new HttpError(404, 'Không tìm thấy phiếu nhập');
+  if (!r) throw new HttpError(404, 'Không tìm thấy phiếu');
   const closed = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(r.day).first();
-  if (closed) throw new HttpError(409, 'Ngày đã chốt, không hủy được');
+  if (closed) throw new HttpError(409, 'Ngày đã chốt, không hủy được', 'closed');
   if (user.role !== 'admin' && (r.user_id !== user.id || Date.now() - r.ts > 10 * 60e3)) {
     throw new HttpError(403, 'Chỉ hoàn tác được trong 10 phút sau khi nhập');
   }
+  const rows = r.grp
+    ? (await env.DB.prepare('SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND voided = 0').bind(r.grp).all()).results
+    : [r];
   await env.DB.batch([
-    env.DB.prepare('UPDATE receipts SET voided = 1 WHERE id = ?').bind(id),
-    auditStmt(env, user, 'receipt_void', { id, phi: r.phi_id, khu: r.khu_id, qty: r.qty }),
+    r.grp
+      ? env.DB.prepare('UPDATE receipts SET voided = 1 WHERE grp = ? AND voided = 0').bind(r.grp)
+      : env.DB.prepare('UPDATE receipts SET voided = 1 WHERE id = ?').bind(id),
+    auditStmt(env, user, 'receipt_void', { id, kind: r.kind || 'nhap', lines: rows.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
   ]);
   return json({ ok: true });
@@ -436,7 +513,7 @@ async function computeReview(env, day) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, kpR, repR, cntR, baseR, rcR, usedR, closedR] = await db.batch([
+  const [phiR, khuR, kpR, repR, cntR, baseR, rcR, usedR, closedR, todayR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     db.prepare('SELECT khu_id, COUNT(*) n FROM khu_phi WHERE active = 1 GROUP BY khu_id'),
@@ -446,6 +523,7 @@ async function computeReview(env, day) {
     db.prepare('SELECT phi_id, khu_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY phi_id, khu_id').bind(last, day),
     db.prepare('SELECT used_json, span FROM day_close ORDER BY day DESC LIMIT 7'),
     db.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    db.prepare('SELECT khu_id, phi_id, qty, kind, ts FROM receipts WHERE voided = 0 AND day = ?').bind(day),
   ]);
   const cnt = {}, base = {}, inn = {};
   cntR.results.forEach((r) => (cnt[r.khu_id + '|' + r.phi_id] = r.v));
@@ -495,6 +573,15 @@ async function computeReview(env, day) {
       if (r.recount) exceptions.push({ type: 'recount', khu: k.id, name: k.name });
     }
   }
+  // thép nhập/chuyển vào khu SAU khi khu đã báo: số đếm chưa gồm lượng này, cần đếm lại
+  for (const k of khuAct) {
+    const r = reps[k.id];
+    if (!r) continue;
+    const late = {};
+    todayR.results.filter((x) => x.khu_id === k.id && x.ts > r.ts).forEach((x) => (late[x.phi_id] = (late[x.phi_id] || 0) + x.qty));
+    const items = Object.entries(late).filter(([, q]) => q !== 0).map(([phi, q]) => ({ phi, q }));
+    if (items.length) exceptions.push({ type: 'late', khu: k.id, name: k.name, reportTs: r.ts, items });
+  }
   rows.forEach((r) => {
     if (r.neg) exceptions.push({ type: 'phi', phi: r.phi, reason: 'neg' });
     else if (r.high) exceptions.push({ type: 'phi', phi: r.phi, reason: 'high' });
@@ -524,6 +611,7 @@ async function doClose(env, user, rv, note, action) {
       `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span)
        SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')}, ${J('used')}, ?2 FROM json_each(?3) j`
     ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, used: r.used })))),
+    env.DB.prepare(RATE_SQL).bind(day),
     env.DB.prepare(
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kp.khu_id, kp.phi_id, COALESCE(c.v, b.v, 0)
@@ -549,6 +637,7 @@ async function reopenDay(req, env, user) {
     env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
+    env.DB.prepare(RATE_SQL).bind(day),
     auditStmt(env, user, 'reopen_day', { day, note }),
     bump(env),
   ]);
@@ -671,6 +760,17 @@ async function khuUpdate(req, env, admin, id) {
   if (!k) throw new HttpError(404, 'Không tìm thấy khu');
   const name = b.name !== undefined ? String(b.name).trim().slice(0, 40) || k.name : k.name;
   const active = b.active !== undefined ? (b.active ? 1 : 0) : k.active;
+  if (k.active && !active) {
+    // khu ẩn thì không ai đếm được nữa: còn thép mà ẩn sẽ làm số tồn "đóng băng"
+    const day = vnDay();
+    const st = await env.DB.prepare(
+      `SELECT COALESCE(SUM(COALESCE(c.v, b.v, 0)), 0) n FROM khu_phi kp
+       LEFT JOIN counts c ON c.day = ?2 AND c.khu_id = kp.khu_id AND c.phi_id = kp.phi_id
+       LEFT JOIN baseline b ON b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND b.khu_id = kp.khu_id AND b.phi_id = kp.phi_id
+       WHERE kp.khu_id = ?1`
+    ).bind(id, day).first();
+    if (st && st.n > 0) throw bad(`${k.name} còn ${st.n} cây. Hãy chuyển thép sang khu khác (Nhập → Chuyển khu) hoặc đếm về 0 trước khi ẩn`);
+  }
   await env.DB.batch([
     env.DB.prepare('UPDATE khu SET name = ?, active = ? WHERE id = ?').bind(name, active, id),
     auditStmt(env, admin, 'khu_update', { id, name, active }),
@@ -695,6 +795,30 @@ async function phiUpdate(req, env, admin, id) {
   return json({ ok: true });
 }
 
+async function phiBulk(req, env, admin) {
+  const b = await readJson(req);
+  const items = Array.isArray(b.items) ? b.items : [];
+  if (!items.length) throw bad('Không có gì để lưu');
+  const { results } = await env.DB.prepare('SELECT * FROM phi').all();
+  const by = Object.fromEntries(results.map((p) => [p.id, p]));
+  const stmts = [], log = [];
+  for (const it of items.slice(0, 50)) {
+    const p = by[String(it.id || '')];
+    if (!p) throw bad('Phi không hợp lệ: ' + it.id);
+    const bo = intIn(it.bo_size ?? p.bo_size, 1, 9999, 'Số cây mỗi bó của ' + p.id);
+    const min = intIn(it.min_stock ?? p.min_stock, 0, 99999, 'Mức tối thiểu của ' + p.id);
+    const kg = Number(String(it.kg_per_cay ?? p.kg_per_cay).replace(',', '.'));
+    if (!(kg > 0 && kg < 1000)) throw bad('Khối lượng mỗi cây của ' + p.id + ' không hợp lệ');
+    if (bo === p.bo_size && min === p.min_stock && kg === p.kg_per_cay) continue;
+    stmts.push(env.DB.prepare('UPDATE phi SET bo_size = ?, min_stock = ?, kg_per_cay = ? WHERE id = ?').bind(bo, min, kg, p.id));
+    log.push({ id: p.id, bo, min, kg });
+  }
+  if (!stmts.length) return json({ ok: true, n: 0 });
+  stmts.push(auditStmt(env, admin, 'phi_update', { items: log }), bump(env));
+  await env.DB.batch(stmts);
+  return json({ ok: true, n: log.length });
+}
+
 async function settingsUpdate(req, env, admin) {
   const b = await readJson(req);
   const stmts = [];
@@ -708,6 +832,156 @@ async function settingsUpdate(req, env, admin) {
   stmts.push(auditStmt(env, admin, 'settings_update', Object.fromEntries(Object.keys(SETTING_RANGE).filter((k) => b[k] !== undefined).map((k) => [k, b[k]]))), bump(env));
   await env.DB.batch(stmts);
   return json({ ok: true });
+}
+
+/* ========================= XEM NGÀY CŨ ========================= */
+
+async function dayView(env, url) {
+  const day = url.searchParams.get('date') || '';
+  if (!DAY_RE.test(day) || day > vnDay()) throw bad('Ngày không hợp lệ');
+  const db = env.DB;
+  const [closeR, cntR, baseR, prevR, rcR, sumR, repR] = await db.batch([
+    db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
+    db.prepare('SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, u.name uname FROM counts c JOIN users u ON u.id = c.user_id WHERE c.day = ?').bind(day),
+    db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(day),
+    // ngày chưa chốt: khu không báo thì tạm lấy tồn chuẩn trước đó (giống màn Tổng quan)
+    db.prepare("SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?)").bind(day),
+    db.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.voided, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? ORDER BY r.id').bind(day),
+    db.prepare('SELECT phi_id, ton, nhap, dung, span FROM daily_summary WHERE day = ?').bind(day),
+    db.prepare('SELECT r.khu_id, r.ts, u.name uname FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
+  ]);
+  return json({
+    day, close: closeR.results[0] || null, counts: cntR.results, baseline: baseR.results, prevBaseline: prevR.results,
+    receipts: rcR.results, summary: sumR.results, reports: repR.results,
+  });
+}
+
+/* ========================= BÁO CÁO THEO KỲ =========================
+   Đọc bảng tổng hợp daily_summary (12 dòng/ngày) nên cả năm cũng chỉ vài nghìn dòng. */
+async function report(env, url) {
+  const today = vnDay();
+  const from = url.searchParams.get('from') || today.slice(0, 8) + '01';
+  const to = url.searchParams.get('to') || today;
+  if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) throw bad('Khoảng ngày không hợp lệ');
+  if (daysBetween(from, to) > 366) throw bad('Chỉ xem tối đa 1 năm mỗi lần');
+  const db = env.DB;
+  const [phiR, openR, sumR, closeR, daysR] = await db.batch([
+    db.prepare('SELECT id, kg_per_cay FROM phi ORDER BY sort'),
+    db.prepare('SELECT day, phi_id, ton FROM daily_summary WHERE day = (SELECT MAX(day) FROM daily_summary WHERE day < ?)').bind(from),
+    db.prepare('SELECT phi_id, SUM(nhap) nhap, SUM(dung) dung FROM daily_summary WHERE day >= ? AND day <= ? GROUP BY phi_id').bind(from, to),
+    db.prepare('SELECT day, phi_id, ton FROM daily_summary WHERE day = (SELECT MAX(day) FROM daily_summary WHERE day >= ? AND day <= ?)').bind(from, to),
+    db.prepare(
+      `SELECT d.day, MAX(d.span) span, SUM(d.nhap * p.kg_per_cay) nhap_kg, SUM(COALESCE(d.dung, 0) * p.kg_per_cay) dung_kg, SUM(d.ton * p.kg_per_cay) ton_kg
+       FROM daily_summary d JOIN phi p ON p.id = d.phi_id WHERE d.day >= ? AND d.day <= ? GROUP BY d.day ORDER BY d.day`
+    ).bind(from, to),
+  ]);
+  const by = (rs, f) => Object.fromEntries(rs.map((r) => [r.phi_id, r[f]]));
+  const open = by(openR.results, 'ton'), close = by(closeR.results, 'ton');
+  const nhap = by(sumR.results, 'nhap'), dung = by(sumR.results, 'dung');
+  const hasOpen = openR.results.length > 0, hasClose = closeR.results.length > 0;
+  const rows = phiR.results.map((p) => {
+    const o = hasOpen ? open[p.id] || 0 : null;
+    const c = hasClose ? close[p.id] || 0 : o;
+    return { phi: p.id, kg: p.kg_per_cay, dau: o, nhap: nhap[p.id] || 0, dung: dung[p.id] == null ? 0 : dung[p.id], cuoi: c };
+  });
+  const out = {
+    from, to, openDay: hasOpen ? openR.results[0].day : null, closeDay: hasClose ? closeR.results[0].day : null,
+    closedDays: daysR.results.length, rows, days: daysR.results,
+  };
+  if (url.searchParams.get('format') !== 'csv') return json(out);
+
+  const esc = (x) => '"' + String(x).replace(/"/g, '""') + '"';
+  const n = (x) => (x == null ? '' : x);
+  const t = (x, kg) => (x == null ? '' : ((x * kg) / 1000).toFixed(3));
+  const lines = [
+    esc(`Báo cáo Nhập - Dùng - Tồn từ ${fmtDay(from)} đến ${fmtDay(to)} (${out.closedDays} ngày đã chốt)`),
+    ['Phi', 'Tồn đầu (cây)', 'Nhập (cây)', 'Dùng (cây)', 'Tồn cuối (cây)', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Dùng (tấn)', 'Tồn cuối (tấn)'].map(esc).join(','),
+  ];
+  const tot = { dau: 0, nhap: 0, dung: 0, cuoi: 0 };
+  for (const r of rows) {
+    lines.push([esc(r.phi), n(r.dau), r.nhap, r.dung, n(r.cuoi), t(r.dau, r.kg), t(r.nhap, r.kg), t(r.dung, r.kg), t(r.cuoi, r.kg)].join(','));
+    tot.dau += (r.dau || 0) * r.kg; tot.nhap += r.nhap * r.kg; tot.dung += r.dung * r.kg; tot.cuoi += (r.cuoi || 0) * r.kg;
+  }
+  lines.push([esc('TỔNG (tấn)'), '', '', '', '', (tot.dau / 1000).toFixed(3), (tot.nhap / 1000).toFixed(3), (tot.dung / 1000).toFixed(3), (tot.cuoi / 1000).toFixed(3)].join(','));
+  lines.push('', ['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Dùng (tấn)', 'Tồn cuối ngày (tấn)'].map(esc).join(','));
+  for (const d of out.days) lines.push([esc(fmtDay(d.day)), d.span, (d.nhap_kg / 1000).toFixed(3), (d.dung_kg / 1000).toFixed(3), (d.ton_kg / 1000).toFixed(3)].join(','));
+  return new Response('﻿' + lines.join('\r\n'), {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="bao-cao-${from}-${to}.csv"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+/* ========================= HAI NGƯỜI BÁO KHÁC SỐ ========================= */
+
+// So sánh lần báo mới nhất với lần báo gần nhất của NGƯỜI KHÁC trong ngày (lấy từ lịch sử đếm)
+async function conflictView(env, url) {
+  const khu = String(url.searchParams.get('khu') || '');
+  const day = vnDay();
+  const { results } = await env.DB.prepare(
+    'SELECT l.phi_id, l.v, l.kind, l.user_id, l.ts, u.name uname FROM counts_log l JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id'
+  ).bind(day, khu).all();
+  const subs = [];
+  for (const r of results) {
+    let s = subs[subs.length - 1];
+    if (!s || s.user_id !== r.user_id || s.ts !== r.ts) { s = { user_id: r.user_id, uname: r.uname, ts: r.ts, vals: {} }; subs.push(s); }
+    s.vals[r.phi_id] = r.v;
+  }
+  const b = subs[subs.length - 1];
+  let a = null;
+  for (let i = subs.length - 2; i >= 0; i--) if (b && subs[i].user_id !== b.user_id) { a = subs[i]; break; }
+  if (!a || !b) return json({ khu, a: null, b: null, diffs: [] });
+  const phis = [...new Set([...Object.keys(a.vals), ...Object.keys(b.vals)])];
+  const diffs = phis.filter((p) => a.vals[p] !== b.vals[p]).map((p) => ({ phi: p, a: a.vals[p] ?? null, b: b.vals[p] ?? null }));
+  const strip = (x) => ({ uname: x.uname, ts: x.ts });
+  return json({ khu, a: strip(a), b: strip(b), diffs });
+}
+
+// pick: { D16: 120, ... } số admin chọn cho từng phi (không gửi pick = giữ số báo sau)
+async function conflictResolve(req, env, user) {
+  const b = await readJson(req);
+  const khu = String(b.khu || '');
+  const day = vnDay();
+  const [closedR, curR, repR] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT phi_id, v FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
+    env.DB.prepare('SELECT 1 x FROM khu_report WHERE day = ? AND khu_id = ?').bind(day, khu),
+  ]);
+  if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
+  if (!repR.results.length) throw bad('Không có khu cần xử lý');
+  const cur = Object.fromEntries(curR.results.map((r) => [r.phi_id, r.v]));
+  const pick = b.pick && typeof b.pick === 'object' ? b.pick : {};
+  const changes = [];
+  for (const phi of Object.keys(pick)) {
+    if (!(phi in cur)) throw bad('Phi không có trong báo cáo: ' + phi);
+    const v = intIn(pick[phi], 0, 99999, 'Số cây của ' + phi);
+    if (v !== cur[phi]) changes.push({ phi, prev: cur[phi], v });
+  }
+  const ts = Date.now();
+  const data = JSON.stringify(changes);
+  const stmts = [];
+  if (changes.length) {
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE counts SET v = (SELECT ${J('v')} FROM json_each(?3) j WHERE ${J('phi')} = counts.phi_id),
+           kind = 'dem', bo = NULL, le = NULL, user_id = ?4, ts = ?5
+         WHERE day = ?1 AND khu_id = ?2 AND phi_id IN (SELECT ${J('phi')} FROM json_each(?3) j)`
+      ).bind(day, khu, data, user.id, ts),
+      env.DB.prepare(
+        `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
+         SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, 'dem', ?3, ?4 FROM json_each(?5) j`
+      ).bind(day, khu, user.id, ts, data)
+    );
+  }
+  stmts.push(
+    env.DB.prepare('UPDATE khu_report SET resolved = 1 WHERE day = ? AND khu_id = ?').bind(day, khu),
+    auditStmt(env, user, 'conflict_resolve', { khu, changes: changes.map((c) => ({ phi: c.phi, from: c.prev, to: c.v })) }),
+    bump(env)
+  );
+  await env.DB.batch(stmts);
+  return json({ ok: true, changed: changes.length });
 }
 
 async function auditList(env, url) {
@@ -797,12 +1071,15 @@ async function handle(req, env, url) {
   if (r0 === 'bootstrap' && method === 'GET') return json(await bootstrap(env, user));
   if (r0 === 'counts' && method === 'PUT') { need(ALL); return putCounts(req, env, user); }
   if (r0 === 'usage' && method === 'GET') return usage(env, url);
+  if (r0 === 'day' && method === 'GET') return dayView(env, url);
 
   if (r0 === 'receipts') {
     need(['admin', 'thukho']);
     if (method === 'POST' && p.length === 1) return postReceipt(req, env, user);
     if (method === 'DELETE' && p.length === 2) return voidReceipt(env, user, Number(p[1]));
   }
+  if (r0 === 'transfers' && method === 'POST') { need(['admin', 'thukho']); return postTransfer(req, env, user); }
+  if (r0 === 'report' && method === 'GET') { need(['admin', 'thukho']); return report(env, url); }
 
   // --- chỉ admin ---
   need(['admin']);
@@ -817,13 +1094,8 @@ async function handle(req, env, url) {
     await env.DB.batch([bump(env), auditStmt(env, user, 'recount', { khu: b.khu })]);
     return json({ ok: true });
   }
-  if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') {
-    const b = await readJson(req);
-    const res = await env.DB.prepare('UPDATE khu_report SET resolved = 1 WHERE day = ? AND khu_id = ?').bind(vnDay(), String(b.khu || '')).run();
-    if (!res.meta.changes) throw bad('Không có khu cần xử lý');
-    await env.DB.batch([bump(env), auditStmt(env, user, 'conflict_resolve', { khu: b.khu })]);
-    return json({ ok: true });
-  }
+  if (r0 === 'conflict' && !p[1] && method === 'GET') return conflictView(env, url);
+  if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') return conflictResolve(req, env, user);
   if (r0 === 'audit' && method === 'GET') return auditList(env, url);
   if (r0 === 'export' && method === 'GET') return exportCsv(env, url);
   if (r0 === 'users') {
@@ -836,6 +1108,7 @@ async function handle(req, env, url) {
     if (method === 'PATCH' && p.length === 2) return khuUpdate(req, env, user, p[1]);
   }
   if (r0 === 'phi' && method === 'PATCH' && p.length === 2) return phiUpdate(req, env, user, p[1]);
+  if (r0 === 'phi' && method === 'PUT' && p.length === 1) return phiBulk(req, env, user);
   if (r0 === 'settings' && method === 'PUT') return settingsUpdate(req, env, user);
 
   throw new HttpError(404, 'Không tìm thấy');

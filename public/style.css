@@ -131,3 +131,14 @@ a{color:var(--pri)}
 .menu{display:flex;align-items:center;gap:12px;width:100%;min-height:64px;padding:10px 16px;border-radius:14px;border:1px solid var(--line);background:#fff;font-size:18px;font-weight:600;text-align:left;text-decoration:none;color:var(--ink)}
 .logrow{padding:12px 14px;border-radius:14px;background:#fff;border:2px solid var(--line);display:flex;flex-direction:column;gap:6px}
 .logrow.flag{border-color:var(--bad)}
+
+/* đang lưu: chặn bấm đúp trong lúc gửi */
+.busy{position:absolute;inset:0;z-index:50;background:rgba(243,241,236,.55);display:flex;align-items:center;justify-content:center}
+.busy span{background:var(--pri);color:#fff;font-weight:700;font-size:18px;padding:14px 22px;border-radius:14px}
+
+/* bảng báo cáo */
+.tbl{width:100%;border-collapse:collapse;font-size:15px}
+.tbl th,.tbl td{padding:9px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.tbl th:first-child{text-align:left;padding-left:12px}
+.tbl thead th{font-size:13px;color:var(--mut);background:#F7F6F2}
+.tbl tfoot th,.tbl tfoot td{background:#E8EEF6;font-weight:700}
