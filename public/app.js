@@ -537,7 +537,7 @@ function demView() {
     }).join('')}</div>`);
   });
   const hdrs = shown.map((x) => `<button class="khh" aria-label="Phóng to ${esc(x.name)}" data-a="zoom" data-k="${esc(x.id)}" style="${cwStyle};font-size:${zk ? 15 : 14}px">${zk ? esc(x.name) + ' (chạm để thu nhỏ)' : esc(x.id)}</button>`).join('');
-  const tots = shown.map((x) => `<div class="oc" style="${cwStyle};font-size:${zk ? 16 : 12}px;font-weight:700;height:40px">${fmtT(colTotKg[x.id])} t</div>`).join('');
+  const tots = shown.map((x) => `<div class="oc" style="${cwStyle};font-size:${zk ? 16 : 12}px;font-weight:700;height:40px;white-space:nowrap">${fmtT(colTotKg[x.id])}</div>`).join('');
 
   const keepable = pend.filter((p) => !keepBlock(k, p.id));
   const empty = list.length === 0; // khu chưa có phi nào: không phải "đã xong", mà là chưa bắt đầu
@@ -575,7 +575,7 @@ function demView() {
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Nét đứt vàng: chưa nhập (số mờ là số dự kiến) · Vàng đậm: lệch lớn so với dự kiến · Chấm: không có (chạm để thêm phi). Chạm chữ cái khu để phóng to.</div>' : ''}
       ${absent.length ? `<div class="sm b">Không có: ${absent.join(', ')} (${absent.length} phi) — chạm ô dấu · để thêm vào khu</div>` : ''}</div>`}
     <div class="f1" id="mx"><div class="mxw">
-      <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtT(T.ownKg)} t</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtT(T.allKg)} t</div></div></div>
+      <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:12px;font-weight:700;line-height:1.1">Tổng<br>(tấn)</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri);white-space:nowrap">${fmtT(T.ownKg)}</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700;white-space:nowrap">${fmtT(T.allKg)}</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
     ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(cut(kname, 20).toUpperCase()) : empty ? 'CHẠM Ô · ĐỂ THÊM PHI VÀO KHU' : 'Còn ' + pend.length + ' phi chưa nhập'}</button></div>`}`;

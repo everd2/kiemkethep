@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS phi (
   kg_per_cay REAL NOT NULL,
   bo_size INTEGER NOT NULL,
   min_stock INTEGER NOT NULL,
-  unit TEXT NOT NULL DEFAULT 'cay'  -- 'cay' = cây nguyên, 'cuon' = dây cuộn (D8)
+  unit TEXT NOT NULL DEFAULT 'cay',  -- 'cay' = cây nguyên, 'cuon' = dây cuộn (D6/D8)
+  active INTEGER NOT NULL DEFAULT 1   -- 0 = phi bãi không dùng: ẩn khỏi bảng đếm, dữ liệu cũ vẫn giữ
 );
 
 CREATE TABLE IF NOT EXISTS khu (
@@ -182,7 +183,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 6);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 7);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

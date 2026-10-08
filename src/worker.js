@@ -159,6 +159,15 @@ const genPin = () => {
     try { checkPin(p); return p; } catch (e) { /* thử lại */ }
   }
 };
+// D6/D8 lưu theo "phần" (100 phần = 1 cuộn), các phi khác lưu theo cây: thông báo phải gọi đúng tên
+const isCuon = (p) => !!(p && p.unit === 'cuon');
+const unitWord = (p) => (isCuon(p) ? 'phần' : 'cây');
+const boWord = (p) => (isCuon(p) ? 'Số cuộn' : 'Số bó');
+const qtyWord = (v, p) => {
+  if (!isCuon(p)) return v + ' cây';
+  const c = Math.floor(v / p.bo_size), r = v % p.bo_size;
+  return (c ? c + ' cuộn' : '') + (c && r ? ' + ' : '') + (r || !c ? r + ' phần' : '');
+};
 const intIn = (v, min, max, label) => {
   const n = Number(v);
   if (!Number.isInteger(n) || n < min || n > max) throw bad(label + ' không hợp lệ');
@@ -177,7 +186,13 @@ const guardStmt = (env, cond, ...args) =>
   env.DB.prepare(`INSERT INTO meta (key, value) SELECT 'guard', NULL WHERE ${cond}`).bind(...args);
 async function batchGuarded(env, guard, stmts, err) {
   try { return (await env.DB.batch([guard, ...stmts])).slice(1); }
-  catch (e) { if (/NOT NULL constraint failed: meta\.value/i.test(String(e && e.message))) throw err; throw e; }
+  catch (e) {
+    // D1 có thể đổi câu chữ thông báo lỗi: nhận diện rộng, và ghi log khi không khớp để còn biết mà sửa
+    const m = String((e && e.message) || '');
+    if (/NOT NULL/i.test(m) && /meta/i.test(m)) throw err;
+    console.error('batchGuarded: lỗi không nhận ra', m);
+    throw e;
+  }
 }
 const IS_CLOSED = 'EXISTS (SELECT 1 FROM day_close WHERE day = ?)';
 const closedErr = (msg) => new HttpError(409, msg || 'Ngày hôm nay vừa được chốt, không ghi được nữa', 'closed');
@@ -305,7 +320,7 @@ async function logout(req, env, url) {
 async function recoverAdmin(req, env) {
   if (!env.RECOVERY_TOKEN || !env.PEPPER) throw new HttpError(503, 'Chưa cấu hình recovery');
   const b = await readJson(req);
-  if (!b.token || b.token !== env.RECOVERY_TOKEN) throw new HttpError(403, 'Token không đúng');
+  if (!b.token || !safeEq(String(b.token), env.RECOVERY_TOKEN)) throw new HttpError(403, 'Token không đúng');
   const phone = String(b.phone || '').replace(/\D/g, '');
   if (!phone) throw bad('Thiếu số điện thoại');
   const np = String(b.newPin || '');
@@ -385,6 +400,14 @@ async function bootstrap(env, user) {
 // dữ liệu gửi dạng JSON trong một tham số rồi tách bằng json_each (số truy vấn không đổi dù thêm phi).
 const J = (f) => `json_extract(j.value, '$.${f}')`;
 
+/* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
+   So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
+   "người báo khác nhau" thì hai người báo giống số cũng bị coi là xung đột. */
+const conflictCond = (day, khu, usr, data) =>
+  `EXISTS (SELECT 1 FROM counts c, json_each(?${data}) j
+     WHERE c.day = ?${day} AND c.khu_id = ?${khu} AND c.phi_id = ${J('phi')}
+       AND c.user_id <> ?${usr} AND c.v <> ${J('v')})`;
+
 async function putCounts(req, env, user) {
   const b = await readJson(req);
   const day = vnDay();
@@ -400,7 +423,7 @@ async function putCounts(req, env, user) {
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
-    env.DB.prepare('SELECT id FROM phi'),
+    env.DB.prepare('SELECT id, bo_size, unit FROM phi'),
     env.DB.prepare('SELECT phi_id, active, zero_days, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khuId),
     env.DB.prepare('SELECT phi_id, v, kind, user_id FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
     env.DB.prepare(
@@ -419,22 +442,27 @@ async function putCounts(req, env, user) {
     throw new HttpError(403, `Bạn không phụ trách ${k.name}. Nhờ admin gán quyền nếu cần đếm khu này.`, 'not_assigned');
   }
   const settings = parseSettings(setR.results);
-  const phiSet = new Set(phiR.results.map((r) => r.id));
+  const phiBy = Object.fromEntries(phiR.results.map((r) => [r.id, r]));
   const kp = Object.fromEntries(kpR.results.map((r) => [r.phi_id, r]));
   const prev = Object.fromEntries(prevR.results.map((r) => [r.phi_id, r]));
 
   const seen = new Set();
   const clean = items.map((it) => {
     const phi = String((it && it.phi) || '');
-    if (!phiSet.has(phi)) throw bad('Phi không hợp lệ: ' + phi);
+    const pi = phiBy[phi];
+    if (!pi) throw bad('Phi không hợp lệ: ' + phi);
     if (seen.has(phi)) throw bad('Trùng phi: ' + phi);
     seen.add(phi);
     const kind = String(it.kind || 'dem');
     if (!KINDS.includes(kind)) throw bad('Loại số liệu không hợp lệ');
-    const v = intIn(it.v, 0, 99999, 'Số cây của ' + phi);
+    const v = intIn(it.v, 0, 99999, 'Số ' + unitWord(pi) + ' của ' + phi);
     if (kind === 'zero' && v !== 0) throw bad('Số liệu không khớp ở phi ' + phi);
-    const bo = it.bo === undefined || it.bo === null ? null : intIn(it.bo, 0, 999, 'Số bó');
-    const le = it.le === undefined || it.le === null ? null : intIn(it.le, 0, 9999, 'Số cây lẻ');
+    const bo = it.bo === undefined || it.bo === null ? null : intIn(it.bo, 0, 999, boWord(pi) + ' của ' + phi);
+    const le = it.le === undefined || it.le === null ? null : intIn(it.le, 0, 9999, 'Số ' + unitWord(pi) + ' lẻ của ' + phi);
+    // bo/le gửi lên độc lập với v: không kiểm chéo thì database giữ luôn cặp số mâu thuẫn
+    if (kind === 'dem' && bo !== null && le !== null && bo * pi.bo_size + le !== v) {
+      throw bad(`Số liệu phi ${phi} không khớp: ${bo} × ${pi.bo_size} + ${le} khác ${v}`);
+    }
     return { phi, kind, v, bo, le };
   });
 
@@ -466,7 +494,18 @@ async function putCounts(req, env, user) {
   });
   const data = JSON.stringify(rows);
 
-  await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
+  const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
+    // chạy TRƯỚC khi ghi counts: cờ này nói "lần gửi NÀY lệch với người khác", để trả lời người gửi
+    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4)} conflict`).bind(day, khuId, user.id, data),
+    env.DB.prepare(
+      `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
+       SELECT ?1, ?2, ?3, ?4, CASE WHEN ${conflictCond(1, 2, 3, 5)} THEN 1 ELSE 0 END, 0, 0
+       WHERE 1
+       ON CONFLICT(day, khu_id) DO UPDATE SET user_id = excluded.user_id, ts = excluded.ts,
+         conflict = CASE WHEN excluded.conflict = 1 THEN 1 ELSE khu_report.conflict END,
+         resolved = CASE WHEN excluded.conflict = 1 THEN 0 ELSE khu_report.resolved END,
+         recount = 0`
+    ).bind(day, khuId, user.id, ts, data),
     env.DB.prepare(
       `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
        SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4 FROM json_each(?5) j WHERE 1
@@ -481,34 +520,30 @@ async function putCounts(req, env, user) {
        SELECT ?1, ${J('phi')}, ${J('active')}, ${J('zero')}, ${J('keep')} FROM json_each(?2) j WHERE 1
        ON CONFLICT(khu_id, phi_id) DO UPDATE SET active=excluded.active, zero_days=excluded.zero_days, keep_streak=excluded.keep_streak`
     ).bind(khuId, data),
-    env.DB.prepare(
-      `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount) VALUES (?,?,?,?,?,0,0)
-       ON CONFLICT(day, khu_id) DO UPDATE SET user_id=excluded.user_id, ts=excluded.ts,
-         conflict = CASE WHEN excluded.conflict = 1 OR khu_report.user_id != excluded.user_id THEN 1 ELSE khu_report.conflict END,
-         resolved = CASE WHEN excluded.conflict = 1 OR khu_report.user_id != excluded.user_id THEN 0 ELSE khu_report.resolved END,
-         recount = 0`
-    ).bind(day, khuId, user.id, ts, conflict),
     auditStmt(env, user, 'count', { khu: khuId, n: clean.length, changes: changes.slice(0, 30), conflict: !!conflict }),
     bump(env),
   ], closedErr());
-  return json({ ok: true, conflict: !!conflict });
+  // cờ do database tính, đúng cả khi hai người gửi cùng lúc (cờ tính ở JS chỉ dùng cho nhật ký)
+  const probe = res[0].results[0];
+  return json({ ok: true, conflict: !!(probe && probe.conflict) });
 }
 
 /* ========================= NHẬP KHO ========================= */
 
 // Đọc danh sách dòng { phi, qty } của một phiếu; gộp các dòng trùng phi
-function parseLines(b, phiSet) {
+function parseLines(b, ctx) {
+  const phiBy = ctx.phiBy || {};
   const raw = Array.isArray(b.lines) ? b.lines : b.phi !== undefined ? [{ phi: b.phi, qty: b.qty }] : [];
   if (!raw.length) throw bad('Phiếu chưa có dòng nào');
   if (raw.length > 30) throw bad('Một phiếu tối đa 30 dòng');
   const sum = {};
   for (const it of raw) {
     const phi = String((it && it.phi) || '');
-    if (!phiSet.has(phi)) throw bad('Phi không hợp lệ: ' + phi);
-    sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số cây của ' + phi);
+    if (!phiBy[phi]) throw bad('Phi không hợp lệ: ' + phi);
+    sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số ' + unitWord(phiBy[phi]) + ' của ' + phi);
   }
   return Object.entries(sum).map(([phi, qty]) => {
-    if (qty > 99999) throw bad('Số cây của ' + phi + ' quá lớn');
+    if (qty > 99999) throw bad('Số ' + unitWord(phiBy[phi]) + ' của ' + phi + ' quá lớn');
     return { phi, qty };
   });
 }
@@ -517,13 +552,38 @@ async function receiptCtx(env, khuIds) {
   const day = vnDay();
   const [closedR, phiR, khuR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('SELECT id FROM phi'),
+    env.DB.prepare('SELECT id, bo_size, unit FROM phi'),
     env.DB.prepare('SELECT id, name FROM khu WHERE active = 1'),
   ]);
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   const khu = Object.fromEntries(khuR.results.map((k) => [k.id, k]));
   for (const id of khuIds) if (!khu[id]) throw bad('Khu không hợp lệ');
-  return { day, phiSet: new Set(phiR.results.map((r) => r.id)), khu };
+  return {
+    day, khu,
+    phiBy: Object.fromEntries(phiR.results.map((r) => [r.id, r])),
+    phiSet: new Set(phiR.results.map((r) => r.id)),
+  };
+}
+
+/* Tồn thực có của một khu theo từng phi, đúng như màn Đếm hiểu:
+   đã đếm hôm nay thì lấy số đếm cộng thép về SAU lúc đếm; chưa đếm thì lấy tồn chuẩn cộng nhập/chuyển từ lần chốt trước. */
+async function stockOf(env, day, khuId, phis) {
+  const data = JSON.stringify(phis.map((p) => ({ phi: p })));
+  const { results } = await env.DB.prepare(
+    `SELECT ${J('phi')} phi,
+       CASE WHEN c.v IS NOT NULL
+         THEN c.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ?2
+                               AND rr.phi_id = ${J('phi')} AND rr.day = ?1 AND rr.ts > c.ts), 0)
+         ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ?2
+                               AND rr.phi_id = ${J('phi')} AND rr.day <= ?1
+                               AND rr.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)), 0)
+       END have
+     FROM json_each(?3) j
+     LEFT JOIN counts c ON c.day = ?1 AND c.khu_id = ?2 AND c.phi_id = ${J('phi')}
+     LEFT JOIN baseline b ON b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)
+       AND b.khu_id = ?2 AND b.phi_id = ${J('phi')}`
+  ).bind(day, khuId, data).all();
+  return Object.fromEntries(results.map((r) => [r.phi, r.have || 0]));
 }
 
 // Ghi các dòng (đã có khu và qty có dấu) trong MỘT batch: phiếu, bật phi ở khu nhận, nhật ký, phiên bản
@@ -552,7 +612,7 @@ async function postReceipt(req, env, user) {
   const b = await readJson(req);
   const khuId = String(b.khu || '');
   const ctx = await receiptCtx(env, [khuId]);
-  const lines = parseLines(b, ctx.phiSet);
+  const lines = parseLines(b, ctx);
   const note = String(b.note || '').trim().slice(0, 200);
   return writeReceipt(env, user, ctx, lines.map((l) => ({ ...l, khu: khuId })), 'nhap', note, { khu: khuId, lines });
 }
@@ -564,8 +624,16 @@ async function postTransfer(req, env, user) {
   const from = String(b.from || ''), to = String(b.to || '');
   if (from === to) throw bad('Khu đi và khu đến phải khác nhau');
   const ctx = await receiptCtx(env, [from, to]);
-  const lines = parseLines(b, ctx.phiSet);
+  const lines = parseLines(b, ctx);
   const note = String(b.note || '').trim().slice(0, 200);
+  // Chuyển quá số thực có làm tồn khu nguồn âm, số "dự kiến" khi đếm sai theo, và che lỗi gõ ngược chiều
+  const have = await stockOf(env, ctx.day, from, lines.map((l) => l.phi));
+  for (const l of lines) {
+    const h = have[l.phi] || 0;
+    if (l.qty > h) {
+      throw bad(`${ctx.khu[from].name} chỉ còn ${qtyWord(h, ctx.phiBy[l.phi])} ${l.phi}, không chuyển được ${qtyWord(l.qty, ctx.phiBy[l.phi])}`);
+    }
+  }
   const rows = [];
   lines.forEach((l) => { rows.push({ phi: l.phi, khu: from, qty: -l.qty }, { phi: l.phi, khu: to, qty: l.qty }); });
   return writeReceipt(env, user, ctx, rows, 'chuyen', note, { from, to, lines });
