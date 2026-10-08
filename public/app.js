@@ -617,7 +617,7 @@ function vHome() {
       }).join('') : ''}
       <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px"><h2 class="sec" style="min-width:0">Tồn theo khu và người báo</h2><span class="sm muted" style="white-space:nowrap;flex:none">${reportedCount()}/${b.khuAct.length} khu đã báo</span></div>
       ${khuCards}
-      <div class="row" style="justify-content:space-between;align-items:baseline"><h2 class="sec">Tồn theo phi</h2><button class="b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;font-size:15px;padding:8px 0" data-a="nav" data-s="ton">Xem chi tiết</button></div>
+      <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px"><h2 class="sec" style="min-width:0">Tồn theo đường kính</h2><button class="b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;font-size:15px;padding:8px 0;white-space:nowrap;flex:none" data-a="nav" data-s="ton">Xem chi tiết</button></div>
       <div class="sm muted">Vạch đen là mức báo động. Thanh đỏ là tồn đã xuống dưới mức báo động.</div>
       <div class="bars">${bars}</div>
     </div></div>`;
@@ -655,7 +655,7 @@ function khuChiTiet(k) {
       ${r.moi === null ? '' : `<span class="sm" style="white-space:nowrap;color:${lech ? 'var(--warn)' : 'var(--mut)'}">${r.trong ? 'để trống' : fmtQs(r.moi, r.p)}${lech ? ' (' + (lech > 0 ? '+' : '−') + fmtQs(Math.abs(lech), r.p) + ')' : ''}</span>`}</div>`;
   };
   return `<div class="col gap6" style="border-top:1px solid var(--line);padding-top:8px">
-    <div class="li sm b" style="background:#E8EEF6"><span style="width:44px">Phi</span><span class="f1">Đang có${coCho ? ' (trước báo cáo)' : ''}</span>${coCho ? '<span>Khu báo</span>' : ''}</div>
+    <div class="li sm b" style="background:#E8EEF6"><span style="width:44px">ɸ</span><span class="f1">Đang có${coCho ? ' (trước báo cáo)' : ''}</span>${coCho ? '<span>Khu báo</span>' : ''}</div>
     <div class="card" style="padding:0;overflow:hidden;margin:0">${rows.map(dong).join('')}</div>
     <div class="row sm" style="justify-content:space-between"><span class="muted">${rows.length} phi có thép</span><b>${fmtT(tongKg)} tấn</b></div>
     ${coCho
@@ -800,7 +800,7 @@ function demView() {
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Dấu — : để trống, gửi đi sẽ ghi 0 · Viền cam đậm: lệch lớn so với dự kiến, hoặc để trống phi đang có thép. Phi khu không có thì cứ để trống. Chạm chữ cái khu để phóng to.</div>' : ''}
       ${nBlank ? `<div class="sm b" style="color:var(--bad);line-height:1.4">${nBlank} phi đang có thép mà còn để trống: ${blankWithStock().slice(0, 6).map((p) => p.id).join(', ')}${nBlank > 6 ? '…' : ''}. Gửi là ghi 0.</div>` : ''}</div>`}
     <div class="f1" id="mx"><div class="mxw">
-      <div class="mxl"><div class="mxh"><div class="mxp" style="font-size:13px">Phi</div><div class="mxo" style="font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div class="mxv" style="font-size:13px">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div class="mxp" style="font-size:12px;line-height:1.1">Tổng<br>(tấn)</div><div class="mxo" style="font-weight:700;color:var(--pri)">${fmtT(T.ownKg)}</div><div class="mxv">${fmtT(T.allKg)}</div></div></div>
+      <div class="mxl"><div class="mxh"><div class="mxp" style="font-size:13px">ɸ</div><div class="mxo" style="font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div class="mxv" style="font-size:13px">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div class="mxp" style="font-size:12px;line-height:1.1">Tổng<br>(tấn)</div><div class="mxo" style="font-weight:700;color:var(--pri)">${fmtT(T.ownKg)}</div><div class="mxv">${fmtT(T.allKg)}</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
     ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(cut(kname, 20).toUpperCase()) : 'CHƯA CÓ PHI THÉP NÀO'}</button></div>`}`;
@@ -949,7 +949,7 @@ function renderSubsPanel(khu, R) {
     const cur = i === subData.length - 1;
     return `<td style="text-align:center;padding:6px 4px">${cur ? '<span class="sm muted">đang dùng</span>' : `<button class="btn s" data-a="spick" data-k="${esc(khu)}" data-i="${i}">Dùng</button>`}</td>`;
   }).join('')}</tr>` : '';
-  return `<div style="overflow-x:auto;margin-top:6px"><table class="tbl"><thead><tr><th>Phi</th>${hdrs}</tr></thead><tbody>${bodyRows}</tbody>${footRow ? '<tfoot>' + footRow + '</tfoot>' : ''}</table></div>`;
+  return `<div style="overflow-x:auto;margin-top:6px"><table class="tbl"><thead><tr><th>ɸ</th>${hdrs}</tr></thead><tbody>${bodyRows}</tbody>${footRow ? '<tfoot>' + footRow + '</tfoot>' : ''}</table></div>`;
 }
 
 /* --- Duyệt (admin) --- */
@@ -1000,7 +1000,7 @@ function vDuyet() {
     if (C && !C.data) cmp = '<span class="sm">Đang tải...</span>';
     else if (C && C.data && C.data.diffs.length) {
       const A = C.data.a, B = C.data.b;
-      cmp = `<div class="card" style="padding:0;overflow:hidden;color:var(--ink)"><div class="li sm b"><span style="width:44px">Phi</span><span class="f1" style="text-align:center">${esc(A.uname)} ${hhmm(A.ts)}</span><span class="f1" style="text-align:center">${esc(B.uname)} ${hhmm(B.ts)}</span></div>${C.data.diffs.map((x) => {
+      cmp = `<div class="card" style="padding:0;overflow:hidden;color:var(--ink)"><div class="li sm b"><span style="width:44px">ɸ</span><span class="f1" style="text-align:center">${esc(A.uname)} ${hhmm(A.ts)}</span><span class="f1" style="text-align:center">${esc(B.uname)} ${hhmm(B.ts)}</span></div>${C.data.diffs.map((x) => {
         const pickB = C.pick[x.phi] !== 'a';
         return `<div class="li"><b style="width:44px">${x.phi}</b><button class="chip s f1 ${pickB ? '' : 'on'}" data-a="cpick" data-p="${x.phi}" data-v="a">${x.a == null ? '—' : x.a}</button><button class="chip s f1 ${pickB ? 'on' : ''}" data-a="cpick" data-p="${x.phi}" data-v="b">${x.b == null ? '—' : x.b}</button></div>`;
       }).join('')}</div><span class="sm">Chạm số đúng cho từng phi (đang chọn: ô đậm), rồi lưu. Chọn số xong vẫn phải bấm Duyệt khu.</span>
@@ -1079,7 +1079,7 @@ function vDuyet() {
     const lech = k.items.filter((x) => x.d || x.cnt === null);
     const khop = k.items.length - lech.length;
     const bang = !k.items.length ? '<span class="sm muted">Khu không có thép, không có gì để đối chiếu.</span>'
-      : `<div class="card" style="padding:0;overflow:hidden;margin:4px 0"><div class="li sm b" style="background:#E8EEF6"><span style="width:46px">Phi</span><span class="f1">Dự kiến → Khu báo</span><span>Lệch</span></div>${(lech.length ? lech : k.items).map(row).join('')}</div>`
+      : `<div class="card" style="padding:0;overflow:hidden;margin:4px 0"><div class="li sm b" style="background:#E8EEF6"><span style="width:46px">ɸ</span><span class="f1">Dự kiến → Khu báo</span><span>Lệch</span></div>${(lech.length ? lech : k.items).map(row).join('')}</div>`
       + (lech.length && khop ? `<span class="sm muted">${khop} phi còn lại khớp dự kiến.</span>` : '');
 
     const choPhieu = !choP ? '' : `<div class="sm b" style="color:var(--warn)">Còn ${choP} phiếu chờ duyệt của khu này: ${k.phieu.map((g) => {
@@ -1155,7 +1155,7 @@ function vLichSu() {
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${status}
     <div class="hero" style="border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:15px">Tồn cuối ngày ${esc(fmtDay(D.day))}</span><span style="font-size:28px;font-weight:700">${fmtT(totKg)} tấn</span></div>${closed ? `<div class="col" style="align-items:flex-end;font-size:15px"><span>Nhập ${fmtT(totIn)} tấn</span><span>Dùng ${fmtT(totUse)} tấn</span></div>` : ''}</div></div>
-    <h2 class="sec">Theo phi (chạm để xem từng khu)</h2>
+    <h2 class="sec">Theo đường kính (chạm để xem từng khu)</h2>
     <div class="card" style="padding:0;overflow:hidden">${rows}</div>
     <h2 class="sec">Người báo</h2><div class="sm">${reps || '<span class="muted">Không có báo cáo đếm</span>'}</div>
     <h2 class="sec">Phiếu nhập / chuyển</h2>${recs ? `<div class="card" style="padding:0;overflow:hidden">${recs}</div>` : '<div class="muted">Không có phiếu</div>'}
@@ -1197,7 +1197,7 @@ function vBaoCao() {
     ${D.closedDays || D.openDay ? '' : '<div class="card warn">Không có ngày nào được chốt trong khoảng này.</div>'}
     ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt nào nên chưa có số tồn đầu kỳ.</div>'}
     ${D.openStock ? `<div class="card sm" style="line-height:1.4">Kỳ này gồm cả lần chốt đầu tiên (${esc(fmtDay(D.openDay))}) — đó là buổi kiểm kê mở sổ, nên lấy luôn làm tồn đầu kỳ. Lượng nhập/dùng trước buổi đó không ai ghi nên không tính vào kỳ.</div>` : ''}
-    <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>Phi</th><th>Tồn đầu</th><th>Nhập</th><th>Dùng</th><th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
+    <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>ɸ</th><th>Tồn đầu</th><th>Nhập</th><th>Dùng</th><th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><th>Tấn</th><td>${fmtT(t.dau)}${miss.dau ? '*' : ''}</td><td>${fmtT(t.nhap)}</td><td>${fmtT(t.dung)}</td><td><b>${fmtT(t.cuoi)}${miss.cuoi ? '*' : ''}</b></td></tr></tfoot></table></div>
     ${miss.dau || miss.cuoi ? `<div class="card warn sm" style="line-height:1.4">* Tổng tấn chưa gồm ${[miss.dau ? miss.dau + ' phi không có tồn đầu kỳ' : '', miss.cuoi ? miss.cuoi + ' phi không có tồn cuối kỳ' : ''].filter(Boolean).join(' và ')} (ô ghi "—"). Những phi đó chưa có lần chốt nào trong khoảng này.</div>` : ''}
     <div class="sm muted">Đơn vị: cây (D10–D36) hoặc cuộn (D6, D8), dòng cuối: tấn. ${D.openDay ? (D.openStock ? 'Tồn đầu lấy buổi kiểm kê mở sổ ' : 'Tồn đầu lấy ngày chốt ') + fmtDay(D.openDay) + '. ' : ''}${D.closeDay ? 'Tồn cuối lấy ngày chốt ' + fmtDay(D.closeDay) + '. ' : ''}Chuyển khu không tính vào nhập.</div>
@@ -1321,7 +1321,7 @@ function vMore() {
   return `${head('Thêm', esc(S.me.name) + ' · ' + ROLE[S.me.role])}
   <div class="f1 scroll pad col gap8" id="body">
     <button class="menu" data-a="nav" data-s="stats">Thống kê theo khu / toàn bãi</button>
-    <button class="menu" data-a="nav" data-s="ton">Tồn bãi theo phi</button>
+    <button class="menu" data-a="nav" data-s="ton">Tồn bãi theo đường kính</button>
     <button class="menu" data-a="nav" data-s="lichsu">Xem lại ngày cũ</button>
     ${canIn() ? '<button class="menu" data-a="nav" data-s="baocao">Báo cáo Nhập – Dùng – Tồn theo kỳ</button>' : ''}
     ${a ? `<button class="menu" data-a="nav" data-s="nhatky">Nhật ký hoạt động</button>

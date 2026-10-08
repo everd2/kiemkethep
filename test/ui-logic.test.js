@@ -427,7 +427,7 @@ const run = async () => {
        { khu_id: 'A', phi_id: 'D12', v: 0, kind: 'zero', ts: 2000, duyet_v: null, duyet_ts: null }
      ]; var H2 = vHome();
      // chỉ lấy riêng khối chi tiết của khu A, để khỏi khớp nhầm số ở phần khác của màn hình
-     var CT2 = H2.slice(H2.indexOf('Đang có'), H2.indexOf('Tồn theo phi'));`);
+     var CT2 = H2.slice(H2.indexOf('Đang có'), H2.indexOf('Tồn theo đường kính'));`);
   ok('có báo cáo chờ duyệt thì bày thêm cột Khu báo', /Khu báo/.test(r('CT2')));
   ok('tồn vẫn là số ĐÃ DUYỆT (300), chưa nhận số đang chờ (250)',
     /300 cây/.test(r('CT2')), (r('CT2').match(/\d+ cây/g) || []).join(','));
@@ -440,7 +440,7 @@ const run = async () => {
   r(`S.boot.counts = S.boot.counts.map((c) => ({ ...c, duyet_v: c.v, duyet_ts: c.ts }));
      S.boot.eff = [{ khu_id: 'A', phi_id: 'D10', v: 250 }];
      indexBoot(S.boot); var H3 = vHome();
-     var CT3 = H3.slice(H3.indexOf('Đang có'), H3.indexOf('Tồn theo phi'));`);
+     var CT3 = H3.slice(H3.indexOf('Đang có'), H3.indexOf('Tồn theo đường kính'));`);
   ok('duyệt xong thì chi tiết hiện số mới', /250 cây/.test(r('CT3')), (r('CT3').match(/\d+ cây/g) || []).join(','));
   ok('và không còn cột Khu báo', !/Khu báo/.test(r('CT3')));
 

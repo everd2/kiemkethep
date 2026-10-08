@@ -1565,11 +1565,15 @@ async function main() {
     // dựng lại đúng cảnh của một database cũ: dòng id nhỏ nhất không còn là admin
     S.raw.prepare("UPDATE users SET role = 'nguoidem' WHERE id = 1").run();
 
+    /* Lấy sẵn id trước, không tra lại theo tên: nếu bản sửa bị bỏ thì lệnh sửa tên trả 403 và
+       cái tên mới không tồn tại, lúc đó uid('An B') ném lỗi làm sập cả bộ test — che hết những
+       mục sau thay vì báo đúng một dòng FAIL. */
+    const a2Id = uid('Admin Hai'), anId = uid('An');
     const ls = (await S.call('GET', '/users', undefined, 'A2')).data;
-    eq('chủ hệ thống chuyển sang admin có id nhỏ nhất', ls.first, uid('Admin Hai'));
+    eq('chủ hệ thống chuyển sang admin có id nhỏ nhất', ls.first, a2Id);
     eq('sửa tên không bị khoá cứng',
-      (await S.call('POST', `/users/${uid('An')}/rename`, { name: 'An B' }, 'A2')).status, 200);
-    eq('xoá cũng dùng được', (await S.call('POST', `/users/${uid('An B')}/delete`, {}, 'A2')).status, 200);
+      (await S.call('POST', `/users/${anId}/rename`, { name: 'An B' }, 'A2')).status, 200);
+    eq('xoá cũng dùng được', (await S.call('POST', `/users/${anId}/delete`, {}, 'A2')).status, 200);
     // và dòng id 1 giờ không còn được PROTECT_FIRST che, nên sửa lại được từ trong app
     eq('nâng quyền lại cho dòng id 1', (await S.call('POST', '/users/1/role', { role: 'admin' }, 'A2')).status, 200);
     eq('nâng xong thì chủ hệ thống về lại dòng id 1', (await S.call('GET', '/users', undefined, 'A2')).data.first, 1);
