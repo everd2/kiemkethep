@@ -1,6 +1,10 @@
 -- ===== Kho Thép Bãi: cấu trúc dữ liệu D1 =====
--- Lưu ý: đặt chú thích TRÊN dòng cột, đừng để cuối dòng trong CREATE TABLE.
--- SQLite dựng lại câu CREATE khi ALTER TABLE ... DROP COLUMN, chú thích cuối dòng sẽ làm câu lệnh bị cắt.
+-- KHÔNG đặt chú thích BÊN TRONG khối CREATE TABLE. Giải thích cột thì ghi ngay TRÊN khối CREATE.
+-- Lý do: SQLite dựng lại câu CREATE từ chính văn bản này khi chạy ALTER TABLE ... DROP COLUMN.
+-- Chú thích cuối dòng làm câu lệnh bị cắt; chú thích TRÊN DÒNG CỘT vẫn đủ làm sập khi cột đó là
+-- cột CUỐI của bảng, vì chú thích nằm kẹp giữa dấu phẩy và ")" nên câu dựng lại thành
+-- "... ,\n  -- chú thích\n)" và SQLite báo "incomplete input". Đã gặp thật với phi.active.
+-- Ngoài ra: drop một cột đang có index thì phải DROP INDEX trước (xem idx_receipts_grp).
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,15 +39,15 @@ CREATE TABLE IF NOT EXISTS login_fail (
   PRIMARY KEY (ip, day)
 );
 
+-- unit:   'cay' = cây nguyên, 'cuon' = dây cuộn (D6/D8)
+-- active: 0 = phi bãi không dùng, ẩn khỏi bảng đếm; dữ liệu cũ vẫn giữ
 CREATE TABLE IF NOT EXISTS phi (
   id TEXT PRIMARY KEY,
   sort INTEGER NOT NULL,
   kg_per_cay REAL NOT NULL,
   bo_size INTEGER NOT NULL,
   min_stock INTEGER NOT NULL,
-  -- unit: 'cay' = cây nguyên, 'cuon' = dây cuộn (D6/D8)
   unit TEXT NOT NULL DEFAULT 'cay',
-  -- active: 0 = phi bãi không dùng, ẩn khỏi bảng đếm; dữ liệu cũ vẫn giữ
   active INTEGER NOT NULL DEFAULT 1
 );
 
@@ -112,6 +116,10 @@ CREATE TABLE IF NOT EXISTS khu_report (
   PRIMARY KEY (day, khu_id)
 );
 
+-- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến)
+-- grp:       các dòng cùng một phiếu
+-- voided_ts: lúc hủy phiếu. Hủy sau khi khu đã báo làm số dự kiến của khu đổi y như nhập muộn,
+--            nên màn Duyệt cần mốc này mới cảnh báo được (exception 'late').
 CREATE TABLE IF NOT EXISTS receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   day TEXT NOT NULL,
@@ -122,15 +130,15 @@ CREATE TABLE IF NOT EXISTS receipts (
   user_id INTEGER NOT NULL,
   ts INTEGER NOT NULL,
   voided INTEGER NOT NULL DEFAULT 0,
-  -- kind: 'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến)
   kind TEXT NOT NULL DEFAULT 'nhap',
-  -- grp: các dòng cùng một phiếu
-  grp TEXT
+  grp TEXT,
+  voided_ts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
 CREATE INDEX IF NOT EXISTS idx_receipts_grp ON receipts(grp);
 
 -- Chốt ngày: khóa số liệu, lưu mức dùng để tính trung bình
+-- span: số ngày gộp (quên chốt thì > 1)
 CREATE TABLE IF NOT EXISTS day_close (
   day TEXT PRIMARY KEY,
   closed_by INTEGER NOT NULL,
@@ -138,11 +146,9 @@ CREATE TABLE IF NOT EXISTS day_close (
   note TEXT,
   used_json TEXT,
   exc_json TEXT,
-  -- span: số ngày gộp (quên chốt thì > 1)
   span INTEGER NOT NULL DEFAULT 1
 );
 
--- Tổng hợp theo ngày đã chốt x phi: báo cáo theo kỳ đọc bảng này cho nhẹ hạn mức
 -- Admin duyệt cảnh báo lệch theo khu trong ngày.
 -- sig: số liệu của khu lúc duyệt; khu báo lại số khác thì lần duyệt hết hiệu lực.
 CREATE TABLE IF NOT EXISTS review_ack (
@@ -155,6 +161,7 @@ CREATE TABLE IF NOT EXISTS review_ack (
   PRIMARY KEY (day, khu_id)
 );
 
+-- Tổng hợp theo ngày đã chốt x phi: báo cáo theo kỳ đọc bảng này cho nhẹ hạn mức
 CREATE TABLE IF NOT EXISTS daily_summary (
   day TEXT NOT NULL,
   phi_id TEXT NOT NULL,
@@ -202,7 +209,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 8);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 9);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

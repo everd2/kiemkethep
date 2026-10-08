@@ -1,5 +1,7 @@
 /* Test logic nghiệp vụ trên worker thật + SQLite thật. node srv.test.mjs <đường-dẫn-repo> */
-import { boot, addDays, vnDay } from './harness.mjs';
+import { boot, addDays, advance, vnDay } from './harness.mjs';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const ROOT = process.argv[2] || '.';
 const T = [];
@@ -154,8 +156,8 @@ async function main() {
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D6', qty: 1000 }, { phi: 'D16', qty: 1800 }] });
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 1000, D16: 1800 }) }, 'An');
     await S.call('POST', '/close', { note: '' });
-    // ngày 2..4: dùng đều để có phi_rate
-    for (let i = 0; i < 3; i++) {
+    // ngày 2..6: dùng đều 5 ngày để phi_rate đủ tin (dưới 5 ngày thì không cảnh báo)
+    for (let i = 0; i < 5; i++) {
       addDays(1); day = vnDay();
       await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 1000 - (i + 1) * 10, D16: 1800 - (i + 1) * 100 }) }, 'An');
       await S.call('POST', '/close', { note: '' });
@@ -163,19 +165,43 @@ async function main() {
     const rate = S.sql('SELECT phi_id, per_day, days FROM phi_rate ORDER BY phi_id');
     eq('phi_rate D6', rate.find((x) => x.phi_id === 'D6').per_day, 10);
     eq('phi_rate D16', rate.find((x) => x.phi_id === 'D16').per_day, 100);
-    // ngày 5: D6 dùng 11 đơn vị (220 kg) = gấp 1,1 lần -> KHÔNG bất thường
+    eq('phi_rate đủ 5 ngày dữ liệu', rate.find((x) => x.phi_id === 'D6').days, 5);
+    // ngày 7: D6 còn 950, dùng 11 đơn vị (220 kg) = gấp 1,1 lần -> KHÔNG bất thường
     addDays(1); day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 959, D16: 1500 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 939, D16: 1100 }) }, 'An');
     let rv = (await S.call('GET', '/review')).data;
     let r6 = rv.rows.find((x) => x.phi === 'D6');
     eq('D6 dùng 11 (220kg): không bất thường', r6.high, false);
     eq('mức bình thường hiển thị = phi_rate', r6.avg, 10);
     ok('D16 dùng 200 (3696kg) gấp 2 lần: chưa bất thường', rv.rows.find((x) => x.phi === 'D16').high === false);
-    // ngày 5b: D6 dùng 200 đơn vị = 4000 kg, gấp 20 lần -> bất thường
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 760, D16: 1500 }) }, 'An');
+    // cùng ngày, báo lại: D6 dùng 200 đơn vị = 4000 kg, gấp 20 lần -> bất thường
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 750, D16: 1100 }) }, 'An');
     rv = (await S.call('GET', '/review')).data;
     r6 = rv.rows.find((x) => x.phi === 'D6');
     eq('D6 dùng 200 (4000kg): bất thường', r6.high, true);
+  }
+
+  /* ================= 6b. Chưa đủ ngày dữ liệu thì không kết luận "dùng cao bất thường" =================
+     "Mức trung bình" dựng từ một ngày không phải mức bình thường của bãi. Nếu vẫn kết luận thì
+     ngay tuần đầu vận hành đã báo động và chặn chốt, trong khi chưa ai biết bãi dùng bao nhiêu là thường.
+     Màn Tồn bãi cũng im lặng ở mức dữ liệu này, hai màn hình phải nói cùng một điều. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D6', qty: 1000 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 1000 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    addDays(1); day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 990 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    eq('phi_rate mới có 1 ngày dữ liệu', S.one('SELECT days FROM phi_rate WHERE phi_id=?', 'D6').days, 1);
+    // dùng 200 phần = 4.000 kg = gấp 20 lần "mức trung bình" của đúng một ngày
+    addDays(1); day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 790 }) }, 'An');
+    const r = (await S.call('GET', '/review')).data.rows.find((x) => x.phi === 'D6');
+    eq('gấp 20 lần nhưng mới 1 ngày dữ liệu: chưa kết luận bất thường', r.high, false);
+    eq('vẫn nói rõ có bao nhiêu ngày dữ liệu', r.rateDays, 1);
+    eq('không sinh việc chặn chốt', (await S.call('GET', '/review')).data.pending, 0);
   }
 
   /* ================= 7. Dùng âm có dung sai theo kg ================= */
@@ -365,7 +391,7 @@ async function main() {
     // request đầu tiên phải tự nâng cấp
     await S.call('GET', '/me');
     ok('sau request đầu: đã thêm cột active', S.sql('PRAGMA table_info(phi)').some((c) => c.name === 'active'));
-    eq('phiên bản schema đã lên', S.one("SELECT value FROM meta WHERE key='schema'").value, 8);
+    eq('phiên bản schema đã lên', S.one("SELECT value FROM meta WHERE key='schema'").value, 9);
     eq('phi cũ mặc định đang dùng', S.one("SELECT active FROM phi WHERE id='D10'").active, 1);
     // nâng cấp hai lần không lỗi (nhiều isolate cùng khởi động)
     S.raw.exec("UPDATE meta SET value = 6 WHERE key = 'schema'");
@@ -426,10 +452,26 @@ async function main() {
     // cả hai khu xuất hết D22: hai cảnh báo hụt
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 0 }) }, 'An');
     await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 0 }) }, 'Binh');
+    /* Duyệt phải gửi kèm dấu số liệu đang hiện trên màn hình admin, đúng như app làm.
+       Thiếu dấu thì server từ chối: nếu chỉ kiểm tra khi máy khách chịu gửi thì một bản app cũ
+       còn trong cache (máy đã cài PWA) sẽ lặng lẽ tắt luôn cơ chế chống duyệt số chưa nhìn thấy. */
+    const sigsNow = async () => {
+      const d = (await S.call('GET', '/review')).data;
+      const m = {};
+      d.exceptions.forEach((e) => { if ((e.type === 'khu_up' || e.type === 'khu_down') && !e.ack) m[e.khu] = e.sig; });
+      return m;
+    };
+    const ack = async (khu, who) => S.call('POST', '/review/ack', { khu, sig: (await sigsNow())[khu] }, who);
+    const ackAll = async () => S.call('POST', '/review/ack', { all: true, sigs: await sigsNow() });
+
     let rv = (await S.call('GET', '/review')).data;
     eq('2 việc chặn chốt', rv.pending, 2);
     eq('người đếm không duyệt được', (await S.call('POST', '/review/ack', { khu: 'A' }, 'An')).status, 403);
-    eq('duyệt khu A', (await S.call('POST', '/review/ack', { khu: 'A' })).status, 200);
+    const noSig = await S.call('POST', '/review/ack', { khu: 'A' });
+    eq('duyệt mà không gửi dấu số liệu: từ chối', noSig.status, 409);
+    eq('nói rõ là bản app cũ', noSig.data.code, 'need_sig');
+    const sigA = (await sigsNow()).A;
+    eq('duyệt khu A', (await ack('A')).status, 200);
     rv = (await S.call('GET', '/review')).data;
     eq('còn 1 việc chặn chốt', rv.pending, 1);
     eq('cảnh báo khu A vẫn hiện, đánh dấu đã duyệt', rv.exceptions.filter((e) => e.khu === 'A' && e.ack).length, 1);
@@ -438,7 +480,11 @@ async function main() {
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 5 }) }, 'An');
     rv = (await S.call('GET', '/review')).data;
     eq('báo lại số khác thì phải duyệt lại', rv.pending, 2);
-    eq('duyệt tất cả', (await S.call('POST', '/review/ack', { all: true })).data.n, 2);
+    // admin bấm Duyệt bằng màn hình cũ (dấu số liệu trước lúc khu A báo lại): phải bị chặn
+    const stale = await S.call('POST', '/review/ack', { khu: 'A', sig: sigA });
+    eq('duyệt bằng số liệu cũ: từ chối', stale.status, 409);
+    eq('mã lỗi nói khu vừa báo lại', stale.data.code, 'stale_sig');
+    eq('duyệt tất cả', (await ackAll()).data.n, 2);
     eq('duyệt hết thì không còn việc chặn', (await S.call('GET', '/review')).data.pending, 0);
     eq('bỏ duyệt khu B', (await S.call('POST', '/review/ack', { khu: 'B', undo: true })).status, 200);
     eq('bỏ duyệt thì khu B chặn lại', (await S.call('GET', '/review')).data.pending, 1);
@@ -447,7 +493,7 @@ async function main() {
     await cron();
     eq('còn việc chưa duyệt: cron không chốt', closedToday(), 0);
     ok('cron ghi lý do bỏ qua', /chưa duyệt/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
-    await S.call('POST', '/review/ack', { khu: 'B' });
+    await ack('B');
     await cron();
     eq('duyệt hết: cron tự chốt', closedToday(), 1);
     eq('đã chốt thì không duyệt được nữa', (await S.call('POST', '/review/ack', { all: true })).status, 409);
@@ -524,16 +570,203 @@ async function main() {
     const d2 = vnDay();
     // thép về rồi mới đếm: số đếm đã bao gồm lô này
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    advance(5000); // thực tế hai thao tác cách nhau vài giây
     await S.call('PUT', '/counts', { khu: 'A', day: d2, items: items({ D20: 228 }) }, 'An');
     addDays(1);
     const d3 = vnDay();
     const keep = await S.call('PUT', '/counts', { khu: 'A', day: d3, items: [{ phi: 'D20', v: 228, kind: 'giu' }] }, 'An');
     eq('giữ nguyên được vì thép về trước lần đếm', keep.status, 200);
     // còn thép về SAU lần đếm thì phải đếm thực tế
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    advance(5000);
+    const rc3 = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    eq('ghi được phiếu nhập sau lần đếm', rc3.status, 200);
     const keep2 = await S.call('PUT', '/counts', { khu: 'A', day: d3, items: [{ phi: 'D20', v: 228, kind: 'giu' }] }, 'An');
     eq('thép về sau lần đếm: chặn giữ nguyên', keep2.status, 400);
     ok('nói rõ lý do', /nhập\/chuyển|đếm thực tế/.test(JSON.stringify(keep2.data)), JSON.stringify(keep2.data));
+  }
+
+  /* ================= 22. Khu đếm ra thép "từ không mà có" =================
+     Phép soi từng khu được dựng để bắt chuyện này. Trước đây nó bỏ qua mọi phi chưa có tồn chuẩn ở
+     khu đó, nên đúng chỗ số bịa dễ xuất hiện nhất lại không kiểm. Khi có khu khác hụt cùng phi thì
+     tổng bãi khớp nên cảnh báo "dùng âm" cấp phi cũng im, và cảnh báo duy nhất hiện ra lại trỏ vào
+     khu BỊ HỤT kèm câu "kiểm tra có xuất dùng thật không" — admin bị chỉ sai hướng hoàn toàn. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await S.call('POST', '/receipts', { khu: 'B', lines: [{ phi: 'D25', qty: 200 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day, items: [] }, 'An');
+    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D25: 200 }) }, 'Binh');
+    await S.call('POST', '/close', { note: '' });
+    eq('chỉ khu B có tồn chuẩn D25', S.sql('SELECT khu_id FROM baseline WHERE day=? AND phi_id=?', day, 'D25').map((x) => x.khu_id), ['B']);
+    addDays(1); day = vnDay();
+    // khu A "sinh" 200 cây D25 (9.022 kg) không phiếu không tồn chuẩn; khu B báo mất đúng 200
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D25: 200 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D25: 0 }) }, 'Binh');
+    const rv = (await S.call('GET', '/review')).data;
+    const d25 = rv.rows.find((x) => x.phi === 'D25');
+    eq('tổng bãi khớp nên không có cờ dùng âm', [d25.used, d25.neg], [0, false]);
+    const up = rv.exceptions.find((e) => e.type === 'khu_up' && e.khu === 'A');
+    ok('khu A bị bắt đếm dư dù chưa từng có tồn chuẩn D25', !!up, JSON.stringify(rv.exceptions.map((e) => [e.type, e.khu])));
+    eq('số lệch của khu A tính từ mốc 0', up && up.items.map((x) => [x.phi, x.ref, x.mv, x.d]), [['D25', 0, 0, 200]]);
+    ok('khu B vẫn có cảnh báo hụt', rv.exceptions.some((e) => e.type === 'khu_down' && e.khu === 'B'));
+    // phi mới về bằng phiếu thì số nhập đã bù vào dự kiến, đếm đúng không bị báo oan
+    await S.call('POST', '/receipts', { khu: 'C', lines: [{ phi: 'D28', qty: 57 }] });
+    await S.call('PUT', '/counts', { khu: 'C', day, items: items({ D28: 57 }) }, 'An');
+    const rv2 = (await S.call('GET', '/review')).data;
+    ok('khu nhận thép mới, đếm đúng số phiếu: không cảnh báo', !rv2.exceptions.some((e) => e.khu === 'C'),
+      JSON.stringify(rv2.exceptions.filter((e) => e.khu === 'C')));
+  }
+
+  /* ================= 23. Hủy phiếu sau khi khu đã báo =================
+     Hủy phiếu làm số dự kiến của khu đổi y như nhập muộn, nên phải cảnh báo y như nhập muộn. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    addDays(1); day = vnDay();
+    const rc = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+    advance(5000);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1980 }) }, 'An');
+    eq('đếm khớp phiếu: chưa có cảnh báo muộn', (await S.call('GET', '/review')).data.exceptions.filter((e) => e.type === 'late').length, 0);
+    advance(5000);
+    eq('hủy phiếu được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
+    ok('ghi lại mốc hủy', S.one('SELECT voided, voided_ts FROM receipts WHERE id=?', rc.data.id).voided_ts > 0);
+    const late = (await S.call('GET', '/review')).data.exceptions.find((e) => e.type === 'late' && e.khu === 'A');
+    ok('hủy phiếu sau khi khu báo: cảnh báo khu cần đếm lại', !!late);
+    eq('ghi đúng lượng bị rút khỏi dự kiến', late && late.items, [{ phi: 'D16', q: -180 }]);
+    // phiếu lập xong hủy luôn, cả hai việc đều sau lúc khu báo: tự triệt tiêu, không báo oan
+    const rc2 = await S.call('POST', '/receipts', { khu: 'C', lines: [{ phi: 'D12', qty: 320 }] });
+    await S.call('DELETE', '/receipts/' + rc2.data.id);
+    ok('lập rồi hủy luôn: không sinh cảnh báo cho khu C',
+      !(await S.call('GET', '/review')).data.exceptions.some((e) => e.type === 'late' && e.khu === 'C'));
+  }
+
+  /* ================= 24. Dòng khu_phi mồ côi không được khóa cả khu =================
+     Phi bị xoá khỏi bảng phi (dọn dữ liệu tay) mà khu_phi còn dòng active=1 thì khu bị kẹt:
+     không gửi phi đó thì "Còn phi chưa nhập", gửi thì "Phi không hợp lệ" — không có đường ra. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 180, D20: 114 }) }, 'An');
+    S.raw.exec("DELETE FROM phi WHERE id='D20'");
+    const r = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 200 }) }, 'An');
+    eq('phi mồ côi không chặn việc báo số', r.status, 200);
+    eq('số mới vẫn ghi được', S.one('SELECT v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16').v, 200);
+  }
+
+  /* ================= 25. Admin chọn số để lại cùng dấu vết như một lần báo thường ================= */
+  {
+    const S = await setup();
+    const day = vnDay();
+    await S.call('PUT', '/settings', { hide_after_zero_days: 1 });
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D20', qty: 114 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 180, D20: 114 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    addDays(1);
+    const d1 = vnDay();
+    // An giữ nguyên D20 -> keep_streak = 1; Bình báo số khác D16 -> xung đột
+    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: [{ phi: 'D16', v: 180, kind: 'dem', bo: 1, le: 0 }, { phi: 'D20', v: 114, kind: 'giu' }] }, 'An');
+    eq('giữ nguyên: chuỗi = 1', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 1);
+    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: items({ D16: 150, D20: 114 }) }, 'Binh');
+    // admin chọn 0 cho D16 và một số thật cho D20 (thay cho bản "giữ nguyên")
+    const cr = await S.call('POST', '/conflict/resolve', { khu: 'A', pick: { D16: 0, D20: 100 } });
+    eq('admin chọn số: 2 phi đổi', cr.data.changed, 2);
+    const kp16 = S.one('SELECT active, zero_days FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D16');
+    eq('chọn số 0: chuỗi đếm 0 được cộng và phi tự ẩn khỏi khu', [kp16.zero_days, kp16.active], [1, 0]);
+    eq('chọn số thật thay bản giữ nguyên: chuỗi giữ nguyên về 0', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 0);
+  }
+
+  /* ================= 26. Bật lại phi thì khu phải hiện lại trong bảng đếm ================= */
+  {
+    const S = await setup();
+    const day = vnDay();
+    await S.call('PUT', '/settings', { hide_after_zero_days: 3 });
+    // khu A có cả D20 và D22 trong bảng đếm (bãi hết thép nên phi mới tắt được);
+    // D22 thì đã đếm 0 đủ nhiều ngày nên tự ẩn khỏi khu từ trước
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D20: 0, D22: 0 }) }, 'An');
+    S.raw.exec("UPDATE khu_phi SET active = 0, zero_days = 3 WHERE khu_id='A' AND phi_id='D22'");
+    eq('tắt phi D20 được vì bãi không còn D20', (await S.call('PATCH', '/phi/D20', { active: 0 })).status, 200);
+    eq('tắt phi: khu thôi phải báo', S.one('SELECT active FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').active, 0);
+    await S.call('PATCH', '/phi/D20', { active: 1 });
+    eq('bật lại phi: khu hiện lại trong bảng đếm', S.one('SELECT active FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').active, 1);
+    eq('khu bị ẩn vì đếm 0 nhiều ngày thì vẫn ẩn', S.one('SELECT active FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D22').active, 0);
+  }
+
+  /* ================= 27. CSV báo cáo kỳ: dòng TỔNG khớp cột với tiêu đề =================
+     Thiếu một ô rỗng là cả bốn số tấn tụt sang trái một cột và Excel đọc "tồn đầu" thành "tồn cuối". */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    addDays(1); day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    const csv = (await S.call('GET', `/report?format=csv&from=${day}&to=${day}`)).data;
+    const rows = csv.split('\r\n');
+    const hdr = rows.find((l) => l.startsWith('"Phi"')).split(';');
+    const tot = rows.find((l) => l.startsWith('"TỔNG')).split(';');
+    eq('dòng TỔNG có đúng số ô như tiêu đề', tot.length, hdr.length);
+    eq('số tấn nằm đúng dưới 4 cột tấn', hdr.slice(-4), ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Dùng (tấn)"', '"Tồn cuối (tấn)"']);
+    // 1800 cây D16 × 18,48 kg = 33,264 tấn; dùng 300 cây = 5,544 tấn; còn 1500 cây = 27,720 tấn
+    eq('tồn đầu / nhập / dùng / tồn cuối theo tấn', tot.slice(-4), ['33,264', '0,000', '5,544', '27,720']);
+  }
+
+  /* ================= 28. Mất một dòng users không được làm biến mất số liệu =================
+     INNER JOIN users sẽ làm cả số đếm và phiếu của người đó biến khỏi màn hình trong khi vẫn nằm
+     trong database và vẫn được computeReview/baseline tính — hai màn hình lệch nhau không lý do. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] }, 'Kho');
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    S.raw.exec("DELETE FROM users WHERE name IN ('An','Kho')");
+    const boot = (await S.call('GET', '/bootstrap')).data;
+    eq('số đếm vẫn hiện ở Tổng quan', boot.counts.map((c) => [c.phi_id, c.v]), [['D16', 1800]]);
+    eq('phiếu nhập vẫn hiện', boot.receipts.length, 1);
+    eq('khu vẫn được đánh dấu đã báo', boot.reports.map((r) => r.khu_id), ['A']);
+    ok('tên người đã xoá hiện rõ ràng', /đã xoá/.test(boot.counts[0].uname), boot.counts[0].uname);
+    const dv = (await S.call('GET', '/day?date=' + day)).data;
+    eq('màn Xem lại ngày cũ cũng giữ đủ dòng', [dv.counts.length, dv.receipts.length, dv.reports.length], [1, 1, 1]);
+    eq('màn Duyệt vẫn thấy khu đã báo', (await S.call('GET', '/review')).data.reports.map((r) => r.khu_id), ['A']);
+  }
+
+  /* ================= 29. schema.sql phải chịu được ALTER TABLE ... DROP COLUMN =================
+     SQLite dựng lại câu CREATE từ chính văn bản trong schema.sql khi drop cột. Chú thích nằm trong
+     khối CREATE làm câu dựng lại bị cắt: với cột CUỐI của bảng, chú thích kẹp giữa dấu phẩy và ")"
+     nên SQLite báo "incomplete input" và migration tương lai sẽ chết giữa đường trên database thật. */
+  {
+    const sql = readFileSync(path.join(ROOT, 'schema.sql'), 'utf8');
+    const inBlock = [];
+    let depth = 0;
+    for (const line of sql.split('\n')) {
+      if (/^CREATE TABLE/i.test(line)) depth = 1;
+      else if (depth && /^\);/.test(line)) depth = 0;
+      else if (depth && /^\s+--/.test(line)) inBlock.push(line.trim());
+    }
+    eq('không còn chú thích nào bên trong khối CREATE TABLE', inBlock, []);
+
+    const S = await boot(ROOT);
+    const tables = S.sql("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map((t) => t.name);
+    ok('có đủ bảng để kiểm tra', tables.length > 10, tables.length);
+    const broken = [];
+    for (const t of tables) {
+      const cols = S.sql(`PRAGMA table_info(${t})`);
+      const last = cols[cols.length - 1];
+      if (last.pk) continue; // cột khoá chính không drop được, lý do khác
+      // cột đang có index thì phải DROP INDEX trước (xem ghi chú đầu schema.sql), không tính là lỗi
+      const indexed = S.sql(`PRAGMA index_list(${t})`)
+        .some((ix) => S.sql(`PRAGMA index_info(${ix.name})`).some((c) => c.name === last.name));
+      if (indexed) continue;
+      S.raw.exec('SAVEPOINT dc');
+      try { S.raw.prepare(`ALTER TABLE ${t} DROP COLUMN ${last.name}`).run(); }
+      catch (e) { broken.push(t + '.' + last.name + ': ' + e.message); }
+      S.raw.exec('ROLLBACK TO dc; RELEASE dc');
+    }
+    eq('drop được cột cuối của mọi bảng', broken, []);
   }
 
   /* ================= kết quả ================= */

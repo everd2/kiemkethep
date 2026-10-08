@@ -10,6 +10,7 @@ const root = path.resolve(here, '..');
 const SUITES = [
   ['Logic nghiệp vụ (worker thật + SQLite thật)', 'server.test.mjs'],
   ['Giao diện: mọi màn hình render được', 'ui-render.test.js'],
+  ['Giao diện: bố cục cuộn từng màn', 'layout.test.js'],
   ['Giao diện: hành vi các thao tác', 'ui-logic.test.js'],
   ['Mô phỏng bãi nhiều ngày + dữ liệu sai', 'sim.test.mjs'],
 ];

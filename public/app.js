@@ -267,6 +267,14 @@ function askHtml() {
 }
 
 /* ===================== TÍNH TOÁN ===================== */
+/* Ngưỡng cảnh báo lấy từ server (/bootstrap trả boot.limits) chứ không chép hằng số sang đây:
+   trước đây Tổng quan báo "đã dùng âm" ngay khi lệch 1 cây còn Duyệt chỉ báo từ 100 kg, nên thẻ đỏ
+   dẫn sang Duyệt rồi không có gì để xử lý. Vẫn để số dự phòng cho bản cache cũ và cho bộ test. */
+const LIM_DEF = { negKg: 100, highKg: 500, rateDays: 5 };
+const LIM = (k, dflt) => {
+  const v = S.boot && S.boot.limits ? S.boot.limits[k] : undefined;
+  return typeof v === 'number' ? v : (dflt === undefined ? LIM_DEF[k] : dflt);
+};
 const isPresent = (k, p) => {
   const b = S.boot;
   const kp = b.kp[k + '|' + p];
@@ -496,7 +504,9 @@ function vHome() {
   const rateTxt = (p) => (b.rate[p.id] ? (isCuon(p) ? fmtDec(b.rate[p.id] / p.bo_size) + ' cuộn/ngày' : fmtInt(b.rate[p.id]) + ' cây/ngày') : '');
   const neg = [], low = [], shortp = [];
   b.phiAct.forEach((p) => {
-    if (b.lastClosed && T.used[p.id] < 0) neg.push(p);
+    // cùng ngưỡng kg với màn Duyệt: lệch vài cây là sai số đếm thường ngày, báo đỏ ở đây thì
+    // bấm sang Duyệt lại không có việc gì để xử lý, và người dùng mất tin vào cảnh báo
+    if (b.lastClosed && T.used[p.id] * p.kg_per_cay < -LIM('negKg')) neg.push(p);
     const dl = daysLeft(p.id, T.perPhi[p.id]);
     if (T.perPhi[p.id] < p.min_stock) low.push(p);
     else if (dl !== null && dl < 3) shortp.push({ p, dl });
@@ -668,7 +678,7 @@ function demView() {
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
     ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}
     ${b.closed ? '<div class="toast err">Ngày hôm nay đã chốt, không sửa được nữa.</div>' : ''}
-    ${S.sel ? '' : `<div class="col gap6" style="padding:6px 12px 2px">${already ? `<div class="card sm" style="line-height:1.4"><b>${esc(already.uname)} đã báo ${esc(kname)} lúc ${hhmm(already.ts)}.</b> Bạn đang đếm lại: chỉ gửi khi vừa đếm thực tế, số khác với người trước sẽ chuyển admin xem.</div>` : ''}<button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
+    ${S.sel ? '' : `<div class="col gap6 tbar" style="padding:6px 12px 2px">${already ? `<div class="card sm" style="line-height:1.4"><b>${esc(already.uname)} đã báo ${esc(kname)} lúc ${hhmm(already.ts)}.</b> Bạn đang đếm lại: chỉ gửi khi vừa đếm thực tế, số khác với người trước sẽ chuyển admin xem.</div>` : ''}<button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
       ${S.draftWarn ? `<div class="card warn col gap6"><b>${esc(S.draftWarn.uname)} đã gửi báo cáo khu này lúc ${hhmm(S.draftWarn.ts)}, sau khi bạn bắt đầu nháp.</b><div class="row gap6"><button class="btn s f1" data-a="draftnew">Dùng số mới</button><button class="btn s f1" data-a="draftkeep">Giữ nháp của tôi</button></div></div>` : ''}
       <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="legend">${S.legend ? 'Ẩn chú thích' : 'ⓘ Chú thích màu'}</button>
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Nét đứt vàng: chưa nhập (số mờ là số dự kiến) · Vàng đậm: lệch lớn so với dự kiến · Chấm: không có (chạm để thêm phi). Chạm chữ cái khu để phóng to.</div>' : ''}
@@ -742,13 +752,14 @@ function vNhap() {
 
 /* --- Tồn bãi --- */
 // số ngày còn đủ dùng = tồn / lượng dùng trung bình mỗi ngày (28 ngày gần nhất, tính khi chốt ngày)
-const MIN_RATE_DAYS = 5; // khớp MIN_RATE_DAYS trong src/worker.js
-// Dưới 5 ngày dữ liệu thì mức dùng trung bình chưa đáng tin: thà không dự báo còn hơn dự báo sai
+// Dưới ngần này ngày dữ liệu thì mức dùng trung bình chưa đáng tin: thà không dự báo còn hơn dự báo sai.
+// Ngưỡng do server gửi trong /bootstrap (boot.limits) nên Duyệt và Tồn bãi không thể lệch nhau.
+const minRateDays = () => LIM('rateDays', 5);
 function daysLeft(phi, v) {
   const r = S.boot.rate[phi];
-  return r > 0 && (S.boot.rateDays[phi] || 0) >= MIN_RATE_DAYS ? v / r : null;
+  return r > 0 && (S.boot.rateDays[phi] || 0) >= minRateDays() ? v / r : null;
 }
-const rateReady = (phi) => (S.boot.rateDays[phi] || 0) >= MIN_RATE_DAYS;
+const rateReady = (phi) => (S.boot.rateDays[phi] || 0) >= minRateDays();
 const daysTxt = (d) => (d < 1 ? 'dưới 1 ngày' : '~' + Math.floor(d) + ' ngày');
 function vTon() {
   const b = S.boot, T = totals();
@@ -756,14 +767,14 @@ function vTon() {
     const v = T.perPhi[p.id], low = v < p.min_stock, open = S.expand[p.id];
     const dl = daysLeft(p.id, v), short = dl !== null && dl < 3;
     const rateDisp = !b.rate[p.id] ? null
-      : !rateReady(p.id) ? `chưa đủ dữ liệu (${b.rateDays[p.id] || 0}/${MIN_RATE_DAYS} ngày)`
+      : !rateReady(p.id) ? `chưa đủ dữ liệu (${b.rateDays[p.id] || 0}/${minRateDays()} ngày)`
       : isCuon(p) ? `${Math.round(b.rate[p.id] / p.bo_size * 10) / 10} cuộn/ngày` : `${fmtInt(b.rate[p.id])} cây/ngày`;
     const det = open ? `<div class="card" style="margin:-4px 0 4px;border-radius:0 0 16px 16px">${b.khu.map((k) => { const x = valOf(k.id, p.id); return x ? `<div class="li"><span>${esc(k.name)}${k.active ? '' : ' (ẩn)'}</span><span class="col" style="align-items:flex-end"><b>${qMain(x, p)}</b><span class="sm muted">${qSub(x, p)}</span></span></div>` : ''; }).join('') || '<div class="muted">Không có ở khu nào</div>'}${rateDisp ? `<div class="li"><span class="sm muted">Dùng trung bình</span><span class="sm">${rateDisp}</span></div>` : ''}</div>` : '';
     const sub = low ? 'Dưới mức báo động (' + minStockLbl(p) + ')' + (dl !== null ? ' · còn ' + daysTxt(dl) : '') : dl !== null ? 'Còn đủ dùng ' + daysTxt(dl) : b.rate[p.id] === undefined ? 'Chưa có số liệu dùng' : 'Đủ dùng';
     return `<button class="tonrow ${low ? 'low' : ''}" data-a="expand" data-p="${p.id}"><span class="col" style="gap:2px"><b style="font-size:24px">${p.id}</b><span class="sm" style="${low ? 'color:var(--bad);font-weight:700' : short ? 'color:var(--warn);font-weight:700' : 'color:#5F6670'}">${sub}</span></span><span class="col" style="align-items:flex-end;text-align:right;min-width:0"><b style="font-size:24px;line-height:1.15;white-space:nowrap">${qMain(v, p)}</b><span class="sm muted">${qSub(v, p)}</span></span></button>${det}`;
   }).join('');
   return `${head('Tồn bãi', b.lastClosed ? 'Tồn chuẩn chốt ngày ' + fmtDay(b.lastClosed) + ' · chạm phi để xem từng khu' : 'Chưa có ngày nào được chốt', 'home')}
-    <div class="hero" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:15px">Tổng toàn bãi</span><span style="font-size:30px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;white-space:nowrap">${fmtInt(T.cay)} cây nguyên</span></div></div>
+    <div class="hero tbar" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:15px">Tổng toàn bãi</span><span style="font-size:30px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;white-space:nowrap">${fmtInt(T.cay)} cây nguyên</span></div></div>
     <div class="f1 scroll pad col gap8" id="body">${rows}</div>`;
 }
 
@@ -844,7 +855,8 @@ function vDuyet() {
         ${cmp || `<div class="row gap8"><button class="btn s warnb f1" data-a="cview" data-k="${esc(e.khu)}">SO SÁNH 2 SỐ</button><button class="btn s warnb f1" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button></div><button class="btn s warnb full" data-a="${recountA}" data-k="${esc(e.khu)}">YÊU CẦU ĐẾM LẠI</button>`}
         ${C && C.data && !C.data.diffs.length ? `<button class="btn s warnb full" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button>` : ''}</div>`;
     }
-    if (e.type === 'late') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)}: có thép nhập/chuyển sau khi khu báo (${hhmm(e.reportTs)})</b><span class="sm">${e.items.map((x) => { const xp = S.boot.phiBy[x.phi]; return esc(x.phi) + ' ' + (x.q > 0 ? '+' : '−') + fmtQs(Math.abs(x.q), xp); }).join(' · ')}. Số đếm của khu chưa gồm lượng này nên tính "đã dùng" sẽ sai.</span><button class="btn s warnb full" data-a="${recountA}" data-k="${esc(e.khu)}">YÊU CẦU ${esc(cut(e.name, 18).toUpperCase())} ĐẾM LẠI</button></div>`;
+    // q > 0: phiếu ghi sau lúc khu báo. q < 0: phiếu bị HỦY sau lúc khu báo (lúc đếm phiếu còn hiệu lực).
+    if (e.type === 'late') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)}: số nhập/chuyển đổi sau khi khu báo (${hhmm(e.reportTs)})</b><span class="sm">${e.items.map((x) => { const xp = S.boot.phiBy[x.phi]; return esc(x.phi) + ' ' + (x.q > 0 ? 'thêm +' : 'hủy −') + fmtQs(Math.abs(x.q), xp); }).join(' · ')}. Số đếm của khu không gồm thay đổi này nên tính "đã dùng" sẽ sai.</span><button class="btn s warnb full" data-a="${recountA}" data-k="${esc(e.khu)}">YÊU CẦU ${esc(cut(e.name, 18).toUpperCase())} ĐẾM LẠI</button></div>`;
     if (e.type === 'recount') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)} đang chờ đếm lại</b><span class="sm">Đã yêu cầu, chưa có số mới.</span></div>`;
     return '';
   }).join('');
@@ -928,7 +940,7 @@ const ydayOf = (d) => new Date(Date.parse(d) - 864e5).toISOString().slice(0, 10)
 function vLichSu() {
   const b = S.boot, H = S.hist, D = H.data;
   const top = `${head('Xem lại ngày cũ', 'Số liệu tồn, nhập, dùng của một ngày', 'more')}
-    <div class="row gap8" style="padding:4px 16px"><input class="inp s f1" type="date" id="hdate" max="${b.today}" value="${H.date}" data-change="hdate"><button class="btn s" data-a="hprev">‹ Trước</button><button class="btn s ${H.date >= b.today ? 'dis' : ''}" data-a="hnext" ${H.date >= b.today ? 'disabled' : ''}>Sau ›</button></div>`;
+    <div class="row gap8 tbar" style="padding:4px 16px"><input class="inp s f1" type="date" id="hdate" max="${b.today}" value="${H.date}" data-change="hdate"><button class="btn s" data-a="hprev">‹ Trước</button><button class="btn s ${H.date >= b.today ? 'dis' : ''}" data-a="hnext" ${H.date >= b.today ? 'disabled' : ''}>Sau ›</button></div>`;
   if (!D) return `${top}${panelWait('lichsu')}`;
   const key = (r) => r.khu_id + '|' + r.phi_id;
   const cm = {}, bm = {}, pm = {};
@@ -977,7 +989,7 @@ async function loadHist(date) {
 function vBaoCao() {
   const b = S.boot, R = S.bc, D = R.data;
   const top = `${head('Báo cáo Nhập – Dùng – Tồn', 'Theo các ngày đã chốt', 'more')}
-    <div class="col gap8" style="padding:4px 16px">
+    <div class="col gap8 tbar" style="padding:4px 16px">
       <div class="row gap8"><label class="f1 sm">Từ ngày<input class="inp s" style="width:100%" type="date" id="rfrom" data-model="rfrom" max="${b.today}" value="${esc(fv('rfrom', R.from))}"></label><label class="f1 sm">Đến ngày<input class="inp s" style="width:100%" type="date" id="rto" data-model="rto" max="${b.today}" value="${esc(fv('rto', R.to))}"></label></div>
       <div class="wrap"><button class="chip s" data-a="rquick" data-v="week">7 ngày</button><button class="chip s" data-a="rquick" data-v="month">Tháng này</button><button class="chip s" data-a="rquick" data-v="last">Tháng trước</button></div>
       <div class="row gap8"><button class="btn s pri f1" data-a="rload">XEM</button><button class="btn s f1" data-a="rcsv">Tải Excel (CSV)</button></div></div>`;
@@ -1056,7 +1068,7 @@ function vNhatKy() {
   const F = [['all', 'Tất cả'], ['dem', 'Báo đếm'], ['nhap', 'Nhập kho'], ['admin', 'Admin'], ['flag', 'Cần chú ý']];
   const rows = (S.audit || []).map((a) => ({ a, f: fmtAudit(a) })).filter((x) => S.logFilter === 'all' || (S.logFilter === 'flag' ? x.f.flag : x.f.type === S.logFilter));
   return `${head('Nhật ký hoạt động', 'Không ai xóa hoặc sửa được', 'more')}
-  <div class="wrap" style="padding:6px 16px">${F.map((f) => `<button class="chip s ${S.logFilter === f[0] ? 'on' : ''}" data-a="logf" data-v="${f[0]}">${f[1]}</button>`).join('')}</div>
+  <div class="wrap tbar" style="padding:6px 16px">${F.map((f) => `<button class="chip s ${S.logFilter === f[0] ? 'on' : ''}" data-a="logf" data-v="${f[0]}">${f[1]}</button>`).join('')}</div>
   <div class="f1 scroll ${S.audit ? 'pad ' : ''}col gap8" id="body">${S.audit ? (rows.map((x) => `<div class="logrow ${x.f.flag ? 'flag' : ''}"><div class="row" style="justify-content:space-between"><b>${esc(x.a.user_name || 'Hệ thống')}</b><span class="sm muted">${dmy(x.a.ts)}</span></div><div style="font-size:16px;line-height:1.4">${esc(x.f.text)}</div>${x.f.flag ? '<span class="badge bad" style="align-self:flex-start">Cần chú ý</span>' : ''}</div>`).join('') || '<div class="muted">Chưa có dữ liệu</div>') : panelWait('nhatky')}</div>`;
 }
 
@@ -1365,16 +1377,28 @@ async function download(path, fname) {
   render();
 }
 
+const V_MAX = 99999; // trần server cho số đếm một phi (intIn trong putCounts)
 function pressKey(i) {
   const f = S.field;
   if (i === 11) { S.field = f === 'bo' ? 'le' : 'bo'; }
   else if (i === 9) { S.rep[f] = false; S[f] = S[f].slice(0, -1); }
   else {
     const d = String(i === 10 ? 0 : i + 1);
-    if (S.rep[f]) { S[f] = ''; S.rep[f] = false; } // ô đang hiện số cũ: gõ số mới sẽ thay thế
+    const cur = S.rep[f] ? '' : S[f]; // ô đang hiện số cũ: gõ số mới sẽ thay thế
     // cuộn dở gõ theo % của một cuộn (bo_size phần) nên không vượt quá bo_size - 1
     const maxLen = f === 'bo' ? 3 : S.sel && isCuon(S.sel) ? String(S.boot.phiBy[S.sel].bo_size - 1).length : 4;
-    S[f] = (S[f] === '0' ? d : S[f] + d).slice(0, maxLen);
+    const next = (cur === '0' ? d : cur + d).slice(0, maxLen);
+    /* Chặn ngay tại bàn số thay vì để server từ chối lúc bấm GỬI: 999 bó D10 là 439.560 cây,
+       người đếm nhập xong cả khu rồi mới biết số không hợp lệ và không rõ phi nào sai. */
+    const size = S.sel ? S.boot.phiBy[S.sel].bo_size : 1;
+    const boN = parseInt((f === 'bo' ? next : S.bo) || '0', 10);
+    const leN = parseInt((f === 'le' ? next : S.le) || '0', 10);
+    if (boN * size + leN > V_MAX) {
+      const cu = isCuon(S.sel);
+      return say(`Số ${S.sel} quá lớn, không nhập thêm được. Kiểm tra lại số ${cu ? 'cuộn' : 'bó'} (tối đa ${fmtInt(Math.floor(V_MAX / size))} ${cu ? 'cuộn' : 'bó'}).`, true);
+    }
+    S.rep[f] = false;
+    S[f] = next;
   }
 }
 function nextPhi(p) {
@@ -1644,20 +1668,33 @@ const ACTIONS = {
   },
   pstd(d) { const p = S.boot.phiBy[d.p]; if (p && fillStd(p)) say('Đã điền số chuẩn cho ' + p.id + '. Bấm LƯU CẤU HÌNH PHI để áp dụng.'); render(); },
   pstdall() { const n = S.boot.phiAct.filter(fillStd).length; say('Đã điền số chuẩn cho ' + n + ' phi. Xem lại, sửa phi nào khác rồi bấm LƯU CẤU HÌNH PHI.'); render(); },
+  /* Chỉ tính lại trường mà admin THỰC SỰ đã sửa (có trong S.form), các trường còn lại gửi y số
+     đang lưu. Ô "Báo động (bó)" và "kg / 1 cuộn" chỉ hiện số đã làm tròn, nên nếu lượt lưu nào cũng
+     quy đổi ngược từ ô hiển thị thì mở Cài đặt rồi bấm LƯU là đủ đổi số: min_stock 30 cây D28
+     (57 cây/bó) hiện "0,5 bó" rồi lưu lại thành 29. Bộ số chuẩn tình cờ quy đổi khứ hồi khớp nên
+     lỗi này không lộ ra với phi mặc định, chỉ lộ với số admin tự đặt. */
   psaveall() {
     const items = [];
     for (const p of S.boot.phiAct) { // phi đã tắt không có ô nhập trên màn hình, không gửi lên
       const g = (k) => numIn(val(k + '-' + p.id));
-      const mn = g('mn'), bad = () => (say('Số của ' + p.id + ' chưa hợp lệ, hãy kiểm tra lại.', true), render());
+      // "đã sửa" = chữ trong ô khác với số đang lưu mà ô hiển thị; so trực tiếp trên ô nên không
+      // phụ thuộc vào việc S.form có được điền hay không
+      const f0 = phiForm(p);
+      const edited = (k) => f0[k] !== undefined && document.getElementById(k + '-' + p.id) && String(val(k + '-' + p.id)).trim() !== f0[k];
+      const bad = () => (say('Số của ' + p.id + ' chưa hợp lệ, hãy kiểm tra lại.', true), render());
+      const it = { id: p.id, bo_size: p.bo_size, kg_per_cay: p.kg_per_cay, min_stock: p.min_stock };
       if (isCuon(p)) { // 1 cuộn = bo_size phần; kg mỗi phần = kg cuộn / bo_size
-        const kgc = g('kgc');
-        if (!(kgc > 0) || !(mn >= 0)) return bad();
-        items.push({ id: p.id, bo_size: p.bo_size, kg_per_cay: Math.round((kgc / p.bo_size) * 1e4) / 1e4, min_stock: Math.round(mn * p.bo_size) });
+        if (edited('kgc')) {
+          const kgc = g('kgc');
+          if (!(kgc > 0)) return bad();
+          it.kg_per_cay = Math.round((kgc / p.bo_size) * 1e4) / 1e4;
+        }
       } else {
-        const bo = Math.round(g('bo')), kg = g('kg');
-        if (!(bo >= 1) || !(kg > 0) || !(mn >= 0)) return bad();
-        items.push({ id: p.id, bo_size: bo, kg_per_cay: kg, min_stock: Math.round(mn * bo) });
+        if (edited('bo')) { const bo = Math.round(g('bo')); if (!(bo >= 1)) return bad(); it.bo_size = bo; }
+        if (edited('kg')) { const kg = g('kg'); if (!(kg > 0)) return bad(); it.kg_per_cay = kg; }
       }
+      if (edited('mn')) { const mn = g('mn'); if (!(mn >= 0)) return bad(); it.min_stock = Math.round(mn * it.bo_size); }
+      items.push(it);
     }
     act(async () => {
       const r = await api('PUT', '/phi', { items });
@@ -1749,8 +1786,11 @@ document.addEventListener('keydown', (e) => {
 /* Làm mới thích ứng để tiết kiệm hạn mức miễn phí:
    - đang thao tác: hỏi phiên bản mỗi 60 giây; để yên quá 5 phút: mỗi 5 phút
    - ngoài giờ làm (20:00 - 6:00): mỗi 15 phút; app chạy nền: không hỏi */
-let lastAct = Date.now(), lastPoll = 0;
+let lastAct = Date.now(), lastPoll = 0, lastScroll = 0;
 ['click', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => { lastAct = Date.now(); }, { passive: true }));
+// Vẽ lại là thay cả DOM nên cú miết tay đang dở sẽ bị cắt. Sự kiện scroll không nổi bọt,
+// phải bắt ở pha capture trên document.
+document.addEventListener('scroll', () => { lastScroll = Date.now(); lastAct = Date.now(); }, { capture: true, passive: true });
 function pollEvery() {
   const h = new Date().getHours();
   if (h < 6 || h >= 20) return 15 * 60e3;
@@ -1758,6 +1798,7 @@ function pollEvery() {
 }
 async function refresh() {
   if (!S.me || document.hidden || S.me.must_change) return;
+  if (Date.now() - lastScroll < 2000) return; // đang cuộn: để yên, vòng sau hỏi lại
   lastPoll = Date.now();
   try {
     // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ

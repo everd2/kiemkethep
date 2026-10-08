@@ -1,14 +1,16 @@
 :root{color-scheme:light;--bg:#F3F1EC;--ink:#1C1F22;--mut:#4B5360;--line:#D9D5CC;--pri:#1F3A5F;--ok:#176B34;--okbg:#E3F1E6;--warn:#8A5A00;--warnbg:#FBEFCF;--bad:#8F1B1B;--badbg:#FDEDEB}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:#E9E6DF}
+html,body{margin:0;height:100%;overflow:hidden;background:#E9E6DF}
 body{color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:16px}
-#app{max-width:480px;margin:0 auto;height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--bg);position:relative;overflow:hidden}
+#app{max-width:480px;margin:0 auto;height:100%;height:100dvh;display:flex;flex-direction:column;background:var(--bg);position:relative;overflow:hidden}
 button{font-family:inherit;cursor:pointer;color:inherit}
 button:disabled{cursor:default}
 input,select{font-family:inherit;font-size:18px;color:var(--ink)}
 a{color:var(--pri)}
 .f1{flex:1;min-height:0}
-.scroll{overflow-y:auto;-webkit-overflow-scrolling:touch}
+.scroll{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+/* thanh công cụ giữa đầu trang và vùng cuộn: không được co lại kẻo cắt mất chữ của chính nó */
+.tbar{flex:none}
 .col{display:flex;flex-direction:column}
 /* khung cuộn dạng cột: thẻ con không được co lại cho vừa màn hình (thẻ overflow:hidden sẽ bị bóp còn vài px) */
 .scroll.col>*{flex-shrink:0}
@@ -22,7 +24,7 @@ a{color:var(--pri)}
 .b{font-weight:700}
 
 /* header */
-.top{display:flex;align-items:center;gap:6px;padding:calc(8px + env(safe-area-inset-top)) 12px 6px 8px}
+.top{display:flex;align-items:center;gap:6px;flex:none;padding:calc(8px + env(safe-area-inset-top)) 12px 6px 8px}
 .top .t{flex:1;min-width:0}
 .top h1{margin:0;font-size:22px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .top small{display:block;font-size:14px;color:var(--mut)}
@@ -96,11 +98,11 @@ a{color:var(--pri)}
 .err{color:var(--bad);font-weight:600;font-size:16px;min-height:22px}
 
 /* ma trận đếm */
-.mxhead{margin:4px 12px;padding:8px 12px;border-radius:12px;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mxhead{flex:none;margin:4px 12px;padding:8px 12px;border-radius:12px;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .mxhead span{font-size:13px;color:#D6E0EE;display:block}
 .mxhead b{font-size:18px}
 /* #mx cuộn cả 2 chiều; cột trái dính bên trái, dòng tiêu đề dính trên (sticky không chạy trong khung overflow lồng nhau) */
-#mx{background:#fff;border-top:1px solid var(--line);margin-top:4px;overflow:auto}
+#mx{background:#fff;border-top:1px solid var(--line);margin-top:4px;overflow:auto;overscroll-behavior:contain}
 .mxw{display:flex;width:100%}
 .mxl{width:164px;flex:none;position:sticky;left:0;z-index:3;background:#fff;box-shadow:2px 0 0 #C9C4B8}
 .mxr{flex:1;min-width:0}
@@ -149,7 +151,7 @@ a{color:var(--pri)}
 
 /* hộp xác nhận trong app */
 .modal{position:absolute;inset:0;z-index:60;background:rgba(28,31,34,.5);display:flex;align-items:flex-end;justify-content:center;padding:12px}
-.modal .box{width:100%;max-width:440px;background:#fff;border-radius:18px;padding:18px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.modal .box{width:100%;max-width:440px;max-height:calc(100% - 8px);overflow-y:auto;overscroll-behavior:contain;background:#fff;border-radius:18px;padding:18px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 10px 30px rgba(0,0,0,.3)}
 
 /* bảng báo cáo */
 .tbl{width:100%;border-collapse:collapse;font-size:15px}
@@ -157,3 +159,15 @@ a{color:var(--pri)}
 .tbl th:first-child{text-align:left;padding-left:12px}
 .tbl thead th{font-size:13px;color:var(--mut);background:#F7F6F2}
 .tbl tfoot th,.tbl tfoot td{background:#E8EEF6;font-weight:700}
+
+/* màn hình thấp: cho cả trang cuộn, thanh tab dính đáy */
+@media (max-height: 560px) {
+  html, body { overflow: auto; }
+  #app { height: auto; min-height: 100%; overflow: visible; }
+  .f1 { flex: none; min-height: 0; }
+  .scroll, #mx { overflow: visible; max-height: none; }
+  .tabs { position: sticky; bottom: 0; z-index: 30; }
+  .pad-sheet { position: sticky; bottom: 60px; z-index: 29; }
+  .modal { position: fixed; }
+  .busy { position: fixed; }
+}

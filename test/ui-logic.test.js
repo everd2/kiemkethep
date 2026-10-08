@@ -89,6 +89,8 @@ const boot = {
   settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 },
 };
 ctx._boot = () => JSON.parse(JSON.stringify(boot));
+// dựng một ô nhập có sẵn nội dung, như lúc màn hình vừa vẽ xong
+ctx._mk = (id, v) => { EL[id] = mkEl(id); EL[id].value = String(v); return EL[id]; };
 
 const T = [];
 const ok = (name, cond, extra) => T.push([cond ? 'PASS' : 'FAIL', name, extra === undefined ? '' : String(extra)]);
@@ -243,6 +245,72 @@ const run = async () => {
   r(`S.bc.from = '${yday}'; S.bc.to = '${today}'; ACTIONS.rcsv();`);
   await new Promise((res) => setTimeout(res, 30));
   ok('CSV: tải bằng fetch, không rời app', calls.some((c) => /\/api\/report\?format=csv/.test(c.url)), calls.map((c) => c.url).join(','));
+
+  /* ---- 7a. Ngưỡng "đã dùng âm" ở Tổng quan phải trùng màn Duyệt ----
+     Trước đây Tổng quan báo đỏ ngay khi lệch 1 cây còn Duyệt chỉ báo từ 100 kg, nên bấm thẻ đỏ
+     sang Duyệt rồi không có việc gì để xử lý và người dùng mất tin vào cảnh báo. */
+  r(`S.boot.limits = { negKg: 100, highKg: 500, rateDays: 5 };`);
+  // D10 nặng 0,617 kg/cây: lệch 5 cây = 3 kg, dưới ngưỡng -> không báo
+  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 305, kind: 'dem', user_id: 1, uname: 'A', ts: Date.now() },
+                      { khu_id: 'B', phi_id: 'D10', v: 100, kind: 'dem', user_id: 1, uname: 'A', ts: Date.now() }]; indexBoot(S.boot);`);
+  ok('lệch nhỏ (3 kg): Tổng quan không báo "đã dùng âm"', !/đã dùng âm/.test(r('vHome()')), r(`JSON.stringify(totals().used)`));
+  // lệch 200 cây = 123 kg, vượt ngưỡng -> phải báo
+  r(`S.boot.counts[0].v = 500; indexBoot(S.boot);`);
+  ok('lệch lớn (123 kg): Tổng quan báo "đã dùng âm"', /đã dùng âm/.test(r('vHome()')));
+  // server gửi ngưỡng khác thì app phải đi theo, không dùng số chép cứng
+  r(`S.boot.limits.negKg = 500;`);
+  ok('đổi ngưỡng ở server thì app đi theo', !/đã dùng âm/.test(r('vHome()')));
+  r(`S.boot.limits.negKg = 100; S.boot.counts = []; indexBoot(S.boot);`);
+  ok('ngưỡng số ngày dữ liệu cũng lấy từ server', r('S.boot.limits.rateDays = 9, minRateDays()') === 9);
+  r(`delete S.boot.limits;`);
+  ok('bản cache cũ không có limits: vẫn chạy bằng số dự phòng', r('LIM("negKg")') === 100 && r('minRateDays()') === 5);
+
+  /* ---- 7b. Mở Cài đặt rồi bấm LƯU mà không sửa gì thì không được đổi số ----
+     Ô "Báo động (bó)" và "kg / 1 cuộn" chỉ hiện số đã làm tròn. Nếu lượt lưu nào cũng quy đổi ngược
+     từ ô hiển thị thì min_stock 110 của D8 (11 phần/cuộn) hiện "10 cuộn" rồi lưu lại vẫn ra 110,
+     nhưng số nào không chia hết sẽ bị kéo lệch. Ở đây: không sửa ô nào thì phải gửi y số đang lưu. */
+  r(`S.boot.phi.forEach((p) => { p.active = 1; }); S.form = {};`);
+  // bó to thì 0,1 bó đã hơn nửa cây: 30 / 57 = 0,526 -> ô hiện "0,5" -> quy đổi ngược ra 29, lệch 1 cây
+  r(`const p12 = S.boot.phi.find((p) => p.id === 'D12'); p12.bo_size = 57; p12.min_stock = 30;`);
+  // phi cuộn: 115 / 11 = 10,45 -> ô hiện "10,5" -> quy đổi ngược ra 116
+  r(`S.boot.phi.find((p) => p.id === 'D8').min_stock = 115;`);
+  r(`indexBoot(S.boot);`);
+  for (const p of ['D8', 'D10', 'D12']) {
+    for (const k of ['bo', 'kg', 'kgc', 'mn']) delete EL[k + '-' + p];
+  }
+  // ô nhập hiện đúng những gì phiForm() dựng ra, giống lúc màn hình vừa mở
+  r(`['D8','D10','D12'].forEach((id) => { const p = S.boot.phiBy[id], f = phiForm(p);
+       Object.keys(f).forEach((k) => { _mk(k + '-' + id, f[k]); }); });`);
+  calls.length = 0;
+  r(`ACTIONS.psaveall()`);
+  await new Promise((res) => setTimeout(res, 30));
+  const putSame = calls.find((c) => c.method === 'PUT' && /\/phi$/.test(c.url));
+  const d12 = putSame && putSame.body.items.find((x) => x.id === 'D12');
+  ok('không sửa gì: mức báo động giữ nguyên 30 cây, không bị kéo về 29', !!d12 && d12.min_stock === 30, d12 && JSON.stringify(d12));
+  const d8same = putSame && putSame.body.items.find((x) => x.id === 'D8');
+  ok('không sửa gì: phi cuộn giữ nguyên báo động 115 phần', !!d8same && d8same.min_stock === 115, d8same && JSON.stringify(d8same));
+  ok('không sửa gì: kg mỗi phần của phi cuộn giữ nguyên', !!d8same && d8same.kg_per_cay === 0.395, d8same && JSON.stringify(d8same));
+  // sửa thật một ô thì phải tính lại đúng ô đó
+  EL['mn-D12'].value = '20';
+  calls.length = 0;
+  r(`ACTIONS.psaveall()`);
+  await new Promise((res) => setTimeout(res, 30));
+  const putEd = calls.find((c) => c.method === 'PUT' && /\/phi$/.test(c.url));
+  const d12b = putEd && putEd.body.items.find((x) => x.id === 'D12');
+  ok('sửa ô báo động: quy đổi theo bó (20 × 57 = 1.140)', !!d12b && d12b.min_stock === 1140, d12b && JSON.stringify(d12b));
+  r(`S.form = {};`);
+
+  /* ---- 7c. Bàn đếm chặn số vượt trần ngay lúc gõ ----
+     Server chặn 99.999 cây mỗi phi. Trước đây bàn số cho gõ tới 999 bó (D10 là 439.560 cây),
+     người đếm nhập xong cả khu rồi mới bị từ chối lúc bấm GỬI và không rõ phi nào sai. */
+  r(`S.khu = 'A'; S.sel = 'D10'; S.bo = ''; S.le = ''; S.field = 'bo'; S.rep = { bo: false, le: false }; S.toast = '';`);
+  r(`S.boot.phiBy.D10.bo_size = 440;`); // 99.999 / 440 = 227 bó
+  r(`pressKey(1); pressKey(1); pressKey(1);`); // gõ 2,2,2 -> 222 bó, vẫn trong trần
+  ok('gõ 222 bó D10 (97.680 cây): nhận', r('S.bo') === '222', r('S.bo'));
+  r(`S.bo = ''; S.toast = ''; pressKey(8); pressKey(8); pressKey(8);`); // 999 bó -> vượt trần
+  ok('gõ tới 999 bó: chặn ngay ở chữ số thứ ba', r('S.bo') === '99', r('S.bo'));
+  ok('nói rõ lý do ngay tại bàn số', /quá lớn/.test(r('S.toast')), r('S.toast'));
+  r(`S.sel = null; S.bo = ''; S.le = ''; S.toast = '';`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

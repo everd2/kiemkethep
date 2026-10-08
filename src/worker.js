@@ -90,7 +90,7 @@ function seedPhi(env) {
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -144,6 +144,13 @@ const MIGRATIONS = {
     // tự chốt chỉ chạy khi admin chủ động bật: tắt nếu admin chưa từng tự chỉnh mục này
     `UPDATE settings SET value = '0' WHERE key = 'auto_close'
        AND NOT EXISTS (SELECT 1 FROM audit WHERE action = 'settings_update' AND detail LIKE '%"auto_close"%')`,
+  ],
+  9: [
+    // voided_ts: lúc hủy phiếu. Hủy phiếu sau khi khu đã báo làm số dự kiến của khu đổi y như
+    // nhập muộn, nên màn Duyệt phải biết thời điểm hủy mới cảnh báo được (xem exception 'late').
+    'ALTER TABLE receipts ADD COLUMN voided_ts INTEGER',
+    // phiếu đã hủy từ trước: lấy ts của phiếu làm mốc, coi như hủy ngay lúc nhập (không cảnh báo lùi)
+    'UPDATE receipts SET voided_ts = ts WHERE voided = 1 AND voided_ts IS NULL',
   ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
@@ -259,6 +266,10 @@ function sessionCookie(url, token, maxAge) {
   return `sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
 }
 
+/* Tên người báo. Dùng LEFT JOIN + dự phòng tên: nếu một dòng users biến mất thì INNER JOIN
+   sẽ làm cả số đếm/phiếu của người đó biến khỏi màn hình trong khi vẫn nạm trong database và vẫn
+   được computeReview/baseline tính — hai màn hình lệch nhau mà không ai hiểu tại sao. */
+const UNAME = "COALESCE(u.name, '(đã xoá)') uname";
 const SETTINGS_SQL = 'SELECT key, value FROM settings';
 const SETTING_RANGE = { hide_after_zero_days: [1, 30], max_keep_streak: [1, 30], auto_close: [0, 1] };
 function parseSettings(rows) {
@@ -398,10 +409,10 @@ async function bootstrap(env, user) {
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, active, keep_streak FROM khu_phi'),
-    env.DB.prepare('SELECT c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, u.name uname, c.ts FROM counts c JOIN users u ON u.id = c.user_id WHERE c.day = ?').bind(day),
+    env.DB.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, ${UNAME}, c.ts FROM counts c LEFT JOIN users u ON u.id = c.user_id WHERE c.day = ?`).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
-    env.DB.prepare('SELECT r.khu_id, r.user_id, u.name uname, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
-    env.DB.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.user_id, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? AND r.voided = 0 ORDER BY r.id DESC').bind(day),
+    env.DB.prepare(`SELECT r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
+    env.DB.prepare(`SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.user_id, ${UNAME} FROM receipts r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ? AND r.voided = 0 ORDER BY r.id DESC`).bind(day),
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
     // nhập/chuyển kể từ lần chốt gần nhất theo khu × phi (gồm cả ngày quên chốt), giống cách màn Duyệt tính
@@ -439,6 +450,10 @@ async function bootstrap(env, user) {
     rates: rates.results,
     khuUser: khuUser.results,
     settings: parseSettings(settings.results),
+    /* Ngưỡng cảnh báo gửi xuống máy khách thay vì chép hằng số sang app.js: trước đây màn Tổng quan
+       báo "đã dùng âm" ở mức lệch 1 cây còn màn Duyệt chỉ báo từ 100 kg, nên thẻ đỏ dẫn sang Duyệt
+       rồi không có gì để xử lý. Một nguồn số thì hai màn hình không thể lệch nhau nữa. */
+    limits: { negKg: NEG_KG, highKg: HIGH_KG, rateDays: MIN_RATE_DAYS },
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
   };
 }
@@ -544,7 +559,10 @@ async function putCounts(req, env, user) {
     return { phi, kind, v, bo, le };
   });
 
-  const missing = Object.values(kp).filter((r) => r.active && !seen.has(r.phi_id)).map((r) => r.phi_id);
+  /* Chỉ đòi những phi còn tồn tại và đang bật trong bảng phi. Nếu không đối chiếu phiBy, một dòng
+     khu_phi mồ côi (phi bị xoá khỏi bảng phi) sẽ khoá vĩnh viễn cả khu: không gửi phi đó thì
+     "Còn phi chưa nhập", mà gửi thì "Phi không hợp lệ" — không có đường ra từ giao diện. */
+  const missing = Object.values(kp).filter((r) => r.active && phiBy[r.phi_id] && !seen.has(r.phi_id)).map((r) => r.phi_id);
   if (missing.length) throw bad('Còn phi chưa nhập: ' + missing.join(', '));
 
   const ts = Date.now();
@@ -734,8 +752,8 @@ async function voidReceipt(env, user, id) {
     : [r];
   await batchGuarded(env, guardStmt(env, IS_CLOSED, r.day), [
     r.grp
-      ? env.DB.prepare('UPDATE receipts SET voided = 1 WHERE grp = ? AND voided = 0').bind(r.grp)
-      : env.DB.prepare('UPDATE receipts SET voided = 1 WHERE id = ?').bind(id),
+      ? env.DB.prepare('UPDATE receipts SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)
+      : env.DB.prepare('UPDATE receipts SET voided = 1, voided_ts = ? WHERE id = ?').bind(Date.now(), id),
     auditStmt(env, user, 'receipt_void', { id, kind: r.kind || 'nhap', lines: rows.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
   ], closedErr('Ngày đã chốt, không hủy được'));
@@ -755,14 +773,15 @@ async function computeReview(env, day) {
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     db.prepare('SELECT khu_id, COUNT(*) n FROM khu_phi WHERE active = 1 GROUP BY khu_id'),
-    db.prepare('SELECT r.khu_id, r.user_id, u.name uname, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
+    db.prepare(`SELECT r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
     db.prepare(EFF_SELECT).bind(last, day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     db.prepare('SELECT phi_id, khu_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY phi_id, khu_id').bind(last, day),
     db.prepare('SELECT used_json, span FROM day_close ORDER BY day DESC LIMIT 7'),
     db.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
     db.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
-    db.prepare('SELECT khu_id, phi_id, qty, kind, ts FROM receipts WHERE voided = 0 AND day = ?').bind(day),
+    // gồm cả phiếu đã hủy: hủy sau khi khu báo cũng làm số dự kiến của khu đổi (xem exception 'late')
+    db.prepare('SELECT khu_id, phi_id, qty, kind, ts, voided, voided_ts FROM receipts WHERE day = ?').bind(day),
     db.prepare("SELECT value FROM meta WHERE key = 'rev'"),
     db.prepare('SELECT khu_id, sig, user_name, ts FROM review_ack WHERE day = ?').bind(day),
   ]);
@@ -804,15 +823,21 @@ async function computeReview(env, day) {
     const arr = hist[p.id] || [];
     const peak = arr.length ? Math.max(...arr) : 0;
     const rt = rate[p.id] ? rate[p.id].per_day : null;
+    const rtDays = rate[p.id] ? rate[p.id].days : 0;
     const kgOf = (x) => x * p.kg_per_cay;
     const neg = used !== null && kgOf(used) < -NEG_KG;
-    // phải thỏa cả ba: gấp 3 lần mức trung bình, hơn 1,5 lần ngày dùng nhiều nhất, và đủ lớn tính theo kg
-    const high = perDay !== null && rt > 0 && perDay > RATE_K * rt && perDay > PEAK_K * peak && kgOf(used) > HIGH_KG;
+    /* Phải thỏa cả bốn: đủ ngày dữ liệu để có "mức bình thường", gấp 3 lần mức trung bình,
+       hơn 1,5 lần ngày dùng nhiều nhất, và đủ lớn tính theo kg.
+       Thiếu MIN_RATE_DAYS thì "trung bình" chỉ dựng từ một hai ngày: ngày thứ ba vận hành
+       sẽ báo "dùng gấp 3 lần trung bình" rồi chặn chốt, trong khi chưa biết mức bình thường là bao nhiêu.
+       Màn Tồn bãi cũng dùng đúng ngưỡng này để quyết định có dự báo "còn đủ dùng" hay không. */
+    const high = perDay !== null && rt > 0 && rtDays >= MIN_RATE_DAYS
+      && perDay > RATE_K * rt && perDay > PEAK_K * peak && kgOf(used) > HIGH_KG;
     return {
       phi: p.id, kg: p.kg_per_cay, old, inn: innT, cnt: cn, used,
       avg: rt === null ? null : Math.round(rt * 10) / 10,
       peak: Math.round(peak * 10) / 10,
-      rateDays: rate[p.id] ? rate[p.id].days : 0,
+      rateDays: rtDays,
       neg, high, topKhu, topNet, off: phiOff,
     };
   })
@@ -832,12 +857,21 @@ async function computeReview(env, day) {
       if (r.recount) exceptions.push({ type: 'recount', khu: k.id, name: k.name });
     }
   }
-  // thép nhập/chuyển vào khu SAU khi khu đã báo: số đếm chưa gồm lượng này, cần đếm lại
+  /* Số nhập/chuyển của khu đổi SAU khi khu đã báo: số đếm không gồm thay đổi này nên tính "đã dùng" sẽ sai.
+     Hai đường dẫn tới cùng một hậu quả, nên cộng chung vào một con số "đổi bao nhiêu":
+     - phiếu ghi sau lúc khu báo  → +qty (thép về mà khu chưa đếm)
+     - phiếu bị HỦY sau lúc khu báo → −qty (lúc đếm phiếu còn hiệu lực, giờ không còn)
+     Chỉ xét phiếu lập trước lúc báo rồi mới hủy; phiếu lập xong hủy luôn (cả hai sau lúc báo) tự triệt tiêu. */
   for (const k of khuAct) {
     const r = reps[k.id];
     if (!r) continue;
     const late = {};
-    todayR.results.filter((x) => x.khu_id === k.id && x.ts > r.ts).forEach((x) => (late[x.phi_id] = (late[x.phi_id] || 0) + x.qty));
+    const add = (x, q) => (late[x.phi_id] = (late[x.phi_id] || 0) + q);
+    for (const x of todayR.results) {
+      if (x.khu_id !== k.id) continue;
+      if (!x.voided) { if (x.ts > r.ts) add(x, x.qty); }
+      else if (x.voided_ts != null && x.voided_ts > r.ts) add(x, x.ts > r.ts ? 0 : -x.qty);
+    }
     const items = Object.entries(late).filter(([, q]) => q !== 0).map(([phi, q]) => ({ phi, q }));
     if (items.length) exceptions.push({ type: 'late', khu: k.id, name: k.name, reportTs: r.ts, items });
   }
@@ -851,12 +885,18 @@ async function computeReview(env, day) {
       const up = [], down = [];
       for (const p of phiR.results) {
         const key = k.id + '|' + p.id;
-        if (base[key] === undefined || cnt[key] === undefined) continue; // chưa có tồn chuẩn hoặc khu không đếm phi này
-        const ref = base[key], mv = inn[key] || 0, exp = ref + mv, d = cnt[key] - exp;
+        if (cnt[key] === undefined) continue; // khu không đếm phi này (phi đã ẩn khỏi khu): số cũ giữ nguyên
+        /* Chưa có tồn chuẩn = khu này hôm qua KHÔNG CÓ phi đó, tức dự kiến bằng 0 (cộng phiếu nhập/chuyển).
+           Trước đây chỗ này bỏ qua, nên khu đếm ra thép "từ không mà có" không bao giờ bị bắt — đúng
+           cái mà phép soi từng khu được dựng để bắt. Khi có khu khác hụt cùng phi thì tổng bãi khớp
+           nên cảnh báo "dùng âm" cấp phi cũng im, và cảnh báo duy nhất hiện ra lại trỏ vào khu BỊ HỤT. */
+        const ref = base[key] === undefined ? 0 : base[key];
+        const mv = inn[key] || 0, exp = ref + mv, d = cnt[key] - exp;
         const kg = Math.abs(d) * kgBy[p.id];
         const it = { phi: p.id, ref, mv, cnt: cnt[key], d };
         if (d > 0 && kg > KHU_UP_KG) up.push(it);
-        else if (d < 0 && kg > KHU_DOWN_KG && -d > exp * KHU_DOWN_PCT) down.push(it);
+        // hụt quá nửa số dự kiến; dự kiến 0 hoặc âm (phiếu bị hủy) thì bỏ qua phép so tỉ lệ
+        else if (d < 0 && kg > KHU_DOWN_KG && -d > Math.max(0, exp) * KHU_DOWN_PCT) down.push(it);
       }
       if (!up.length && !down.length) continue;
       // admin đã duyệt khu này với ĐÚNG số liệu hiện tại thì cảnh báo vẫn hiện nhưng không chặn chốt
@@ -944,10 +984,13 @@ async function reviewAck(req, env, user) {
   rv.exceptions.forEach((e) => { if ((e.type === 'khu_up' || e.type === 'khu_down') && (all || e.khu === khu)) byKhu[e.khu] = e; });
   const list = Object.values(byKhu).filter((e) => (undo ? e.ack : !e.ack));
   if (!list.length) throw bad(undo ? 'Không có khu nào đang được duyệt' : all ? 'Không còn khu nào cần duyệt' : 'Khu này không có cảnh báo cần duyệt');
-  // Dấu số liệu mà màn hình admin đang hiện. Khác dấu server vừa tính lại nghĩa là khu báo số mới
-  // trong lúc admin đang xem, chặn lại để không duyệt nhằm con số chưa nhìn thấy.
-  const sigs = b.sigs && typeof b.sigs === 'object' ? b.sigs : (b.sig ? { [khu]: String(b.sig) } : null);
-  if (!undo && sigs) {
+  /* Dấu số liệu mà màn hình admin đang hiện. Khác dấu server vừa tính lại nghĩa là khu báo số mới
+     trong lúc admin đang xem, chặn lại để không duyệt nhằm con số chưa nhìn thấy.
+     BẮT BUỘC có dấu: nếu chỉ kiểm tra khi máy khách chịu gửi thì một bản app cũ còn trong cache
+     (máy đã cài PWA, mở lúc mạng kém) sẽ lặng lẽ tắt luôn cơ chế này. Thiếu dấu thì nói rõ phải tải lại. */
+  if (!undo) {
+    const sigs = b.sigs && typeof b.sigs === 'object' ? b.sigs : (b.sig ? { [khu]: String(b.sig) } : null);
+    if (!sigs) throw new HttpError(409, 'Bản ứng dụng trên máy đã cũ. Hãy tải lại trang rồi duyệt lại.', 'need_sig');
     const stale = list.filter((e) => sigs[e.khu] !== e.sig);
     if (stale.length) {
       throw new HttpError(409, `${stale.map((e) => e.name).join(', ')} vừa báo lại số mới. Xem lại rồi hãy duyệt.`, 'stale_sig');
@@ -1151,6 +1194,14 @@ async function phiUpdate(req, env, admin, id) {
     // phi ẩn thì không khu nào còn phải báo nó nữa
     stmts.push(env.DB.prepare('UPDATE khu_phi SET active = 0 WHERE phi_id = ?').bind(id));
   }
+  if (!p.active && active) {
+    /* Bật lại phi thì những khu bị TẮT CÙNG LÚC với phi phải hiện lại trong bảng đếm, nếu không
+       admin bật phi mà bảng đếm vẫn trống và không ai hiểu tại sao. Phân biệt với khu bị ẩn do
+       "đếm 0 nhiều ngày": khu đó có zero_days đã chạm ngưỡng, giữ nguyên trạng thái ẩn. */
+    const setR = await env.DB.prepare(SETTINGS_SQL).all();
+    stmts.push(env.DB.prepare('UPDATE khu_phi SET active = 1 WHERE phi_id = ? AND active = 0 AND zero_days < ?')
+      .bind(id, parseSettings(setR.results).hide_after_zero_days));
+  }
   await env.DB.batch([
     env.DB.prepare('UPDATE phi SET bo_size = ?, min_stock = ?, kg_per_cay = ?, active = ? WHERE id = ?').bind(bo, min, kg, active, id),
     ...stmts,
@@ -1213,13 +1264,13 @@ async function dayView(env, url) {
   const db = env.DB;
   const [closeR, cntR, baseR, prevR, rcR, sumR, repR] = await db.batch([
     db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
-    db.prepare('SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, u.name uname FROM counts c JOIN users u ON u.id = c.user_id WHERE c.day = ?').bind(day),
+    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, ${UNAME} FROM counts c LEFT JOIN users u ON u.id = c.user_id WHERE c.day = ?`).bind(day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(day),
     // ngày chưa chốt: khu không báo thì tạm lấy tồn chuẩn trước đó (giống màn Tổng quan)
     db.prepare("SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?)").bind(day),
-    db.prepare('SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.voided, u.name uname FROM receipts r JOIN users u ON u.id = r.user_id WHERE r.day = ? ORDER BY r.id').bind(day),
+    db.prepare(`SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.voided, ${UNAME} FROM receipts r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ? ORDER BY r.id`).bind(day),
     db.prepare('SELECT phi_id, ton, nhap, dung, span FROM daily_summary WHERE day = ?').bind(day),
-    db.prepare('SELECT r.khu_id, r.ts, u.name uname FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
+    db.prepare(`SELECT r.khu_id, r.ts, ${UNAME} FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
   ]);
   return json({
     day, close: closeR.results[0] || null, counts: cntR.results, baseline: baseR.results, prevBaseline: prevR.results,
@@ -1286,7 +1337,10 @@ async function report(env, url) {
     lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dung), n(r.cuoi), t(r.dau, r.kg), t(r.nhap, r.kg), t(r.dung, r.kg), t(r.cuoi, r.kg)]));
     tot.dau += (r.dau || 0) * r.kg; tot.nhap += r.nhap * r.kg; tot.dung += r.dung * r.kg; tot.cuoi += (r.cuoi || 0) * r.kg;
   }
-  lines.push(csvRow([esc('TỔNG (tấn)'), '', '', '', '', csvDec(tot.dau / 1000, 3), csvDec(tot.nhap / 1000, 3), csvDec(tot.dung / 1000, 3), csvDec(tot.cuoi / 1000, 3)]));
+  /* Đúng 10 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả bốn số tấn tụt sang trái một cột
+     và Excel đọc "tồn đầu" thành "tồn cuối" — sai ngay trên tệp mang đi đối chiếu. */
+  const totCells = ['', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dung, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
+  lines.push(csvRow([esc('TỔNG (tấn)'), ...totCells]));
   lines.push('', csvRow(['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Dùng (tấn)', 'Tồn cuối ngày (tấn)'].map(esc)));
   for (const d of out.days) lines.push(csvRow([esc(fmtDay(d.day)), d.span, csvDec(d.nhap_kg / 1000, 3), csvDec(d.dung_kg / 1000, 3), csvDec(d.ton_kg / 1000, 3)]));
   return new Response(CSV_HEAD + lines.join('\r\n'), {
@@ -1305,7 +1359,7 @@ async function conflictView(env, url) {
   const khu = String(url.searchParams.get('khu') || '');
   const day = vnDay();
   const { results } = await env.DB.prepare(
-    'SELECT l.phi_id, l.v, l.kind, l.user_id, l.ts, u.name uname FROM counts_log l JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id'
+    `SELECT l.phi_id, l.v, l.kind, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id`
   ).bind(day, khu).all();
   const subs = [];
   for (const r of results) {
@@ -1328,25 +1382,40 @@ async function conflictResolve(req, env, user) {
   const b = await readJson(req);
   const khu = String(b.khu || '');
   const day = vnDay();
-  const [closedR, curR, repR] = await env.DB.batch([
+  const [closedR, curR, repR, kpR, setR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('SELECT phi_id, v FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
+    env.DB.prepare('SELECT phi_id, v, kind FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
     env.DB.prepare('SELECT 1 x FROM khu_report WHERE day = ? AND khu_id = ?').bind(day, khu),
+    env.DB.prepare('SELECT phi_id, zero_days, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khu),
+    env.DB.prepare(SETTINGS_SQL),
   ]);
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   if (!repR.results.length) throw bad('Không có khu cần xử lý');
-  const cur = Object.fromEntries(curR.results.map((r) => [r.phi_id, r.v]));
+  const cur = Object.fromEntries(curR.results.map((r) => [r.phi_id, r]));
   const pick = b.pick && typeof b.pick === 'object' ? b.pick : {};
   const changes = [];
   for (const phi of Object.keys(pick)) {
     if (!(phi in cur)) throw bad('Phi không có trong báo cáo: ' + phi);
-    const v = intIn(pick[phi], 0, 99999, 'Số cây của ' + phi);
-    if (v !== cur[phi]) changes.push({ phi, prev: cur[phi], v });
+    const v = intIn(pick[phi], 0, 99999, 'Số đếm của ' + phi);
+    if (v !== cur[phi].v) changes.push({ phi, prev: cur[phi].v, v });
   }
   const ts = Date.now();
   const data = JSON.stringify(changes);
   const stmts = [];
   if (changes.length) {
+    /* Số admin chọn phải để lại cùng dấu vết như một lần báo thường, nếu không thì hai đường ghi
+       cùng một ô lại cho hai trạng thái khác nhau: chọn số 0 mà zero_days không tăng thì phi không
+       bao giờ tự ẩn khỏi khu, và chọn số thay cho bản "giữ nguyên" mà keep_streak không về 0 thì
+       người đếm bị bắt đếm lại sớm hơn thực tế. Cách tính chuỗi giống putCounts: bỏ phần mà lần
+       báo đang bị thay thế đã cộng, rồi tính lại theo số mới. kind thành 'dem' nên keep_streak = 0. */
+    const settings = parseSettings(setR.results);
+    const kp = Object.fromEntries(kpR.results.map((r) => [r.phi_id, r]));
+    const kpRows = changes.map((c) => {
+      const old = kp[c.phi];
+      const zero0 = Math.max(0, (old ? old.zero_days : 0) - (c.prev === 0 ? 1 : 0));
+      const zero = c.v === 0 ? zero0 + 1 : 0;
+      return { phi: c.phi, zero, active: c.v === 0 && zero >= settings.hide_after_zero_days ? 0 : 1 };
+    });
     stmts.push(
       env.DB.prepare(
         `UPDATE counts SET v = (SELECT ${J('v')} FROM json_each(?3) j WHERE ${J('phi')} = counts.phi_id),
@@ -1356,7 +1425,12 @@ async function conflictResolve(req, env, user) {
       env.DB.prepare(
         `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
          SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, 'dem', ?3, ?4 FROM json_each(?5) j`
-      ).bind(day, khu, user.id, ts, data)
+      ).bind(day, khu, user.id, ts, data),
+      env.DB.prepare(
+        `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
+         SELECT ?1, ${J('phi')}, ${J('active')}, ${J('zero')}, 0 FROM json_each(?2) j WHERE 1
+         ON CONFLICT(khu_id, phi_id) DO UPDATE SET active = excluded.active, zero_days = excluded.zero_days, keep_streak = 0`
+      ).bind(khu, JSON.stringify(kpRows))
     );
   }
   stmts.push(
@@ -1373,7 +1447,7 @@ async function submissionsView(env, url) {
   const khu = String(url.searchParams.get('khu') || '');
   const day = vnDay();
   const { results } = await env.DB.prepare(
-    'SELECT l.phi_id, l.v, l.user_id, l.ts, u.name uname FROM counts_log l JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id'
+    `SELECT l.phi_id, l.v, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id`
   ).bind(day, khu).all();
   const subs = [];
   for (const r of results) {

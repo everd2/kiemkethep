@@ -17,6 +17,9 @@ class FakeDate extends RealDate {
 }
 globalThis.Date = FakeDate;
 export const addDays = (n) => { clock.offset += n * 86400e3; };
+/* Nhích đồng hồ vài giây. Cần khi test phụ thuộc thứ tự theo `ts`: bộ test chạy trong bộ nhớ
+   nên hai thao tác có thể rơi vào cùng một milligiây, lúc đó so sánh ts không phân định được. */
+export const advance = (ms) => { clock.offset += ms; };
 export const vnDay = (ms = Date.now()) => new RealDate(ms + 7 * 3600e3).toISOString().slice(0, 10);
 
 /* ---------- shim D1 trên node:sqlite ---------- */
