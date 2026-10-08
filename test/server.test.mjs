@@ -29,6 +29,10 @@ async function setup() {
   return S;
 }
 
+/* Phiên bản cấu trúc hiện tại, đọc từ chính worker: ba mục dưới đây chỉ cần biết "migration đã
+   chạy tới bản mới nhất", nên không phải sửa số bằng tay mỗi lần thêm một migration. */
+const SCHEMA_NOW = Number(readFileSync(path.join(ROOT, 'src/worker.js'), 'utf8').match(/SCHEMA_VERSION = (\d+)/)[1]);
+
 const PHI = ['D6', 'D8', 'D10', 'D12', 'D14', 'D16', 'D18', 'D20', 'D22', 'D25', 'D28', 'D32', 'D36'];
 /* Một báo cáo gồm ĐỦ mọi phi đang bật, đúng như máy khách gửi: phi người đếm gõ số thì kind 'dem',
    phi để trống thì kind 'zero' với v = 0. Server đòi đủ để một bản app cũ còn trong cache không thể
@@ -449,7 +453,7 @@ async function main() {
     // request đầu tiên phải tự nâng cấp
     await S.call('GET', '/me');
     ok('sau request đầu: đã thêm cột active', S.sql('PRAGMA table_info(phi)').some((c) => c.name === 'active'));
-    eq('phiên bản schema đã lên', S.one("SELECT value FROM meta WHERE key='schema'").value, 10);
+    eq('phiên bản schema đã lên', S.one("SELECT value FROM meta WHERE key='schema'").value, SCHEMA_NOW);
     eq('phi cũ mặc định đang dùng', S.one("SELECT active FROM phi WHERE id='D10'").active, 1);
     // nâng cấp hai lần không lỗi (nhiều isolate cùng khởi động)
     S.raw.exec("UPDATE meta SET value = 6 WHERE key = 'schema'");
@@ -484,7 +488,7 @@ async function main() {
 
     // request đầu tiên sau khi deploy phải tự nâng cấp
     await S.call('GET', '/rev');
-    eq('phiên bản schema lên 10', S.one("SELECT value FROM meta WHERE key='schema'").value, 10);
+    eq('phiên bản schema lên bản mới nhất', S.one("SELECT value FROM meta WHERE key='schema'").value, SCHEMA_NOW);
     ok('đã thêm cột duyệt cho counts', S.sql('PRAGMA table_info(counts)').some((c) => c.name === 'duyet_v'));
     ok('đã thêm cột duyệt cho receipts', S.sql('PRAGMA table_info(receipts)').some((c) => c.name === 'duyet_day'));
     ok('bảng review_ack đã bỏ', !S.sql("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_ack'").length);
@@ -510,7 +514,7 @@ async function main() {
     S.raw.exec("UPDATE meta SET value = 9 WHERE key = 'schema'");
     const S2 = await boot(ROOT, S.raw); // isolate MỚI trên cùng database: ensureSchema chạy lại từ bản 9
     await S2.call('GET', '/rev');
-    eq('chạy lại migration: phiên bản vẫn lên 10', S.one("SELECT value FROM meta WHERE key='schema'").value, 10);
+    eq('chạy lại migration: phiên bản vẫn lên bản mới nhất', S.one("SELECT value FROM meta WHERE key='schema'").value, SCHEMA_NOW);
     eq('và KHÔNG phá ô "để trống" của dữ liệu mới',
       S.one("SELECT kind, duyet_kind FROM counts WHERE khu_id='B' AND phi_id='D25'"), { kind: 'zero', duyet_kind: 'zero' });
     eq('dữ liệu cũ vẫn giữ nguyên số đã duyệt',
@@ -933,6 +937,106 @@ async function main() {
     const d4 = await S.call('POST', '/review/duyet', { khu: 'A' });
     eq('duyệt khu gộp phiếu trong khả năng: được', [d4.status, d4.data.phieu], [200, 1]);
     eq('phiếu vào tồn theo ngày duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', t2.data.id).duyet_day, day);
+  }
+
+  /* ================= 36. Xoá / sửa tên tài khoản: hoạt động phải GIỮ NGUYÊN TÊN =================
+     Hai yêu cầu đi liền nhau. Tên là thứ đi theo mọi hoạt động: số đếm, phiếu, báo cáo khu và
+     lần chốt ngày đều lấy tên bằng cách join users. Vì vậy:
+     - Xoá tài khoản KHÔNG được xoá dòng users, nếu không toàn bộ lịch sử của người đó hiện
+       "(đã xoá)" và mất dấu ai đã làm gì.
+     - Phải sửa được tên, vì trước đây tên đặt lúc tạo là vĩnh viễn: một tài khoản đặt theo chức
+       danh ("admin") sẽ ghi "admin" lên mọi hoạt động và không ai biết người thật là ai. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    const uid = (n) => S.one('SELECT id FROM users WHERE name = ?', n).id;
+    // An đếm, Kho nhập phiếu: hai dấu vết mang tên hai người
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] }, 'Kho');
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    const tenTrongBoot = async (who) => {
+      const b = (await S.call('GET', '/bootstrap', undefined, who)).data;
+      return { dem: b.counts.filter((c) => c.v).map((c) => c.uname), phieu: b.receipts.map((r) => r.uname) };
+    };
+    eq('trước khi xoá: hoạt động mang tên hai người', await tenTrongBoot('admin'), { dem: ['An'], phieu: ['Kho'] });
+
+    /* --- chỉ admin ĐẦU TIÊN được sửa tên / xoá / khôi phục --- */
+    const admin2 = await S.call('POST', '/users', { name: 'Admin Hai', phone: '0900000009', role: 'admin' });
+    await S.login('Admin Hai', '0900000009', admin2.data.pin);
+    await S.call('POST', '/change-pin', { pin: admin2.data.pin, newPin: '2846' }, 'Admin Hai');
+    eq('admin thường không xoá được tài khoản',
+      (await S.call('POST', `/users/${uid('An')}/delete`, {}, 'Admin Hai')).status, 403);
+    eq('admin thường không sửa được tên',
+      (await S.call('POST', `/users/${uid('An')}/rename`, { name: 'X' }, 'Admin Hai')).status, 403);
+    eq('người đếm càng không', (await S.call('POST', `/users/${uid('An')}/delete`, {}, 'An')).status, 403);
+
+    /* --- admin đầu tiên là tài khoản quản lý: không ai khoá, hạ quyền hay xoá được --- */
+    const first = uid('Admin');
+    eq('admin khác không khoá được admin đầu tiên',
+      (await S.call('POST', `/users/${first}/lock`, { locked: 1 }, 'Admin Hai')).status, 400);
+    eq('không hạ quyền được admin đầu tiên',
+      (await S.call('POST', `/users/${first}/role`, { role: 'nguoidem' }, 'Admin Hai')).status, 400);
+    eq('và chính admin đầu tiên cũng không tự xoá được',
+      (await S.call('POST', `/users/${first}/delete`, {})).status, 400);
+
+    /* --- SỬA TÊN: số đếm và phiếu hiện tên mới NGAY, cả dữ liệu cũ --- */
+    const r1 = await S.call('POST', `/users/${uid('An')}/rename`, { name: 'Nguyễn Văn An' });
+    eq('admin đầu tiên sửa được tên', r1.status, 200);
+    eq('số đếm cũ hiện tên mới', (await tenTrongBoot('admin')).dem, ['Nguyễn Văn An']);
+    /* Tên NGƯỜI DUYỆT cũng phải theo tên mới. Đây là chỗ dễ sót nhất mà lại đúng chỗ cần nhất:
+       tài khoản hay đặt tên theo chức danh ("admin") chính là tài khoản đi duyệt gần như mọi thứ,
+       nên nếu tên người duyệt bị lưu cứng vào dòng số liệu thì sửa tên xong màn Duyệt và màn Xem
+       lại ngày cũ vẫn ghi tên cũ. */
+    const r2 = await S.call('POST', `/users/${first}/rename`, { name: 'Phạm Quản Lý' });
+    eq('sửa được tên của chính admin đầu tiên', r2.status, 200);
+    eq('màn Duyệt hiện tên người duyệt mới',
+      (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').duyet.by, 'Phạm Quản Lý');
+    await chot(S, { note: '' });
+    eq('màn Xem lại ngày cũ cũng hiện tên mới',
+      [...new Set((await S.call('GET', '/day?date=' + day)).data.counts.map((c) => c.uname))], ['Phạm Quản Lý']);
+    eq('tên trùng tên cũ: từ chối', (await S.call('POST', `/users/${uid('Nguyễn Văn An')}/rename`, { name: 'Nguyễn Văn An' })).status, 400);
+    eq('tên rỗng: từ chối', (await S.call('POST', `/users/${uid('Nguyễn Văn An')}/rename`, { name: '  ' })).status, 400);
+    /* Nhật ký thì KHÁC: nó lưu sẵn tên vào từng dòng và database từ chối mọi lệnh sửa, nên dòng
+       cũ giữ tên cũ — cố ý, để nhật ký không viết lại được. Dòng "đổi tên" là cái nối hai tên. */
+    const nk = S.sql('SELECT user_name, action, detail FROM audit ORDER BY id');
+    ok('dòng nhật ký cũ vẫn mang tên lúc đó', nk.some((x) => x.action === 'count' && x.user_name === 'An'),
+      JSON.stringify(nk.filter((x) => x.action === 'count').map((x) => x.user_name)));
+    const rn = nk.find((x) => x.action === 'user_rename');
+    eq('và có dòng nối hai tên lại', rn && JSON.parse(rn.detail).from + ' -> ' + JSON.parse(rn.detail).to, 'An -> Nguyễn Văn An');
+
+    /* --- XOÁ: hoạt động giữ nguyên tên, không còn đăng nhập, bỏ phân công khu --- */
+    const anId = uid('Nguyễn Văn An');
+    await S.call('PUT', `/khu/A/users`, { users: [anId] });
+    eq('An đang phụ trách khu A', S.sql('SELECT 1 FROM khu_user WHERE user_id = ?', anId).length, 1);
+    const del = await S.call('POST', `/users/${anId}/delete`, {});
+    eq('xoá được', del.status, 200);
+    eq('DÒNG users KHÔNG bị xoá — đây là điều kiện để giữ tên',
+      S.one('SELECT name, deleted FROM users WHERE id = ?', anId), { name: 'Nguyễn Văn An', deleted: 1 });
+    eq('số đếm và phiếu vẫn mang đúng tên người làm', await tenTrongBoot('admin'),
+      { dem: ['Nguyễn Văn An'], phieu: ['Kho'] });
+    eq('màn Duyệt cũng vẫn thấy tên', (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').rep.uname, 'Nguyễn Văn An');
+    eq('bị thu hồi mọi phiên', S.sql('SELECT 1 FROM sessions WHERE user_id = ?', anId).length, 0);
+    eq('bị bỏ khỏi phân công khu', S.sql('SELECT 1 FROM khu_user WHERE user_id = ?', anId).length, 0);
+    eq('không đăng nhập lại được', (await S.call('POST', '/login', { phone: '0900000002', pin: '1357' }, 'An2')).status, 401);
+    eq('phiên cũ cũng không dùng được nữa', (await S.call('GET', '/bootstrap', undefined, 'An')).status, 401);
+
+    // tài khoản đã xoá thì chỉ còn khôi phục, không đặt lại PIN / đổi vai trò nửa vời
+    eq('không đặt lại PIN cho tài khoản đã xoá', (await S.call('POST', `/users/${anId}/reset-pin`, {})).status, 400);
+    eq('không gán khu cho tài khoản đã xoá', (await S.call('PUT', `/khu/A/users`, { users: [anId] })).status, 400);
+    // số điện thoại vẫn bị giữ: nói rõ đường đi thay vì "đã có tài khoản"
+    const dup = await S.call('POST', '/users', { name: 'Người mới', phone: '0900000002', role: 'nguoidem' });
+    ok('tạo trùng số của tài khoản đã xoá: chỉ dẫn khôi phục', /khôi phục/i.test(JSON.stringify(dup.data)), JSON.stringify(dup.data));
+
+    /* --- KHÔI PHỤC --- */
+    const res = await S.call('POST', `/users/${anId}/restore`, {});
+    eq('khôi phục được', res.status, 200);
+    eq('và bắt đổi PIN khi đăng nhập lại', S.one('SELECT deleted, must_change FROM users WHERE id = ?', anId), { deleted: 0, must_change: 1 });
+    eq('khôi phục lần hai: từ chối', (await S.call('POST', `/users/${anId}/restore`, {})).status, 400);
+
+    // danh sách trả cả tài khoản đã xoá và id admin đầu tiên, để màn hình bày đúng nút
+    await S.call('POST', `/users/${anId}/delete`, {});
+    const ls = (await S.call('GET', '/users')).data;
+    eq('danh sách nói rõ ai là admin đầu tiên', ls.first, first);
+    eq('và kèm tài khoản đã xoá để khôi phục', ls.users.filter((u) => u.deleted).map((u) => u.name), ['Nguyễn Văn An']);
   }
 
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */

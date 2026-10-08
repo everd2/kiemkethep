@@ -91,7 +91,7 @@ function seedPhi(env) {
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -207,6 +207,14 @@ const MIGRATIONS = {
     // review_ack chỉ chứa cờ duyệt cảnh báo trong ngày, nay thay bằng duyet_* trên chính dòng số liệu
     'DROP TABLE IF EXISTS review_ack',
   ],
+  /* Xoá tài khoản, nhưng KHÔNG xoá dòng users.
+     Mọi số đếm, phiếu, báo cáo khu và lần chốt ngày đều lấy tên người làm bằng cách join users
+     (xem UNAME). Xoá hẳn dòng đó là toàn bộ lịch sử của người ấy hiện "(đã xoá)" — mất dấu ai
+     đã làm gì, đúng cái không được phép mất. Giữ dòng lại thì mọi tên vẫn đúng mãi mãi, và
+     khôi phục được tài khoản xoá nhầm mà không cần mở database. */
+  11: [
+    'ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0',
+  ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
   SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
@@ -307,9 +315,10 @@ async function auth(req, env, renew = true) {
   if (!m) throw new HttpError(401, 'Chưa đăng nhập');
   const th = await sha256(m[1]);
   const row = await env.DB.prepare(
-    'SELECT u.id, u.name, u.phone, u.role, u.locked, u.must_change, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?'
+    'SELECT u.id, u.name, u.phone, u.role, u.locked, u.deleted, u.must_change, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?'
   ).bind(th).first();
-  if (!row || row.expires_at < Date.now() || row.locked) throw new HttpError(401, 'Phiên đăng nhập hết hạn');
+  // xoá tài khoản đã thu hồi mọi phiên, nhưng vẫn kiểm ở đây: phiên là thứ dùng để vào hệ thống
+  if (!row || row.expires_at < Date.now() || row.locked || row.deleted) throw new HttpError(401, 'Phiên đăng nhập hết hạn');
   if (renew && row.expires_at - Date.now() < SESSION_MS / 2) {
     await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(Date.now() + SESSION_MS, th).run();
   }
@@ -325,6 +334,13 @@ function sessionCookie(url, token, maxAge) {
    sẽ làm cả số đếm/phiếu của người đó biến khỏi màn hình trong khi vẫn nạm trong database và vẫn
    được computeReview/baseline tính — hai màn hình lệch nhau mà không ai hiểu tại sao. */
 const UNAME = "COALESCE(u.name, '(đã xoá)') uname";
+/* Tên NGƯỜI DUYỆT: lấy từ bảng users qua duyet_by, không dùng duyet_name đã lưu cứng trong dòng
+   số liệu. Lý do: sửa tên phải lan tới mọi chỗ hiện hoạt động, mà tài khoản hay mang tên theo
+   chức danh ("admin") lại chính là tài khoản đi duyệt gần như mọi thứ — để tên cứng thì sửa tên
+   xong màn Xem lại ngày cũ vẫn ghi "admin". duyet_name giữ lại làm bản lưu tên LÚC DUYỆT, và là
+   đường rơi về nếu dòng users biến mất (dữ liệu cũ bị xoá tay trong database). */
+const DUYET_NAME = "COALESCE(ud.name, c.duyet_name) duyet_uname";
+const DUYET_JOIN = 'LEFT JOIN users ud ON ud.id = c.duyet_by';
 const SETTINGS_SQL = 'SELECT key, value FROM settings';
 const SETTING_RANGE = { max_keep_streak: [1, 30], auto_close: [0, 1] };
 function parseSettings(rows) {
@@ -380,6 +396,9 @@ async function login(req, env, url) {
   const ipFail = env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today);
   const u = uR.results[0];
   if (!u) { await ipFail.run(); throw fail(); }
+  /* Tài khoản đã xoá: trả lời y như sai PIN, không nói "tài khoản đã xoá". Nói rõ là tiết lộ
+     số điện thoại nào từng có tài khoản cho người đang dò. Người bị xoá thật thì hỏi admin. */
+  if (u.deleted) { await ipFail.run(); throw fail(); }
   if (u.locked) throw new HttpError(403, 'Tài khoản đã bị khóa, liên hệ admin');
   if (u.locked_until > Date.now()) {
     const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
@@ -428,7 +447,7 @@ async function recoverAdmin(req, env) {
   if (!phone) throw bad('Thiếu số điện thoại');
   const np = String(b.newPin || '');
   checkPin(np);
-  const u = await env.DB.prepare('SELECT * FROM users WHERE phone = ? AND role = ?').bind(phone, 'admin').first();
+  const u = await env.DB.prepare('SELECT * FROM users WHERE phone = ? AND role = ? AND deleted = 0').bind(phone, 'admin').first();
   if (!u) throw new HttpError(404, 'Không tìm thấy tài khoản admin với số điện thoại này');
   const salt = rand(16);
   await env.DB.batch([
@@ -465,15 +484,16 @@ async function bootstrap(env, user) {
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
     env.DB.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, ${UNAME}, c.ts,
-                      c.duyet_v, c.duyet_ts, c.duyet_at, c.duyet_name FROM counts c LEFT JOIN users u ON u.id = c.user_id WHERE c.day = ?`).bind(day),
+                      c.duyet_v, c.duyet_ts, c.duyet_at, ${DUYET_NAME}
+                    FROM counts c LEFT JOIN users u ON u.id = c.user_id ${DUYET_JOIN} WHERE c.day = ?`).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     env.DB.prepare(`SELECT r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
     /* Phiếu để hiện danh sách: của hôm nay, CỘNG mọi phiếu còn chờ duyệt của ngày trước.
        Phiếu lập hôm qua chưa ai duyệt vẫn phải nhìn thấy được, không thì nó biến mất khỏi
        màn Nhập kho mà vẫn chưa vào tồn — không ai biết nó còn tồn tại. */
     env.DB.prepare(`SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.user_id, ${UNAME},
-                      r.day, r.duyet_day, r.duyet_ts, r.duyet_name
-                    FROM receipts r LEFT JOIN users u ON u.id = r.user_id
+                      r.day, r.duyet_day, r.duyet_ts, COALESCE(ud.name, r.duyet_name) duyet_name
+                    FROM receipts r LEFT JOIN users u ON u.id = r.user_id LEFT JOIN users ud ON ud.id = r.duyet_by
                     WHERE r.voided = 0 AND (r.day = ?1 OR r.duyet_day IS NULL OR r.duyet_day = ?1) ORDER BY r.id DESC`).bind(day),
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
@@ -950,7 +970,7 @@ function lastDuyetBy(subRows, khuId) {
     if (r.khu_id !== khuId || !r.duyet_at) continue;
     if (!best || r.duyet_at > best.duyet_at) best = r;
   }
-  return best ? best.duyet_name : null;
+  return best ? best.duyet_uname : null;
 }
 
 async function computeReview(env, day) {
@@ -970,8 +990,8 @@ async function computeReview(env, day) {
     db.prepare(EFF_SELECT).bind(last, day),
     /* Lần báo MỚI NHẤT của từng ô, kèm trạng thái duyệt. Đây là số người duyệt đang phải quyết,
        khác số ở effR khi lần báo mới chưa được duyệt. */
-    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day, c.duyet_v, c.duyet_ts, c.duyet_at, c.duyet_name, ${UNAME}
-                FROM counts c LEFT JOIN users u ON u.id = c.user_id
+    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day, c.duyet_v, c.duyet_ts, c.duyet_at, ${DUYET_NAME}, ${UNAME}
+                FROM counts c LEFT JOIN users u ON u.id = c.user_id ${DUYET_JOIN}
                 WHERE c.day > ?1 AND c.day <= ?2
                   AND c.day = (SELECT MAX(c2.day) FROM counts c2
                                WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id
@@ -1348,9 +1368,22 @@ async function nightly(env) {
 
 /* ========================= QUẢN TRỊ ========================= */
 
+/* Admin ĐẦU TIÊN = tài khoản do màn Thiết lập tạo ra, tức dòng users có id nhỏ nhất. Đây là
+   "chủ hệ thống": chỉ người này được sửa tên, xoá và khôi phục tài khoản, và chính tài khoản này
+   thì không ai khoá, hạ quyền hay xoá được — kể cả một admin khác. Thiếu chốt đó thì hai admin
+   có thể khoá lẫn nhau và cả bãi mất đường quản lý người dùng, không sửa được từ trong app. */
+const firstAdminId = async (env) => {
+  const r = await env.DB.prepare('SELECT MIN(id) id FROM users').first();
+  return r && r.id != null ? r.id : 0;
+};
+
 async function listUsers(env) {
-  const { results } = await env.DB.prepare('SELECT id, name, phone, role, locked, must_change, locked_until FROM users ORDER BY id').all();
-  return json({ users: results });
+  // trả cả tài khoản đã xoá: admin đầu tiên cần thấy để khôi phục khi xoá nhầm
+  const [uR, fid] = await Promise.all([
+    env.DB.prepare('SELECT id, name, phone, role, locked, deleted, must_change, locked_until FROM users ORDER BY id').all(),
+    firstAdminId(env),
+  ]);
+  return json({ users: uR.results, first: fid });
 }
 
 async function createUser(req, env, admin) {
@@ -1360,7 +1393,11 @@ async function createUser(req, env, admin) {
   const phone = normPhone(b.phone);
   const role = String(b.role || 'nguoidem');
   if (!ROLES.includes(role)) throw bad('Vai trò không hợp lệ');
-  const exist = await env.DB.prepare('SELECT 1 x FROM users WHERE phone = ?').bind(phone).first();
+  const exist = await env.DB.prepare('SELECT name, deleted FROM users WHERE phone = ?').bind(phone).first();
+  /* Số điện thoại là UNIQUE và dòng của người đã xoá vẫn còn, nên không tạo mới trùng số được.
+     Nói rõ đường đi thay vì chỉ "đã có tài khoản": người dùng không nhìn thấy tài khoản đã xoá
+     trong danh sách nên sẽ tưởng là lỗi vô lý. */
+  if (exist && exist.deleted) throw bad(`Số này thuộc tài khoản đã xoá của ${exist.name}. Hãy khôi phục tài khoản đó, hoặc dùng số khác.`);
   if (exist) throw bad('Số điện thoại này đã có tài khoản');
   const pin = genPin();
   const salt = rand(16);
@@ -1370,9 +1407,25 @@ async function createUser(req, env, admin) {
   return json({ ok: true, id: r.meta.last_row_id, pin });
 }
 
+// ba việc quản lý người dùng dành riêng cho admin đầu tiên (xem firstAdminId)
+const OWNER_ONLY = ['rename', 'delete', 'restore'];
+// và ba việc KHÔNG được làm với chính admin đầu tiên, kể cả do một admin khác
+const PROTECT_FIRST = ['lock', 'role', 'delete'];
+
 async function userAction(req, env, admin, id, action) {
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
   if (!u) throw new HttpError(404, 'Không tìm thấy người dùng');
+  const first = await firstAdminId(env);
+  if (OWNER_ONLY.includes(action) && admin.id !== first) {
+    throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới sửa tên, xoá hoặc khôi phục tài khoản');
+  }
+  if (PROTECT_FIRST.includes(action) && id === first) {
+    throw bad('Không thể khóa, hạ quyền hay xoá admin đầu tiên — đó là tài khoản quản lý hệ thống');
+  }
+  /* Tài khoản đã xoá thì chỉ còn khôi phục được. Cho đặt lại PIN hay đổi vai trò một tài khoản
+     đã xoá chỉ sinh ra trạng thái nửa vời mà không ai dùng được, và PIN mới hiện ra màn hình
+     cho một người đã rời bãi. */
+  if (u.deleted && action !== 'restore') throw bad(`Tài khoản ${u.name} đã bị xoá. Khôi phục trước nếu cần dùng lại.`);
   const b = req.method === 'POST' ? await readJson(req) : {};
   if (action === 'reset-pin') {
     const pin = genPin();
@@ -1411,6 +1464,48 @@ async function userAction(req, env, admin, id, action) {
     ]);
     return json({ ok: true });
   }
+  /* Sửa tên. Lý do có việc này: tên đặt lúc tạo tài khoản trước đây không sửa được, nên một tài
+     khoản đặt tên theo chức danh ("admin") sẽ ghi "admin" lên mọi hoạt động về sau và không ai
+     biết người thật là ai. Số đếm, phiếu và báo cáo khu lấy tên bằng cách join users nên đổi tên
+     là chúng hiện tên mới NGAY, cả dữ liệu cũ.
+     Riêng NHẬT KÝ thì không: bảng audit lưu sẵn tên vào từng dòng và database từ chối mọi lệnh
+     sửa (trigger audit_no_update), cố ý như vậy để nhật ký không viết lại được. Nên dòng nhật ký
+     cũ giữ tên cũ — và chính dòng "đổi tên X thành Y" dưới đây là cái nối hai tên đó lại. */
+  if (action === 'rename') {
+    const name = String(b.name || '').trim().slice(0, 60);
+    if (!name) throw bad('Cần nhập tên');
+    if (name === u.name) throw bad('Tên mới trùng tên cũ');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(name, id),
+      auditStmt(env, admin, 'user_rename', { id, from: u.name, to: name }),
+      bump(env),
+    ]);
+    return json({ ok: true, name });
+  }
+  /* Xoá: đánh dấu deleted, KHÔNG xoá dòng users — xem migration 11. Thu hồi mọi phiên và bỏ phân
+     công khu, vì khu đã gán cho người này sẽ không ai đếm được nữa (chỉ người phụ trách và admin
+     đếm được). Số đếm, phiếu, báo cáo người này đã làm thì giữ nguyên, kèm nguyên tên. */
+  if (action === 'delete') {
+    if (id === admin.id) throw bad('Không thể tự xoá chính mình');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET deleted = 1, locked = 0, fail_count = 0, locked_until = 0 WHERE id = ?').bind(id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
+      env.DB.prepare('DELETE FROM khu_user WHERE user_id = ?').bind(id),
+      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone }),
+      bump(env),
+    ]);
+    return json({ ok: true });
+  }
+  // Khôi phục tài khoản xoá nhầm. Bắt đổi PIN khi đăng nhập lại: PIN cũ đã nằm ngoài tầm kiểm soát.
+  if (action === 'restore') {
+    if (!u.deleted) throw bad('Tài khoản này chưa bị xoá');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET deleted = 0, must_change = 1 WHERE id = ?').bind(id),
+      auditStmt(env, admin, 'user_restore', { id, name: u.name }),
+      bump(env),
+    ]);
+    return json({ ok: true });
+  }
   throw new HttpError(404, 'Không có thao tác này');
 }
 
@@ -1444,9 +1539,10 @@ async function khuUsers(req, env, admin, id) {
   if (raw.length > 50) throw bad('Quá nhiều người trong một khu');
   const ids = [...new Set(raw.map((x) => intIn(x, 1, 1e9, 'Mã tài khoản')))];
   if (ids.length) {
-    const have = await env.DB.prepare('SELECT id FROM users WHERE id IN (SELECT value FROM json_each(?))')
+    // tài khoản đã xoá không gán được: khu gán cho người đã rời bãi thì không ai đếm được nữa
+    const have = await env.DB.prepare('SELECT id FROM users WHERE deleted = 0 AND id IN (SELECT value FROM json_each(?))')
       .bind(JSON.stringify(ids)).all();
-    if (have.results.length !== ids.length) throw bad('Có tài khoản không tồn tại');
+    if (have.results.length !== ids.length) throw bad('Có tài khoản không tồn tại hoặc đã bị xoá');
   }
   const stmts = [env.DB.prepare('DELETE FROM khu_user WHERE khu_id = ?').bind(id)];
   if (ids.length) {
@@ -1572,8 +1668,8 @@ async function dayView(env, url) {
     db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
     /* Xem lại một ngày là xem số ĐÃ DUYỆT của ngày đó: đó mới là số liệu chính thức.
        Lần báo chưa duyệt (nếu còn) không phải số liệu của ngày, nên không lấy ra đây. */
-    db.prepare(`SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c.duyet_at ts, c.duyet_name uname
-                FROM counts c WHERE c.day = ? AND c.duyet_v IS NOT NULL`).bind(day),
+    db.prepare(`SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c.duyet_at ts, ${DUYET_NAME.replace('duyet_uname', 'uname')}
+                FROM counts c ${DUYET_JOIN} WHERE c.day = ? AND c.duyet_v IS NOT NULL`).bind(day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(day),
     // ngày chưa chốt: khu không báo thì tạm lấy tồn chuẩn trước đó (giống màn Tổng quan)
     db.prepare("SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?)").bind(day),

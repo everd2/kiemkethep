@@ -161,10 +161,15 @@ S.audit = [
   { ts: Date.now(), user_name: null, action: 'auto_close_skip', detail: JSON.stringify({ day: '${today}', reason: '1 khu chưa báo' }) },
   { ts: Date.now(), user_name: 'Nguyễn Văn A', action: 'login_locked', detail: JSON.stringify({ mins: 60 }) },
 ];
+/* Đủ các trạng thái màn Người dùng phải vẽ: admin đầu tiên (không khoá/hạ quyền/xoá được),
+   người bị khoá, admin thường, và một tài khoản ĐÃ XOÁ để thử mục khôi phục. */
 S.users = [
-  { id: 1, name: 'Nguyễn Văn A', phone: '0901234567', role: 'admin', locked: 0, must_change: 0 },
-  { id: 2, name: 'Trần B', phone: '0902222222', role: 'nguoidem', locked: 1, must_change: 1 },
+  { id: 1, name: 'Nguyễn Văn A', phone: '0901234567', role: 'admin', locked: 0, deleted: 0, must_change: 0 },
+  { id: 2, name: 'Trần B', phone: '0902222222', role: 'nguoidem', locked: 1, deleted: 0, must_change: 1 },
+  { id: 3, name: 'Phạm D', phone: '0903333333', role: 'thukho', locked: 0, deleted: 0, must_change: 0 },
+  { id: 4, name: 'Lê C', phone: '0904444444', role: 'nguoidem', locked: 0, deleted: 1, must_change: 0 },
 ];
+S.uFirst = 1;
 S.usage = [{ day: '${yday}', span: 1, used: { D8: 55, D10: 120 } }];
 S.hist = { date: '${yday}', data: ${JSON.stringify(dayData)} };
 S.bc = { from: '${yday}', to: '${today}', data: ${JSON.stringify(repData)} };

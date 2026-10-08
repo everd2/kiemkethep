@@ -6,6 +6,12 @@
 -- "... ,\n  -- chú thích\n)" và SQLite báo "incomplete input". Đã gặp thật với phi.active.
 -- Ngoài ra: drop một cột đang có index thì phải DROP INDEX trước (xem idx_receipts_grp).
 
+-- deleted: tài khoản đã xoá. DÒNG NÀY KHÔNG BAO GIỜ BỊ XOÁ KHỎI BẢNG: mọi số đếm, phiếu, báo cáo
+-- khu và lần chốt ngày đều lấy tên người làm bằng cách join users, nên xoá hẳn dòng là toàn bộ
+-- lịch sử của người đó hiện "(đã xoá)" — mất dấu ai đã làm gì. Giữ dòng thì tên còn đúng mãi,
+-- và khôi phục được tài khoản xoá nhầm mà không phải mở database.
+-- Tài khoản có id NHỎ NHẤT là admin đầu tiên (người thiết lập hệ thống): chỉ người này được sửa
+-- tên, xoá và khôi phục tài khoản, và không ai khoá/hạ quyền/xoá được tài khoản đó.
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -18,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
   fail_count INTEGER NOT NULL DEFAULT 0,
   locked_until INTEGER NOT NULL DEFAULT 0,
   lock_level INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -223,7 +230,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 10);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 11);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

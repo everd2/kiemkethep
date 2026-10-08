@@ -1202,6 +1202,11 @@ function fmtAudit(a) {
     reopen_day: ['mở lại ngày ' + fmtDay(d.day) + ' (' + d.note + ')', 'flag'], recount: ['yêu cầu ' + kn(d.khu) + ' đếm lại', 'admin'], recount_after_close: ['mở lại ngày, xoá số ' + kn(d.khu) + ' và yêu cầu đếm lại', 'flag'], conflict_resolve: [(d.changes && d.changes.length ? 'chọn số cho ' + kn(d.khu) + ': ' + d.changes.map((c) => c.phi + ' ' + c.from + ' → ' + c.to).join('; ') : 'chọn số báo sau cho ' + kn(d.khu)), 'admin'],
     user_create: ['tạo tài khoản ' + d.name, 'admin'], user_reset_pin: ['đặt lại PIN cho ' + d.name, 'admin'], user_lock: ['khóa ' + d.name, 'admin'], user_unlock: ['mở khóa ' + d.name, 'admin'],
     user_role: ['đổi vai trò ' + d.name + ' thành ' + (ROLE[d.role] || d.role), 'admin'], user_logout: ['đăng xuất mọi máy của ' + d.name, 'admin'],
+    /* Dòng này là cái NỐI hai tên lại: nhật ký lưu sẵn tên vào từng dòng và database từ chối sửa,
+       nên các dòng trước khi đổi tên vẫn mang tên cũ. Có dòng này thì vẫn tra ra được là ai. */
+    user_rename: ['đổi tên "' + d.from + '" thành "' + d.to + '"', 'admin'],
+    user_delete: ['xoá tài khoản ' + d.name + ' (' + (ROLE[d.role] || d.role) + ')' + (d.phone ? ' · ' + d.phone : '') + ' — hoạt động cũ vẫn giữ tên', 'flag'],
+    user_restore: ['khôi phục tài khoản ' + d.name, 'admin'],
     khu_create: ['thêm ' + d.name, 'admin'], khu_update: ['sửa ' + d.name + (d.active ? '' : ' (ẩn)'), 'admin'],
     khu_users: [d.n ? 'gán ' + d.n + ' người phụ trách ' + kn(d.khu) : 'bỏ phân công ' + kn(d.khu) + ' (mọi người đếm được)', 'admin'], phi_update: ['sửa cấu hình ' + (d.items ? d.items.map((x) => x.id).join(', ') : d.id), 'admin'], phi_seed: ['khôi phục phi mặc định D6–D36', 'admin'], settings_update: ['sửa cài đặt', 'admin'],
   };
@@ -1288,18 +1293,60 @@ function vPin() {
 }
 
 /* --- Người dùng (admin) --- */
+/* Nạp danh sách kèm id của ADMIN ĐẦU TIÊN (người thiết lập hệ thống). Chỉ người đó được sửa tên,
+   xoá và khôi phục tài khoản, và chính tài khoản đó thì không ai khoá/hạ quyền/xoá được. Server
+   mới là chỗ chặn thật (xem OWNER_ONLY/PROTECT_FIRST); phần này chỉ để khỏi bày nút vô dụng. */
+async function loadUsers() {
+  const r = await api('GET', '/users');
+  S.users = r.users; S.uFirst = r.first;
+}
+const isOwner = () => !!S.me && S.uFirst === S.me.id;
+
 function vUsers() {
-  const list = (S.users || []).map((u) => `<div class="card col gap8" style="${u.locked ? 'opacity:.7' : ''}">
-    <div class="row" style="justify-content:space-between;gap:8px"><div class="col"><b style="font-size:18px">${esc(u.name)}</b><span class="sm muted">${esc(u.phone)}${u.locked ? ' · ĐÃ KHÓA' : ''}${u.must_change ? ' · chưa đổi PIN' : ''}</span></div>
-    <select class="inp s" style="width:130px;font-size:15px" data-change="role" data-id="${u.id}">${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
-    <div class="row gap6"><button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>${u.id === S.me.id ? '' : `<button class="btn s f1 ${u.locked ? '' : 'bad'}" data-a="ulock" data-id="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}<button class="btn s f1" data-a="ulogout" data-id="${u.id}">Đăng xuất máy</button></div></div>`).join('');
-  return `${head('Người dùng', 'Admin tạo tài khoản và PIN', 'more')}<div class="f1 scroll pad col gap12" id="body">
+  const own = isOwner();
+  const all = S.users || [];
+  const live = all.filter((u) => !u.deleted);
+  const gone = all.filter((u) => u.deleted);
+  const card = (u) => {
+    const first = u.id === S.uFirst;
+    const me = u.id === S.me.id;
+    /* Sửa tên là việc của riêng admin đầu tiên, vì tên là thứ đi theo mọi hoạt động: số đếm,
+       phiếu và báo cáo khu đều lấy tên bằng cách join nên đổi tên là đổi cả lịch sử hiển thị. */
+    const renameBox = own && S.uRename === u.id
+      ? `<div class="row gap6"><input class="inp s f1" id="urn" placeholder="Tên mới" value="${esc(S.form.urn || u.name)}" data-model="urn"><button class="btn s pri" data-a="urenamesave" data-id="${u.id}">Lưu</button><button class="btn s" data-a="urenamecancel">Bỏ</button></div>`
+      : '';
+    const tags = [
+      first ? '<span class="badge" style="background:var(--pri);color:#fff">Admin đầu tiên</span>' : '',
+      u.locked ? '<span class="badge bad">Đã khóa</span>' : '',
+      u.must_change ? '<span class="badge warn">chưa đổi PIN</span>' : '',
+    ].filter(Boolean).join(' ');
+    return `<div class="card col gap8" style="${u.locked ? 'opacity:.75;' : ''}${first ? 'border:2px solid var(--pri)' : ''}">
+      <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div class="col" style="gap:2px;min-width:0"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:18px">${esc(u.name)}</b>${tags}</div>
+          <span class="sm muted">${esc(u.phone)}</span></div>
+        <select class="inp s" style="width:130px;font-size:15px" data-change="role" data-id="${u.id}" ${first ? 'disabled' : ''}>${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
+      ${renameBox}
+      <div class="row gap6"><button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>
+        ${me || first ? '' : `<button class="btn s f1 ${u.locked ? '' : 'bad'}" data-a="ulock" data-id="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}
+        <button class="btn s f1" data-a="ulogout" data-id="${u.id}">Đăng xuất máy</button></div>
+      ${own && !renameBox ? `<div class="row gap6">${first ? '' : `<button class="btn s f1" data-a="urename" data-id="${u.id}">Sửa tên</button>`}
+        ${me || first ? '' : `<button class="btn s bad f1" data-a="udelete" data-id="${u.id}">Xoá tài khoản</button>`}</div>` : ''}
+      ${first ? '<span class="sm muted" style="line-height:1.4">Tài khoản thiết lập hệ thống: không ai khóa, hạ quyền hay xoá được, kể cả admin khác.</span>' : ''}</div>`;
+  };
+  const goneSec = !gone.length ? '' : `<h2 class="sec">Tài khoản đã xoá (${gone.length})</h2>
+    <div class="sm muted" style="line-height:1.4">Không đăng nhập được và không nhận phân công khu. Mọi số đếm, phiếu và báo cáo họ đã làm vẫn giữ nguyên tên — đó là lý do dòng tài khoản không bị xoá hẳn.</div>
+    ${gone.map((u) => `<div class="card col gap8" style="opacity:.75">
+      <div class="col" style="gap:2px"><b style="font-size:17px">${esc(u.name)}</b><span class="sm muted">${esc(u.phone)} · ${ROLE[u.role] || u.role}</span></div>
+      ${own ? `<button class="btn s f1" data-a="urestore" data-id="${u.id}">KHÔI PHỤC</button>` : '<span class="sm muted">Chỉ admin đầu tiên khôi phục được.</span>'}</div>`).join('')}`;
+  return `${head('Người dùng', own ? 'Bạn là admin đầu tiên: tạo, sửa tên và xoá tài khoản' : 'Admin tạo tài khoản và PIN', 'more')}<div class="f1 scroll pad col gap12" id="body">
     ${S.pinShown ? `<div class="card ok col gap8"><b style="font-size:18px">PIN của ${esc(S.pinShown.name)}</b><b style="font-size:40px;letter-spacing:8px">${esc(S.pinShown.pin)}</b><span class="sm">Đưa PIN này cho người dùng (chỉ hiện một lần). Họ sẽ phải đổi PIN khi đăng nhập lần đầu.</span><button class="btn s full" data-a="pinok">Đã ghi lại</button></div>` : ''}
     <div class="card col gap8"><b style="font-size:18px">Thêm người dùng</b>
       <input class="inp s" id="un" placeholder="Họ tên" value="${esc(S.form.un || '')}" data-model="un"><input class="inp s" id="up" type="tel" inputmode="numeric" placeholder="Số điện thoại" value="${esc(S.form.up || '')}" data-model="up">
       <select class="inp s" id="ur" data-model="ur">${Object.keys(ROLE).reverse().map((r) => `<option value="${r}" ${(S.form.ur || 'nguoidem') === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select>
+      <span class="sm muted" style="line-height:1.4">Đặt ĐÚNG HỌ TÊN, đừng đặt theo chức danh: tên này đi theo mọi số đếm, phiếu và dòng nhật ký của người đó.</span>
       <div class="err" id="err">${esc(S.err)}</div><button class="btn pri full" data-a="ucreate">TẠO TÀI KHOẢN</button></div>
-    ${list || (S.users ? '<div class="muted">Chưa có người dùng nào</div>' : panelWait('users'))}</div>`;
+    ${live.map(card).join('') || (S.users ? '<div class="muted">Chưa có người dùng nào</div>' : panelWait('users'))}
+    ${goneSec}</div>`;
 }
 
 /* --- Cài đặt (admin) --- */
@@ -1479,11 +1526,11 @@ async function go(screen, noPush) {
   try {
     if (screen === 'duyet') { S.review = null; S.subs = {}; render(); S.review = await api('GET', '/review'); }
     else if (screen === 'nhatky') { S.audit = null; render(); S.audit = (await api('GET', '/audit?limit=300')).items; }
-    else if (screen === 'users') { S.users = (await api('GET', '/users')).users; }
+    else if (screen === 'users') { await loadUsers(); }
     else if (screen === 'lichsu') { await loadHist(S.hist.date || ydayOf(S.boot.today)); }
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
     else if (screen === 'stats') { S.usage = null; render(); S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
-    else if (screen === 'settings') { S.kuEdit = null; await loadBoot(); S.users = (await api('GET', '/users')).users; }
+    else if (screen === 'settings') { S.kuEdit = null; await loadBoot(); await loadUsers(); }
     else if (['home', 'ton', 'khu', 'nhap', 'dem'].includes(screen)) { await loadBoot(); }
   } catch (e) { S.loadErr[screen] = e.message; say(e.message, true); }
   render();
@@ -1834,14 +1881,44 @@ const ACTIONS = {
     const name = val('un'), phone = val('up'), role = val('ur');
     S.form.un = name; S.form.up = phone; S.form.ur = role;
     act(async () => {
-      try { const r = await api('POST', '/users', { name, phone, role }); S.pinShown = { name, pin: r.pin }; S.form.un = ''; S.form.up = ''; S.err = ''; S.users = (await api('GET', '/users')).users; }
+      try { const r = await api('POST', '/users', { name, phone, role }); S.pinShown = { name, pin: r.pin }; S.form.un = ''; S.form.up = ''; S.err = ''; await loadUsers(); }
       catch (e) { S.err = e.message; }
     });
   },
   pinok() { S.pinShown = null; render(); },
-  async ureset(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); if (!u) return; if (!(await ask('Đặt lại PIN cho ' + u.name + '?\nHọ sẽ bị đăng xuất khỏi mọi máy và phải đổi PIN khi đăng nhập lại.', 'ĐẶT LẠI PIN'))) return; act(async () => { const r = await api('POST', `/users/${d.id}/reset-pin`, {}); S.pinShown = { name: u.name, pin: r.pin }; S.users = (await api('GET', '/users')).users; }); },
-  ulock(d) { act(async () => { await api('POST', `/users/${d.id}/lock`, { locked: d.v === '1' }); S.users = (await api('GET', '/users')).users; }); },
+  async ureset(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); if (!u) return; if (!(await ask('Đặt lại PIN cho ' + u.name + '?\nHọ sẽ bị đăng xuất khỏi mọi máy và phải đổi PIN khi đăng nhập lại.', 'ĐẶT LẠI PIN'))) return; act(async () => { const r = await api('POST', `/users/${d.id}/reset-pin`, {}); S.pinShown = { name: u.name, pin: r.pin }; await loadUsers(); }); },
+  ulock(d) { act(async () => { await api('POST', `/users/${d.id}/lock`, { locked: d.v === '1' }); await loadUsers(); }); },
   ulogout(d) { act(async () => { await api('POST', `/users/${d.id}/logout`, {}); }, 'Đã đăng xuất người dùng khỏi mọi máy.'); },
+  // mở ô sửa tên, mồi sẵn tên hiện tại để chỉ phải sửa phần cần sửa
+  urename(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); S.uRename = Number(d.id); S.form.urn = u ? u.name : ''; render(); },
+  urenamecancel() { S.uRename = null; S.form.urn = ''; render(); },
+  urenamesave(d) {
+    const name = val('urn');
+    if (!name) return say('Cần nhập tên.', true), render();
+    act(async () => {
+      await api('POST', `/users/${d.id}/rename`, { name });
+      S.uRename = null; S.form.urn = '';
+      await loadUsers(); await loadBoot();
+    }, 'Đã sửa tên. Số đếm và phiếu cũ hiện tên mới ngay; dòng nhật ký cũ giữ tên cũ (nhật ký không sửa được).');
+  },
+  /* Xoá tài khoản. Nói rõ hai điều người dùng cần biết trước khi bấm: hoạt động cũ KHÔNG mất, và
+     khôi phục được — nếu không họ sẽ không dám bấm, hoặc bấm rồi tưởng đã mất số liệu. */
+  async udelete(d) {
+    const u = (S.users || []).find((x) => x.id === Number(d.id));
+    if (!u) return;
+    const msg = `Xoá tài khoản ${u.name}?\n\n`
+      + `• Không đăng nhập được nữa, bị đăng xuất khỏi mọi máy và bỏ khỏi phân công khu.\n`
+      + `• Mọi số đếm, phiếu và báo cáo ${u.name} đã làm VẪN GIỮ NGUYÊN, vẫn mang tên ${u.name}.\n`
+      + `• Khôi phục lại được ở cuối màn hình này.`;
+    if (!(await ask(msg, 'XOÁ TÀI KHOẢN', true))) return render();
+    act(async () => { await api('POST', `/users/${d.id}/delete`, {}); await loadUsers(); await loadBoot(); }, 'Đã xoá tài khoản ' + u.name + '.');
+  },
+  async urestore(d) {
+    const u = (S.users || []).find((x) => x.id === Number(d.id));
+    if (!u) return;
+    if (!(await ask(`Khôi phục tài khoản ${u.name}?\nHọ sẽ phải đổi PIN khi đăng nhập lại, nên hãy đặt lại PIN và đưa cho họ.`, 'KHÔI PHỤC'))) return render();
+    act(async () => { await api('POST', `/users/${d.id}/restore`, {}); await loadUsers(); await loadBoot(); }, 'Đã khôi phục ' + u.name + '. Hãy đặt lại PIN cho họ.');
+  },
 
   async phiseed() {
     if (!(await ask('Khôi phục phi mặc định D6–D36?\nPhi đã có sẽ KHÔNG bị thay đổi, chỉ thêm lại các phi bị xoá nhầm.', 'KHÔI PHỤC'))) return;
@@ -1980,7 +2057,7 @@ document.addEventListener('change', async (e) => {
     const id = t.dataset.id, role = t.value;
     const u = (S.users || []).find((x) => x.id === Number(id));
     if (!(await ask(`Đổi vai trò ${u ? u.name : ''} thành ${ROLE[role]}?`, 'ĐỔI VAI TRÒ'))) return render(); // vẽ lại để ô chọn quay về vai trò cũ
-    act(async () => { await api('POST', `/users/${id}/role`, { role }); S.users = (await api('GET', '/users')).users; }, 'Đã đổi vai trò.');
+    act(async () => { await api('POST', `/users/${id}/role`, { role }); await loadUsers(); }, 'Đã đổi vai trò.');
   }
 });
 document.addEventListener('keydown', (e) => {
