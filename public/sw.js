@@ -1,7 +1,9 @@
 // Service worker: lưu giao diện để mở nhanh và mở được khi mất mạng (dữ liệu luôn lấy từ server).
 // Chiến lược "mạng trước": bản mới luôn được lấy và ghi lại vào cache sau mỗi lần mở có mạng,
 // nên KHÔNG cần đổi số phiên bản mỗi lần sửa giao diện. Chỉ đổi khi muốn xoá sạch cache cũ.
-const CACHE = 'kho-thep-v4';
+/* v6: bản 1.3 đổi giao thức báo cáo (gửi đủ mọi phi, ô để trống là 0). Bản app cũ còn trong cache
+   sẽ gửi thiếu phi và bị server từ chối (need_all), nên phải xoá sạch cache cũ ở lần cài này. */
+const CACHE = 'kho-thep-v6';
 const SHELL = ['/', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

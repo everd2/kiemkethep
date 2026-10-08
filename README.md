@@ -1,21 +1,26 @@
 # Kho Thép Bãi
 
-Ứng dụng web (PWA) quản lý tồn kho thép bê tông cốt thép D8 → D36 trên bãi, chạy hoàn toàn trên Cloudflare (gói miễn phí): **Workers + D1 + Static Assets**. Không cần VPS.
+Ứng dụng web (PWA) quản lý tồn kho thép bê tông cốt thép D6 → D36 trên bãi, chạy hoàn toàn trên Cloudflare (gói miễn phí): **Workers + D1 + Static Assets**. Không cần VPS.
 
 ## Cách hệ thống tính
 
 - Mỗi ô **(ngày × khu × phi)** là đơn vị gốc. Mọi thống kê (toàn bãi, theo khu, theo phi) tính từ các ô này.
-- Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). Phi không có ở khu thì không hỏi, hệ thống hiểu là 0.
+- Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.
+- **Chưa duyệt thì không vào tồn.** Đây là quy tắc trung tâm, áp cho cả báo cáo đếm lẫn phiếu nhập/chuyển: tồn của một khu luôn bằng **báo cáo mới nhất ĐƯỢC DUYỆT** của khu đó, không liên quan khu khác. Khu báo lại số mới mà chưa ai duyệt thì tồn vẫn là số đã duyệt trước đó.
 - **Đã dùng = Tồn chuẩn hôm qua + Nhập trong ngày − Tổng đếm hôm nay** (tính ở cấp toàn bãi, không ai phải nhập phiếu xuất).
-- Admin duyệt theo ngoại lệ: khu chưa báo, hai người báo khác số, phi dùng âm hoặc dùng quá 3 lần mức bình thường. Ngày bình thường chỉ cần một lần bấm xác nhận.
-- Chốt ngày thì khóa số liệu, số đếm hôm đó trở thành **tồn chuẩn** cho ngày sau. Chốt nhầm thì admin **mở lại** được trong ngày (bắt buộc ghi lý do).
-- **Tự chốt lúc 23:50** nếu ngày bình thường (đủ khu, không bất thường). Ngày có bất thường thì không tự chốt, nhật ký ghi lý do. Tắt/bật ở **Cài đặt**.
+- **Duyệt theo từng khu, độc lập.** Màn Duyệt bày cho mỗi khu một bảng *dự kiến → khu báo → lệch*, rồi admin bấm **Duyệt khu**. Lệch to hay nhỏ chỉ đổi màu chữ để dễ thấy, **không** quyết định khu có duyệt được hay không — khu nào đã báo cũng duyệt được. Duyệt khu nào thì duyệt luôn phiếu đang chờ của khu đó, trong cùng một lần ghi.
+- Admin vẫn được nhắc riêng những việc không duyệt được bằng một nút: khu chưa báo, hai người báo khác số, khu đang chờ đếm lại, phi dùng âm hoặc dùng quá 3 lần mức bình thường.
+- **Để trống phi đang có thép** thì app hỏi lại ngay lúc gửi (*"gửi là ghi 0, đúng chưa?"*), và màn Duyệt đánh dấu riêng ô đó cho người duyệt thấy. Phi dự kiến đang 0 mà để trống thì không hỏi gì.
+- Chốt ngày thì khóa số liệu, số **đã duyệt** hôm đó trở thành **tồn chuẩn** cho ngày sau. Chốt nhầm thì admin **mở lại** được trong ngày (bắt buộc ghi lý do).
+- **Tự chốt lúc 23:50** nếu đủ khu đã báo và không còn việc nào chờ duyệt. Ngày có bất thường thì không tự chốt, nhật ký ghi lý do. Tắt/bật ở **Cài đặt**.
 - Quên chốt vài ngày: lượng dùng được gộp cho cả khoảng đó, cảnh báo "dùng nhiều" tự chia theo số ngày.
 - Mất mạng khi gửi báo cáo: app lưu báo cáo kèm **ngày đếm** và tự gửi lại khi có mạng. Nếu đã sang ngày mới, báo cáo hiện ở Tổng quan để người dùng chọn *Gửi làm số hôm nay* hoặc *Bỏ*, không tự ghi vào sai ngày.
-- **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu, hoàn tác cả phiếu trong 10 phút. Mọi nút lưu đều bị khóa trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
+- **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu. Mọi nút lưu đều bị khóa trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
+- **Mọi phiếu đều chờ admin duyệt**, kể cả phiếu admin tự nhập. Phiếu ghi **cả ngày nhập và ngày duyệt**, và tính vào tồn theo **ngày duyệt**: thép về chiều ngày 7 duyệt sáng ngày 8 thì nằm trong số liệu ngày 8, chứng từ vẫn ghi đủ hai mốc. Nhờ vậy phiếu treo qua đêm không cần chặn chốt ngày.
+- Người lập **rút lại** phiếu chưa duyệt bất cứ lúc nào; phiếu đã duyệt thì chỉ hoàn tác được trong 10 phút kể từ **lúc duyệt**, sau đó nhờ admin. Admin **từ chối** phiếu chờ duyệt, hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
 - **Chuyển khu** (Nhập → Chuyển khu): ghi một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng.
-- Khi đếm, ô chưa nhập hiện **số dự kiến** = tồn hôm qua + nhập/chuyển. Phi có thép nhập/chuyển từ lần chốt trước **không được "giữ nguyên"**, bắt buộc đếm thực tế.
-- Duyệt cảnh báo **thép nhập/chuyển sau giờ khu báo** (số đếm chưa gồm lượng này). Khi 2 người báo khác số, admin xem **hai số cạnh nhau** và chọn từng phi.
+- Khi đếm, ô chưa chạm tới hiện dấu **—** kèm chữ *"sẽ ghi 0"* và số dự kiến làm tham chiếu (= tồn đã duyệt hôm qua + phiếu đã duyệt). Muốn lấy nguyên số hôm qua thì bấm **Giữ nguyên**, không phải cứ bỏ trống. Phi có thép nhập/chuyển từ lần chốt trước **không được "giữ nguyên"**, bắt buộc đếm thực tế.
+- Nếu một phiếu được duyệt **sau khi** số của khu đã duyệt, số dự kiến của khu đổi mà số đã duyệt thì không: màn Duyệt nhắc *xem lại khu đó*. Duyệt lại khu là hết nhắc. Khi 2 người báo khác số, admin xem **hai số cạnh nhau** và chọn từng phi — chọn số xong vẫn phải bấm Duyệt khu, vì chọn số không phải là duyệt số.
 - Không ẩn được khu còn thép (phải chuyển đi hoặc đếm về 0 trước).
 - **Xem lại ngày cũ**, **báo cáo Nhập – Dùng – Tồn theo kỳ** (xuất CSV), và **dự báo số ngày còn đủ dùng** từng phi (theo lượng dùng trung bình 28 ngày).
 - Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xóa).
@@ -76,7 +81,7 @@ Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tê
 Đăng nhập admin, vào **Thêm**:
 1. **Cài đặt**: đổi tên khu, thêm/ẩn khu theo bãi thực tế (mặc định có Khu A → H). Với từng phi, đặt **số cây mỗi bó**, **mức tồn tối thiểu** và **kg/cây** (mặc định theo 0,00617 × D² × 11,7 m, sửa theo trọng lượng thực tế nhà máy nếu khác).
 2. **Người dùng và PIN**: tạo tài khoản cho thủ kho và các tổ. Hệ thống tạo PIN ngẫu nhiên hiện **một lần**, đưa cho người dùng. Họ phải tự đổi PIN khi đăng nhập lần đầu.
-3. Ngày đầu tiên: các khu đếm và báo hết, admin vào **Duyệt → Chốt ngày**. Số đếm hôm đó trở thành tồn chuẩn đầu tiên, từ ngày sau hệ thống tính lượng dùng.
+3. Ngày đầu tiên: các khu đếm và báo hết, admin vào **Duyệt**, duyệt từng khu rồi **Chốt ngày**. Số đã duyệt hôm đó trở thành tồn chuẩn đầu tiên, từ ngày sau hệ thống tính lượng dùng.
 
 ### 8. Cài lên điện thoại
 - **Android (Chrome):** mở địa chỉ → menu ⋮ → **Thêm vào Màn hình chính** (hoặc **Cài đặt ứng dụng**).

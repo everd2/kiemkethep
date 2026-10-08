@@ -101,11 +101,37 @@ const review = {
   ],
   exceptions: [
     { type: 'khu_missing', khu: 'A', name: 'Khu A' },
+    { type: 'khu_pending', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm', n: 3, blank: 1 },
     { type: 'conflict', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
-    { type: 'late', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm', reportTs: ts, items: [{ phi: 'D10', q: 50 }] },
+    { type: 'recheck', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
     { type: 'recount', khu: 'C', name: 'Khu C' },
+    { type: 'receipt_pending', key: 'g1', id: 71, kind: 'nhap', day: today },
     { type: 'phi', phi: 'D10', reason: 'neg' },
   ],
+  /* Thẻ của từng khu: đủ các trạng thái cần vẽ — chưa báo, chờ duyệt kèm lệch và ô để trống,
+     đã duyệt, và khu báo từ NGÀY TRƯỚC (quên chốt) để thử nhãn ngày. */
+  khus: [
+    { khu: 'A', name: 'Khu A', items: [{ phi: 'D10', ref: 300, mv: 0, exp: 300, cnt: null, d: null, kind: null, duyet: null }], waiting: 0, blank: 0, rep: null, recheck: false, phieu: [], duyet: null },
+    { khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm',
+      items: [
+        { phi: 'D8', ref: 220, mv: 110, exp: 330, cnt: 180, d: -150, kind: 'dem', big: true, blank: false, duyet: false },
+        { phi: 'D10', ref: 0, mv: 0, exp: 0, cnt: 200, d: 200, kind: 'dem', big: true, blank: false, duyet: false },
+        { phi: 'D12', ref: 40, mv: 0, exp: 40, cnt: 0, d: -40, kind: 'zero', big: false, blank: true, duyet: false },
+        { phi: 'D14', ref: 55, mv: 0, exp: 55, cnt: 55, d: 0, kind: 'dem', big: false, blank: false, duyet: false },
+      ],
+      waiting: 4, blank: 1, rep: { uname: 'Nguyễn Văn B', ts, day: today, conflict: 1, resolved: 0, recount: 0 },
+      recheck: true, phieu: ['g1'], duyet: null },
+    { khu: 'C', name: 'Khu C', items: [{ phi: 'D10', ref: 100, mv: 0, exp: 100, cnt: 100, d: 0, kind: 'dem', big: false, blank: false, duyet: true }],
+      waiting: 0, blank: 0, rep: { uname: 'Trần Thị C', ts, day: yday, conflict: 0, resolved: 0, recount: 1 },
+      recheck: false, phieu: [], duyet: { by: 'Admin', ts } },
+  ],
+  phieu: [
+    { key: 'g1', grp: 'g1', id: 71, day: today, ts, uname: 'Thủ kho', kind: 'nhap', note: 'xe 12A',
+      lines: [{ phi: 'D8', khu: 'B', qty: 110 }] },
+    { key: 'g2', grp: 'g2', id: 72, day: yday, ts, uname: 'Thủ kho', kind: 'chuyen', note: '',
+      lines: [{ phi: 'D10', khu: 'A', qty: -50 }, { phi: 'D10', khu: 'B', qty: 50 }] },
+  ],
+  pending: 6,
   reports: boot.reports, khu,
 };
 const dayData = {

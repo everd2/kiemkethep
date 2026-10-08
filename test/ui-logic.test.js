@@ -144,11 +144,24 @@ const run = async () => {
     r(`S.unit = '${mode}'; var HM = vTon();`);
     ok('kiểu "' + mode + '": Tồn bãi hiện đúng đơn vị', want.test(r('HM')) && !nope.test(r('HM')), (r('HM').match(/<b style="font-size:24px;[^>]*>[^<]*/) || [''])[0]);
   }
-  // số lẻ đứng một mình phải có đơn vị, trong ngoặc thì bỏ cho gọn
+  // số lẻ LUÔN có đơn vị, kể cả trong ngoặc: "47 bó + 5" không nói 5 cái gì
   r(`S.unit = 'bo'`);
   ok('kiểu "bó": số lẻ có chữ cây', /47 bó \+ 0 cây|47 bó/.test(r(`qBo(470, S.boot.phiBy.D10)`)) && /bó \+ 5 cây/.test(r(`qBo(475, S.boot.phiBy.D10)`)), r(`qBo(475, S.boot.phiBy.D10)`));
   r(`S.unit = 'all'`);
-  ok('kiểu "tất cả": trong ngoặc bỏ chữ cây cho gọn', /475 cây \(47 bó \+ 5\)/.test(r(`fmtQ(475, S.boot.phiBy.D10)`)), r(`fmtQ(475, S.boot.phiBy.D10)`));
+  ok('kiểu "tất cả": số lẻ trong ngoặc cũng có đơn vị', /475 cây \(47 bó \+ 5 cây\)/.test(r(`fmtQ(475, S.boot.phiBy.D10)`)), r(`fmtQ(475, S.boot.phiBy.D10)`));
+
+  /* Cặp "còn bao nhiêu / mức báo động" phải cùng đơn vị mới so được bằng mắt.
+     Tồn dưới mức báo động thì gần như luôn dưới một bó, nên đây là trường hợp thường gặp
+     chứ không phải ngoại lệ: trước đây ra "Còn 40 cây, báo động 1 bó". */
+  // tồn 4 cây / báo động 10 cây (1 bó D10): số tồn chưa đủ một bó nên cả hai phải ra "cây"
+  r(`S.unit = 'all'; var QP = qPair(4, S.boot.phiBy.D10.bo_size, S.boot.phiBy.D10);`);
+  ok('cặp số so sánh: cùng đơn vị khi một số chưa đủ một bó', /cây/.test(r('QP[0]')) && /cây/.test(r('QP[1]')) && !/bó/.test(r('QP[1]')), r('QP').join(' | '));
+  r(`var QP2 = qPair(95, S.boot.phiBy.D10.min_stock, S.boot.phiBy.D10);`);
+  ok('cặp số so sánh: cả hai đủ một bó thì vẫn hiện theo bó', /bó/.test(r('QP2[0]')) && /bó/.test(r('QP2[1]')), r('QP2').join(' | '));
+
+  // dấu thập phân tiếng Việt ở MỌI chỗ hiện mức dùng trung bình (Tổng quan / Tồn bãi / Duyệt)
+  r(`S.unit = 'all'; S.expand = { D8: true }; var HR = vTon() + vHome() + vDuyet(); S.expand = {};`);
+  ok('mức dùng trung bình: không lọt dấu chấm thập phân', !/\d\.\d+ (cuộn|cây)\/ngày/.test(r('HR')), (r('HR').match(/[\d.,]+ (cuộn|cây)\/ngày/g) || []).join(' | '));
 
   // ---- Tồn bãi: bó (+ cây lẻ) đứng trước, rồi số cây, rồi tấn ----
   r(`S.screen = 'ton'; var HT = vTon();`);
@@ -227,12 +240,19 @@ const run = async () => {
   ok('toast: bỏ đúng thẻ, không vẽ lại cả màn hình', toastNodes[0]._removed === 1 && r('S.toast') === '');
   toastNodes = [];
 
-  // ---- 3c. nút xám nói rõ lý do, không nhấp nháy "Đang lưu" ----
-  r(`S.khu = 'A'; loadDraft(true); S.toast = ''; S.busy = false; ACTIONS.send();`);
-  ok('GỬI khi còn phi chưa nhập: nói rõ thiếu phi nào', /phi chưa nhập/.test(r('S.toast')), r('S.toast'));
+  /* ---- 3c. GỬI khi để trống phi ĐANG CÓ THÉP: phải hỏi lại ----
+     Từ bản 1.3 ô để trống là 0 nên không còn chặn gửi. Nhưng để trống một phi đang có thép là
+     xoá vài tấn khỏi giấy tờ bằng một lần quên gõ, nên phải hiện hộp xác nhận ở đúng đây. */
+  r(`S.khu = 'A'; loadDraft(true); S.toast = ''; S.busy = false; S.ask = null; ACTIONS.send();`);
+  ok('GỬI khi để trống phi đang có thép: hỏi lại trước khi ghi 0', !!r('S.ask'), JSON.stringify(r('S.ask && S.ask.msg')));
+  ok('hộp hỏi nói rõ phi nào và đang có bao nhiêu', /D8|D10/.test(r('(S.ask && S.ask.msg) || ""')), r('(S.ask && S.ask.msg) || ""'));
+  ok('và nói rõ gửi là ghi 0', /ghi 0/.test(r('(S.ask && S.ask.msg) || ""')), r('(S.ask && S.ask.msg) || ""'));
+  // khu không có thép: để trống hết cũng không có gì phải hỏi (đây mới là trường hợp thường ngày)
+  r(`S.ask = null; S.khu = 'B'; S.boot.bm = {}; S.boot.mv = {}; S.boot.mvn = {}; loadDraft(true);`);
+  ok('khu không có thép: không phi nào bị hỏi lại', r('blankWithStock().length') === 0, r('blankWithStock().length'));
   ok('GỬI khi còn thiếu: không bật overlay Đang lưu', r('S.busy') === false);
   r(`S.khu = 'A'; loadDraft(true); S.draft.cells['D10'] = { v: 300, kind: 'dem', bo: 30, le: 0 };
-     S.toast = ''; S.confirmKeep = false; ACTIONS.keepall();`);
+     S.toast = ''; ACTIONS.keepall();`);
   ok('Giữ nguyên khi không phi nào đủ điều kiện: nói rõ', /đếm thực tế|hết phi/.test(r('S.toast')), r('S.toast'));
 
   // ---- 6a. nút Back của điện thoại ----

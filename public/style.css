@@ -78,7 +78,7 @@ a{color:var(--pri)}
 .bars .t i.low{background:var(--bad)}
 .bars .t u{position:absolute;top:-3px;bottom:-3px;width:3px;background:#1C1F22}
 .bars .v{width:66px;text-align:right;font-weight:700;line-height:1.1}
-.bars .v i{display:block;font-style:normal;font-size:10px;font-weight:600;color:var(--mut)}
+.bars .v i{display:block;font-style:normal;font-size:12px;font-weight:600;color:var(--mut)}
 .bars .v.low{color:var(--bad)}
 
 /* tabs */
@@ -104,7 +104,11 @@ a{color:var(--pri)}
 /* #mx cuộn cả 2 chiều; cột trái dính bên trái, dòng tiêu đề dính trên (sticky không chạy trong khung overflow lồng nhau) */
 #mx{background:#fff;border-top:1px solid var(--line);margin-top:4px;overflow:auto;overscroll-behavior:contain}
 .mxw{display:flex;width:100%}
-.mxl{width:164px;flex:none;position:sticky;left:0;z-index:3;background:#fff;box-shadow:2px 0 0 #C9C4B8}
+.mxl{width:176px;flex:none;position:sticky;left:0;z-index:3;background:#fff;box-shadow:2px 0 0 #C9C4B8}
+/* ba cột của khung trái, dùng chung cho dòng tiêu đề, các dòng phi và dòng tổng */
+.mxp{width:40px;padding-left:4px;font-weight:700}
+.mxo{width:72px;display:flex;justify-content:center}
+.mxv{width:64px;text-align:right;padding-right:6px;font-weight:700;white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
 .mxr{flex:1;min-width:0}
 .mxr > div{min-width:max-content}
 .mxh{position:sticky;top:0;z-index:2;height:46px;display:flex;align-items:center;background:#E8EEF6;border-bottom:2px solid var(--pri)}
@@ -119,7 +123,7 @@ a{color:var(--pri)}
 .own.sel{border:3px solid var(--pri)}
 .own.okc{border:1.5px solid var(--ok);background:var(--okbg)}
 .own.giu{border:1.5px solid var(--pri);background:#DCE6F2}
-.own.big{border:2.5px solid var(--warn);background:#FFE8A8}
+.own.big{border:2.5px solid #B4530A;background:#FFD2A8;color:#5C3A00}
 .own.pend{border:2px dashed var(--warn);background:#FFF9E6;color:#6B5A3A}
 .oc{display:flex;align-items:center;justify-content:center;height:46px;font-weight:600}
 .khh{height:46px;padding:0;border:0;background:transparent;text-align:center;font-weight:700;text-decoration:underline}

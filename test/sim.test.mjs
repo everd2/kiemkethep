@@ -46,6 +46,17 @@ async function sim(seed) {
   const PHI = boot0.phi.filter((p) => p.active !== 0).map((p) => p.id);
   const kgOf = Object.fromEntries(boot0.phi.map((p) => [p.id, p.kg_per_cay]));
   const boOf = Object.fromEntries(boot0.phi.map((p) => [p.id, p.bo_size]));
+  /* Từ bản 1.3 chưa duyệt thì không vào tồn, nên mô phỏng phải duyệt y như admin thật: duyệt
+     phiếu ngay sau khi nhập, duyệt khu ngay sau khi khu báo. Sổ bóng là "thép thật đang nằm ở
+     bãi" nên nó chỉ khớp database sau khi đã duyệt. */
+  const duyetP = (id) => S.call('POST', '/receipts/' + id + '/duyet', {});
+  const duyetKhu = (k) => S.call('POST', '/review/duyet', { khu: k });
+  // một báo cáo phủ ĐỦ mọi phi: phi khu không có thì để trống, server hiểu là 0
+  const soAll = (k) => PHI.map((ph) => {
+    const v = get(k, ph);
+    return v === 0 ? { phi: ph, v: 0, kind: 'zero' }
+      : { phi: ph, v, kind: 'dem', bo: Math.floor(v / boOf[ph]), le: v % boOf[ph] };
+  });
 
   // sổ bóng: số thép thật đang nằm ở mỗi khu × phi
   const real = {};
@@ -74,7 +85,9 @@ async function sim(seed) {
       const k = pick(KHU), p = pick(PHI), q = 1 + int(5) * boOf[p];
       const r = await S.call('POST', '/receipts', { khu: k, lines: [{ phi: p, qty: q }] });
       if (r.status !== 200) { bug(seed, 'nhập kho bị từ chối', `${k}/${p} ${q}: ${JSON.stringify(r.data)}`, log); return; }
-      add(k, p, q); bumpMap(nhapTong, p, q); say(`nhập ${k} ${p} +${q}`);
+      const dp = await duyetP(r.data.id);
+      if (dp.status !== 200) { bug(seed, 'duyệt phiếu nhập bị từ chối', `${k}/${p} ${q}: ${JSON.stringify(dp.data)}`, log); return; }
+      add(k, p, q); bumpMap(nhapTong, p, q); say(`nhập ${k} ${p} +${q} (đã duyệt)`);
       // thỉnh thoảng hủy ngay phiếu vừa ghi
       if (rnd() < 0.15) {
         const v = await S.call('DELETE', '/receipts/' + r.data.id);
@@ -91,7 +104,9 @@ async function sim(seed) {
       const q = 1 + int(have - 1);
       const r = await S.call('POST', '/transfers', { from, to, lines: [{ phi: p, qty: q }] });
       if (r.status !== 200) { bug(seed, 'chuyển khu trong khả năng mà bị từ chối', `${from}→${to} ${p} ${q}/${have}: ${JSON.stringify(r.data)}`, log); return; }
-      add(from, p, -q); add(to, p, q); say(`chuyển ${from}→${to} ${p} ${q}`);
+      const dp2 = await duyetP(r.data.id);
+      if (dp2.status !== 200) { bug(seed, 'duyệt phiếu chuyển bị từ chối', `${from}→${to} ${p} ${q}/${have}: ${JSON.stringify(dp2.data)}`, log); return; }
+      add(from, p, -q); add(to, p, q); say(`chuyển ${from}→${to} ${p} ${q} (đã duyệt)`);
     }
 
     // ---- xuất dùng (không ghi phiếu, chỉ phát hiện khi đếm) ----
@@ -105,20 +120,15 @@ async function sim(seed) {
     // ---- đếm & báo ----
     for (const k of KHU) {
       if (rnd() < 0.12) continue; // thỉnh thoảng có khu không báo
-      const its = PHI.filter((p) => get(k, p) > 0 || rnd() < 0.2).map((p) => ({ phi: p, v: get(k, p), kind: 'dem', bo: Math.floor(get(k, p) / boOf[p]), le: get(k, p) % boOf[p] }));
-      if (!its.length) continue;
+      const its = soAll(k);
       const who = rnd() < 0.5 ? 'An' : 'Binh';
-      let r = await S.call('PUT', '/counts', { khu: k, day, items: its }, who);
-      if (r.status === 400 && /Còn phi chưa nhập: (.+)/.test(r.data.error || '')) {
-        // khu đang theo dõi thêm phi khác: báo đủ rồi gửi lại
-        const miss = r.data.error.replace('Còn phi chưa nhập: ', '').split(', ');
-        miss.forEach((p) => its.push({ phi: p, v: get(k, p), kind: 'dem', bo: Math.floor(get(k, p) / boOf[p]), le: get(k, p) % boOf[p] }));
-        r = await S.call('PUT', '/counts', { khu: k, day, items: its }, who);
-      }
+      const r = await S.call('PUT', '/counts', { khu: k, day, items: its }, who);
       if (r.status !== 200) { bug(seed, 'báo số bị từ chối', `${k}: ${JSON.stringify(r.data)}`, log); return; }
+      const dk = await duyetKhu(k);
+      if (dk.status !== 200) { bug(seed, 'duyệt khu bị từ chối', `${k}: ${JSON.stringify(dk.data)}`, log); return; }
       reported.add(k);
-      clean(k, its.map((x) => x.phi));
-      say(`${who} báo ${k} (${its.map((x) => x.phi + '=' + x.v).join(',')})`);
+      clean(k, PHI);
+      say(`${who} báo ${k} + duyệt (${its.filter((x) => x.v).map((x) => x.phi + '=' + x.v).join(',') || 'rỗng'})`);
       // người thứ hai báo LỆCH số rồi admin chọn lại số đúng
       if (rnd() < 0.15 && its.length) {
         const sai = its.map((x) => {
@@ -129,18 +139,24 @@ async function sim(seed) {
         if (r3.status !== 200) { bug(seed, 'báo lệch số bị từ chối', JSON.stringify(r3.data), log); return; }
         sai.forEach((x) => { if (x.v !== get(k, x.phi)) dirty.add(key(k, x.phi)); });
         say(`báo LỆCH ${k}`);
-        const pick = Object.fromEntries(its.map((x) => [x.phi, x.v]));
-        const rr = await S.call('POST', '/conflict/resolve', { khu: k, pick });
+        const pick2 = Object.fromEntries(its.map((x) => [x.phi, x.v]));
+        const rr = await S.call('POST', '/conflict/resolve', { khu: k, pick: pick2 });
         if (rr.status !== 200) { bug(seed, 'admin chọn số bị từ chối', JSON.stringify(rr.data), log); return; }
-        clean(k, its.map((x) => x.phi));
-        say(`admin chọn số đúng cho ${k}`);
+        /* Admin chọn số KHÔNG phải là duyệt số: ô vừa sửa quay về chờ duyệt nên phải duyệt lại,
+           đúng như admin thật phải bấm "Duyệt khu" sau khi chọn. */
+        const dk2 = await duyetKhu(k);
+        if (dk2.status !== 200) { bug(seed, 'duyệt lại sau khi admin chọn số bị từ chối', `${k}: ${JSON.stringify(dk2.data)}`, log); return; }
+        clean(k, PHI);
+        say(`admin chọn số đúng cho ${k} + duyệt lại`);
       }
       // người thứ hai báo lại ĐÚNG số: không được coi là xung đột
       if (rnd() < 0.2) {
         const r2 = await S.call('PUT', '/counts', { khu: k, day, items: its }, who === 'An' ? 'Binh' : 'An');
         if (r2.status !== 200) { bug(seed, 'báo lại cùng số bị từ chối', JSON.stringify(r2.data), log); return; }
         if (r2.data.conflict) { bug(seed, 'báo lại ĐÚNG số vẫn bị coi là xung đột', `khu ${k}`, log); return; }
-        say(`báo lại ${k} cùng số`);
+        const dk3 = await duyetKhu(k);
+        if (dk3.status !== 200) { bug(seed, 'duyệt lại sau khi báo lại cùng số bị từ chối', `${k}: ${JSON.stringify(dk3.data)}`, log); return; }
+        say(`báo lại ${k} cùng số + duyệt`);
       }
     }
 
@@ -163,10 +179,10 @@ async function sim(seed) {
         if (dirty.has(key(k, p))) continue;
         const want = get(k, p), got = bm[key(k, p)] || 0;
         if (want !== got) {
-          const ct = S.sql('SELECT day, v, kind, user_id FROM counts WHERE khu_id=? AND phi_id=? ORDER BY day', k, p);
-          const kp = S.one('SELECT active, zero_days, keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', k, p);
+          const ct = S.sql('SELECT day, v, kind, ts, duyet_v, duyet_ts, user_id FROM counts WHERE khu_id=? AND phi_id=? ORDER BY day', k, p);
+          const kp = S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', k, p);
           const bl = S.sql('SELECT day, v FROM baseline WHERE khu_id=? AND phi_id=? ORDER BY day', k, p);
-          const rc = S.sql('SELECT day, qty, kind, voided FROM receipts WHERE khu_id=? AND phi_id=? ORDER BY id', k, p);
+          const rc = S.sql('SELECT day, duyet_day, qty, kind, voided FROM receipts WHERE khu_id=? AND phi_id=? ORDER BY id', k, p);
           bug(seed, 'tồn chuẩn sau chốt lệch sổ bóng',
             `${k}/${p}: sổ ${want}, database ${got}\n  khu_phi: ${JSON.stringify(kp)}\n  counts: ${JSON.stringify(ct)}\n  baseline: ${JSON.stringify(bl)}\n  receipts: ${JSON.stringify(rc)}\n  nhật ký ${p}: ${log.filter((l) => l.includes(' ' + p + ' ') || l.includes(p + '=')).slice(-10).join(' // ')}`,
             log);
@@ -192,16 +208,14 @@ async function sim(seed) {
           // số của khu đó bị xoá: hệ thống quay về tồn chuẩn cũ nên mọi ô của khu thành "chưa biết"
           PHI.forEach((p2) => dirty.add(key(k2, p2)));
           say(`ĐẾM LẠI ${k2} (đã xoá số, mở lại ngày)`);
-          const its2 = PHI.filter((p2) => get(k2, p2) > 0 || rnd() < 0.3).map((p2) => ({ phi: p2, v: get(k2, p2), kind: 'dem', bo: Math.floor(get(k2, p2) / boOf[p2]), le: get(k2, p2) % boOf[p2] }));
-          if (its2.length) {
-            let r4 = await S.call('PUT', '/counts', { khu: k2, day, items: its2 }, 'An');
-            if (r4.status === 400 && /Còn phi chưa nhập: (.+)/.test(r4.data.error || '')) {
-              r4.data.error.replace('Còn phi chưa nhập: ', '').split(', ').forEach((p2) => its2.push({ phi: p2, v: get(k2, p2), kind: 'dem', bo: Math.floor(get(k2, p2) / boOf[p2]), le: get(k2, p2) % boOf[p2] }));
-              r4 = await S.call('PUT', '/counts', { khu: k2, day, items: its2 }, 'An');
-            }
+          {
+            const its2 = soAll(k2);
+            const r4 = await S.call('PUT', '/counts', { khu: k2, day, items: its2 }, 'An');
             if (r4.status !== 200) { bug(seed, 'báo lại sau khi bị bắt đếm lại bị từ chối', JSON.stringify(r4.data), log); return; }
-            clean(k2, its2.map((x) => x.phi));
-            say(`báo lại ${k2} sau đếm lại`);
+            const dk4 = await duyetKhu(k2);
+            if (dk4.status !== 200) { bug(seed, 'duyệt lại sau khi đếm lại bị từ chối', `${k2}: ${JSON.stringify(dk4.data)}`, log); return; }
+            clean(k2, PHI);
+            say(`báo lại ${k2} sau đếm lại + duyệt`);
           }
           const rv3 = (await S.call('GET', '/review')).data;
           const c3 = await S.call('POST', '/close', { note: rv3.exceptions.length ? 'mô phỏng' : '' });

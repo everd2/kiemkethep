@@ -58,7 +58,9 @@ CREATE TABLE IF NOT EXISTS khu (
   active INTEGER NOT NULL DEFAULT 1
 );
 
--- Phi đang có ở từng khu (phi không có thì không hỏi, hệ thống hiểu là 0)
+-- Chỉ còn keep_streak được dùng: số lần "giữ nguyên" liên tiếp, để bắt đếm thật sau vài ngày.
+-- active và zero_days là tàn dư của cơ chế "tự ẩn phi khỏi khu sau N ngày đếm 0", đã bỏ ở bản 1.3:
+-- nay mọi khu luôn hiện đủ phi, để trống thì mặc định 0. Giữ cột chứ không DROP, xem cảnh báo đầu tệp.
 CREATE TABLE IF NOT EXISTS khu_phi (
   khu_id TEXT NOT NULL,
   phi_id TEXT NOT NULL,
@@ -77,7 +79,17 @@ CREATE TABLE IF NOT EXISTS khu_user (
 );
 CREATE INDEX IF NOT EXISTS idx_khu_user_u ON khu_user(user_id);
 
--- Số đếm hiệu lực của từng ô (ngày x khu x phi)
+-- Số đếm của từng ô (ngày x khu x phi). Mỗi ô giữ HAI con số:
+--   v, kind, ts, user_id = lần báo MỚI NHẤT (chưa chắc đã duyệt)
+--   duyet_* = số ĐÃ DUYỆT. Tồn chỉ đọc duyet_v. Chưa duyệt thì không vào tồn.
+-- duyet_ts giữ ts CỦA LẦN BÁO ĐÃ ĐƯỢC DUYỆT, nên "ô này đã duyệt" là phép so BẰNG: duyet_ts = ts.
+-- Không so >= : hai mốc rơi cùng một milligiây thì không phân định được, mà mặc định sai hướng
+-- nghĩa là một lần báo lọt vào tồn mà không ai duyệt. duyet_at là giờ duyệt, chỉ để hiện lên màn hình.
+-- Nhờ tách hai cột, khu báo lại lúc 10h không đè mất số đã duyệt lúc 8h: tồn vẫn là số 8h
+-- cho tới khi admin duyệt lần báo mới. Ô đang chờ duyệt <=> duyet_ts IS NULL OR duyet_ts <> ts.
+-- kind: 'dem' đếm thật (bấm "Hết (0)" cũng là dem với v=0), 'giu' giữ nguyên số hôm qua,
+--       'zero' người đếm ĐỂ TRỐNG nên mặc định 0. Phân biệt 'zero' với 'dem' v=0 để màn Duyệt
+--       nói được "khu để trống D25 trong khi dự kiến 72 cây", rất khác "khu đếm, D25 hết thật".
 CREATE TABLE IF NOT EXISTS counts (
   day TEXT NOT NULL,
   khu_id TEXT NOT NULL,
@@ -88,6 +100,12 @@ CREATE TABLE IF NOT EXISTS counts (
   le INTEGER,
   user_id INTEGER NOT NULL,
   ts INTEGER NOT NULL,
+  duyet_v INTEGER,
+  duyet_kind TEXT,
+  duyet_ts INTEGER,
+  duyet_at INTEGER,
+  duyet_by INTEGER,
+  duyet_name TEXT,
   PRIMARY KEY (day, khu_id, phi_id)
 );
 
@@ -118,8 +136,11 @@ CREATE TABLE IF NOT EXISTS khu_report (
 
 -- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến)
 -- grp:       các dòng cùng một phiếu
--- voided_ts: lúc hủy phiếu. Hủy sau khi khu đã báo làm số dự kiến của khu đổi y như nhập muộn,
---            nên màn Duyệt cần mốc này mới cảnh báo được (exception 'late').
+-- voided_ts: lúc hủy phiếu (cũng là lúc từ chối, phân biệt bằng nhật ký)
+-- duyet_day: NGÀY DUYỆT, cũng là ngày phiếu vào tồn. NULL = đang chờ duyệt, chưa tính vào tồn.
+--            Khác day (ngày nhập) khi phiếu nằm chờ qua đêm; giữ cả hai để chứng từ ghi rõ
+--            "nhập 07/10, duyệt 08/10". Nhờ vậy phiếu treo không cần chặn chốt ngày: nó vào
+--            tồn của đúng ngày được duyệt.
 CREATE TABLE IF NOT EXISTS receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   day TEXT NOT NULL,
@@ -132,8 +153,13 @@ CREATE TABLE IF NOT EXISTS receipts (
   voided INTEGER NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'nhap',
   grp TEXT,
-  voided_ts INTEGER
+  voided_ts INTEGER,
+  duyet_day TEXT,
+  duyet_ts INTEGER,
+  duyet_by INTEGER,
+  duyet_name TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_receipts_duyet ON receipts(duyet_day);
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
 CREATE INDEX IF NOT EXISTS idx_receipts_grp ON receipts(grp);
 
@@ -147,18 +173,6 @@ CREATE TABLE IF NOT EXISTS day_close (
   used_json TEXT,
   exc_json TEXT,
   span INTEGER NOT NULL DEFAULT 1
-);
-
--- Admin duyệt cảnh báo lệch theo khu trong ngày.
--- sig: số liệu của khu lúc duyệt; khu báo lại số khác thì lần duyệt hết hiệu lực.
-CREATE TABLE IF NOT EXISTS review_ack (
-  day TEXT NOT NULL,
-  khu_id TEXT NOT NULL,
-  sig TEXT NOT NULL,
-  user_id INTEGER NOT NULL,
-  user_name TEXT,
-  ts INTEGER NOT NULL,
-  PRIMARY KEY (day, khu_id)
 );
 
 -- Tổng hợp theo ngày đã chốt x phi: báo cáo theo kỳ đọc bảng này cho nhẹ hạn mức
@@ -209,7 +223,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 9);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 10);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
@@ -234,7 +248,6 @@ INSERT OR IGNORE INTO khu (id, name, sort, active) VALUES
  ('E','Khu E',5,1),('F','Khu F',6,1),('G','Khu G',7,1),('H','Khu H',8,1);
 
 INSERT OR IGNORE INTO settings (key, value) VALUES
- ('hide_after_zero_days','3'),
  ('max_keep_streak','3'),
  ('auto_close','0');
 

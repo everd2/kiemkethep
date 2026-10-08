@@ -30,8 +30,46 @@ async function setup() {
 }
 
 const PHI = ['D6', 'D8', 'D10', 'D12', 'D14', 'D16', 'D18', 'D20', 'D22', 'D25', 'D28', 'D32', 'D36'];
-// báo đủ mọi phi đang active của khu (server đòi đủ)
-const items = (vals) => Object.entries(vals).map(([phi, v]) => ({ phi, v, kind: 'dem', bo: 0, le: v }));
+/* Một báo cáo gồm ĐỦ mọi phi đang bật, đúng như máy khách gửi: phi người đếm gõ số thì kind 'dem',
+   phi để trống thì kind 'zero' với v = 0. Server đòi đủ để một bản app cũ còn trong cache không thể
+   gửi thiếu rồi bị điền 0 thay (xem putCounts). */
+const items = (vals, phis = PHI) => phis.map((phi) => {
+  const x = vals[phi];
+  if (x === undefined) return { phi, v: 0, kind: 'zero' };
+  // số trần = đếm thật; khai cả object khi cần kind 'giu' hoặc cần bo/le cụ thể
+  if (typeof x === 'number') return { phi, v: x, kind: 'dem', bo: 0, le: x };
+  return { phi, kind: 'dem', bo: 0, le: x.v, ...x };
+});
+// duyệt báo cáo của một khu (và luôn cả phiếu đang chờ của khu đó)
+const duyet = (S, khu, who) => S.call('POST', '/review/duyet', { khu }, who);
+const duyetAll = (S, who) => S.call('POST', '/review/duyet', { all: true }, who);
+// duyệt một phiếu nhập/chuyển theo id
+const duyetP = (S, id, who) => S.call('POST', '/receipts/' + id + '/duyet', {}, who);
+
+/* Bọc sẵn "làm rồi duyệt" cho các mục kiểm thứ khác. Bản thân việc CHƯA DUYỆT THÌ KHÔNG VÀO TỒN
+   đã có mục 1 và mục 30 kiểm riêng, nên ở những mục còn lại gọi thẳng cho đỡ rối. */
+const nhap = async (S, body, who) => {
+  const r = await S.call('POST', '/receipts', body, who);
+  if (r.data && r.data.id) await duyetP(S, r.data.id);
+  return r;
+};
+const chuyen = async (S, body, who) => {
+  const r = await S.call('POST', '/transfers', body, who);
+  if (r.data && r.data.id) await duyetP(S, r.data.id);
+  return r;
+};
+const bao = async (S, body, who) => {
+  // máy khách chỉ gửi phi đang bật, đúng như màn Đếm chỉ hiện phi đang bật
+  const act = new Set(S.sql('SELECT id FROM phi WHERE active = 1').map((x) => x.id));
+  const r = await S.call('PUT', '/counts', { ...body, items: body.items.filter((x) => act.has(x.phi)) }, who);
+  if (r.status === 200) await duyet(S, body.khu);
+  return r;
+};
+// chốt ngày: duyệt hết những gì còn chờ rồi mới chốt (bỏ qua bước duyệt khi đang thử phân quyền)
+const chot = async (S, body, who) => {
+  if (!who) await duyetAll(S);
+  return S.call('POST', '/close', body === undefined ? { note: '' } : body, who);
+};
 
 async function main() {
   /* ================= 1. Luồng cơ bản: nhập, đếm, chốt ================= */
@@ -41,17 +79,40 @@ async function main() {
     // nhập 10 bó D16 (180 cây/bó) vào khu A
     let r = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }], note: 'xe 1' });
     eq('nhập kho trả ok', r.status, 200);
-    // khu A đếm 1800, khu B/C chưa có phi nào -> không cần báo
+    const phieu1 = r.data.id;
+    // CHƯA DUYỆT thì phiếu không vào tồn: đây là quy tắc cốt lõi của bản 1.3
+    eq('phiếu mới nằm chờ duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', phieu1).duyet_day, null);
+    let rv = (await S.call('GET', '/review')).data;
+    eq('phiếu chờ duyệt hiện ra màn Duyệt', rv.phieu.length, 1);
+    eq('phiếu chưa duyệt chưa vào dự kiến của khu A',
+      (rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16') || { exp: 0 }).exp, 0);
+    eq('duyệt phiếu được', (await duyetP(S, phieu1)).status, 200);
+    eq('duyệt rồi thì ghi ngày duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', phieu1).duyet_day, day0);
+
     r = await S.call('PUT', '/counts', { khu: 'A', day: day0, items: items({ D16: 1800 }) }, 'An');
     eq('An báo khu A', r.status, 200);
     eq('không xung đột khi chỉ 1 người báo', r.data.conflict, false);
-    const rv = (await S.call('GET', '/review')).data;
+    // số vừa báo cũng CHƯA vào tồn: duyet_v còn trống
+    eq('số vừa báo nằm chờ duyệt',
+      S.one('SELECT v, duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day0, 'A', 'D16'),
+      { v: 1800, duyet_v: null });
+    rv = (await S.call('GET', '/review')).data;
+    eq('khu A chờ duyệt', rv.exceptions.filter((e) => e.type === 'khu_pending').map((e) => e.khu), ['A']);
+    eq('chưa duyệt thì chưa chốt được không ghi chú', (await S.call('POST', '/close', { note: '' })).status, 400);
+
+    eq('duyệt khu A', (await duyet(S, 'A')).status, 200);
+    eq('duyệt rồi thì số vào tồn',
+      S.one('SELECT duyet_v, duyet_name FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day0, 'A', 'D16'),
+      { duyet_v: 1800, duyet_name: 'Admin' });
+    rv = (await S.call('GET', '/review')).data;
     eq('ngày đầu chưa có tồn chuẩn -> used null', rv.rows.find((x) => x.phi === 'D16').used, null);
     eq('span ngày đầu', rv.span, 1);
+    eq('duyệt hết thì không còn việc chờ', rv.pending, 0);
     r = await S.call('POST', '/close', { note: '' });
     eq('chốt ngày đầu được', r.status, 200);
-    const base = S.sql("SELECT khu_id, phi_id, v FROM baseline WHERE day = ?", day0);
-    eq('tồn chuẩn ghi đúng 1 dòng', base.map((x) => [x.khu_id, x.phi_id, x.v]), [['A', 'D16', 1800]]);
+    const base = S.sql("SELECT khu_id, phi_id, v FROM baseline WHERE day = ? AND v <> 0", day0);
+    eq('tồn chuẩn ghi đúng 1 dòng khác 0', base.map((x) => [x.khu_id, x.phi_id, x.v]), [['A', 'D16', 1800]]);
+    eq('tồn chuẩn giờ đặc: 3 khu x 13 phi', S.sql('SELECT 1 FROM baseline WHERE day = ?', day0).length, 39);
     eq('daily_summary ngày đầu', S.one('SELECT ton, nhap, dung FROM daily_summary WHERE day=? AND phi_id=?', day0, 'D16'), { ton: 1800, nhap: 1800, dung: null });
 
     /* --- ngày 2: dùng 300 cây --- */
@@ -59,10 +120,11 @@ async function main() {
     const day1 = vnDay();
     r = await S.call('PUT', '/counts', { khu: 'A', day: day1, items: items({ D16: 1500 }) }, 'An');
     eq('ngày 2 báo được', r.status, 200);
+    await duyetAll(S);
     const rv2 = (await S.call('GET', '/review')).data;
     const d16 = rv2.rows.find((x) => x.phi === 'D16');
     eq('dùng = tồn cũ + nhập − đếm', [d16.old, d16.inn, d16.cnt, d16.used], [1800, 0, 1500, 300]);
-    eq('không có việc bất thường', rv2.exceptions.length, 0);
+    eq('duyệt hết rồi thì không còn việc chờ', rv2.pending, 0);
     await S.call('POST', '/close', { note: '' });
     eq('dung ghi vào daily_summary', S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', day1, 'D16').dung, 300);
     eq('phi_rate sau 1 ngày có dùng', S.one('SELECT per_day, days FROM phi_rate WHERE phi_id=?', 'D16'), { per_day: 300, days: 1 });
@@ -77,9 +139,9 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D10: 440 }) }, 'An');
-    const r = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D10: 440 }) }, 'Binh');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
+    await bao(S, { khu: 'A', day, items: items({ D10: 440 }) }, 'An');
+    const r = await bao(S, { khu: 'A', day, items: items({ D10: 440 }) }, 'Binh');
     eq('Binh báo lại ĐÚNG số của An: không được coi là xung đột', r.data.conflict, false);
     const rep = S.one('SELECT conflict, resolved, user_id FROM khu_report WHERE day=? AND khu_id=?', day, 'A');
     eq('cờ xung đột trong DB', rep.conflict, 0);
@@ -91,9 +153,9 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D10: 440 }) }, 'An');
-    const r = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D10: 430 }) }, 'Binh');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
+    await bao(S, { khu: 'A', day, items: items({ D10: 440 }) }, 'An');
+    const r = await bao(S, { khu: 'A', day, items: items({ D10: 430 }) }, 'Binh');
     eq('số khác nhau -> xung đột', r.data.conflict, true);
     eq('DB ghi cờ xung đột', S.one('SELECT conflict FROM khu_report WHERE day=? AND khu_id=?', day, 'A').conflict, 1);
     const rv = (await S.call('GET', '/review')).data;
@@ -107,7 +169,7 @@ async function main() {
     eq('số sau khi chọn', S.one('SELECT v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D10').v, 440);
     eq('đã đánh dấu xử lý xong', S.one('SELECT resolved FROM khu_report WHERE day=? AND khu_id=?', day, 'A').resolved, 1);
     // An báo lại đúng số đã chốt -> không được bật lại xung đột
-    const again = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D10: 440 }) }, 'An');
+    const again = await bao(S, { khu: 'A', day, items: items({ D10: 440 }) }, 'An');
     eq('báo lại trùng số admin đã chọn: không xung đột', again.data.conflict, false);
     eq('vẫn còn trạng thái đã xử lý', S.one('SELECT conflict, resolved FROM khu_report WHERE day=? AND khu_id=?', day, 'A').resolved, 1);
   }
@@ -116,24 +178,24 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D12', qty: 320 }] });
-    let r = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 100 }] });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D12', qty: 320 }] });
+    let r = await chuyen(S, { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 100 }] });
     eq('chuyển trong khả năng: ok', r.status, 200);
     eq('ghi 2 dòng ±', S.sql('SELECT khu_id, qty FROM receipts WHERE kind=? ORDER BY qty', 'chuyen').map((x) => [x.khu_id, x.qty]), [['A', -100], ['B', 100]]);
     // vượt tồn
-    r = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 9999 }] });
+    r = await chuyen(S, { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 9999 }] });
     eq('chuyển vượt tồn: bị từ chối', r.status, 400);
     ok('thông báo nói rõ số thực có', /220|chỉ còn|không đủ/i.test(JSON.stringify(r.data)), JSON.stringify(r.data));
-    r = await S.call('POST', '/transfers', { from: 'C', to: 'B', lines: [{ phi: 'D12', qty: 1 }] });
+    r = await chuyen(S, { from: 'C', to: 'B', lines: [{ phi: 'D12', qty: 1 }] });
     eq('chuyển từ khu rỗng: bị từ chối', r.status, 400);
     // tổng bãi không đổi -> dùng không bị ảnh hưởng
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D12: 220 }) }, 'An');
-    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D12: 100 }) }, 'Binh');
+    await bao(S, { khu: 'A', day, items: items({ D12: 220 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D12: 100 }) }, 'Binh');
     const rv = (await S.call('GET', '/review')).data;
     const d12 = rv.rows.find((x) => x.phi === 'D12');
     eq('chuyển khu không tính vào nhập', d12.inn, 320);
     eq('chuyển khu không làm sai dùng', d12.used, null); // ngày đầu chưa có tồn chuẩn
-    await S.call('POST', '/close', { note: '' });
+    await chot(S, { note: '' });
     eq('nhap trong daily_summary chỉ gồm thép về', S.one('SELECT nhap FROM daily_summary WHERE day=? AND phi_id=?', day, 'D12').nhap, 320);
   }
 
@@ -141,10 +203,10 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 360 }] });
-    let r = await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D16', v: 360, kind: 'dem', bo: 2, le: 0 }] }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 360 }] });
+    let r = await bao(S, { khu: 'A', day, items: items({ D16: { v: 360, bo: 2, le: 0 } }) }, 'An');
     eq('bo×bo_size + le = v: nhận', r.status, 200);
-    r = await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D16', v: 5, kind: 'dem', bo: 2, le: 0 }] }, 'An');
+    r = await bao(S, { khu: 'A', day, items: items({ D16: { v: 5, bo: 2, le: 0 } }) }, 'An');
     eq('bo/le không khớp v: từ chối', r.status, 400);
   }
 
@@ -153,14 +215,14 @@ async function main() {
     const S = await setup();
     // ngày 1: có tồn chuẩn
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D6', qty: 1000 }, { phi: 'D16', qty: 1800 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 1000, D16: 1800 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D6', qty: 1000 }, { phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D6: 1000, D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
     // ngày 2..6: dùng đều 5 ngày để phi_rate đủ tin (dưới 5 ngày thì không cảnh báo)
     for (let i = 0; i < 5; i++) {
       addDays(1); day = vnDay();
-      await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 1000 - (i + 1) * 10, D16: 1800 - (i + 1) * 100 }) }, 'An');
-      await S.call('POST', '/close', { note: '' });
+      await bao(S, { khu: 'A', day, items: items({ D6: 1000 - (i + 1) * 10, D16: 1800 - (i + 1) * 100 }) }, 'An');
+      await chot(S, { note: '' });
     }
     const rate = S.sql('SELECT phi_id, per_day, days FROM phi_rate ORDER BY phi_id');
     eq('phi_rate D6', rate.find((x) => x.phi_id === 'D6').per_day, 10);
@@ -168,14 +230,14 @@ async function main() {
     eq('phi_rate đủ 5 ngày dữ liệu', rate.find((x) => x.phi_id === 'D6').days, 5);
     // ngày 7: D6 còn 950, dùng 11 đơn vị (220 kg) = gấp 1,1 lần -> KHÔNG bất thường
     addDays(1); day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 939, D16: 1100 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D6: 939, D16: 1100 }) }, 'An');
     let rv = (await S.call('GET', '/review')).data;
     let r6 = rv.rows.find((x) => x.phi === 'D6');
     eq('D6 dùng 11 (220kg): không bất thường', r6.high, false);
     eq('mức bình thường hiển thị = phi_rate', r6.avg, 10);
     ok('D16 dùng 200 (3696kg) gấp 2 lần: chưa bất thường', rv.rows.find((x) => x.phi === 'D16').high === false);
     // cùng ngày, báo lại: D6 dùng 200 đơn vị = 4000 kg, gấp 20 lần -> bất thường
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 750, D16: 1100 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D6: 750, D16: 1100 }) }, 'An');
     rv = (await S.call('GET', '/review')).data;
     r6 = rv.rows.find((x) => x.phi === 'D6');
     eq('D6 dùng 200 (4000kg): bất thường', r6.high, true);
@@ -188,16 +250,16 @@ async function main() {
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D6', qty: 1000 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 1000 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D6', qty: 1000 }] });
+    await bao(S, { khu: 'A', day, items: items({ D6: 1000 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 990 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await bao(S, { khu: 'A', day, items: items({ D6: 990 }) }, 'An');
+    await chot(S, { note: '' });
     eq('phi_rate mới có 1 ngày dữ liệu', S.one('SELECT days FROM phi_rate WHERE phi_id=?', 'D6').days, 1);
     // dùng 200 phần = 4.000 kg = gấp 20 lần "mức trung bình" của đúng một ngày
     addDays(1); day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D6: 790 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D6: 790 }) }, 'An');
     const r = (await S.call('GET', '/review')).data.rows.find((x) => x.phi === 'D6');
     eq('gấp 20 lần nhưng mới 1 ngày dữ liệu: chưa kết luận bất thường', r.high, false);
     eq('vẫn nói rõ có bao nhiêu ngày dữ liệu', r.rateDays, 1);
@@ -208,16 +270,16 @@ async function main() {
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D36', qty: 100 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D36: 100 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D36', qty: 100 }] });
+    await bao(S, { khu: 'A', day, items: items({ D36: 100 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
     // đếm nhiều hơn 1 cây (93,55 kg) -> trong dung sai, không coi là bất thường
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D36: 101 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D36: 101 }) }, 'An');
     let rv = (await S.call('GET', '/review')).data;
     eq('lệch 1 cây D36 (94kg): không bật cờ âm', rv.rows.find((x) => x.phi === 'D36').neg, false);
     // đếm nhiều hơn 10 cây (935 kg) -> bất thường
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D36: 110 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D36: 110 }) }, 'An');
     rv = (await S.call('GET', '/review')).data;
     eq('lệch 10 cây D36 (935kg): bật cờ âm', rv.rows.find((x) => x.phi === 'D36').neg, true);
   }
@@ -226,18 +288,18 @@ async function main() {
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D20: 114 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    await bao(S, { khu: 'A', day, items: items({ D20: 114 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
     // báo giữ nguyên rồi sửa lại thành đếm thật: chuỗi phải về 0
-    await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D20', v: 114, kind: 'giu' }] }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D20: { v: 114, kind: 'giu' } }) }, 'An');
     eq('giữ nguyên lần 1: chuỗi = 1', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 1);
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D20: 110 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D20: 110 }) }, 'An');
     eq('sửa lại thành đếm thật: chuỗi về 0', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 0);
     // giữ nguyên hai lần trong cùng ngày: vẫn là 1
-    await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D20', v: 110, kind: 'giu' }] }, 'An');
-    await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D20', v: 110, kind: 'giu' }] }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D20: { v: 110, kind: 'giu' } }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D20: { v: 110, kind: 'giu' } }) }, 'An');
     eq('giữ nguyên 2 lần cùng ngày: chuỗi = 1', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 1);
   }
 
@@ -245,8 +307,8 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D14', qty: 222 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D14: 222 }) }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D14', qty: 222 }] });
+    await bao(S, { khu: 'A', day, items: items({ D14: 222 }) }, 'An');
     // ẩn khu A khi còn thép: phải bị từ chối
     const hide = await S.call('PATCH', '/khu/A', { active: 0 });
     eq('ẩn khu còn thép: từ chối', hide.status, 400);
@@ -271,8 +333,8 @@ async function main() {
     boot = (await S.call('GET', '/bootstrap')).data;
     eq('phi đã ẩn không bị seed bật lại', boot.phi.find((p) => p.id === 'D6').active, 0);
     // còn thép thì không ẩn được
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D8', qty: 100 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D8: 100 }) }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D8', qty: 100 }] });
+    await bao(S, { khu: 'A', day, items: items({ D8: 100 }) }, 'An');
     r = await S.call('PATCH', '/phi/D8', { active: 0 });
     eq('ẩn phi còn thép: từ chối', r.status, 400);
   }
@@ -281,39 +343,35 @@ async function main() {
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
+    await bao(S, { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 0 }) }, 'An');
-    const z1 = S.one('SELECT zero_days FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D22').zero_days;
-    // khu A hụt sạch D22 nên có cảnh báo biến động khu: chốt phải kèm lý do
-    const cl = await S.call('POST', '/close', { note: 'Khu A đã xuất hết D22' });
+    await bao(S, { khu: 'A', day, items: items({ D22: 0 }) }, 'An');
+    const cl = await chot(S, { note: 'Khu A đã xuất hết D22' });
     eq('chốt kèm ghi chú khi có biến động khu', cl.status, 200);
     const r = await S.call('POST', '/recount-after-close', { khu: 'A' });
     eq('mở lại ngày để đếm lại: ok', r.status, 200);
     eq('ngày đã mở lại', S.sql('SELECT 1 FROM day_close WHERE day=?', day).length, 0);
     eq('số của khu đã xoá', S.sql('SELECT 1 FROM counts WHERE day=? AND khu_id=?', day, 'A').length, 0);
-    eq('chuỗi ngày đếm 0 được hoàn lại', S.one('SELECT zero_days FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D22').zero_days, z1 - 1);
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 0 }) }, 'Binh');
-    eq('báo lại không cộng chuỗi hai lần', S.one('SELECT zero_days FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D22').zero_days, z1);
+    eq('báo lại sau khi mở ngày: ghi được', (await bao(S, { khu: 'A', day, items: items({ D22: 0 }) }, 'Binh')).status, 200);
   }
 
   /* ================= 12. Quên chốt nhiều ngày ================= */
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D25', qty: 720 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D25: 720 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D25', qty: 720 }] });
+    await bao(S, { khu: 'A', day, items: items({ D25: 720 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(3); day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D25', qty: 72 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D25: 600 }) }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D25', qty: 72 }] });
+    await bao(S, { khu: 'A', day, items: items({ D25: 600 }) }, 'An');
     const rv = (await S.call('GET', '/review')).data;
     eq('span gộp 3 ngày', rv.span, 3);
     const r25 = rv.rows.find((x) => x.phi === 'D25');
     eq('dùng gộp = 720 + 72 − 600', r25.used, 192);
-    await S.call('POST', '/close', { note: '' });
+    await chot(S, { note: '' });
     eq('phi_rate chia theo span', S.one('SELECT per_day, days FROM phi_rate WHERE phi_id=?', 'D25'), { per_day: 64, days: 3 });
   }
 
@@ -321,14 +379,14 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D18', qty: 138 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D18: 138 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
-    const a = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D18: 130 }) }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D18', qty: 138 }] });
+    await bao(S, { khu: 'A', day, items: items({ D18: 138 }) }, 'An');
+    await chot(S, { note: '' });
+    const a = await bao(S, { khu: 'A', day, items: items({ D18: 130 }) }, 'An');
     eq('đã chốt: không báo số được', a.status, 409);
-    const b = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D18', qty: 1 }] });
+    const b = await nhap(S, { khu: 'A', lines: [{ phi: 'D18', qty: 1 }] });
     eq('đã chốt: không nhập kho được', b.status, 409);
-    const c = await S.call('POST', '/close', { note: 'x' });
+    const c = await chot(S, { note: 'x' });
     eq('chốt hai lần: từ chối', c.status, 409);
   }
 
@@ -336,9 +394,9 @@ async function main() {
   {
     const S = await setup();
     eq('người đếm không vào được Duyệt', (await S.call('GET', '/review', undefined, 'An')).status, 403);
-    eq('người đếm không nhập kho được', (await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D10', qty: 1 }] }, 'An')).status, 403);
-    eq('thủ kho không chốt ngày được', (await S.call('POST', '/close', { note: 'x' }, 'Kho')).status, 403);
-    eq('thủ kho nhập kho được', (await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D10', qty: 10 }] }, 'Kho')).status, 200);
+    eq('người đếm không nhập kho được', (await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 1 }] }, 'An')).status, 403);
+    eq('thủ kho không chốt ngày được', (await chot(S, { note: 'x' }, 'Kho')).status, 403);
+    eq('thủ kho nhập kho được', (await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 10 }] }, 'Kho')).status, 200);
     eq('recovery token sai: từ chối', (await S.call('POST', '/recover', { token: 'sai', phone: '0900000001', newPin: '2469' })).status, 403);
     eq('recovery token đúng: đổi được PIN', (await S.call('POST', '/recover', { token: 'rec-tok', phone: '0900000001', newPin: '2469' })).status, 200);
   }
@@ -347,11 +405,11 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
-    const r = await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D10', v: 100000, kind: 'dem', bo: 0, le: 100000 }] }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
+    const r = await bao(S, { khu: 'A', day, items: items({ D10: { v: 100000, bo: 0, le: 100000 } }) }, 'An');
     eq('vượt trần: từ chối', r.status, 400);
     ok('thông báo dùng đúng đơn vị', !/Số cây của D6/.test(JSON.stringify(r.data)));
-    const r2 = await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D6', v: 10, kind: 'dem', bo: 0, le: 10 }] }, 'An');
+    const r2 = await bao(S, { khu: 'A', day, items: items({ D6: { v: 10, bo: 0, le: 10 } }) }, 'An');
     ok('phi cuộn không bị đòi "cây"', r2.status === 400 ? !/cây/.test(JSON.stringify(r2.data)) : true, JSON.stringify(r2.data));
   }
 
@@ -361,8 +419,8 @@ async function main() {
     const day = vnDay();
     await S.call('PATCH', '/phi/D6', { active: 0 });
     await S.call('PATCH', '/phi/D32', { active: 0 });
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 180 }) }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 180 }) }, 'An');
     const rv = (await S.call('GET', '/review')).data;
     ok('Duyệt bỏ phi đã tắt không có số liệu', !rv.rows.some((r) => r.phi === 'D6' || r.phi === 'D32'), rv.rows.map((r) => r.phi).join(','));
     ok('Duyệt vẫn có phi đang dùng', rv.rows.some((r) => r.phi === 'D16'));
@@ -371,11 +429,11 @@ async function main() {
     ok('CSV không có cột phi đã tắt', !/"D6"|"D32"/.test(head), head);
     ok('CSV có cột phi đang dùng', /"D16"/.test(head), head);
     // nhập kho vào phi đã tắt: từ chối cho rõ ràng
-    const r = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D6', qty: 100 }] });
+    const r = await nhap(S, { khu: 'A', lines: [{ phi: 'D6', qty: 100 }] });
     eq('nhập vào phi đã tắt: từ chối', r.status, 400);
     // bật lại thì dùng được bình thường
     await S.call('PATCH', '/phi/D6', { active: 1 });
-    eq('bật lại rồi nhập được', (await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D6', qty: 100 }] })).status, 200);
+    eq('bật lại rồi nhập được', (await nhap(S, { khu: 'A', lines: [{ phi: 'D6', qty: 100 }] })).status, 200);
   }
 
   /* ================= 17. Nâng cấp database đang chạy (schema 6 -> 7) ================= */
@@ -391,12 +449,57 @@ async function main() {
     // request đầu tiên phải tự nâng cấp
     await S.call('GET', '/me');
     ok('sau request đầu: đã thêm cột active', S.sql('PRAGMA table_info(phi)').some((c) => c.name === 'active'));
-    eq('phiên bản schema đã lên', S.one("SELECT value FROM meta WHERE key='schema'").value, 9);
+    eq('phiên bản schema đã lên', S.one("SELECT value FROM meta WHERE key='schema'").value, 10);
     eq('phi cũ mặc định đang dùng', S.one("SELECT active FROM phi WHERE id='D10'").active, 1);
     // nâng cấp hai lần không lỗi (nhiều isolate cùng khởi động)
     S.raw.exec("UPDATE meta SET value = 6 WHERE key = 'schema'");
     const S2 = await boot(ROOT);
     ok('chạy lại migration không làm sập', (await S.call('GET', '/me')).status === 401 || true);
+  }
+
+  /* ================= 17b. Nâng cấp bản 1.2 -> 1.3: dữ liệu cũ phải thành "đã duyệt" =================
+     Đây là bước nguy hiểm nhất của cả bản này. Sau bản 1.3 mọi đường đọc tồn đều đòi duyet_v /
+     duyet_day, nên nếu migration không đánh dấu dữ liệu đang chạy là đã duyệt thì tồn toàn bãi
+     về 0 ngay lần request đầu tiên sau khi deploy, và tồn chuẩn ngày hôm đó cũng ghi 0. */
+  {
+    const S = await boot(ROOT);
+    // hạ về đúng hình dạng bản 1.2: chưa có cột duyệt nào, và còn bảng review_ack
+    for (const t of ['counts', 'receipts']) {
+      const cols = S.sql(`PRAGMA table_info(${t})`).map((c) => c.name).filter((n) => !n.startsWith('duyet_'));
+      S.raw.exec(`CREATE TABLE ${t}_old AS SELECT ${cols.join(', ')} FROM ${t}`);
+      S.raw.exec(`DROP TABLE ${t}`);
+      S.raw.exec(`ALTER TABLE ${t}_old RENAME TO ${t}`);
+    }
+    S.raw.exec(`CREATE TABLE IF NOT EXISTS review_ack (day TEXT NOT NULL, khu_id TEXT NOT NULL, sig TEXT NOT NULL,
+      user_id INTEGER NOT NULL, user_name TEXT, ts INTEGER NOT NULL, PRIMARY KEY (day, khu_id))`);
+    S.raw.exec("UPDATE meta SET value = 9 WHERE key = 'schema'");
+    // số liệu đang chạy của bản cũ: khu A có 1800 cây D16, một phiếu nhập, một lần đếm
+    const day = vnDay();
+    S.raw.exec(`INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, voided, kind, grp)
+      VALUES ('${day}', 'D16', 'A', 1800, 'xe cũ', 1, 1000, 0, 'nhap', 'g1')`);
+    S.raw.exec(`INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
+      VALUES ('${day}', 'A', 'D16', 1800, 'dem', 10, 0, 1, 2000), ('${day}', 'A', 'D20', 0, 'zero', 0, 0, 1, 2000)`);
+    ok('trước nâng cấp: chưa có cột duyệt nào',
+      !S.sql('PRAGMA table_info(counts)').some((c) => c.name.startsWith('duyet_')));
+
+    // request đầu tiên sau khi deploy phải tự nâng cấp
+    await S.call('GET', '/rev');
+    eq('phiên bản schema lên 10', S.one("SELECT value FROM meta WHERE key='schema'").value, 10);
+    ok('đã thêm cột duyệt cho counts', S.sql('PRAGMA table_info(counts)').some((c) => c.name === 'duyet_v'));
+    ok('đã thêm cột duyệt cho receipts', S.sql('PRAGMA table_info(receipts)').some((c) => c.name === 'duyet_day'));
+    ok('bảng review_ack đã bỏ', !S.sql("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_ack'").length);
+
+    eq('số đếm cũ thành ĐÃ DUYỆT, không về 0',
+      S.one("SELECT duyet_v, duyet_ts FROM counts WHERE khu_id='A' AND phi_id='D16'"), { duyet_v: 1800, duyet_ts: 2000 });
+    eq('phiếu cũ thành ĐÃ DUYỆT theo đúng ngày nhập',
+      S.one("SELECT duyet_day FROM receipts WHERE grp='g1'").duyet_day, day);
+    /* kind 'zero' của bản cũ nghĩa là người đếm bấm "Hết (0)", còn bản 1.3 dùng 'zero' cho
+       "để trống, mặc định 0". Phải đổi dòng cũ về 'dem' để về sau không bị đọc ngược nghĩa. */
+    eq("'zero' cũ đổi về 'dem' cho khỏi bị đọc ngược nghĩa",
+      S.one("SELECT kind, duyet_kind FROM counts WHERE khu_id='A' AND phi_id='D20'"), { kind: 'dem', duyet_kind: 'dem' });
+    eq('tự ẩn phi đã bỏ: mọi ô mở lại', S.sql('SELECT 1 FROM khu_phi WHERE active = 0').length, 0);
+    ok('cài đặt "tự ẩn sau N ngày đếm 0" đã bỏ',
+      !S.sql("SELECT 1 FROM settings WHERE key='hide_after_zero_days'").length);
   }
 
   /* ================= 18. Không nạp lại phi mặc định mỗi lần khởi động ================= */
@@ -409,103 +512,223 @@ async function main() {
     ok('phi bị xoá không tự sống lại', !S.sql("SELECT 1 FROM phi WHERE id='D36'").length);
   }
 
-  /* ================= 19. Cảnh báo biến động theo từng khu ================= */
+  /* ================= 19. Lệch theo từng khu: bày ra cho người duyệt, có tô đậm =================
+     Ba mốc KHU_UP_KG / KHU_DOWN_KG / KHU_DOWN_PCT từ bản 1.3 chỉ còn quyết định "có tô đậm hay
+     không", chứ không còn quyết định khu có duyệt được hay không: khu nào đã báo cũng duyệt được. */
   {
     const S = await setup();
     let day = vnDay();
     // D22: 34,94 kg mỗi cây. Khu A có 90 cây làm tồn chuẩn.
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
+    await bao(S, { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
-    const exc = async (v) => {
-      await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: v }) }, 'An');
+    // trả về [lệch, có tô đậm] của D22 ở khu A sau khi báo số v
+    const lech = async (v) => {
+      await bao(S, { khu: 'A', day, items: items({ D22: v }) }, 'An');
       const rv = (await S.call('GET', '/review')).data;
-      return rv.exceptions.filter((e) => e.type === 'khu_up' || e.type === 'khu_down').map((e) => e.type);
+      const it = rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D22');
+      return [it.d, !!it.big];
     };
-    eq('đếm dư 2 cây (70 kg): coi là sai số, không báo', await exc(92), []);
-    eq('đếm dư 5 cây (175 kg): báo đếm dư', await exc(95), ['khu_up']);
-    eq('hụt 5 cây (175 kg): chưa đủ lớn, không báo', await exc(85), []);
-    eq('hụt 40 cây (1,4 tấn) nhưng chưa quá nửa: không báo', await exc(50), []);
-    eq('hụt 50 cây (1,7 tấn) và quá nửa: báo hụt', await exc(40), ['khu_down']);
-    eq('hụt sạch: báo hụt', await exc(0), ['khu_down']);
-    // có cảnh báo thì không chốt được nếu thiếu ghi chú
-    eq('còn cảnh báo mà chốt không ghi chú: từ chối', (await S.call('POST', '/close', { note: '' })).status, 400);
-    eq('có ghi chú thì chốt được', (await S.call('POST', '/close', { note: 'xuất cho công trình X' })).status, 200);
+    eq('đếm dư 2 cây (70 kg): lệch nhỏ, không tô', await lech(92), [2, false]);
+    eq('đếm dư 5 cây (175 kg): tô đậm', await lech(95), [5, true]);
+    eq('hụt 5 cây (175 kg): chưa đủ lớn, không tô', await lech(85), [-5, false]);
+    eq('hụt 40 cây (1,4 tấn) nhưng chưa quá nửa: không tô', await lech(50), [-40, false]);
+    eq('hụt 50 cây (1,7 tấn) và quá nửa: tô đậm', await lech(40), [-50, true]);
+    eq('hụt sạch: tô đậm', await lech(0), [-90, true]);
+    // lệch to đến mấy cũng KHÔNG chặn chốt, vì nó đã được duyệt
+    eq('đã duyệt thì lệch không chặn chốt', (await S.call('POST', '/close', { note: '' })).status, 200);
   }
 
-  /* ================= 20. Duyệt cảnh báo theo khu + tự chốt chỉ khi được bật ================= */
+  /* ================= 20. Duyệt theo khu + tự chốt chỉ khi được bật ================= */
   {
     const S = await setup();
     const cron = async () => { let pr; await S.worker.scheduled({}, S.env, { waitUntil: (p) => (pr = p) }); await pr; };
     const closedToday = () => S.sql('SELECT 1 FROM day_close WHERE day=?', vnDay()).length;
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
-    await S.call('POST', '/receipts', { khu: 'B', lines: [{ phi: 'D22', qty: 90 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
-    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 90 }) }, 'Binh');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
+    await nhap(S, { khu: 'B', lines: [{ phi: 'D22', qty: 90 }] });
+    await bao(S, { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D22: 90 }) }, 'Binh');
     eq('tự chốt mặc định tắt', (await S.call('GET', '/bootstrap')).data.settings.auto_close, 0);
     await cron();
     eq('tắt thì cron không chốt', closedToday(), 0);
-    await S.call('POST', '/close', { note: '' });
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
-    // cả hai khu xuất hết D22: hai cảnh báo hụt
+    // cả hai khu xuất hết D22
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 0 }) }, 'An');
     await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 0 }) }, 'Binh');
-    /* Duyệt phải gửi kèm dấu số liệu đang hiện trên màn hình admin, đúng như app làm.
-       Thiếu dấu thì server từ chối: nếu chỉ kiểm tra khi máy khách chịu gửi thì một bản app cũ
-       còn trong cache (máy đã cài PWA) sẽ lặng lẽ tắt luôn cơ chế chống duyệt số chưa nhìn thấy. */
-    const sigsNow = async () => {
-      const d = (await S.call('GET', '/review')).data;
-      const m = {};
-      d.exceptions.forEach((e) => { if ((e.type === 'khu_up' || e.type === 'khu_down') && !e.ack) m[e.khu] = e.sig; });
-      return m;
-    };
-    const ack = async (khu, who) => S.call('POST', '/review/ack', { khu, sig: (await sigsNow())[khu] }, who);
-    const ackAll = async () => S.call('POST', '/review/ack', { all: true, sigs: await sigsNow() });
 
     let rv = (await S.call('GET', '/review')).data;
-    eq('2 việc chặn chốt', rv.pending, 2);
-    eq('người đếm không duyệt được', (await S.call('POST', '/review/ack', { khu: 'A' }, 'An')).status, 403);
-    const noSig = await S.call('POST', '/review/ack', { khu: 'A' });
-    eq('duyệt mà không gửi dấu số liệu: từ chối', noSig.status, 409);
-    eq('nói rõ là bản app cũ', noSig.data.code, 'need_sig');
-    const sigA = (await sigsNow()).A;
-    eq('duyệt khu A', (await ack('A')).status, 200);
+    eq('2 khu chờ duyệt = 2 việc', rv.pending, 2);
+    eq('người đếm không duyệt được', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'An')).status, 403);
+    eq('thủ kho cũng không duyệt được', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'Kho')).status, 403);
+    eq('duyệt khu không tồn tại: từ chối', (await S.call('POST', '/review/duyet', { khu: 'ZZ' })).status, 400);
+
+    eq('duyệt khu A', (await duyet(S, 'A')).status, 200);
     rv = (await S.call('GET', '/review')).data;
-    eq('còn 1 việc chặn chốt', rv.pending, 1);
-    eq('cảnh báo khu A vẫn hiện, đánh dấu đã duyệt', rv.exceptions.filter((e) => e.khu === 'A' && e.ack).length, 1);
+    eq('còn 1 việc: khu B', rv.pending, 1);
+    eq('khu A đã ghi tên người duyệt', rv.khus.find((k) => k.khu === 'A').duyet.by, 'Admin');
+    eq('khu B vẫn đang chờ', rv.khus.find((k) => k.khu === 'B').duyet, null);
     eq('còn khu chưa duyệt: chốt không ghi chú bị từ chối', (await S.call('POST', '/close', { note: '' })).status, 400);
-    // khu A báo lại số khác: lần duyệt cũ hết hiệu lực
+
+    /* Khu A báo lại số khác: lần duyệt cũ hết hiệu lực NGAY, không cần dấu số liệu nào.
+       Bản cũ phải so "sig" vì duyệt là một cờ rời; nay duyệt gắn vào đúng lần báo qua mốc ts,
+       nên báo lại là tự chờ duyệt — cả cơ chế need_sig/stale_sig không còn lý do tồn tại. */
+    advance(2000);
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 5 }) }, 'An');
     rv = (await S.call('GET', '/review')).data;
     eq('báo lại số khác thì phải duyệt lại', rv.pending, 2);
-    // admin bấm Duyệt bằng màn hình cũ (dấu số liệu trước lúc khu A báo lại): phải bị chặn
-    const stale = await S.call('POST', '/review/ack', { khu: 'A', sig: sigA });
-    eq('duyệt bằng số liệu cũ: từ chối', stale.status, 409);
-    eq('mã lỗi nói khu vừa báo lại', stale.data.code, 'stale_sig');
-    eq('duyệt tất cả', (await ackAll()).data.n, 2);
-    eq('duyệt hết thì không còn việc chặn', (await S.call('GET', '/review')).data.pending, 0);
-    eq('bỏ duyệt khu B', (await S.call('POST', '/review/ack', { khu: 'B', undo: true })).status, 200);
-    eq('bỏ duyệt thì khu B chặn lại', (await S.call('GET', '/review')).data.pending, 1);
+    eq('nhưng tồn vẫn là số đã duyệt, chưa nhận số mới',
+      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D22').duyet_v, 0);
+
+    eq('duyệt tất cả', (await duyetAll(S)).data.khu, 2);
+    eq('duyệt hết thì không còn việc', (await S.call('GET', '/review')).data.pending, 0);
+    eq('số mới đã vào tồn', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D22').duyet_v, 5);
+    eq('không còn gì chờ thì duyệt nữa: từ chối', (await duyetAll(S)).status, 400);
+
     // bật tự chốt: còn việc chưa duyệt thì cron bỏ qua và ghi lý do
+    advance(2000);
+    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 1 }) }, 'Binh');
     await S.call('PUT', '/settings', { auto_close: 1 });
     await cron();
     eq('còn việc chưa duyệt: cron không chốt', closedToday(), 0);
     ok('cron ghi lý do bỏ qua', /chưa duyệt/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
-    await ack('B');
+    await duyet(S, 'B');
     await cron();
     eq('duyệt hết: cron tự chốt', closedToday(), 1);
-    eq('đã chốt thì không duyệt được nữa', (await S.call('POST', '/review/ack', { all: true })).status, 409);
+    eq('đã chốt thì không duyệt được nữa', (await duyetAll(S)).status, 409);
+  }
+
+  /* ================= 4c. "Có N việc cần xem" đếm theo số lần admin phải ra tay =================
+     Một khu có thể vừa lệch dư vừa lệch hụt vừa có phiếu chờ, nhưng chỉ có MỘT nút "Duyệt khu",
+     nên nó là MỘT việc. Đếm theo số phần tử trong mảng thì bấm một lần con số tụt mấy đơn vị,
+     admin không đối chiếu được với những gì đang thấy trên màn hình. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D22', qty: 100 }, { phi: 'D18', qty: 100 }] });
+    await nhap(S, { khu: 'B', lines: [{ phi: 'D22', qty: 100 }] });
+    await bao(S, { khu: 'A', day, items: items({ D22: 100, D18: 100 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D22: 100 }) }, 'Binh');
+    await chot(S, { note: '' });
+    addDays(1); day = vnDay();
+    // khu A: D22 dư 20 cây và D18 hụt sạch 100 cây; khu B: D22 hụt 20 cây
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 120, D18: 0 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 80 }) }, 'Binh');
+    // phiếu chờ duyệt của khu A: vẫn chỉ là một việc, vì nút "Duyệt khu A" xử lý luôn cả nó
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 50 }] });
+    let rv = (await S.call('GET', '/review')).data;
+    eq('hai khu chờ duyệt + một phiếu chờ = ba việc', rv.pending, 3);
+    const kA = rv.khus.find((k) => k.khu === 'A');
+    eq('lệch của khu A bày ra theo từng phi',
+      kA.items.filter((x) => x.d).map((x) => [x.phi, x.exp, x.cnt, x.d]).sort(),
+      [['D18', 100, 0, -100], ['D22', 100, 120, 20]]);
+    eq('lệch đủ lớn thì được tô đậm', kA.items.filter((x) => x.big).map((x) => x.phi).sort(), ['D18', 'D22']);
+    eq('khu B lệch nhỏ: không tô đậm', rv.khus.find((k) => k.khu === 'B').items.filter((x) => x.big).length, 0);
+    ok('nhưng khu B vẫn duyệt được như mọi khu', rv.khus.find((k) => k.khu === 'B').waiting > 0);
+
+    // duyệt khu A: một lần bấm xử lý cả số lệch lẫn phiếu chờ của khu đó
+    const dA = await S.call('POST', '/review/duyet', { khu: 'A' });
+    eq('duyệt khu A gộp cả phiếu của khu A', [dA.data.khu, dA.data.phieu], [1, 1]);
+    rv = (await S.call('GET', '/review')).data;
+    eq('còn đúng một việc: khu B', rv.pending, 1);
+    eq('việc còn lại là khu B', rv.exceptions.map((e) => e.type + ':' + e.khu), ['khu_pending:B']);
+    eq('duyệt khu A không chạm gì khu B',
+      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'B', 'D22').duyet_v, null);
+    eq('duyệt rồi thì phiếu của khu A vào tồn theo ngày duyệt',
+      S.one("SELECT duyet_day FROM receipts WHERE khu_id='A' AND phi_id='D22' AND qty=50").duyet_day, day);
+  }
+
+  /* ================= 30. Duyệt theo khu: độc lập, và chưa duyệt thì không vào tồn =================
+     Mục này kiểm đúng câu quy tắc: tồn của một khu bằng BÁO CÁO MỚI NHẤT ĐƯỢC DUYỆT của khu đó,
+     không liên quan khu khác. Hai cái bẫy không được sập:
+     - khu báo lại số mới mà chưa ai duyệt thì tồn vẫn phải là số đã duyệt trước đó, KHÔNG phải
+       số mới và cũng KHÔNG tụt về tồn chuẩn;
+     - duyệt khu này không được làm đổi bất cứ con số nào của khu khác. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 200 }] });
+    await nhap(S, { khu: 'B', lines: [{ phi: 'D20', qty: 200 }] });
+    await bao(S, { khu: 'A', day, items: items({ D20: 200 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D20: 200 }) }, 'Binh');
+    await chot(S, { note: '' });
+    addDays(1); day = vnDay();
+
+    // khu A báo 150 và được duyệt -> tồn A = 150
+    await bao(S, { khu: 'A', day, items: items({ D20: 150 }) }, 'An');
+    const tonA = () => S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D20').duyet_v;
+    eq('duyệt rồi: tồn khu A theo số vừa duyệt', tonA(), 150);
+
+    // khu A báo lại 100, CHƯA duyệt -> tồn vẫn là 150
+    advance(2000);
+    // chính An báo lại (hai NGƯỜI báo khác số là xung đột, một việc khác, đã có mục 3 kiểm)
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D20: 100 }) }, 'An');
+    eq('báo lại chưa duyệt: tồn giữ số ĐÃ DUYỆT, không nhận số mới', tonA(), 150);
+    let rv = (await S.call('GET', '/review')).data;
+    // một lần báo phủ cả 13 phi nên cả 13 ô đều về trạng thái chờ duyệt
+    eq('khu A quay lại trạng thái chờ duyệt', rv.khus.find((k) => k.khu === 'A').waiting, 13);
+    eq('màn Duyệt bày số mới để người duyệt quyết',
+      rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D20').cnt, 100);
+    eq('tổng bãi vẫn tính theo số đã duyệt (150 + 200)', rv.rows.find((x) => x.phi === 'D20').cnt, 350);
+
+    // duyệt khu B (không phải A) -> A vẫn treo, B vào tồn. Độc lập hoàn toàn.
+    await bao(S, { khu: 'B', day, items: items({ D20: 190 }) }, 'Binh');
+    eq('duyệt khu B không gỡ trạng thái chờ của khu A', tonA(), 150);
+    eq('khu B đã vào tồn', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'B', 'D20').duyet_v, 190);
+
+    // giờ duyệt A
+    await duyet(S, 'A');
+    eq('duyệt A: nhận số mới nhất đã duyệt', tonA(), 100);
+    rv = (await S.call('GET', '/review')).data;
+    eq('hết việc chờ', rv.pending, 0);
+    eq('tổng bãi theo hai số vừa duyệt (100 + 190)', rv.rows.find((x) => x.phi === 'D20').cnt, 290);
+
+    // chốt: tồn chuẩn lấy đúng số đã duyệt
+    await S.call('POST', '/close', { note: '' });
+    eq('tồn chuẩn ghi số đã duyệt',
+      S.sql("SELECT khu_id, v FROM baseline WHERE day=? AND phi_id='D20' AND v<>0 ORDER BY khu_id", day).map((x) => [x.khu_id, x.v]),
+      [['A', 100], ['B', 190]]);
+  }
+
+  /* ================= 31. Báo cáo treo qua ngày không được biến mất =================
+     Quên chốt là chuyện thường. Khu báo ngày 2 mà không ai duyệt, ngày 3 khu không báo lại:
+     bản cũ đọc khu_report của riêng hôm nay nên cảnh báo lệch biến mất sạch, trong khi số của
+     ngày 2 vẫn là tồn và sẽ thành tồn chuẩn lúc chốt. Nay trạng thái chờ duyệt nằm trên chính
+     dòng số liệu nên nó sống qua đêm. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 200 }] });
+    await bao(S, { khu: 'A', day, items: items({ D20: 200 }) }, 'An');
+    await chot(S, { note: '' });
+
+    addDays(1);
+    const day2 = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day: day2, items: items({ D20: 20 }) }, 'An');
+    eq('ngày 2: báo xong vẫn đang chờ duyệt', (await S.call('GET', '/review')).data.pending, 1);
+
+    addDays(1); day = vnDay();
+    const rv = (await S.call('GET', '/review')).data;
+    eq('sang ngày 3 vẫn thấy khu A chờ duyệt', rv.exceptions.map((e) => e.type + ':' + e.khu), ['khu_pending:A']);
+    const kA = rv.khus.find((k) => k.khu === 'A');
+    eq('và vẫn bày đúng số lệch của lần báo ngày 2', [kA.items[0].exp, kA.items[0].cnt, kA.items[0].d], [200, 20, -180]);
+    eq('nhắc rõ lần báo đó là của ngày nào', kA.rep.day, day2);
+    eq('chưa duyệt thì tồn vẫn là tồn chuẩn, chưa nhận số ngày 2', rv.rows.find((x) => x.phi === 'D20').cnt, 200);
+    // duyệt ở ngày 3 phải duyệt được số treo của ngày 2
+    eq('duyệt được báo cáo treo từ ngày trước', (await duyet(S, 'A')).status, 200);
+    eq('số ngày 2 vào tồn', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day2, 'A', 'D20').duyet_v, 20);
+    eq('hết việc chờ', (await S.call('GET', '/review')).data.pending, 0);
   }
 
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 2889 }, { phi: 'D8', qty: 301 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: [{ phi: 'D20', v: 2889, kind: 'dem', bo: 25, le: 39 }, { phi: 'D8', v: 301, kind: 'dem', bo: 3, le: 1 }] }, 'An');
-    await S.call('POST', '/close', { note: 'x' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 2889 }, { phi: 'D8', qty: 301 }] });
+    await bao(S, { khu: 'A', day, items: items({ D20: { v: 2889, bo: 25, le: 39 }, D8: { v: 301, bo: 3, le: 1 } }) }, 'An');
+    await chot(S, { note: 'x' });
     for (const [ten, url] of [['xuất bảng khu × phi', '/export?date=' + day], ['báo cáo theo kỳ', `/report?format=csv&from=${day}&to=${day}`]]) {
       const csv = String((await S.call('GET', url)).data);
       const dong = csv.split(/\r?\n/);
@@ -527,14 +750,14 @@ async function main() {
   {
     const S = await setup();
     const d1 = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: items({ D22: 90 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
+    await bao(S, { khu: 'A', day: d1, items: items({ D22: 90 }) }, 'An');
+    await chot(S, { note: '' });
 
     // ngày 2: khu A đếm hết D22 về 0 nhưng KHÔNG ai chốt ngày
     addDays(1);
     const d2 = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day: d2, items: items({ D22: 0 }) }, 'An');
+    await bao(S, { khu: 'A', day: d2, items: items({ D22: 0 }) }, 'An');
     eq('ngày 2 không chốt', S.sql('SELECT 1 FROM day_close WHERE day=?', d2).length, 0);
 
     // ngày 3: khu A không báo (đi vắng), admin chốt bù
@@ -549,7 +772,7 @@ async function main() {
     const eff = b.eff.find((x) => x.khu_id === 'A' && x.phi_id === 'D22');
     eq('bootstrap trả số đếm hiệu lực của ngày 2', eff && [eff.v, eff.day], [0, d2]);
 
-    await S.call('POST', '/close', { note: 'khu A đi vắng' });
+    await chot(S, { note: 'khu A đi vắng' });
     eq('tồn chuẩn ngày chốt lấy theo số đã báo ngày 2',
       S.one('SELECT v FROM baseline WHERE day=? AND khu_id=? AND phi_id=?', d3, 'A', 'D22').v, 0);
     eq('daily_summary ghi dùng 90', S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', d3, 'D22').dung, 90);
@@ -563,24 +786,24 @@ async function main() {
   {
     const S = await setup();
     const d1 = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: items({ D20: 114 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    await bao(S, { khu: 'A', day: d1, items: items({ D20: 114 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1);
     const d2 = vnDay();
     // thép về rồi mới đếm: số đếm đã bao gồm lô này
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
     advance(5000); // thực tế hai thao tác cách nhau vài giây
-    await S.call('PUT', '/counts', { khu: 'A', day: d2, items: items({ D20: 228 }) }, 'An');
+    await bao(S, { khu: 'A', day: d2, items: items({ D20: 228 }) }, 'An');
     addDays(1);
     const d3 = vnDay();
-    const keep = await S.call('PUT', '/counts', { khu: 'A', day: d3, items: [{ phi: 'D20', v: 228, kind: 'giu' }] }, 'An');
+    const keep = await bao(S, { khu: 'A', day: d3, items: items({ D20: { v: 228, kind: 'giu' } }) }, 'An');
     eq('giữ nguyên được vì thép về trước lần đếm', keep.status, 200);
     // còn thép về SAU lần đếm thì phải đếm thực tế
     advance(5000);
-    const rc3 = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    const rc3 = await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
     eq('ghi được phiếu nhập sau lần đếm', rc3.status, 200);
-    const keep2 = await S.call('PUT', '/counts', { khu: 'A', day: d3, items: [{ phi: 'D20', v: 228, kind: 'giu' }] }, 'An');
+    const keep2 = await bao(S, { khu: 'A', day: d3, items: items({ D20: { v: 228, kind: 'giu' } }) }, 'An');
     eq('thép về sau lần đếm: chặn giữ nguyên', keep2.status, 400);
     ok('nói rõ lý do', /nhập\/chuyển|đếm thực tế/.test(JSON.stringify(keep2.data)), JSON.stringify(keep2.data));
   }
@@ -593,105 +816,147 @@ async function main() {
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'B', lines: [{ phi: 'D25', qty: 200 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: [] }, 'An');
-    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D25: 200 }) }, 'Binh');
-    await S.call('POST', '/close', { note: '' });
-    eq('chỉ khu B có tồn chuẩn D25', S.sql('SELECT khu_id FROM baseline WHERE day=? AND phi_id=?', day, 'D25').map((x) => x.khu_id), ['B']);
+    await nhap(S, { khu: 'B', lines: [{ phi: 'D25', qty: 200 }] });
+    await bao(S, { khu: 'A', day, items: items({}) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D25: 200 }) }, 'Binh');
+    await chot(S, { note: '' });
+    // tồn chuẩn nay ĐẶC (mọi khu x mọi phi), nên "khu không có phi đó" thể hiện bằng v = 0
+    eq('chỉ khu B có tồn chuẩn D25 khác 0',
+      S.sql('SELECT khu_id FROM baseline WHERE day=? AND phi_id=? AND v<>0', day, 'D25').map((x) => x.khu_id), ['B']);
     addDays(1); day = vnDay();
     // khu A "sinh" 200 cây D25 (9.022 kg) không phiếu không tồn chuẩn; khu B báo mất đúng 200
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D25: 200 }) }, 'An');
-    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D25: 0 }) }, 'Binh');
+    await bao(S, { khu: 'A', day, items: items({ D25: 200 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D25: 0 }) }, 'Binh');
     const rv = (await S.call('GET', '/review')).data;
     const d25 = rv.rows.find((x) => x.phi === 'D25');
     eq('tổng bãi khớp nên không có cờ dùng âm', [d25.used, d25.neg], [0, false]);
-    const up = rv.exceptions.find((e) => e.type === 'khu_up' && e.khu === 'A');
-    ok('khu A bị bắt đếm dư dù chưa từng có tồn chuẩn D25', !!up, JSON.stringify(rv.exceptions.map((e) => [e.type, e.khu])));
-    eq('số lệch của khu A tính từ mốc 0', up && up.items.map((x) => [x.phi, x.ref, x.mv, x.d]), [['D25', 0, 0, 200]]);
-    ok('khu B vẫn có cảnh báo hụt', rv.exceptions.some((e) => e.type === 'khu_down' && e.khu === 'B'));
+    const kA = rv.khus.find((k) => k.khu === 'A');
+    const upA = kA.items.find((x) => x.phi === 'D25');
+    ok('khu A bị bày lệch dư dù chưa từng có tồn chuẩn D25', !!upA && upA.d === 200, JSON.stringify(kA.items));
+    eq('số lệch của khu A tính từ mốc 0', [upA.ref, upA.mv, upA.cnt, upA.d], [0, 0, 200, 200]);
+    ok('và lệch đó đủ lớn để tô đậm', upA.big, JSON.stringify(upA));
+    const downB = rv.khus.find((k) => k.khu === 'B').items.find((x) => x.phi === 'D25');
+    ok('khu B vẫn được bày là hụt', downB.d === -200 && downB.big, JSON.stringify(downB));
     // phi mới về bằng phiếu thì số nhập đã bù vào dự kiến, đếm đúng không bị báo oan
-    await S.call('POST', '/receipts', { khu: 'C', lines: [{ phi: 'D28', qty: 57 }] });
-    await S.call('PUT', '/counts', { khu: 'C', day, items: items({ D28: 57 }) }, 'An');
+    await nhap(S, { khu: 'C', lines: [{ phi: 'D28', qty: 57 }] });
+    await bao(S, { khu: 'C', day, items: items({ D28: 57 }) }, 'An');
     const rv2 = (await S.call('GET', '/review')).data;
-    ok('khu nhận thép mới, đếm đúng số phiếu: không cảnh báo', !rv2.exceptions.some((e) => e.khu === 'C'),
+    const kC = rv2.khus.find((k) => k.khu === 'C');
+    ok('khu nhận thép mới, đếm đúng số phiếu: không lệch', kC.items.every((x) => !x.d), JSON.stringify(kC.items));
+    ok('và không còn việc gì của khu C', !rv2.exceptions.some((e) => e.khu === 'C'),
       JSON.stringify(rv2.exceptions.filter((e) => e.khu === 'C')));
   }
 
-  /* ================= 23. Hủy phiếu sau khi khu đã báo =================
-     Hủy phiếu làm số dự kiến của khu đổi y như nhập muộn, nên phải cảnh báo y như nhập muộn. */
+  /* ================= 23. Phiếu được duyệt SAU khi số của khu đã duyệt =================
+     Số đếm của khu không gồm lô thép đó, nên dự kiến vừa đổi mà số đã duyệt thì không: phải nhắc
+     admin xem lại khu. Bản cũ tính theo giờ NHẬP và giờ HỦY phiếu so với giờ khu báo, và cảnh báo
+     đó không có đường nào xoá — ngày đó bắt buộc chốt kèm ghi chú. Nay chỉ là so hai mốc DUYỆT,
+     và admin duyệt lại khu là hết. */
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
-    const rc = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+
+    // phiếu được duyệt TRƯỚC khi khu báo và được duyệt: đúng trình tự, không nhắc gì
+    const rc = await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
     advance(5000);
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1980 }) }, 'An');
-    eq('đếm khớp phiếu: chưa có cảnh báo muộn', (await S.call('GET', '/review')).data.exceptions.filter((e) => e.type === 'late').length, 0);
+    await bao(S, { khu: 'A', day, items: items({ D16: 1980 }) }, 'An');
+    let rv = (await S.call('GET', '/review')).data;
+    ok('đúng trình tự: không nhắc xem lại', !rv.khus.find((k) => k.khu === 'A').recheck);
+    eq('và không còn việc gì', rv.pending, 0);
+
+    // giờ duyệt thêm một phiếu NỮA, sau khi số của khu đã duyệt
     advance(5000);
-    eq('hủy phiếu được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
+    const rc2 = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+    rv = (await S.call('GET', '/review')).data;
+    ok('phiếu còn chờ duyệt thì chưa nhắc xem lại', !rv.khus.find((k) => k.khu === 'A').recheck);
+    advance(1000);
+    eq('duyệt phiếu thứ hai', (await duyetP(S, rc2.data.id)).status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    const kA = rv.khus.find((k) => k.khu === 'A');
+    ok('duyệt phiếu sau số của khu: nhắc xem lại khu đó', kA.recheck, JSON.stringify(kA));
+    eq('dự kiến đã cộng lô mới', kA.items.find((x) => x.phi === 'D16').exp, 2160);
+    ok('và nó là một việc chặn chốt', rv.exceptions.some((e) => e.type === 'recheck' && e.khu === 'A'));
+
+    /* Gỡ được: admin xem lại rồi duyệt lại khu là xong. Đây là điểm khác hẳn bản cũ. */
+    advance(1000);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 2160 }) }, 'An');
+    await duyet(S, 'A');
+    rv = (await S.call('GET', '/review')).data;
+    ok('duyệt lại khu là hết nhắc', !rv.khus.find((k) => k.khu === 'A').recheck, JSON.stringify(rv.khus.find((k) => k.khu === 'A')));
+    eq('hết việc chờ', rv.pending, 0);
+
+    // hủy phiếu đã duyệt thì lượng đó rút khỏi tồn ngay
+    advance(1000);
+    eq('hủy phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
     ok('ghi lại mốc hủy', S.one('SELECT voided, voided_ts FROM receipts WHERE id=?', rc.data.id).voided_ts > 0);
-    const late = (await S.call('GET', '/review')).data.exceptions.find((e) => e.type === 'late' && e.khu === 'A');
-    ok('hủy phiếu sau khi khu báo: cảnh báo khu cần đếm lại', !!late);
-    eq('ghi đúng lượng bị rút khỏi dự kiến', late && late.items, [{ phi: 'D16', q: -180 }]);
-    // phiếu lập xong hủy luôn, cả hai việc đều sau lúc khu báo: tự triệt tiêu, không báo oan
-    const rc2 = await S.call('POST', '/receipts', { khu: 'C', lines: [{ phi: 'D12', qty: 320 }] });
-    await S.call('DELETE', '/receipts/' + rc2.data.id);
-    ok('lập rồi hủy luôn: không sinh cảnh báo cho khu C',
-      !(await S.call('GET', '/review')).data.exceptions.some((e) => e.type === 'late' && e.khu === 'C'));
+    eq('dự kiến của khu tụt đúng 180', (await S.call('GET', '/review')).data
+      .khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 1980);
   }
 
-  /* ================= 24. Dòng khu_phi mồ côi không được khóa cả khu =================
-     Phi bị xoá khỏi bảng phi (dọn dữ liệu tay) mà khu_phi còn dòng active=1 thì khu bị kẹt:
-     không gửi phi đó thì "Còn phi chưa nhập", gửi thì "Phi không hợp lệ" — không có đường ra. */
+  /* ================= 24. Phi bị xoá khỏi bảng phi không được khóa cả khu =================
+     Bản cũ: khu_phi còn dòng active=1 cho một phi đã bị xoá thì khu kẹt cứng — không gửi phi đó
+     thì "Còn phi chưa nhập", gửi thì "Phi không hợp lệ". Nay bảng đếm dựng từ chính bảng phi nên
+     phi đã xoá đơn giản là không còn được hỏi. */
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 180, D20: 114 }) }, 'An');
+    await bao(S, { khu: 'A', day, items: items({ D16: 180, D20: 114 }) }, 'An');
     S.raw.exec("DELETE FROM phi WHERE id='D20'");
-    const r = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 200 }) }, 'An');
-    eq('phi mồ côi không chặn việc báo số', r.status, 200);
+    const r = await bao(S, { khu: 'A', day, items: items({ D16: 200 }) }, 'An');
+    eq('phi đã xoá không chặn việc báo số', r.status, 200);
     eq('số mới vẫn ghi được', S.one('SELECT v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16').v, 200);
+    eq('và vẫn duyệt được', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16').duyet_v, 200);
   }
 
   /* ================= 25. Admin chọn số để lại cùng dấu vết như một lần báo thường ================= */
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('PUT', '/settings', { hide_after_zero_days: 1 });
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D20', qty: 114 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 180, D20: 114 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D20', qty: 114 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 180, D20: 114 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1);
     const d1 = vnDay();
     // An giữ nguyên D20 -> keep_streak = 1; Bình báo số khác D16 -> xung đột
-    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: [{ phi: 'D16', v: 180, kind: 'dem', bo: 1, le: 0 }, { phi: 'D20', v: 114, kind: 'giu' }] }, 'An');
+    await bao(S, { khu: 'A', day: d1, items: items({ D16: { v: 180, bo: 1, le: 0 }, D20: { v: 114, kind: 'giu' } }) }, 'An');
     eq('giữ nguyên: chuỗi = 1', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 1);
-    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: items({ D16: 150, D20: 114 }) }, 'Binh');
+    await bao(S, { khu: 'A', day: d1, items: items({ D16: 150, D20: 114 }) }, 'Binh');
     // admin chọn 0 cho D16 và một số thật cho D20 (thay cho bản "giữ nguyên")
     const cr = await S.call('POST', '/conflict/resolve', { khu: 'A', pick: { D16: 0, D20: 100 } });
     eq('admin chọn số: 2 phi đổi', cr.data.changed, 2);
-    const kp16 = S.one('SELECT active, zero_days FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D16');
-    eq('chọn số 0: chuỗi đếm 0 được cộng và phi tự ẩn khỏi khu', [kp16.zero_days, kp16.active], [1, 0]);
     eq('chọn số thật thay bản giữ nguyên: chuỗi giữ nguyên về 0', S.one('SELECT keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').keep_streak, 0);
+    /* Admin chọn số KHÔNG phải là duyệt số: ts của ô vừa sửa nhảy lên nên nó quay về chờ duyệt,
+       admin vẫn phải bấm "Duyệt khu" để số đó thành tồn. */
+    eq('chọn số xong vẫn phải duyệt', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', d1, 'A', 'D16').duyet_v, 150);
+    ok('và khu quay lại danh sách chờ duyệt',
+      (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').waiting > 0);
+    await duyet(S, 'A');
+    eq('duyệt rồi thì số admin chọn mới vào tồn', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', d1, 'A', 'D16').duyet_v, 0);
   }
 
-  /* ================= 26. Bật lại phi thì khu phải hiện lại trong bảng đếm ================= */
+  /* ================= 26. Tắt rồi bật lại một phi: mọi khu theo ngay =================
+     Bản cũ phải bật/tắt từng dòng khu_phi, và còn phải phân biệt khu bị ẩn do "đếm 0 nhiều ngày"
+     với khu bị tắt cùng lúc với phi — sai một chỗ là admin bật phi mà bảng đếm vẫn trống. Nay
+     bảng đếm dựng trực tiếp từ bảng phi nên không còn trạng thái nào để lệch. */
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('PUT', '/settings', { hide_after_zero_days: 3 });
-    // khu A có cả D20 và D22 trong bảng đếm (bãi hết thép nên phi mới tắt được);
-    // D22 thì đã đếm 0 đủ nhiều ngày nên tự ẩn khỏi khu từ trước
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D20: 0, D22: 0 }) }, 'An');
-    S.raw.exec("UPDATE khu_phi SET active = 0, zero_days = 3 WHERE khu_id='A' AND phi_id='D22'");
+    await bao(S, { khu: 'A', day, items: items({}) }, 'An');
+    const hoi = async () => {
+      const b = (await S.call('GET', '/bootstrap')).data;
+      return b.phi.filter((x) => x.active).map((x) => x.id);
+    };
+    ok('mặc định hỏi đủ 13 phi D6..D36', (await hoi()).length === 13, (await hoi()).join(','));
     eq('tắt phi D20 được vì bãi không còn D20', (await S.call('PATCH', '/phi/D20', { active: 0 })).status, 200);
-    eq('tắt phi: khu thôi phải báo', S.one('SELECT active FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').active, 0);
+    ok('tắt rồi: không còn hỏi D20', !(await hoi()).includes('D20'));
+    // báo cáo gửi kèm phi đã tắt thì bị từ chối, không âm thầm nhận
+    eq('gửi phi đã tắt: từ chối', (await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D20: 5 }) }, 'An')).status, 400);
     await S.call('PATCH', '/phi/D20', { active: 1 });
-    eq('bật lại phi: khu hiện lại trong bảng đếm', S.one('SELECT active FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D20').active, 1);
-    eq('khu bị ẩn vì đếm 0 nhiều ngày thì vẫn ẩn', S.one('SELECT active FROM khu_phi WHERE khu_id=? AND phi_id=?', 'A', 'D22').active, 0);
+    ok('bật lại: mọi khu hỏi lại ngay', (await hoi()).includes('D20'));
   }
 
   /* ================= 27. CSV báo cáo kỳ: dòng TỔNG khớp cột với tiêu đề =================
@@ -699,12 +964,12 @@ async function main() {
   {
     const S = await setup();
     let day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
     addDays(1); day = vnDay();
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
-    await S.call('POST', '/close', { note: '' });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
+    await chot(S, { note: '' });
     const csv = (await S.call('GET', `/report?format=csv&from=${day}&to=${day}`)).data;
     const rows = csv.split('\r\n');
     const hdr = rows.find((l) => l.startsWith('"Phi"')).split(';');
@@ -721,16 +986,18 @@ async function main() {
   {
     const S = await setup();
     const day = vnDay();
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] }, 'Kho');
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] }, 'Kho');
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
     S.raw.exec("DELETE FROM users WHERE name IN ('An','Kho')");
     const boot = (await S.call('GET', '/bootstrap')).data;
-    eq('số đếm vẫn hiện ở Tổng quan', boot.counts.map((c) => [c.phi_id, c.v]), [['D16', 1800]]);
+    // báo cáo phủ cả 13 phi (phi để trống ghi 0), nên có 13 dòng; chỉ D16 khác 0
+    eq('số đếm vẫn hiện ở Tổng quan', boot.counts.filter((c) => c.v).map((c) => [c.phi_id, c.v]), [['D16', 1800]]);
+    eq('và đủ 13 dòng cho khu A', boot.counts.length, 13);
     eq('phiếu nhập vẫn hiện', boot.receipts.length, 1);
     eq('khu vẫn được đánh dấu đã báo', boot.reports.map((r) => r.khu_id), ['A']);
     ok('tên người đã xoá hiện rõ ràng', /đã xoá/.test((boot.counts[0] || {}).uname || ''), JSON.stringify(boot.counts[0]));
     const dv = (await S.call('GET', '/day?date=' + day)).data;
-    eq('màn Xem lại ngày cũ cũng giữ đủ dòng', [dv.counts.length, dv.receipts.length, dv.reports.length], [1, 1, 1]);
+    eq('màn Xem lại ngày cũ cũng giữ đủ dòng', [dv.counts.length, dv.receipts.length, dv.reports.length], [13, 1, 1]);
     eq('màn Duyệt vẫn thấy khu đã báo', (await S.call('GET', '/review')).data.reports.map((r) => r.khu_id), ['A']);
   }
 
