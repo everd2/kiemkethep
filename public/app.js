@@ -1317,7 +1317,10 @@ function vUsers() {
     const first = u.id === S.uFirst;
     const me = u.id === S.me.id;
     /* Sửa tên là việc của riêng admin đầu tiên, vì tên là thứ đi theo mọi hoạt động: số đếm,
-       phiếu và báo cáo khu đều lấy tên bằng cách join nên đổi tên là đổi cả lịch sử hiển thị. */
+       phiếu và báo cáo khu đều lấy tên bằng cách join nên đổi tên là đổi cả lịch sử hiển thị.
+       Kể cả thẻ của CHÍNH admin đầu tiên — đó mới là tài khoản cần sửa tên nhất: nó hay được đặt
+       theo chức danh ("admin") rồi ghi "admin" lên mọi việc nó duyệt, đúng cái mà tính năng này
+       sinh ra để chữa. Server vẫn cho (rename không nằm trong PROTECT_FIRST). */
     const renameBox = own && S.uRename === u.id
       ? `<div class="row gap6"><input class="inp s f1" id="urn" placeholder="Tên mới" value="${esc(S.form.urn || u.name)}" data-model="urn"><button class="btn s pri" data-a="urenamesave" data-id="${u.id}">Lưu</button><button class="btn s" data-a="urenamecancel">Bỏ</button></div>`
       : '';
@@ -1332,17 +1335,18 @@ function vUsers() {
           <span class="sm muted">${esc(u.phone)}</span></div>
         <select class="inp s" style="width:130px;font-size:15px" data-change="role" data-id="${u.id}" ${first ? 'disabled' : ''}>${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
       ${renameBox}
-      <div class="row gap6"><button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>
+      <div class="row gap6">${first && !own ? '' : `<button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>`}
         ${me || first ? '' : `<button class="btn s f1 ${u.locked ? '' : 'bad'}" data-a="ulock" data-id="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}
         <button class="btn s f1" data-a="ulogout" data-id="${u.id}">Đăng xuất máy</button></div>
-      ${own && !renameBox ? `<div class="row gap6">${first ? '' : `<button class="btn s f1" data-a="urename" data-id="${u.id}">Sửa tên</button>`}
+      ${own && !renameBox ? `<div class="row gap6"><button class="btn s f1" data-a="urename" data-id="${u.id}">Sửa tên</button>
         ${me || first ? '' : `<button class="btn s bad f1" data-a="udelete" data-id="${u.id}">Xoá tài khoản</button>`}</div>` : ''}
-      ${first ? '<span class="sm muted" style="line-height:1.4">Tài khoản thiết lập hệ thống: không ai khóa, hạ quyền hay xoá được, kể cả admin khác.</span>' : ''}</div>`;
+      ${first ? '<span class="sm muted" style="line-height:1.4">Tài khoản thiết lập hệ thống: không ai khóa, hạ quyền, xoá hay đặt lại PIN được, kể cả admin khác.</span>' : ''}</div>`;
   };
   const goneSec = !gone.length ? '' : `<h2 class="sec">Tài khoản đã xoá (${gone.length})</h2>
     <div class="sm muted" style="line-height:1.4">Không đăng nhập được và không nhận phân công khu. Mọi số đếm, phiếu và báo cáo họ đã làm vẫn giữ nguyên tên — đó là lý do dòng tài khoản không bị xoá hẳn.</div>
     ${gone.map((u) => `<div class="card col gap8" style="opacity:.75">
-      <div class="col" style="gap:2px"><b style="font-size:17px">${esc(u.name)}</b><span class="sm muted">${esc(u.phone)} · ${ROLE[u.role] || u.role}</span></div>
+      <div class="col" style="gap:2px"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:17px">${esc(u.name)}</b>${u.locked ? '<span class="badge bad">Đã khóa</span>' : ''}</div><span class="sm muted">${esc(u.phone)} · ${ROLE[u.role] || u.role}</span></div>
+      ${u.locked ? '<span class="sm muted" style="line-height:1.4">Bị khóa trước khi xoá nên khôi phục xong vẫn còn khóa — nhớ mở khóa nếu cho dùng lại.</span>' : ''}
       ${own ? `<button class="btn s f1" data-a="urestore" data-id="${u.id}">KHÔI PHỤC</button>` : '<span class="sm muted">Chỉ admin đầu tiên khôi phục được.</span>'}</div>`).join('')}`;
   return `${head('Người dùng', own ? 'Bạn là admin đầu tiên: tạo, sửa tên và xoá tài khoản' : 'Admin tạo tài khoản và PIN', 'more')}<div class="f1 scroll pad col gap12" id="body">
     ${S.pinShown ? `<div class="card ok col gap8"><b style="font-size:18px">PIN của ${esc(S.pinShown.name)}</b><b style="font-size:40px;letter-spacing:8px">${esc(S.pinShown.pin)}</b><span class="sm">Đưa PIN này cho người dùng (chỉ hiện một lần). Họ sẽ phải đổi PIN khi đăng nhập lần đầu.</span><button class="btn s full" data-a="pinok">Đã ghi lại</button></div>` : ''}
@@ -1409,8 +1413,11 @@ function vSettings() {
     const asg = b.ku[k.id] || [];
     const names = asg.map((id) => (uById[id] ? uById[id].name : '#' + id));
     const open = S.kuEdit === k.id;
+    /* Bảng chọn bỏ tài khoản ĐÃ XOÁ: /users trả cả dòng đã xoá (màn Người dùng cần để khôi phục),
+       còn server thì từ chối gán khu cho người đã xoá — bày tên họ ra đây chỉ dẫn tới mất cả lượt
+       lưu phân công vì một lỗi 400, mà người bấm không hiểu vì sao. */
     const picker = open ? `<div class="col gap6" style="border-top:1px solid var(--line);padding-top:8px">
-      ${(S.users || []).filter((u) => u.role !== 'admin').map((u) => `<button class="chip ${S.kuPick.includes(u.id) ? 'on' : ''}" style="justify-content:flex-start;font-size:16px" data-a="kupick" data-v="${u.id}">${esc(u.name)} · ${ROLE[u.role] || u.role}</button>`).join('') || '<span class="sm muted">Chưa có tài khoản nào ngoài admin.</span>'}
+      ${(S.users || []).filter((u) => u.role !== 'admin' && !u.deleted).map((u) => `<button class="chip ${S.kuPick.includes(u.id) ? 'on' : ''}" style="justify-content:flex-start;font-size:16px" data-a="kupick" data-v="${u.id}">${esc(u.name)} · ${ROLE[u.role] || u.role}</button>`).join('') || '<span class="sm muted">Chưa có tài khoản nào ngoài admin.</span>'}
       <span class="sm muted" style="line-height:1.4">${S.kuPick.length ? 'Chỉ ' + S.kuPick.length + ' người được chọn (và admin) đếm được khu này.' : 'Không chọn ai = mọi người đều đếm được khu này.'}</span>
       <div class="row gap6"><button class="btn s pri f1" data-a="kusave" data-k="${esc(k.id)}">Lưu phân công</button><button class="btn s f1" data-a="kucancel">Hủy</button></div></div>` : '';
     return `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" data-model="kn-${esc(k.id)}" value="${esc(fv('kn-' + k.id, k.name))}"></div>
@@ -1973,18 +1980,38 @@ const ACTIONS = {
   async udelete(d) {
     const u = (S.users || []).find((x) => x.id === Number(d.id));
     if (!u) return;
+    /* Khu mà người này là người phụ trách DUY NHẤT: xoá xong khu đó không còn ai phụ trách, mà
+       khu không ai phụ trách thì MỌI người đếm đều đếm được. Phải nói ra TRƯỚC khi bấm, không thì
+       việc "xoá một người" lại âm thầm mở một khu ra cho cả bãi. Chỉ gửi confirm_khu khi hộp xác
+       nhận đã thật sự cảnh báo, để server còn chặn lại được khi số liệu trên máy đã cũ. */
+    const ku = (S.boot && S.boot.ku) || {};
+    const solo = Object.keys(ku).filter((k) => ku[k].length === 1 && ku[k][0] === u.id);
+    const tenKhu = (k) => k + ' ' + ((S.boot.khuBy[k] && S.boot.khuBy[k].name) || '');
     const msg = `Xoá tài khoản ${u.name}?\n\n`
       + `• Không đăng nhập được nữa, bị đăng xuất khỏi mọi máy và bỏ khỏi phân công khu.\n`
+      + (solo.length ? `• ${u.name} là người phụ trách DUY NHẤT của ${solo.map(tenKhu).join(', ')} — xoá xong thì MỌI người đếm đều đếm được khu đó. Gán người khác trước nếu không muốn vậy.\n` : '')
       + `• Mọi số đếm, phiếu và báo cáo ${u.name} đã làm VẪN GIỮ NGUYÊN, vẫn mang tên ${u.name}.\n`
       + `• Khôi phục lại được ở cuối màn hình này.`;
     if (!(await ask(msg, 'XOÁ TÀI KHOẢN', true))) return render();
-    act(async () => { await api('POST', `/users/${d.id}/delete`, {}); await loadUsers(); await loadBoot(); }, 'Đã xoá tài khoản ' + u.name + '.');
+    act(async () => {
+      try { await api('POST', `/users/${d.id}/delete`, { confirm_khu: solo.length > 0 }); }
+      // số liệu trên máy đã cũ: nạp lại để lần bấm sau hộp xác nhận nói đúng khu nào sẽ mở ra
+      catch (e) { if (e.code === 'khu_open') await loadBoot(); throw e; }
+      await loadUsers(); await loadBoot();
+    }, 'Đã xoá tài khoản ' + u.name + '.'
+      + (solo.length ? ' ' + solo.map(tenKhu).join(', ') + ' không còn ai phụ trách: mọi người đếm đều đếm được.' : ''));
   },
   async urestore(d) {
     const u = (S.users || []).find((x) => x.id === Number(d.id));
     if (!u) return;
-    if (!(await ask(`Khôi phục tài khoản ${u.name}?\nHọ sẽ phải đổi PIN khi đăng nhập lại, nên hãy đặt lại PIN và đưa cho họ.`, 'KHÔI PHỤC'))) return render();
-    act(async () => { await api('POST', `/users/${d.id}/restore`, {}); await loadUsers(); await loadBoot(); }, 'Đã khôi phục ' + u.name + '. Hãy đặt lại PIN cho họ.');
+    if (!(await ask(`Khôi phục tài khoản ${u.name}?\nPIN cũ bị thu hồi, hệ thống cấp PIN MỚI hiện ngay sau đây để bạn đưa lại cho họ.`
+      + (u.locked ? `\n${u.name} đang bị khóa, khôi phục xong vẫn còn khóa: mở khóa nếu cho dùng lại.` : ''), 'KHÔI PHỤC'))) return render();
+    // PIN mới là phản hồi của việc này, hiện bằng đúng thẻ PIN như lúc tạo tài khoản
+    act(async () => {
+      const r = await api('POST', `/users/${d.id}/restore`, {});
+      S.pinShown = { name: u.name, pin: r.pin };
+      await loadUsers(); await loadBoot();
+    });
   },
 
   async phiseed() {

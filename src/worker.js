@@ -1550,12 +1550,17 @@ async function nightly(env) {
 
 /* ========================= QUẢN TRỊ ========================= */
 
-/* Admin ĐẦU TIÊN = tài khoản do màn Thiết lập tạo ra, tức dòng users có id nhỏ nhất. Đây là
+/* Admin ĐẦU TIÊN = tài khoản do màn Thiết lập tạo ra, tức dòng ADMIN có id nhỏ nhất. Đây là
    "chủ hệ thống": chỉ người này được sửa tên, xoá và khôi phục tài khoản, và chính tài khoản này
    thì không ai khoá, hạ quyền hay xoá được — kể cả một admin khác. Thiếu chốt đó thì hai admin
    có thể khoá lẫn nhau và cả bãi mất đường quản lý người dùng, không sửa được từ trong app. */
 const firstAdminId = async (env) => {
-  const r = await env.DB.prepare('SELECT MIN(id) id FROM users').first();
+  /* Phải lọc role = 'admin': "id nhỏ nhất" một mình là chưa đủ. Trên database đã dùng từ trước,
+     dòng id nhỏ nhất có thể KHÔNG còn là admin (đường đổi vai trò cũ chỉ chặn tự hạ quyền mình),
+     và lúc đó cả bãi mất đường quản lý người dùng: sửa tên / xoá / khôi phục tài khoản tắt hẳn
+     với mọi người, mà chính dòng đó lại được PROTECT_FIRST che nên cũng không nâng quyền hay khoá
+     lại được — khoá cứng, không sửa nổi từ trong app. deleted = 0 lọc thêm vì lý do y như vậy. */
+  const r = await env.DB.prepare("SELECT MIN(id) id FROM users WHERE role = 'admin' AND deleted = 0").first();
   return r && r.id != null ? r.id : 0;
 };
 
@@ -1593,6 +1598,11 @@ async function createUser(req, env, admin) {
 const OWNER_ONLY = ['rename', 'delete', 'restore'];
 // và ba việc KHÔNG được làm với chính admin đầu tiên, kể cả do một admin khác
 const PROTECT_FIRST = ['lock', 'role', 'delete'];
+/* Đặt lại PIN của admin đầu tiên thì CHỈ chính người đó làm được. Thiếu chốt này là PROTECT_FIRST
+   thành vô nghĩa: một admin thứ hai bấm "Đặt lại PIN" trên thẻ admin đầu tiên, PIN mới hiện ngay
+   trên màn hình cho họ đọc, họ đăng nhập vào chính tài khoản chủ hệ thống rồi làm đủ những việc
+   vừa bị chặn — đổi tên và xoá bất kỳ ai, kể cả mọi admin khác. */
+const FIRST_SELF_ONLY = ['reset-pin'];
 
 async function userAction(req, env, admin, id, action) {
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
@@ -1600,6 +1610,9 @@ async function userAction(req, env, admin, id, action) {
   const first = await firstAdminId(env);
   if (OWNER_ONLY.includes(action) && admin.id !== first) {
     throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới sửa tên, xoá hoặc khôi phục tài khoản');
+  }
+  if (FIRST_SELF_ONLY.includes(action) && id === first && admin.id !== first) {
+    throw new HttpError(403, 'PIN của admin đầu tiên chỉ chính người đó đặt lại được — admin khác không làm thay');
   }
   if (PROTECT_FIRST.includes(action) && id === first) {
     throw bad('Không thể khóa, hạ quyền hay xoá admin đầu tiên — đó là tài khoản quản lý hệ thống');
@@ -1669,24 +1682,57 @@ async function userAction(req, env, admin, id, action) {
      đếm được). Số đếm, phiếu, báo cáo người này đã làm thì giữ nguyên, kèm nguyên tên. */
   if (action === 'delete') {
     if (id === admin.id) throw bad('Không thể tự xoá chính mình');
+    /* Bỏ phân công khu là chỗ có hậu quả ngầm: khu KHÔNG còn ai phụ trách nghĩa là MỌI người đếm
+       đều đếm được khu đó (xem putCounts), nên xoá người phụ trách duy nhất của một khu là âm thầm
+       mở khu đó ra cho cả bãi — ngược hẳn ý của người vừa bấm "xoá tài khoản". Vì vậy phải hỏi lại
+       một lần, và mỗi khu bị đổi phân công để lại một dòng nhật ký y như lúc sửa phân công tay. */
+    const asg = await env.DB.prepare(
+      `SELECT ku.khu_id khu, k.name, ku.user_id uid FROM khu_user ku JOIN khu k ON k.id = ku.khu_id
+       WHERE ku.khu_id IN (SELECT khu_id FROM khu_user WHERE user_id = ?1)`).bind(id).all();
+    const byKhu = new Map();
+    for (const r of asg.results) {
+      if (!byKhu.has(r.khu)) byKhu.set(r.khu, { khu: r.khu, name: r.name, users: [] });
+      byKhu.get(r.khu).users.push(r.uid);
+    }
+    const khus = [...byKhu.values()].map((k) => ({ ...k, users: k.users.filter((x) => x !== id) }));
+    const solo = khus.filter((k) => !k.users.length);
+    if (solo.length && !b.confirm_khu) {
+      throw new HttpError(409,
+        `${u.name} là người phụ trách duy nhất của ${solo.map((k) => k.khu + ' ' + k.name).join(', ')}. `
+        + 'Xoá xong thì khu đó không còn ai phụ trách, tức là MỌI người đếm đều đếm được khu đó. '
+        + 'Hãy gán người phụ trách khác trước, hoặc xác nhận lại để tiếp tục.', 'khu_open');
+    }
+    /* locked GIỮ NGUYÊN, không xoá về 0: một tài khoản bị khoá có chủ đích mà đi qua một vòng xoá
+       rồi khôi phục thì phải quay về đúng trạng thái bị khoá, chứ không được tự mở khoá dọc đường
+       mà không dòng nhật ký nào nói. fail_count/locked_until thì xoá, đó chỉ là số lần nhập sai
+       PIN — giữ lại chỉ làm người được khôi phục bị chặn oan. */
     await env.DB.batch([
-      env.DB.prepare('UPDATE users SET deleted = 1, locked = 0, fail_count = 0, locked_until = 0 WHERE id = ?').bind(id),
+      env.DB.prepare('UPDATE users SET deleted = 1, fail_count = 0, locked_until = 0 WHERE id = ?').bind(id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
       env.DB.prepare('DELETE FROM khu_user WHERE user_id = ?').bind(id),
-      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone }),
+      ...khus.map((k) => auditStmt(env, admin, 'khu_users', { khu: k.khu, n: k.users.length, users: k.users })),
+      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone, locked: u.locked, mo: solo.map((k) => k.khu) }),
       bump(env),
     ]);
-    return json({ ok: true });
+    return json({ ok: true, mo: solo.map((k) => k.khu) });
   }
-  // Khôi phục tài khoản xoá nhầm. Bắt đổi PIN khi đăng nhập lại: PIN cũ đã nằm ngoài tầm kiểm soát.
+  /* Khôi phục tài khoản xoá nhầm — và cấp luôn PIN MỚI. must_change một mình là không đủ: nó chỉ
+     có tác dụng SAU khi đăng nhập được, nên để nguyên PIN cũ là mở lại đúng cánh cửa vừa đóng —
+     người đã rời bãi mà còn nhớ PIN vẫn vào được, rồi tự đặt PIN mới và ở lại trong hệ thống.
+     Suốt thời gian tài khoản bị xoá, PIN cũ nằm ngoài tầm kiểm soát nên phải coi như đã mất. */
   if (action === 'restore') {
     if (!u.deleted) throw bad('Tài khoản này chưa bị xoá');
+    const pin = genPin();
+    const salt = rand(16);
     await env.DB.batch([
-      env.DB.prepare('UPDATE users SET deleted = 0, must_change = 1 WHERE id = ?').bind(id),
-      auditStmt(env, admin, 'user_restore', { id, name: u.name }),
+      env.DB.prepare('UPDATE users SET deleted = 0, must_change = 1, pin_salt = ?, pin_hash = ?, fail_count = 0, locked_until = 0, lock_level = 0 WHERE id = ?')
+        .bind(salt, await hashPin(env, salt, pin), id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
+      auditStmt(env, admin, 'user_restore', { id, name: u.name, locked: u.locked }),
       bump(env),
     ]);
-    return json({ ok: true });
+    // locked giữ từ lúc xoá: trả về để màn hình nhắc mở khoá, không thì admin tưởng đã xong
+    return json({ ok: true, pin, locked: u.locked ? 1 : 0 });
   }
   throw new HttpError(404, 'Không có thao tác này');
 }
