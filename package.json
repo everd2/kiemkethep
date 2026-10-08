@@ -6,7 +6,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 execute kho-thep --local --file=schema.sql",
-    "db:remote": "wrangler d1 execute kho-thep --remote --file=schema.sql"
+    "db:remote": "wrangler d1 execute kho-thep --remote --file=schema.sql",
+    "test": "node test/run.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
