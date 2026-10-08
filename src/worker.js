@@ -394,7 +394,7 @@ async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, settings, rates, khuUser] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, active, keep_streak FROM khu_phi'),
@@ -406,6 +406,16 @@ async function bootstrap(env, user) {
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
     // nhập/chuyển kể từ lần chốt gần nhất theo khu × phi (gồm cả ngày quên chốt), giống cách màn Duyệt tính
     env.DB.prepare('SELECT khu_id, phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY khu_id, phi_id').bind(last, day),
+    // số đếm hiệu lực của từng ô: khu báo hôm qua mà hôm nay chưa báo thì vẫn phải lấy số hôm qua,
+    // không được quay về tồn chuẩn cũ (xem EFF_SELECT)
+    env.DB.prepare(EFF_SELECT).bind(last, day),
+    // lượng nhập/chuyển xảy ra SAU lần đếm hiệu lực: đây mới là phần chưa nằm trong số đếm
+    env.DB.prepare(
+      `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
+       LEFT JOIN (${EFF_SELECT}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
+       WHERE r.voided = 0 AND r.day > ?1 AND r.day <= ?2 AND (e.ts IS NULL OR r.ts > e.ts)
+       GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`
+    ).bind(last, day),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
     env.DB.prepare('SELECT khu_id, user_id FROM khu_user'),
@@ -424,6 +434,8 @@ async function bootstrap(env, user) {
     reports: reports.results,
     receipts: receipts.results,
     innKhu: innKhu.results,
+    eff: eff.results,
+    mvNew: mvNew.results,
     rates: rates.results,
     khuUser: khuUser.results,
     settings: parseSettings(settings.results),
@@ -436,6 +448,26 @@ async function bootstrap(env, user) {
 // Gói Free giới hạn khoảng 50 truy vấn D1 mỗi request: ghi cả danh sách bằng MỘT câu lệnh,
 // dữ liệu gửi dạng JSON trong một tham số rồi tách bằng json_each (số truy vấn không đổi dù thêm phi).
 const J = (f) => `json_extract(j.value, '$.${f}')`;
+
+/* Số đếm HIỆU LỰC của một ô (khu × phi) = lần báo GẦN NHẤT kể từ sau lần chốt trước, không phải
+   chỉ lần báo của đúng ngày đang xét. Quên chốt vài ngày là chuyện thường (mất mạng, nghỉ lễ):
+   nếu chỉ đọc counts của ngày chốt thì khu nào hôm đó không báo sẽ bị quay về tồn chuẩn cũ,
+   xoá sạch những ngày họ đã báo ở giữa. */
+const EFF_JOIN = (A, B) => `LEFT JOIN counts c
+  ON c.khu_id = kp.khu_id AND c.phi_id = kp.phi_id AND c.day > ?${A} AND c.day <= ?${B}
+  AND c.day = (SELECT MAX(c2.day) FROM counts c2
+               WHERE c2.khu_id = kp.khu_id AND c2.phi_id = kp.phi_id AND c2.day > ?${A} AND c2.day <= ?${B})`;
+// ?1 = ngày chốt trước ('' nếu chưa có), ?2 = ngày đang xét
+const EFF_SELECT = `SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day FROM counts c
+  WHERE c.day > ?1 AND c.day <= ?2
+    AND c.day = (SELECT MAX(c2.day) FROM counts c2
+                 WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id AND c2.day > ?1 AND c2.day <= ?2)`;
+// như trên nhưng mốc là ngày có tồn chuẩn gần nhất tính đến ?1 (dùng cho xuất CSV một ngày bất kỳ)
+const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.v FROM counts c
+  WHERE c.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c.day <= ?1
+    AND c.day = (SELECT MAX(c2.day) FROM counts c2
+                 WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id
+                   AND c2.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c2.day <= ?1)`;
 
 /* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
    So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
@@ -463,9 +495,18 @@ async function putCounts(req, env, user) {
     env.DB.prepare('SELECT id, bo_size, unit FROM phi WHERE active = 1'),
     env.DB.prepare('SELECT phi_id, active, zero_days, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khuId),
     env.DB.prepare('SELECT phi_id, v, kind, user_id FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
+    // chỉ tính thép về SAU lần đếm hiệu lực: nếu thép đã về trước lần đếm thì số đếm đã bao gồm,
+    // giữ nguyên số đó là hợp lệ (trước đây chặn cả trường hợp này nên người dùng bị bắt đếm lại vô cớ)
     env.DB.prepare(
-      `SELECT phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND khu_id = ?1
-       AND day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND day <= ?2 GROUP BY phi_id HAVING SUM(qty) <> 0`
+      `SELECT r.phi_id, SUM(r.qty) q FROM receipts r
+       LEFT JOIN (SELECT c.phi_id, c.ts FROM counts c
+                  WHERE c.khu_id = ?1 AND c.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND c.day <= ?2
+                    AND c.day = (SELECT MAX(c2.day) FROM counts c2 WHERE c2.khu_id = ?1 AND c2.phi_id = c.phi_id
+                                 AND c2.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND c2.day <= ?2)
+                 ) e ON e.phi_id = r.phi_id
+       WHERE r.voided = 0 AND r.khu_id = ?1 AND (e.ts IS NULL OR r.ts > e.ts)
+         AND r.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND r.day <= ?2
+       GROUP BY r.phi_id HAVING SUM(r.qty) <> 0`
     ).bind(khuId, day),
     env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(khuId),
   ]);
@@ -715,7 +756,7 @@ async function computeReview(env, day) {
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     db.prepare('SELECT khu_id, COUNT(*) n FROM khu_phi WHERE active = 1 GROUP BY khu_id'),
     db.prepare('SELECT r.khu_id, r.user_id, u.name uname, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r JOIN users u ON u.id = r.user_id WHERE r.day = ?').bind(day),
-    db.prepare('SELECT khu_id, phi_id, v FROM counts WHERE day = ?').bind(day),
+    db.prepare(EFF_SELECT).bind(last, day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     db.prepare('SELECT phi_id, khu_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY phi_id, khu_id').bind(last, day),
     db.prepare('SELECT used_json, span FROM day_close ORDER BY day DESC LIMIT 7'),
@@ -864,7 +905,7 @@ async function doClose(env, user, rv, note, action) {
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kp.khu_id, kp.phi_id, COALESCE(c.v, b.v, 0)
        FROM khu_phi kp
-       LEFT JOIN counts c ON c.day = ?1 AND c.khu_id = kp.khu_id AND c.phi_id = kp.phi_id
+       ${EFF_JOIN(2, 1)}
        LEFT JOIN baseline b ON b.day = ?2 AND b.khu_id = kp.khu_id AND b.phi_id = kp.phi_id
        WHERE kp.active = 1 OR COALESCE(c.v, b.v, 0) > 0`
     ).bind(day, rv.last || ''),
@@ -1391,7 +1432,7 @@ async function exportCsv(env, url) {
   const [phiR, khuR, cntR, baseR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, active, bo_size, unit FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
-    env.DB.prepare('SELECT khu_id, phi_id, v FROM counts WHERE day = ?').bind(day),
+    env.DB.prepare(EFF_BY_BASELINE).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT MAX(day) FROM baseline WHERE day <= ?)').bind(day),
   ]);
   const c = {}, b = {};

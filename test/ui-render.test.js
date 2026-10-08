@@ -86,6 +86,9 @@ const boot = {
     { id: 13, phi_id: 'D10', khu_id: 'B', qty: 50, note: '', kind: 'chuyen', grp: 'g2', ts, user_id: 1, uname: 'Nguyễn Văn A' },
   ],
   innKhu: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }, { khu_id: 'B', phi_id: 'D10', q: 50 }],
+  // khu B đã đếm D10 hôm nay; phần còn lại chưa đếm nên vẫn là "chưa được đếm"
+  eff: [{ khu_id: 'B', phi_id: 'D10', v: 240, kind: 'dem', ts: Date.now() - 36e5, day: today }],
+  mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }],
   rates: [{ phi_id: 'D8', per_day: 33, days: 28 }, { phi_id: 'D10', per_day: 120, days: 2 }],
   settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 },
 };

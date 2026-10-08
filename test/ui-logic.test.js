@@ -83,6 +83,8 @@ const boot = {
   ],
   reports: [], receipts: [],
   innKhu: [{ khu_id: 'A', phi_id: 'D8', q: 33 }],
+  eff: [], // chưa khu nào đếm trong kỳ: mốc là tồn chuẩn
+  mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 33 }], // chưa đếm nên toàn bộ lượng nhập là "chưa được đếm"
   rates: [{ phi_id: 'D8', per_day: 33, days: 28 }],
   settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 },
 };

@@ -188,12 +188,17 @@ function indexBoot(b) {
   b.khuBy = {}; b.khu.forEach((k) => (b.khuBy[k.id] = k));
   b.khuAct = b.khu.filter((k) => k.active);
   b.kp = {}; b.khuPhi.forEach((r) => (b.kp[r.khu_id + '|' + r.phi_id] = r));
-  b.cm = {}; b.counts.forEach((c) => (b.cm[c.khu_id + '|' + c.phi_id] = c));
+  b.cm = {}; b.counts.forEach((c) => (b.cm[c.khu_id + '|' + c.phi_id] = c)); // chỉ lần báo HÔM NAY (mồi nháp đếm)
+  // số đếm hiệu lực: lần báo gần nhất kể từ lần chốt trước. Khu báo hôm qua mà hôm nay chưa báo
+  // thì vẫn phải lấy số hôm qua, không được quay về tồn chuẩn cũ.
+  b.em = {}; (b.eff || []).forEach((c) => (b.em[c.khu_id + '|' + c.phi_id] = c));
   b.bm = {}; b.baseline.forEach((r) => (b.bm[r.khu_id + '|' + r.phi_id] = r.v));
   b.rm = {}; b.reports.forEach((r) => (b.rm[r.khu_id] = r));
   // nhập/chuyển kể từ lần chốt trước theo khu × phi, và cộng theo phi
   b.mv = {}; b.innPhi = {};
   (b.innKhu || []).forEach((r) => { b.mv[r.khu_id + '|' + r.phi_id] = r.q; b.innPhi[r.phi_id] = (b.innPhi[r.phi_id] || 0) + r.q; });
+  // phần nhập/chuyển xảy ra SAU lần đếm hiệu lực: chỉ phần này mới chưa nằm trong số đếm
+  b.mvn = {}; (b.mvNew || []).forEach((r) => (b.mvn[r.khu_id + '|' + r.phi_id] = r.q));
   b.rate = {}; b.rateDays = {};
   (b.rates || []).forEach((r) => { b.rate[r.phi_id] = r.per_day; b.rateDays[r.phi_id] = r.days || 0; });
   // phi admin đã tắt: không hiện trong bảng đếm / nhập kho nữa, nhưng vẫn tra cứu được số liệu cũ qua phiBy
@@ -266,12 +271,16 @@ const isPresent = (k, p) => {
   const b = S.boot;
   const kp = b.kp[k + '|' + p];
   if (kp && kp.active) return true;
-  const c = b.cm[k + '|' + p];
+  const c = b.em[k + '|' + p];
   if (c && c.v > 0) return true;
   return k === S.khu && !!S.draft.added[p];
 };
-const refOf = (k, p) => S.boot.bm[k + '|' + p]; // undefined nếu chưa có tồn chuẩn
-const movedOf = (k, p) => S.boot.mv[k + '|' + p] || 0; // nhập/chuyển vào (+) hoặc ra (−) khu từ lần chốt trước
+// số làm mốc khi đếm: lần đếm gần nhất của ô đó, chưa đếm lần nào thì lấy tồn chuẩn
+const refOf = (k, p) => { const c = S.boot.em[k + '|' + p]; return c ? c.v : S.boot.bm[k + '|' + p]; };
+// nhập/chuyển vào (+) hoặc ra (−) SAU lần đếm gần nhất, tức phần chưa có trong số mốc
+const movedOf = (k, p) => S.boot.mvn[k + '|' + p] || 0;
+// ngày của lần đếm làm mốc, để nói rõ "số hôm qua" hay "số ngày 28/10"
+const refDay = (k, p) => { const c = S.boot.em[k + '|' + p]; return c ? c.day : null; };
 // số dự kiến = tồn chuẩn hôm qua + nhập/chuyển; dùng để so lệch khi đếm
 const expOf = (k, p) => { const r = refOf(k, p), m = movedOf(k, p); return r === undefined ? (m ? m : undefined) : r + m; };
 // chỉ cho "giữ nguyên" khi có số hôm qua, khu không có thép nhập/chuyển, và chưa giữ nguyên quá số ngày cho phép
@@ -284,7 +293,7 @@ function keepBlock(k, p) {
 function valOf(k, p, useDraft) {
   const b = S.boot;
   if (useDraft && k === S.khu && S.draft.cells[p]) return S.draft.cells[p].v;
-  const c = b.cm[k + '|' + p];
+  const c = b.em[k + '|' + p];
   if (c) return c.v;
   const r = b.bm[k + '|' + p];
   return r === undefined ? 0 : r;
@@ -454,6 +463,7 @@ function vLogin() {
     <div class="err" id="err">${esc(S.err)}</div>
     <button class="btn pri full" style="min-height:60px;font-size:20px" data-a="login">ĐĂNG NHẬP</button>
     <div class="muted" style="text-align:center;line-height:1.5">Máy sẽ nhớ đăng nhập 30 ngày.<br>Quên PIN: nhờ admin đặt lại trong mục Người dùng.</div>
+    ${installBtn('btn full')}
   </div>`;
 }
 function vForcePin() {
@@ -617,7 +627,7 @@ function demView() {
     lrows.push(`<div class="mxrow${bg}"><div style="width:40px;padding-left:4px;font-weight:700">${p.id}</div><div style="width:72px;display:flex;justify-content:center"><button class="own ${cls}" aria-label="Nhập ${p.id}" data-a="cell" data-p="${p.id}"><b>${txt}</b><i>${sub}</i></button></div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${toDisp(total)}</div></div>`);
     rrows.push(`<div class="mxrow${bg}">${shown.map((x) => {
       const st = khuStatus(x);
-      const has = S.boot.cm[x.id + '|' + p.id] || S.boot.bm[x.id + '|' + p.id] !== undefined || (S.boot.kp[x.id + '|' + p.id] && S.boot.kp[x.id + '|' + p.id].active);
+      const has = S.boot.em[x.id + '|' + p.id] || S.boot.bm[x.id + '|' + p.id] !== undefined || (S.boot.kp[x.id + '|' + p.id] && S.boot.kp[x.id + '|' + p.id].active);
       const v = valOf(x.id, p.id);
       const unrep = !b.rm[x.id];
       return `<div class="oc" style="${cwStyle};font-size:${cFont}px;color:${has ? (unrep ? '#4B5360' : '#1C1F22') : '#9A9489'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#EDEBE4' : 'transparent'}">${has ? (isCuon(p.id) ? fmtDec(v / p.bo_size) : v) : '·'}</div>`;
@@ -983,11 +993,12 @@ function vBaoCao() {
   }).join('');
   const days = D.days.slice().reverse().map((d) => `<div class="li"><span>${fmtDay(d.day)}${d.span > 1 ? ` <span class="sm muted">(gộp ${d.span} ngày)</span>` : ''}</span><span class="sm">nhập ${fmtT(d.nhap_kg)} · dùng ${fmtT(d.dung_kg)} · tồn <b>${fmtT(d.ton_kg)}</b> tấn</span></div>`).join('');
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${D.closedDays ? '' : '<div class="card warn">Không có ngày nào được chốt trong khoảng này.</div>'}
-    ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt trước kỳ nên không có số tồn đầu kỳ.</div>'}
+    ${D.closedDays || D.openDay ? '' : '<div class="card warn">Không có ngày nào được chốt trong khoảng này.</div>'}
+    ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt nào nên chưa có số tồn đầu kỳ.</div>'}
+    ${D.openStock ? `<div class="card sm" style="line-height:1.4">Kỳ này gồm cả lần chốt đầu tiên (${esc(fmtDay(D.openDay))}) — đó là buổi kiểm kê mở sổ, nên lấy luôn làm tồn đầu kỳ. Lượng nhập/dùng trước buổi đó không ai ghi nên không tính vào kỳ.</div>` : ''}
     <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>Phi</th><th>Tồn đầu</th><th>Nhập</th><th>Dùng</th><th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><th>Tấn</th><td>${fmtT(t.dau)}</td><td>${fmtT(t.nhap)}</td><td>${fmtT(t.dung)}</td><td><b>${fmtT(t.cuoi)}</b></td></tr></tfoot></table></div>
-    <div class="sm muted">Đơn vị: cây (D10–D36) hoặc cuộn (D6, D8), dòng cuối: tấn. ${D.openDay ? 'Tồn đầu lấy ngày chốt ' + fmtDay(D.openDay) + '. ' : ''}${D.closeDay ? 'Tồn cuối lấy ngày chốt ' + fmtDay(D.closeDay) + '. ' : ''}Chuyển khu không tính vào nhập.</div>
+    <div class="sm muted">Đơn vị: cây (D10–D36) hoặc cuộn (D6, D8), dòng cuối: tấn. ${D.openDay ? (D.openStock ? 'Tồn đầu lấy buổi kiểm kê mở sổ ' : 'Tồn đầu lấy ngày chốt ') + fmtDay(D.openDay) + '. ' : ''}${D.closeDay ? 'Tồn cuối lấy ngày chốt ' + fmtDay(D.closeDay) + '. ' : ''}Chuyển khu không tính vào nhập.</div>
     ${days ? `<h2 class="sec">Theo ngày (${D.closedDays} ngày đã chốt)</h2><div class="card" style="padding:0;overflow:hidden">${days}</div>` : ''}
   </div>`;
 }
@@ -1100,6 +1111,7 @@ function vMore() {
     <div class="card col gap6"><b>Cách hiện số lượng</b>
       <div class="row gap6">${UNIT_OPTS.map(([v, l]) => `<button class="chip s f1 ${S.unit === v ? 'on' : ''}" data-a="unit" data-v="${v}">${l}</button>`).join('')}</div>
       <span class="sm muted" style="line-height:1.4">Ví dụ phi ${esc(uDemo().id)}: <b>${fmtQ(uDemo().bo_size * 31 + 10, uDemo())}</b><br>Chỉ đổi cách hiện trên máy này, số liệu không đổi.</span></div>
+    ${installCard()}
     <button class="menu" data-a="nav" data-s="pin">Đổi PIN của tôi</button>
     <button class="menu" style="color:var(--bad)" data-a="logout">Đăng xuất</button>
     <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.2</div>
@@ -1655,6 +1667,13 @@ const ACTIONS = {
   },
   ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); delete S.form['kn-' + d.k]; await loadBoot(); }, 'Đã lưu tên khu.'); },
   async khide(d) { if (d.v !== '1' && !(await ask('Ẩn ' + kName(d.k) + '?\nKhu ẩn không còn trong danh sách đếm, nhưng thép còn lại vẫn được tính vào tổng bãi.', 'ẨN KHU', true))) return; act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.'); },
+  // Gọi hộp cài app của trình duyệt. Mỗi sự kiện chỉ dùng được một lần.
+  async install() {
+    if (!installEvt) return;
+    const ev = installEvt; installEvt = null;
+    try { ev.prompt(); await ev.userChoice; } catch (e) { /* người dùng đóng hộp */ }
+    render();
+  },
   unit(d) { S.unit = d.v; try { localStorage.setItem('kt:unit', d.v); } catch (e) { /* bỏ qua */ } render(); },
   // duyệt lưu trên server (kèm số liệu lúc duyệt) nên chốt tay và tự chốt đều biết khu đã được duyệt
   // gửi kèm dấu số liệu đang hiện: khu vừa báo lại số mới thì server chặn, admin xem lại rồi mới duyệt
@@ -1791,6 +1810,37 @@ async function start() {
   window.addEventListener('online', () => { render(); refresh(); flushPending(); });
   window.addEventListener('offline', () => render());
   try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
+}
+/* Cài app vào màn hình chính.
+   Chrome Android bắn 'beforeinstallprompt' khi web đủ chuẩn PWA. Giữ lại sự kiện để tự hiện
+   nút ngay trong app, khỏi bắt người dùng mò menu ⋮ của trình duyệt — menu đó đổi tên và đổi
+   chỗ liên tục theo phiên bản Chrome, và biến mất hẳn trong trình duyệt của Zalo, Facebook. */
+let installEvt = null;
+function isStandalone() {
+  try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; }
+}
+// Vẽ lại để nút hiện ra, nhưng không vẽ khi người dùng đang gõ dở (sẽ xoá mất số đang nhập);
+// bỏ qua lần vẽ này thì nút vẫn hiện ở lần vẽ kế tiếp.
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); installEvt = e;
+  const ae = document.activeElement;
+  if (!ae || (ae.tagName !== 'INPUT' && ae.tagName !== 'SELECT')) render();
+});
+window.addEventListener('appinstalled', () => { installEvt = null; say('Đã cài app vào màn hình chính'); render(); });
+// Nút cài: chỉ hiện khi máy cho cài và app chưa được cài.
+function installBtn(cls) {
+  if (!installEvt || isStandalone()) return '';
+  return `<button class="${cls}" data-a="install">Cài app vào màn hình chính</button>`;
+}
+// Trong mục Thêm: cài được thì hiện nút, không thì chỉ cách làm tay.
+function installCard() {
+  if (isStandalone()) return '';
+  if (installEvt) return installBtn('menu');
+  return `<div class="card col gap6"><b>Cài app vào màn hình chính</b>
+    <span class="sm muted" style="line-height:1.5">Máy này chưa cho cài tự động. Làm tay:<br>
+    <b>Android:</b> mở bằng Chrome, bấm menu ⋮ góc trên → <b>Cài đặt ứng dụng</b> (hoặc <b>Thêm vào Màn hình chính</b>).<br>
+    <b>iPhone:</b> mở bằng Safari, bấm nút Chia sẻ → vuốt xuống → <b>Thêm vào MH chính</b>.<br>
+    Mở link trong Zalo hay Facebook thì không cài được, phải bấm "Mở bằng trình duyệt".</span></div>`;
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 start();

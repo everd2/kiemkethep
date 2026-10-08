@@ -51,13 +51,18 @@ async function sim(seed) {
   const real = {};
   const key = (k, p) => k + '|' + p;
   const get = (k, p) => real[key(k, p)] || 0;
-  const add = (k, p, q) => { real[key(k, p)] = get(k, p) + q; };
+  /* dirty: ô mà lượng thép đã đổi SAU lần báo gần nhất của khu đó. Hệ thống không có cách nào
+     biết số mới (thép xuất dùng không có phiếu, hoặc thép về sau khi đã đếm), nên chỉ được đối
+     chiếu sổ bóng ở những ô KHÔNG dirty. Đây là giới hạn của bài toán, không phải lỗi của app. */
+  const dirty = new Set();
+  const add = (k, p, q) => { real[key(k, p)] = get(k, p) + q; dirty.add(key(k, p)); };
+  const clean = (k, phis) => phis.forEach((p) => dirty.delete(key(k, p)));
   const totalReal = () => Object.values(real).reduce((a, b) => a + b, 0);
   let nhapTong = {}, dungTong = {}; // cộng dồn theo phi cho cả kỳ
   const bumpMap = (m, p, q) => { m[p] = (m[p] || 0) + q; };
 
   const firstDay = vnDay();
-  let lastClosedDay = null, lastClosedSnap = null;
+  let lastClosedDay = null, lastClosedSnap = null, lastClosedDirty = null;
   const closedDays = [];
 
   for (let d = 0; d < DAYS; d++) {
@@ -112,7 +117,24 @@ async function sim(seed) {
       }
       if (r.status !== 200) { bug(seed, 'báo số bị từ chối', `${k}: ${JSON.stringify(r.data)}`, log); return; }
       reported.add(k);
+      clean(k, its.map((x) => x.phi));
       say(`${who} báo ${k} (${its.map((x) => x.phi + '=' + x.v).join(',')})`);
+      // người thứ hai báo LỆCH số rồi admin chọn lại số đúng
+      if (rnd() < 0.15 && its.length) {
+        const sai = its.map((x) => {
+          const v = x.v + (rnd() < 0.5 ? 1 : 0) * (1 + int(5));
+          return { phi: x.phi, v, kind: 'dem', bo: Math.floor(v / boOf[x.phi]), le: v % boOf[x.phi] };
+        });
+        const r3 = await S.call('PUT', '/counts', { khu: k, day, items: sai }, who === 'An' ? 'Binh' : 'An');
+        if (r3.status !== 200) { bug(seed, 'báo lệch số bị từ chối', JSON.stringify(r3.data), log); return; }
+        sai.forEach((x) => { if (x.v !== get(k, x.phi)) dirty.add(key(k, x.phi)); });
+        say(`báo LỆCH ${k}`);
+        const pick = Object.fromEntries(its.map((x) => [x.phi, x.v]));
+        const rr = await S.call('POST', '/conflict/resolve', { khu: k, pick });
+        if (rr.status !== 200) { bug(seed, 'admin chọn số bị từ chối', JSON.stringify(rr.data), log); return; }
+        clean(k, its.map((x) => x.phi));
+        say(`admin chọn số đúng cho ${k}`);
+      }
       // người thứ hai báo lại ĐÚNG số: không được coi là xung đột
       if (rnd() < 0.2) {
         const r2 = await S.call('PUT', '/counts', { khu: k, day, items: its }, who === 'An' ? 'Binh' : 'An');
@@ -131,35 +153,91 @@ async function sim(seed) {
       if (c.status !== 200) { bug(seed, 'chốt ngày bị từ chối', JSON.stringify(c.data), log); return; }
       say(`CHỐT (${rv.exceptions.length} cảnh báo)`);
       closedDays.push(day);
-      lastClosedDay = day; lastClosedSnap = { ...real };
+      lastClosedDay = day; lastClosedSnap = { ...real }; lastClosedDirty = new Set(dirty);
 
       // ===== bất biến 1: tồn chuẩn sau chốt phải đúng bằng sổ bóng =====
       const base = S.sql('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?', day);
       const bm = {};
       base.forEach((r) => (bm[key(r.khu_id, r.phi_id)] = r.v));
       for (const k of KHU) for (const p of PHI) {
+        if (dirty.has(key(k, p))) continue;
         const want = get(k, p), got = bm[key(k, p)] || 0;
-        if (want !== got) { bug(seed, 'tồn chuẩn sau chốt lệch sổ bóng', `${k}/${p}: sổ ${want}, database ${got}`, log); return; }
+        if (want !== got) {
+          const ct = S.sql('SELECT day, v, kind, user_id FROM counts WHERE khu_id=? AND phi_id=? ORDER BY day', k, p);
+          const kp = S.one('SELECT active, zero_days, keep_streak FROM khu_phi WHERE khu_id=? AND phi_id=?', k, p);
+          const bl = S.sql('SELECT day, v FROM baseline WHERE khu_id=? AND phi_id=? ORDER BY day', k, p);
+          const rc = S.sql('SELECT day, qty, kind, voided FROM receipts WHERE khu_id=? AND phi_id=? ORDER BY id', k, p);
+          bug(seed, 'tồn chuẩn sau chốt lệch sổ bóng',
+            `${k}/${p}: sổ ${want}, database ${got}\n  khu_phi: ${JSON.stringify(kp)}\n  counts: ${JSON.stringify(ct)}\n  baseline: ${JSON.stringify(bl)}\n  receipts: ${JSON.stringify(rc)}\n  nhật ký ${p}: ${log.filter((l) => l.includes(' ' + p + ' ') || l.includes(p + '=')).slice(-10).join(' // ')}`,
+            log);
+          return;
+        }
+      }
+      // ----- đôi khi admin mở lại ngày rồi chốt lại -----
+      if (rnd() < 0.1) {
+        const ro = await S.call('POST', '/reopen', { note: 'mô phỏng' });
+        if (ro.status !== 200) { bug(seed, 'mở lại ngày bị từ chối', JSON.stringify(ro.data), log); return; }
+        say('MỞ LẠI ngày');
+        const rv2 = (await S.call('GET', '/review')).data;
+        const c2 = await S.call('POST', '/close', { note: rv2.exceptions.length ? 'mô phỏng' : '' });
+        if (c2.status !== 200) { bug(seed, 'chốt lại sau khi mở bị từ chối', JSON.stringify(c2.data), log); return; }
+        say('CHỐT LẠI');
+      }
+      // ----- đôi khi admin bắt một khu đếm lại sau khi đã chốt -----
+      if (rnd() < 0.1) {
+        const k2 = pick(KHU.filter((x) => reported.has(x)));
+        if (k2) {
+          const rc = await S.call('POST', '/recount-after-close', { khu: k2 });
+          if (rc.status !== 200) { bug(seed, 'đếm lại sau chốt bị từ chối', `${k2}: ${JSON.stringify(rc.data)}`, log); return; }
+          // số của khu đó bị xoá: hệ thống quay về tồn chuẩn cũ nên mọi ô của khu thành "chưa biết"
+          PHI.forEach((p2) => dirty.add(key(k2, p2)));
+          say(`ĐẾM LẠI ${k2} (đã xoá số, mở lại ngày)`);
+          const its2 = PHI.filter((p2) => get(k2, p2) > 0 || rnd() < 0.3).map((p2) => ({ phi: p2, v: get(k2, p2), kind: 'dem', bo: Math.floor(get(k2, p2) / boOf[p2]), le: get(k2, p2) % boOf[p2] }));
+          if (its2.length) {
+            let r4 = await S.call('PUT', '/counts', { khu: k2, day, items: its2 }, 'An');
+            if (r4.status === 400 && /Còn phi chưa nhập: (.+)/.test(r4.data.error || '')) {
+              r4.data.error.replace('Còn phi chưa nhập: ', '').split(', ').forEach((p2) => its2.push({ phi: p2, v: get(k2, p2), kind: 'dem', bo: Math.floor(get(k2, p2) / boOf[p2]), le: get(k2, p2) % boOf[p2] }));
+              r4 = await S.call('PUT', '/counts', { khu: k2, day, items: its2 }, 'An');
+            }
+            if (r4.status !== 200) { bug(seed, 'báo lại sau khi bị bắt đếm lại bị từ chối', JSON.stringify(r4.data), log); return; }
+            clean(k2, its2.map((x) => x.phi));
+            say(`báo lại ${k2} sau đếm lại`);
+          }
+          const rv3 = (await S.call('GET', '/review')).data;
+          const c3 = await S.call('POST', '/close', { note: rv3.exceptions.length ? 'mô phỏng' : '' });
+          if (c3.status !== 200) { bug(seed, 'chốt lại sau đếm lại bị từ chối', JSON.stringify(c3.data), log); return; }
+          say('CHỐT LẠI sau đếm lại');
+          lastClosedSnap = { ...real }; lastClosedDirty = new Set(dirty);
+          const base2 = S.sql('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?', day);
+          const bm3 = {};
+          base2.forEach((r) => (bm3[key(r.khu_id, r.phi_id)] = r.v));
+          for (const k3 of KHU) for (const p3 of PHI) {
+            if (dirty.has(key(k3, p3))) continue;
+            const want3 = get(k3, p3), got3 = bm3[key(k3, p3)] || 0;
+            if (want3 !== got3) { bug(seed, 'tồn chuẩn sau đếm lại lệch sổ bóng', `${k3}/${p3}: sổ ${want3}, database ${got3}`, log); return; }
+          }
+        }
       }
       // ===== bất biến 2: daily_summary.ton = tổng sổ bóng theo phi =====
       for (const r of S.sql('SELECT phi_id, ton FROM daily_summary WHERE day = ?', day)) {
+        if (KHU.some((k) => dirty.has(key(k, r.phi_id)))) continue;
         const want = KHU.reduce((a, k) => a + get(k, r.phi_id), 0);
         if (want !== r.ton) { bug(seed, 'daily_summary.ton lệch', `${r.phi_id}: sổ ${want}, database ${r.ton}`, log); return; }
       }
     }
 
     // ===== bất biến 3: tổng toàn bãi mà app hiển thị = sổ bóng (mọi ngày, kể cả chưa chốt) =====
-    if (full) {
+    {
       const b = (await S.call('GET', '/bootstrap')).data;
-      const cm = {}, bm2 = {};
-      b.counts.forEach((c) => (cm[key(c.khu_id, c.phi_id)] = c.v));
+      const em = {}, bm2 = {};
+      (b.eff || []).forEach((c) => (em[key(c.khu_id, c.phi_id)] = c.v));
       b.baseline.forEach((r) => (bm2[key(r.khu_id, r.phi_id)] = r.v));
-      let shown = 0;
-      for (const k of b.khu) for (const p of b.phi) {
-        const x = key(k.id, p.id);
-        shown += cm[x] !== undefined ? cm[x] : (bm2[x] || 0);
+      for (const k of KHU) for (const p of PHI) {
+        const x = key(k, p);
+        if (dirty.has(x)) continue;
+        const shown = em[x] !== undefined ? em[x] : (bm2[x] || 0);
+        if (shown !== get(k, p)) { bug(seed, 'số app hiển thị lệch sổ bóng', `${k}/${p}: app ${shown}, sổ ${get(k, p)}`, log); return; }
       }
-      if (shown !== totalReal()) { bug(seed, 'tổng tồn app hiển thị lệch sổ bóng', `app ${shown}, sổ ${totalReal()}`, log); return; }
     }
 
     addDays(1);
@@ -173,6 +251,7 @@ async function sim(seed) {
     if (dau + r.nhap - r.dung !== cuoi) {
       bug(seed, 'báo cáo kỳ không khép kín', `${r.phi}: ${dau} + ${r.nhap} − ${r.dung} ≠ ${cuoi}`, log); return;
     }
+    if (KHU.some((k) => (lastClosedDirty || new Set()).has(key(k, r.phi)))) continue;
     const wantCuoi = KHU.reduce((a, k) => a + (lastClosedSnap[key(k, r.phi)] || 0), 0);
     if (cuoi !== wantCuoi) { bug(seed, 'tồn cuối kỳ lệch sổ bóng', `${r.phi}: báo cáo ${cuoi}, sổ ${wantCuoi}`, log); return; }
   }
@@ -193,6 +272,7 @@ async function sim(seed) {
   const csvCay = Number(lastLine[lastLine.length - 2]);
   // cột tổng chỉ cộng thép cây; thép cuộn có cột riêng tính theo cuộn
   const isCuonPhi = (id) => head.includes(id + ' (cuộn)');
+  if ((lastClosedDirty || new Set()).size) return; // còn ô hệ thống chưa biết: không so được tổng CSV
   const wantCay = Object.entries(lastClosedSnap).reduce((a, [x, v]) => a + (isCuonPhi(x.split('|')[1]) ? 0 : v), 0);
   if (csvCay !== wantCay) {
     const diff = [];

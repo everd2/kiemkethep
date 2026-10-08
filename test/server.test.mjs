@@ -477,6 +477,65 @@ async function main() {
     eq('cột tấn dùng dấu phẩy', hang[hang.length - 1], '89,45');
   }
 
+  /* ================= 21. Quên chốt: không được bỏ số đã báo ở các ngày giữa ================= */
+  {
+    const S = await setup();
+    const d1 = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 90 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: items({ D22: 90 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+
+    // ngày 2: khu A đếm hết D22 về 0 nhưng KHÔNG ai chốt ngày
+    addDays(1);
+    const d2 = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day: d2, items: items({ D22: 0 }) }, 'An');
+    eq('ngày 2 không chốt', S.sql('SELECT 1 FROM day_close WHERE day=?', d2).length, 0);
+
+    // ngày 3: khu A không báo (đi vắng), admin chốt bù
+    addDays(1);
+    const d3 = vnDay();
+    const rv = (await S.call('GET', '/review')).data;
+    eq('gộp 2 ngày', rv.span, 2);
+    const r22 = rv.rows.find((x) => x.phi === 'D22');
+    eq('Duyệt lấy số đã báo ngày 2, không lấy tồn chuẩn cũ', r22.cnt, 0);
+    eq('nên lượng dùng đúng bằng 90', r22.used, 90);
+    const b = (await S.call('GET', '/bootstrap')).data;
+    const eff = b.eff.find((x) => x.khu_id === 'A' && x.phi_id === 'D22');
+    eq('bootstrap trả số đếm hiệu lực của ngày 2', eff && [eff.v, eff.day], [0, d2]);
+
+    await S.call('POST', '/close', { note: 'khu A đi vắng' });
+    eq('tồn chuẩn ngày chốt lấy theo số đã báo ngày 2',
+      S.one('SELECT v FROM baseline WHERE day=? AND khu_id=? AND phi_id=?', d3, 'A', 'D22').v, 0);
+    eq('daily_summary ghi dùng 90', S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', d3, 'D22').dung, 90);
+    // và báo cáo kỳ vẫn khép kín
+    const rep = (await S.call('GET', `/report?from=${d1}&to=${d3}`)).data;
+    const row = rep.rows.find((x) => x.phi === 'D22');
+    eq('báo cáo kỳ khép kín sau khi quên chốt', (row.dau || 0) + row.nhap - row.dung, row.cuoi);
+  }
+
+  /* ================= 22. Thép về TRƯỚC lần đếm thì vẫn giữ nguyên được ================= */
+  {
+    const S = await setup();
+    const d1 = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day: d1, items: items({ D20: 114 }) }, 'An');
+    await S.call('POST', '/close', { note: '' });
+    addDays(1);
+    const d2 = vnDay();
+    // thép về rồi mới đếm: số đếm đã bao gồm lô này
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    await S.call('PUT', '/counts', { khu: 'A', day: d2, items: items({ D20: 228 }) }, 'An');
+    addDays(1);
+    const d3 = vnDay();
+    const keep = await S.call('PUT', '/counts', { khu: 'A', day: d3, items: [{ phi: 'D20', v: 228, kind: 'giu' }] }, 'An');
+    eq('giữ nguyên được vì thép về trước lần đếm', keep.status, 200);
+    // còn thép về SAU lần đếm thì phải đếm thực tế
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
+    const keep2 = await S.call('PUT', '/counts', { khu: 'A', day: d3, items: [{ phi: 'D20', v: 228, kind: 'giu' }] }, 'An');
+    eq('thép về sau lần đếm: chặn giữ nguyên', keep2.status, 400);
+    ok('nói rõ lý do', /nhập\/chuyển|đếm thực tế/.test(JSON.stringify(keep2.data)), JSON.stringify(keep2.data));
+  }
+
   /* ================= kết quả ================= */
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] ? '  [' + x[2] + ']' : '')).join('\n'));
