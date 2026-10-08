@@ -26,6 +26,7 @@ const cut = (s, n) => { const t = String(s == null ? '' : s); return t.length > 
 const hhmm = (ts) => { const d = new Date(ts); return two(d.getHours()) + ':' + two(d.getMinutes()); };
 const dmy = (ts) => { const d = new Date(ts); return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + hhmm(ts); };
 const ROLE = { admin: 'Admin', thukho: 'Thủ kho', nguoidem: 'Người đếm' };
+const ROWH = 46; // chiều cao một dòng bảng đếm, phải khớp .mxrow/.mxh/.oc trong style.css
 
 const IC = {
   back: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
@@ -47,6 +48,7 @@ const S = {
   nhap: { mode: 'nhap', phi: null, qty: 0, khu: null, from: null, to: null, lines: [], done: null }, scrollSel: null,
   hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, legend: false, draftWarn: null, cmp: null, busy: false,
   stale: null, subs: {}, // subs: khu_id -> null (đang tải) | mảng lần báo
+  ask: null, loadErr: {}, netBad: false, netOk: 0, busyMsg: '',
 };
 const fmtDay = (d) => String(d || '').split('-').reverse().join('/');
 
@@ -73,6 +75,23 @@ async function api(method, path, body) {
   return d;
 }
 
+// Một dải duy nhất cho mọi trạng thái kết nối: người dùng luôn biết số đang xem có mới hay không.
+function netBar() {
+  const top = 'style="margin-top:calc(8px + env(safe-area-inset-top))"';
+  const at = S.netOk ? hhmm(S.netOk) : '';
+  if (S.stale) return `<div class="toast err" data-net="1" role="status">Mất kết nối: đang xem số liệu lưu lúc ${dmy(S.stale)}. Tự cập nhật khi có mạng.</div>`;
+  if (!navigator.onLine) return `<div class="toast err" data-net="1" role="status" ${top}>Máy đang mất mạng${at ? ', đang xem số lúc ' + at : ''}. Tự cập nhật khi có mạng lại.</div>`;
+  if (S.netBad) return `<div class="toast err" data-net="1" role="status" ${top}>Chưa cập nhật được số mới${at ? ', đang xem số lúc ' + at : ''}. Đang thử lại.</div>`;
+  return '';
+}
+const busyHtml = () => (S.busy ? `<div class="busy" role="status" aria-live="polite" aria-busy="true"><span>${esc(S.busyMsg || 'Đang lưu...')}</span></div>` : '');
+// Màn chờ dữ liệu: tải lỗi thì nói rõ và cho bấm thử lại, không treo mãi ở "Đang tải..."
+function panelWait(screen) {
+  const e = S.loadErr[screen];
+  if (!e) return '<div class="pad muted">Đang tải...</div>';
+  return `<div class="pad col gap8"><div class="card bad col gap6"><b style="font-size:17px">Không tải được dữ liệu</b><span class="sm">${esc(e)}</span></div><button class="btn full" data-a="retry" data-s="${esc(screen)}">THỬ LẠI</button></div>`;
+}
+
 function indexBoot(b) {
   b.phiBy = {}; b.phi.forEach((p) => (b.phiBy[p.id] = p));
   b.khuBy = {}; b.khu.forEach((k) => (b.khuBy[k.id] = k));
@@ -91,6 +110,7 @@ async function loadBoot() {
   try { localStorage.setItem('kt:boot', JSON.stringify({ at: Date.now(), b })); } catch (e) { /* đầy bộ nhớ */ }
   indexBoot(b);
   S.boot = b; S.me = b.user; S.stale = null;
+  S.netOk = Date.now(); S.netBad = false;
 }
 // Mất mạng hoặc hết hạn mức: vẫn mở được app với số liệu lần tải gần nhất (chỉ xem)
 function useCachedBoot() {
@@ -119,6 +139,25 @@ function hideToast() {
 }
 // giá trị ô nhập: ưu tiên những gì người dùng đang gõ (S.form), chưa gõ thì lấy số hiện tại
 const fv = (k, dflt) => (S.form[k] === undefined ? String(dflt == null ? '' : dflt) : S.form[k]);
+
+/* Hộp xác nhận trong app: thay confirm() của hệ điều hành để chữ to, nút to,
+   cùng một ngôn ngữ giao diện với phần còn lại. Trả về Promise(true/false). */
+function ask(msg, okLbl, danger) {
+  return new Promise((resolve) => {
+    if (S.ask) S.ask.resolve(false); // hộp cũ chưa trả lời thì coi như huỷ
+    S.ask = { msg, ok: okLbl || 'Đồng ý', danger: !!danger, resolve };
+    render();
+  });
+}
+function askHtml() {
+  const a = S.ask;
+  if (!a) return '';
+  return `<div class="modal" role="dialog" aria-modal="true" aria-label="Xác nhận"><div class="box col gap8">
+    <div style="font-size:18px;line-height:1.45;white-space:pre-line">${esc(a.msg)}</div>
+    <button class="btn ${a.danger ? 'bad' : 'pri'} full" data-a="askyes">${esc(a.ok)}</button>
+    <button class="btn full" data-a="askno">Để sau</button>
+  </div></div>`;
+}
 
 /* ===================== TÍNH TOÁN ===================== */
 const isPresent = (k, p) => {
@@ -150,7 +189,7 @@ function valOf(k, p, useDraft) {
 }
 function totals() {
   const b = S.boot;
-  const T = { cay: 0, kg: 0, perPhi: {}, perKhu: {}, used: {}, usedKg: null, inKg: 0 };
+  const T = { cay: 0, kg: 0, perPhi: {}, perKhu: {}, used: {}, usedKg: null, inKg: 0, hidKg: 0 };
   b.phi.forEach((p) => (T.perPhi[p.id] = 0));
   b.khuAct.forEach((k) => (T.perKhu[k.id] = { cay: 0, kg: 0 }));
   // cộng cả khu đang ẩn (nếu còn thép) để tổng khớp với màn Duyệt
@@ -159,6 +198,7 @@ function totals() {
       const v = valOf(k.id, p.id);
       T.perPhi[p.id] += v; if (!isCuon(p)) T.cay += v; T.kg += v * p.kg_per_cay;
       if (T.perKhu[k.id]) { if (!isCuon(p)) T.perKhu[k.id].cay += v; T.perKhu[k.id].kg += v * p.kg_per_cay; }
+      else T.hidKg += v * p.kg_per_cay; // khu đã ẩn mà còn thép: vẫn vào tổng bãi, nói rõ ở Tổng quan
     }
   }
   // "Nhập hôm nay" chỉ tính thép về, không tính chuyển khu
@@ -180,8 +220,7 @@ function totals() {
 }
 function khuStatus(k) {
   const r = S.boot.rm[k.id];
-  const hasPhi = S.boot.khuPhi.some((x) => x.khu_id === k.id && x.active);
-  if (!r) return hasPhi || !S.boot.lastClosed ? { cls: 'idle', label: 'Chưa báo', who: 'Chưa có ai báo' } : { cls: 'idle', label: 'Chưa báo', who: 'Chưa có ai báo' };
+  if (!r) return { cls: 'idle', label: 'Chưa báo', who: 'Chưa có ai báo' };
   const who = r.uname + ' · ' + hhmm(r.ts);
   if (r.conflict && !r.resolved) return { cls: 'warn', label: 'Cần xem', who: '2 người báo số khác nhau' };
   if (r.recount) return { cls: 'warn', label: 'Đếm lại', who: 'Admin yêu cầu đếm lại' };
@@ -336,16 +375,26 @@ function vHome() {
   b.reports.forEach((r) => {
     const k = b.khuBy[r.khu_id];
     if (!k || !k.active) return;
-    if (r.conflict && !r.resolved) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: isAdmin() ? 'Vào Duyệt để chọn số' : 'Admin đang xem', to: isAdmin() ? 'duyet' : 'home' });
+    if (r.conflict && !r.resolved) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: isAdmin() ? 'Vào Duyệt để chọn số' : 'Admin đang xem', to: isAdmin() ? 'duyet' : null });
     if (r.recount) alerts.push({ bad: false, t: k.name + ' cần đếm lại', s: 'Admin yêu cầu đếm lại', to: 'dem' });
   });
+  // Gom các phi cùng một loại cảnh báo vào MỘT thẻ khi có nhiều hơn 2:
+  // ngày đầu chưa có tồn chuẩn, cả 15 phi đều dưới mức tối thiểu sẽ đẩy hết nội dung khác xuống dưới.
+  const rateTxt = (p) => (b.rate[p.id] ? (isCuon(p) ? fmtInt(Math.round(b.rate[p.id] / p.bo_size)) + ' cuộn/ngày' : fmtInt(b.rate[p.id]) + ' cây/ngày') : '');
+  const neg = [], low = [], shortp = [];
   b.phi.forEach((p) => {
-    if (b.lastClosed && T.used[p.id] < 0) alerts.push({ bad: true, t: p.id + ' đã dùng âm (' + fmtCountShort(T.used[p.id], p) + ')', s: 'Nhập sót phiếu hoặc đếm sai?', to: isAdmin() ? 'duyet' : 'home' });
+    if (b.lastClosed && T.used[p.id] < 0) neg.push(p);
     const dl = daysLeft(p.id, T.perPhi[p.id]);
-    const rateDisp = b.rate[p.id] ? (isCuon(p) ? fmtInt(Math.round(b.rate[p.id] / p.bo_size)) + ' cuộn/ngày' : fmtInt(b.rate[p.id]) + ' cây/ngày') : '';
-    if (T.perPhi[p.id] >= p.min_stock && dl !== null && dl < 3) alerts.push({ bad: false, t: p.id + ' chỉ còn đủ dùng ' + daysTxt(dl), s: 'Còn ' + fmtCountShort(T.perPhi[p.id], p) + (rateDisp ? ', dùng TB ' + rateDisp : ''), to: 'ton' });
-    if (T.perPhi[p.id] < p.min_stock) alerts.push({ bad: true, t: p.id + ' dưới mức tối thiểu', s: 'Còn ' + fmtCountShort(T.perPhi[p.id], p) + ', tối thiểu ' + minStockLbl(p), to: 'ton' });
+    if (T.perPhi[p.id] < p.min_stock) low.push(p);
+    else if (dl !== null && dl < 3) shortp.push({ p, dl });
   });
+  const toDuyet = isAdmin() ? 'duyet' : null; // người không phải admin: thẻ chỉ để đọc, không bấm được
+  if (neg.length > 2) alerts.push({ bad: true, t: neg.length + ' phi có số "đã dùng" âm', s: neg.map((p) => p.id).join(', ') + ' · nhập sót phiếu hoặc đếm sai?', to: toDuyet });
+  else neg.forEach((p) => alerts.push({ bad: true, t: p.id + ' đã dùng âm (' + fmtCountShort(T.used[p.id], p) + ')', s: 'Nhập sót phiếu hoặc đếm sai?', to: toDuyet }));
+  if (low.length > 2) alerts.push({ bad: true, t: low.length + ' phi dưới mức tối thiểu', s: low.map((p) => p.id).join(', '), to: 'ton' });
+  else low.forEach((p) => alerts.push({ bad: true, t: p.id + ' dưới mức tối thiểu', s: 'Còn ' + fmtCountShort(T.perPhi[p.id], p) + ', tối thiểu ' + minStockLbl(p), to: 'ton' }));
+  if (shortp.length > 2) alerts.push({ bad: false, t: shortp.length + ' phi chỉ còn đủ dùng dưới 3 ngày', s: shortp.map((x) => x.p.id).join(', '), to: 'ton' });
+  else shortp.forEach((x) => alerts.push({ bad: false, t: x.p.id + ' chỉ còn đủ dùng ' + daysTxt(x.dl), s: 'Còn ' + fmtCountShort(T.perPhi[x.p.id], x.p) + (rateTxt(x.p) ? ', dùng TB ' + rateTxt(x.p) : ''), to: 'ton' }));
   const maxKhu = Math.max(1, ...b.khuAct.map((k) => T.perKhu[k.id].kg));
   // dùng kg để scale bar (so sánh D8 cuộn vs D10+ cây trên cùng thước đo)
   const maxBarKg = Math.max(1, ...b.phi.map((p) => T.perPhi[p.id] * p.kg_per_cay), ...b.phi.map((p) => p.min_stock * p.kg_per_cay));
@@ -367,7 +416,8 @@ function vHome() {
   // quên chốt ngày trước thì "đã dùng" là lượng dùng gộp từ sau ngày chốt gần nhất
   const yday = new Date(Date.parse(b.today) - 864e5).toISOString().slice(0, 10);
   const usedLabel = b.lastClosed && b.lastClosed < yday ? 'Đã dùng từ sau ' + fmtDay(b.lastClosed).slice(0, 5) : 'Đã dùng hôm nay';
-  const note = miss.length ? `Tạm tính: ${miss.length} khu chưa báo${b.lastClosed ? ' nên lấy số hôm qua' : ''}` : 'Đủ ' + b.khuAct.length + '/' + b.khuAct.length + ' khu đã báo hôm nay';
+  const note = (miss.length ? `Tạm tính: ${miss.length} khu chưa báo${b.lastClosed ? ' nên lấy số hôm qua' : ''}` : 'Đủ ' + b.khuAct.length + '/' + b.khuAct.length + ' khu đã báo hôm nay')
+    + (T.hidKg > 0 ? ` · gồm ${fmtT(T.hidKg)} tấn ở khu đã ẩn (không có trong danh sách dưới)` : '');
   return `<div class="f1 scroll" id="body">
     <div class="hero">
       <div class="row" style="justify-content:space-between"><span>Tổng quan · ${esc(b.today.split('-').reverse().join('/'))}</span><span class="badge" style="background:#fff;color:var(--pri)">${ROLE[S.me.role]}</span></div>
@@ -378,7 +428,12 @@ function vHome() {
     ${b.closed ? '<div class="toast" style="margin-top:12px">Ngày hôm nay đã được admin chốt.</div>' : ''}
     <div class="pad col gap12">
       ${pendingHtml()}
-      ${alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => `<button class="alertbtn ${a.bad ? 'bad' : 'warn'}" data-a="nav" data-s="${a.to}"><span class="f1 col" style="gap:2px"><b style="font-size:17px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>${IC.chev}</button>`).join('') : ''}
+      ${alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => {
+        const inner = `<span class="f1 col" style="gap:2px"><b style="font-size:17px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>`;
+        return a.to
+          ? `<button class="alertbtn ${a.bad ? 'bad' : 'warn'}" data-a="nav" data-s="${a.to}">${inner}${IC.chev}</button>`
+          : `<div class="alertbtn ${a.bad ? 'bad' : 'warn'}">${inner}</div>`;
+      }).join('') : ''}
       <div class="row" style="justify-content:space-between;align-items:baseline"><h2 class="sec">Tồn theo khu và người báo</h2><span class="sm muted">${reportedCount()}/${b.khuAct.length} khu đã báo</span></div>
       ${khuCards}
       <div class="row" style="justify-content:space-between;align-items:baseline"><h2 class="sec">Tồn theo phi</h2><button class="b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;font-size:15px;padding:8px 0" data-a="nav" data-s="ton">Xem chi tiết</button></div>
@@ -461,7 +516,10 @@ function demView() {
 
   const keepable = pend.filter((p) => !keepBlock(k, p.id));
   const empty = list.length === 0; // khu chưa có phi nào: không phải "đã xong", mà là chưa bắt đầu
-  const keepTxt = empty ? 'Khu chưa có phi nào' : pend.length === 0 ? 'Đã xử lý hết phi của khu' : S.confirmKeep ? `Bấm lần nữa để giữ nguyên ${keepable.length} phi` : `Giữ nguyên ${keepable.length} phi còn lại`;
+  const keepTxt = empty ? 'Khu chưa có phi nào'
+    : pend.length === 0 ? 'Đã xử lý hết phi của khu'
+    : !keepable.length ? `${pend.length} phi còn lại phải đếm thực tế`
+    : S.confirmKeep ? `Bấm lần nữa để giữ nguyên ${keepable.length} phi` : `Giữ nguyên ${keepable.length} phi còn lại`;
   const canSend = pend.length === 0 && list.length > 0;
   const absent = b.phi.filter((p) => !isPresent(k, p.id)).map((p) => p.id);
 
@@ -489,7 +547,7 @@ function demView() {
       ${S.draftWarn ? `<div class="card warn col gap6"><b>${esc(S.draftWarn.uname)} đã gửi báo cáo khu này lúc ${hhmm(S.draftWarn.ts)}, sau khi bạn bắt đầu nháp.</b><div class="row gap6"><button class="btn s f1" data-a="draftnew">Dùng số mới</button><button class="btn s f1" data-a="draftkeep">Giữ nháp của tôi</button></div></div>` : ''}
       <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="legend">${S.legend ? 'Ẩn chú thích' : 'ⓘ Chú thích màu'}</button>
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Nét đứt vàng: chưa nhập (số mờ là số dự kiến) · Vàng đậm: lệch lớn so với dự kiến · Chấm: không có (chạm để thêm phi). Chạm chữ cái khu để phóng to.</div>' : ''}
-      ${absent.length ? `<div class="sm b">Không có: ${absent.join(', ')} (${absent.length} phi)</div>` : ''}</div>`}
+      ${absent.length ? `<div class="sm b">Không có: ${absent.join(', ')} (${absent.length} phi) — chạm ô dấu · để thêm vào khu</div>` : ''}</div>`}
     <div class="f1" id="mx"><div class="mxw">
       <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtT(T.ownKg)} t</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtT(T.allKg)} t</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
@@ -534,7 +592,7 @@ function vNhap() {
   const groups = receiptGroups(b.receipts);
   const recs = groups.map((g) => {
     const can = isAdmin() || (g.r0.user_id === S.me.id && Date.now() - g.r0.ts < 10 * 60e3);
-    return `<div class="li"><span><b>${g.title}</b><br>${esc(g.what)} · ${fmtT(g.kg)} tấn<br><span class="sm muted">${esc(g.r0.uname)} · ${hhmm(g.r0.ts)}${g.r0.note ? ' · ' + esc(g.r0.note) : ''}</span></span>${can ? `<button class="btn s bad" data-a="void" data-id="${g.id}">Hủy</button>` : ''}</div>`;
+    return `<div class="li"><span><b>${g.title}</b><br>${esc(g.what)} · ${fmtT(g.kg)} tấn<br><span class="sm muted">${esc(g.r0.uname)} · ${hhmm(g.r0.ts)}${g.r0.note ? ' · ' + esc(g.r0.note) : ''}</span></span>${can ? `<button class="btn s bad" data-a="void" data-id="${g.id}">Huỷ</button>` : '<span class="sm muted" style="text-align:right;max-width:92px">quá 10 phút, nhờ admin huỷ</span>'}</div>`;
   }).join('');
   const saveLbl = chuyen ? 'XÁC NHẬN CHUYỂN KHU' : 'XÁC NHẬN NHẬP KHO';
   return `${head(chuyen ? 'Chuyển khu' : 'Nhập kho', chuyen ? 'Dời thép giữa các khu, tổng bãi không đổi' : 'Ghi phiếu thép mới về', 'home')}
@@ -618,13 +676,14 @@ function renderSubsPanel(khu, R) {
 /* --- Duyệt (admin) --- */
 function vDuyet() {
   const b = S.boot, R = S.review;
-  if (!R) return `${head('Duyệt số liệu', 'Đang tải...', 'home')}<div class="pad muted">Đang tải...</div>`;
+  if (!R) return `${head('Duyệt số liệu', '', 'home')}${panelWait('duyet')}`;
   const badRows = R.rows.filter((r) => r.neg || r.high), normal = R.rows.filter((r) => !(r.neg || r.high));
-  let nExc = 0;
   const kname = (id) => (b.khuBy[id] ? b.khuBy[id].name : id);
   const recountA = R.closed ? 'recountclose' : 'recount';
+  const btnKhu = new Set(); // khu đã có nút "đếm lại" ở phần trên, không bày lại lần nữa ở dưới
+  R.exceptions.forEach((e) => { if (e.khu && (e.type === 'conflict' || e.type === 'late')) btnKhu.add(e.khu); });
+  badRows.forEach((r) => { if (r.topKhu && R.reports.some((x) => x.khu_id === r.topKhu)) btnKhu.add(r.topKhu); });
   const items = R.exceptions.filter((e) => e.type !== 'phi').map((e) => {
-    nExc++;
     if (e.type === 'khu_missing') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)} chưa báo</b><span class="sm">Chưa có ai báo hôm nay. Hãy nhắc người phụ trách, hoặc tự đếm khu này ở tab Đếm.</span></div>`;
     if (e.type === 'conflict') {
       const r = R.reports.find((x) => x.khu_id === e.khu);
@@ -648,7 +707,6 @@ function vDuyet() {
     return '';
   }).join('');
   const cards = badRows.map((r) => {
-    nExc++;
     const canRe = r.topKhu && R.reports.some((x) => x.khu_id === r.topKhu);
     const rp = S.boot.phiBy[r.phi];
     const fmtEq = (v) => v === null ? '—' : fmtCountShort(v, rp);
@@ -671,7 +729,7 @@ function vDuyet() {
     const subOpen = S.subs[k.id] !== undefined;
     return `<div class="card col gap6"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
       <div class="col" style="gap:2px"><b style="font-size:16px">${esc(k.name)}</b><span class="sm muted">${rep ? esc(rep.uname) + ' · ' + hhmm(rep.ts) + (rep.recount ? ' · <b style="color:var(--warn)">chờ đếm lại</b>' : '') : 'Chưa có ai báo'}</span></div>
-      ${rep ? `<div class="row gap6"><button class="btn s" data-a="svload" data-k="${esc(k.id)}">${subOpen ? 'Ẩn' : 'Xem lần báo'}</button><button class="btn s bad" data-a="${recountA}" data-k="${esc(k.id)}">Đếm lại</button></div>` : ''}
+      ${rep ? `<div class="row gap6"><button class="btn s" data-a="svload" data-k="${esc(k.id)}">${subOpen ? 'Ẩn' : 'Xem lần báo'}</button>${btnKhu.has(k.id) ? '' : `<button class="btn s bad" data-a="${recountA}" data-k="${esc(k.id)}">Đếm lại</button>`}</div>` : ''}
     </div>${renderSubsPanel(k.id, R)}</div>`;
   }).join('')}</div>`;
   const normalHtml = S.showNormal ? `<div class="card" style="padding:0;overflow:hidden">${normal.map((r) => { const np = S.boot.phiBy[r.phi]; const fE = (v) => fmtCountShort(v, np); return `<div class="li"><b>${r.phi}</b><span class="sm">${R.last ? fE(r.old) + ' + ' + fE(r.inn) + ' − ' + fE(r.cnt) + ' = ' + fE(r.used) : 'đếm ' + fE(r.cnt)}</span></div>`; }).join('')}</div>` : '';
@@ -684,7 +742,7 @@ function vDuyet() {
     <button class="card b" style="text-align:left;min-height:52px;font-size:16px;border:2px solid #B9B4A8" data-a="toggle-normal">${normal.length} phi bình thường · ${S.showNormal ? 'bấm để ẩn' : 'bấm để xem'}</button>${normalHtml}
     <label class="col gap6" style="font-weight:600">Ghi chú lý do ${allOk ? '(không bắt buộc)' : '(bắt buộc khi còn việc bất thường)'}<input class="inp s" style="height:52px" id="note" data-model="note" placeholder="Ví dụ: nhập sót phiếu D16" value="${esc(S.form.note || '')}"></label>
   </div>
-  <div class="sendbar"><button class="btn ${R.closed ? 'dis' : 'ok'} full" style="height:60px;font-size:20px" data-a="close">${allOk ? 'XÁC NHẬN CHỐT NGÀY' : 'DUYỆT & CHỐT NGÀY'}</button></div>`;
+  <div class="sendbar"><button class="btn ${R.closed ? 'dis' : 'ok'} full" style="min-height:60px;font-size:20px" data-a="close" ${R.closed ? 'disabled' : ''}>${R.closed ? 'ĐÃ CHỐT NGÀY' : allOk ? 'XÁC NHẬN CHỐT NGÀY' : 'DUYỆT & CHỐT NGÀY'}</button></div>`;
 }
 
 /* --- Xem lại ngày cũ --- */
@@ -692,8 +750,8 @@ const ydayOf = (d) => new Date(Date.parse(d) - 864e5).toISOString().slice(0, 10)
 function vLichSu() {
   const b = S.boot, H = S.hist, D = H.data;
   const top = `${head('Xem lại ngày cũ', 'Số liệu tồn, nhập, dùng của một ngày', 'more')}
-    <div class="row gap8" style="padding:4px 16px"><input class="inp s f1" type="date" id="hdate" max="${b.today}" value="${H.date}" data-change="hdate"><button class="btn s" data-a="hprev">‹ Trước</button><button class="btn s ${H.date >= b.today ? 'dis' : ''}" data-a="hnext">Sau ›</button></div>`;
-  if (!D) return `${top}<div class="pad muted">Đang tải...</div>`;
+    <div class="row gap8" style="padding:4px 16px"><input class="inp s f1" type="date" id="hdate" max="${b.today}" value="${H.date}" data-change="hdate"><button class="btn s" data-a="hprev">‹ Trước</button><button class="btn s ${H.date >= b.today ? 'dis' : ''}" data-a="hnext" ${H.date >= b.today ? 'disabled' : ''}>Sau ›</button></div>`;
+  if (!D) return `${top}${panelWait('lichsu')}`;
   const key = (r) => r.khu_id + '|' + r.phi_id;
   const cm = {}, bm = {}, pm = {};
   D.counts.forEach((r) => (cm[key(r)] = r.v));
@@ -731,9 +789,9 @@ function vLichSu() {
   </div>`;
 }
 async function loadHist(date) {
-  S.hist = { date, data: null }; render();
+  S.hist = { date, data: null }; delete S.loadErr.lichsu; render();
   try { const d = await api('GET', '/day?date=' + date); if (S.hist.date === date) S.hist.data = d; }
-  catch (e) { say(e.message, true); }
+  catch (e) { S.loadErr.lichsu = e.message; say(e.message, true); }
   render();
 }
 
@@ -745,7 +803,7 @@ function vBaoCao() {
       <div class="row gap8"><label class="f1 sm">Từ ngày<input class="inp s" style="width:100%" type="date" id="rfrom" data-model="rfrom" max="${b.today}" value="${esc(fv('rfrom', R.from))}"></label><label class="f1 sm">Đến ngày<input class="inp s" style="width:100%" type="date" id="rto" data-model="rto" max="${b.today}" value="${esc(fv('rto', R.to))}"></label></div>
       <div class="wrap"><button class="chip s" data-a="rquick" data-v="week">7 ngày</button><button class="chip s" data-a="rquick" data-v="month">Tháng này</button><button class="chip s" data-a="rquick" data-v="last">Tháng trước</button></div>
       <div class="row gap8"><button class="btn s pri f1" data-a="rload">XEM</button><button class="btn s f1" data-a="rcsv">Tải Excel (CSV)</button></div></div>`;
-  if (!D) return `${top}<div class="pad muted">Đang tải...</div>`;
+  if (!D) return `${top}${panelWait('baocao')}`;
   const kgOf = (id) => (b.phiBy[id] ? b.phiBy[id].kg_per_cay : 0);
   const t = { dau: 0, nhap: 0, dung: 0, cuoi: 0 };
   const rows = D.rows.map((r) => {
@@ -777,8 +835,8 @@ function repRange(kind) {
 }
 async function loadRep() {
   const R = S.bc;
-  R.data = null; render();
-  try { R.data = await api('GET', `/report?from=${R.from}&to=${R.to}`); } catch (e) { say(e.message, true); }
+  R.data = null; delete S.loadErr.baocao; render();
+  try { R.data = await api('GET', `/report?from=${R.from}&to=${R.to}`); } catch (e) { S.loadErr.baocao = e.message; say(e.message, true); }
   render();
 }
 
@@ -815,7 +873,7 @@ function vNhatKy() {
   const rows = (S.audit || []).map((a) => ({ a, f: fmtAudit(a) })).filter((x) => S.logFilter === 'all' || (S.logFilter === 'flag' ? x.f.flag : x.f.type === S.logFilter));
   return `${head('Nhật ký hoạt động', 'Không ai xóa hoặc sửa được', 'more')}
   <div class="wrap" style="padding:6px 16px">${F.map((f) => `<button class="chip s ${S.logFilter === f[0] ? 'on' : ''}" data-a="logf" data-v="${f[0]}">${f[1]}</button>`).join('')}</div>
-  <div class="f1 scroll pad col gap8" id="body">${S.audit ? (rows.map((x) => `<div class="logrow ${x.f.flag ? 'flag' : ''}"><div class="row" style="justify-content:space-between"><b>${esc(x.a.user_name || 'Hệ thống')}</b><span class="sm muted">${dmy(x.a.ts)}</span></div><div style="font-size:16px;line-height:1.4">${esc(x.f.text)}</div>${x.f.flag ? '<span class="badge bad" style="align-self:flex-start">Cần chú ý</span>' : ''}</div>`).join('') || '<div class="muted">Chưa có dữ liệu</div>') : '<div class="muted">Đang tải...</div>'}</div>`;
+  <div class="f1 scroll ${S.audit ? 'pad ' : ''}col gap8" id="body">${S.audit ? (rows.map((x) => `<div class="logrow ${x.f.flag ? 'flag' : ''}"><div class="row" style="justify-content:space-between"><b>${esc(x.a.user_name || 'Hệ thống')}</b><span class="sm muted">${dmy(x.a.ts)}</span></div><div style="font-size:16px;line-height:1.4">${esc(x.f.text)}</div>${x.f.flag ? '<span class="badge bad" style="align-self:flex-start">Cần chú ý</span>' : ''}</div>`).join('') || '<div class="muted">Chưa có dữ liệu</div>') : panelWait('nhatky')}</div>`;
 }
 
 /* --- Thống kê --- */
@@ -829,7 +887,7 @@ function vStats() {
   }).filter((r) => scope === 'all' || r.v > 0 || isPresent(scope, r.p.id));
   const sumCay = rows.filter((r) => !isCuon(r.p)).reduce((a, r) => a + r.v, 0);
   const sumKg = rows.reduce((a, r) => a + r.v * r.p.kg_per_cay, 0);
-  let usageHtml = '<div class="muted">Đang tải...</div>';
+  let usageHtml = panelWait('stats');
   if (S.usage) {
     const per = {}; let tot = 0;
     S.usage.forEach((d) => { let dayKg = 0; for (const p in d.used) { per[p] = (per[p] || 0) + d.used[p]; const ph = b.phiBy[p]; if (ph) dayKg += d.used[p] * ph.kg_per_cay; } d.kg = dayKg; tot += dayKg; });
@@ -840,6 +898,7 @@ function vStats() {
   <div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Tồn hiện tại</h2>
     <div class="wrap">${chips.map((c) => `<button class="chip s ${scope === c[0] ? 'on' : ''}" data-a="sscope" data-v="${esc(c[0])}">${esc(c[1])}</button>`).join('')}</div>
+    <div class="sm muted">Bộ chọn khu này chỉ áp dụng cho mục Tồn hiện tại ngay dưới.</div>
     <div class="card" style="padding:0;overflow:hidden">${rows.map((r) => `<div class="li"><b>${r.p.id}</b><span>${fmtCount(r.v, r.p)} · ${fmtT(r.v * r.p.kg_per_cay)} tấn</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Cộng</b><b>${fmtInt(sumCay)} cây nguyên · ${fmtT(sumKg)} tấn</b></div></div>
     <div class="row" style="justify-content:space-between"><h2 class="sec">Thép đã dùng (toàn bãi)</h2></div>
     <div class="wrap">${[7, 30, 90].map((d) => `<button class="chip s ${S.usageDays === d ? 'on' : ''}" data-a="sdays" data-v="${d}">${d} ngày</button>`).join('')}</div>
@@ -885,7 +944,7 @@ function vUsers() {
       <input class="inp s" id="un" placeholder="Họ tên" value="${esc(S.form.un || '')}" data-model="un"><input class="inp s" id="up" type="tel" inputmode="numeric" placeholder="Số điện thoại" value="${esc(S.form.up || '')}" data-model="up">
       <select class="inp s" id="ur" data-model="ur">${Object.keys(ROLE).reverse().map((r) => `<option value="${r}" ${(S.form.ur || 'nguoidem') === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select>
       <div class="err" id="err">${esc(S.err)}</div><button class="btn pri full" data-a="ucreate">TẠO TÀI KHOẢN</button></div>
-    ${list || '<div class="muted">Đang tải...</div>'}</div>`;
+    ${list || (S.users ? '<div class="muted">Chưa có người dùng nào</div>' : panelWait('users'))}</div>`;
 }
 
 /* --- Cài đặt (admin) --- */
@@ -934,30 +993,39 @@ function vMain() {
   }
   const showToast = S.toast && S.screen !== 'dem';
   const noTabs = S.screen === 'dem' && S.sel;
-  const staleBar = S.stale ? `<div class="toast err" style="margin-top:calc(8px + env(safe-area-inset-top))">Mất kết nối: đang xem số liệu lưu lúc ${dmy(S.stale)}. Tự cập nhật khi có mạng.</div>` : '';
-  const busyBar = S.busy ? '<div class="busy"><span>Đang lưu...</span></div>' : '';
-  return `${busyBar}${staleBar}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}`;
+  return `${busyHtml()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}`;
 }
 
 function render() {
   const body = document.getElementById('body');
   const mx = document.getElementById('mx');
   const keep = { screen: S._last, b: body ? body.scrollTop : 0, m: mx ? mx.scrollTop : 0 };
-  const act = document.activeElement;
-  const focusId = act && act.id && (act.tagName === 'INPUT' || act.tagName === 'SELECT') ? act.id : null;
+  const ae = document.activeElement;
+  // giữ cả vị trí con trỏ: vẽ lại mà con trỏ nhảy về cuối thì số đang gõ dở sẽ sai
+  let fc = null;
+  if (ae && ae.id && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT')) {
+    fc = { id: ae.id, s: null, e: null };
+    try { fc.s = ae.selectionStart; fc.e = ae.selectionEnd; } catch (er) { /* type=date không cho đọc */ }
+  }
   let html;
-  if (!S.me || S.screen === 'login') html = vLogin();
-  else if (S.me.must_change) html = vForcePin();
+  if (!S.me || S.screen === 'login') html = busyHtml() + vLogin() + askHtml();
+  else if (S.me.must_change) html = busyHtml() + vForcePin() + askHtml();
   else html = vMain();
   $app.innerHTML = html;
   const nb = document.getElementById('body'), nm = document.getElementById('mx');
   if (keep.screen === S.screen) { if (nb) nb.scrollTop = keep.b; if (nm) nm.scrollTop = keep.m; }
   if (S.scrollSel && nm) {
     const idx = S.boot.phi.findIndex((p) => p.id === S.scrollSel);
-    nm.scrollTop = Math.max(0, 44 + idx * 44 - 110);
+    nm.scrollTop = Math.max(0, ROWH + idx * ROWH - 110);
     S.scrollSel = null;
   }
-  if (focusId) { const el = document.getElementById(focusId); if (el && el.tagName === 'INPUT') { el.focus(); } }
+  if (S.ask) {
+    const y = $app.querySelector('[data-a="askyes"]'); // hộp xác nhận mở: focus vào nút, không giành lại ô nhập
+    if (y) y.focus();
+  } else if (fc) {
+    const el = document.getElementById(fc.id);
+    if (el) { el.focus(); try { if (fc.s != null && el.setSelectionRange) el.setSelectionRange(fc.s, fc.e); } catch (er) { /* ô không hỗ trợ */ } }
+  }
   S._last = S.screen;
 }
 
@@ -975,8 +1043,9 @@ function syncQty() {
   S.nhap.qty = Math.min(cap, parseInt(e.value.replace(/\D/g, '') || '0', 10));
 }
 
-async function go(screen) {
+async function go(screen, noPush) {
   S.err = ''; S.sel = null;
+  delete S.loadErr[screen];
   if (screen === 'dem') {
     const ok = (id) => id && S.boot.khuBy[id] && S.boot.khuBy[id].active;
     if (!S.boot.khuAct.length) { say('Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.', true); S.screen = 'home'; return render(); }
@@ -984,6 +1053,7 @@ async function go(screen) {
     try { last = localStorage.getItem('kt:lastKhu'); } catch (e) { /* bỏ qua */ }
     openDem(ok(S.khu) ? S.khu : ok(last) ? last : S.boot.khuAct[0].id);
   } else S.screen = screen;
+  if (!noPush) pushNav();
   render();
   try {
     if (screen === 'duyet') { S.review = null; S.subs = {}; render(); S.review = await api('GET', '/review'); }
@@ -993,15 +1063,49 @@ async function go(screen) {
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
     else if (screen === 'stats') { S.usage = null; render(); S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
     else if (['home', 'ton', 'khu', 'nhap', 'settings', 'dem'].includes(screen)) { await loadBoot(); }
-  } catch (e) { say(e.message, true); }
+  } catch (e) { S.loadErr[screen] = e.message; say(e.message, true); }
   render();
 }
+
+/* Nút Back của điện thoại đi về màn trước thay vì đóng hẳn app (app cài về máy không có nút Back trên màn hình) */
+function pushNav() {
+  try {
+    const st = history.state;
+    if (!st || st.s !== S.screen || st.k !== (S.khu || null)) history.pushState({ s: S.screen, k: S.khu || null }, '');
+  } catch (e) { /* bỏ qua */ }
+}
+window.addEventListener('popstate', (e) => {
+  if (!S.me || S.me.must_change) return;
+  if (S.ask) { const a = S.ask; S.ask = null; a.resolve(false); pushNav(); return render(); } // Back = Để sau
+  if (S.sel) { ACTIONS.closesel(); pushNav(); return; } // Back = đóng bảng số
+  const st = e.state, sc = st && st.s ? st.s : 'home';
+  if (sc === 'dem' && st.k && S.boot.khuBy[st.k] && S.boot.khuBy[st.k].active) S.khu = st.k;
+  go(sc, true);
+});
 // Một thao tác ghi tại một thời điểm: bấm đúp hay mạng chậm cũng không gửi trùng (ví dụ 2 phiếu nhập)
-async function act(fn, okMsg) {
+async function act(fn, okMsg, busyMsg) {
   if (S.busy) return;
-  S.busy = true; render();
+  S.busy = true; S.busyMsg = busyMsg || 'Đang lưu...'; render();
   try { await fn(); if (okMsg) say(okMsg); } catch (e) { say(e.message, true); }
-  finally { S.busy = false; }
+  finally { S.busy = false; S.busyMsg = ''; }
+  render();
+}
+
+// Tải tệp bằng fetch rồi lưu: điều hướng bằng location.href trong app đã cài dễ để lại tab trắng
+async function download(path, fname) {
+  if (S.busy) return;
+  S.busy = true; S.busyMsg = 'Đang tạo tệp...'; render();
+  try {
+    const r = await fetch('/api' + path, { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('Không tải được tệp (lỗi ' + r.status + ')');
+    const u = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = u; a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 10000);
+    say('Đã tải ' + fname);
+  } catch (e) { say(e.net ? 'Không có kết nối mạng' : e.message, true); }
+  finally { S.busy = false; S.busyMsg = ''; }
   render();
 }
 
@@ -1047,29 +1151,38 @@ function settle(kind) {
 
 const ACTIONS = {
   async login() {
+    if (S.busy) return; // bấm nhiều lần khi mạng chậm sẽ tính thành nhiều lần sai PIN
     const phone = val('phone'), pin = val('pin');
     S.form.phone = phone;
     if (!phone || pin.length !== 4) { S.err = 'Nhập số điện thoại và PIN 4 số'; return render(); }
+    S.busy = true; S.busyMsg = 'Đang đăng nhập...'; S.err = ''; render();
     try {
       const r = await api('POST', '/login', { phone, pin });
       try { localStorage.setItem('kt:phone', phone); } catch (e) { /* bỏ qua */ }
-      S.me = r.user; S.err = '';
-      if (r.user.must_change) { S.screen = 'home'; return render(); }
-      await loadBoot(); S.screen = 'home';
-      flushPending();
+      S.me = r.user; S.err = ''; S.screen = 'home';
+      if (!r.user.must_change) { await loadBoot(); flushPending(); }
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
+    finally { S.busy = false; S.busyMsg = ''; }
+    try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
     render();
   },
   async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.err = ''; render(); },
   async changepin() {
+    if (S.busy) return;
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
+    if (!/^\d{4}$/.test(n1)) { S.err = 'PIN mới phải là 4 chữ số'; return render(); }
     if (n1 !== n2) { S.err = 'Hai lần nhập PIN mới không giống nhau'; return render(); }
+    S.busy = true; S.busyMsg = 'Đang lưu PIN...'; render();
     try { await api('POST', '/change-pin', { pin: a, newPin: n1 }); S.err = ''; S.me.must_change = 0; await loadBoot(); S.screen = 'home'; say('Đã đổi PIN.'); }
     catch (e) { S.err = e.message; }
+    finally { S.busy = false; S.busyMsg = ''; }
     render();
   },
+  askyes() { const a = S.ask; S.ask = null; render(); if (a) a.resolve(true); },
+  askno() { const a = S.ask; S.ask = null; render(); if (a) a.resolve(false); },
+  retry(d) { S.loadErr = {}; go(d.s); },
   nav(d) { go(d.s); },
-  khuopen(d) { openDem(d.k); render(); },
+  khuopen(d) { openDem(d.k); pushNav(); render(); },
   zoom(d) { S.zoomK = S.zoomK === d.k ? null : d.k; render(); },
   cell(d) {
     const p = d.p;
@@ -1092,33 +1205,39 @@ const ACTIONS = {
   },
   keepall() {
     const pend = pendingList().filter((p) => !keepBlock(S.khu, p.id));
-    if (!pend.length) return;
+    if (!pend.length) {
+      const left = pendingList();
+      return say(left.length ? 'Các phi còn lại phải đếm thực tế: ' + left.map((p) => p.id).join(', ') + '.' : 'Đã xử lý hết phi của khu này.', true), render();
+    }
     if (!S.confirmKeep) { S.confirmKeep = true; return render(); }
     pend.forEach((p) => { S.draft.cells[p.id] = { v: refOf(S.khu, p.id), kind: 'giu' }; });
     S.confirmKeep = false; saveDraft(); render();
   },
-  send() { if (S.boot.closed) return; sendCounts(); },
+  send() {
+    if (S.boot.closed) return say('Ngày hôm nay đã chốt, không sửa được nữa.', true), render();
+    const pend = pendingList();
+    // nói rõ còn thiếu phi nào, thay vì bấm vào nút xám mà không có phản hồi gì
+    if (pend.length) return say('Còn ' + pend.length + ' phi chưa nhập: ' + pend.slice(0, 6).map((p) => p.id).join(', ') + (pend.length > 6 ? '…' : '') + '. Chạm vào ô của phi để nhập số.', true), render();
+    if (!myPhiList().length) return say('Khu này chưa có phi nào. Chạm ô dấu · để thêm phi.', true), render();
+    sendCounts();
+  },
   legend() { S.legend = !S.legend; render(); },
   draftnew() { try { localStorage.removeItem(draftKey()); } catch (e) { /* bỏ qua */ } loadDraft(true); render(); },
   draftkeep() { const r = S.boot.rm[S.khu]; S.draft.baseTs = r ? r.ts : Date.now(); S.draftWarn = null; saveDraft(); render(); },
-  pendsend(d) {
+  async pendsend(d) {
+    const gone = () => (say('Báo cáo này không còn trong hàng chờ.', true), render());
+    const j = readPending().find((x) => pendKey(x) === d.j);
+    if (!j) return gone();
+    if (!(await ask('Gửi báo cáo này làm số đếm của HÔM NAY?\nChỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.', 'GỬI LÀM SỐ HÔM NAY'))) return;
     const q = readPending(), i = q.findIndex((x) => pendKey(x) === d.j);
-    if (i < 0) return say('Báo cáo này không còn trong hàng chờ.', true), render();
-    const j = q[i];
-    ask('Gửi báo cáo này làm số đếm của HÔM NAY?\nChỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.', 'Gửi làm số hôm nay').then((ok) => {
-      if (!ok) return;
-      const q2 = readPending(), i2 = q2.findIndex((x) => pendKey(x) === d.j);
-      if (i2 < 0) return say('Báo cáo này không còn trong hàng chờ.', true), render();
-      q2[i2] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now() };
-      writePending(q2); flushPending(); render();
-    });
+    if (i < 0) return gone();
+    q[i] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now() };
+    writePending(q); flushPending(); render();
   },
-  pendrm(d) {
+  async pendrm(d) {
     if (readPending().every((x) => pendKey(x) !== d.j)) return say('Báo cáo này không còn trong hàng chờ.', true), render();
-    ask('Bỏ báo cáo này? Số liệu trong báo cáo sẽ mất.', 'Bỏ báo cáo', true).then((ok) => {
-      if (!ok) return;
-      writePending(readPending().filter((x) => pendKey(x) !== d.j)); render();
-    });
+    if (!(await ask('Bỏ báo cáo này?\nSố liệu trong báo cáo sẽ mất.', 'BỎ BÁO CÁO', true))) return;
+    writePending(readPending().filter((x) => pendKey(x) !== d.j)); render();
   },
 
   nmode(d) { syncQty(); S.nhap.mode = d.v; S.nhap.done = null; render(); },
@@ -1143,7 +1262,7 @@ const ACTIONS = {
     render();
   },
   nrm(d) { S.nhap.lines.splice(Number(d.i), 1); render(); },
-  nconfirm() {
+  async nconfirm() {
     const N = S.nhap, b = S.boot;
     syncQty();
     if (N.qty > 0) { addLine(N.phi, N.qty * uStepOf(N.phi)); N.qty = 0; } // số đang gõ dở cũng được tính vào phiếu
@@ -1155,7 +1274,7 @@ const ACTIONS = {
     const where = chuyen ? `từ ${kName(N.from)} sang ${kName(N.to)}` : `vào ${kName(N.khu)}`;
     const list = N.lines.map((l) => { const lp = b.phiBy[l.phi]; return `  ${l.phi}: ${fmtCountShort(l.qty, lp)}`; }).join('\n');
     render();
-    if (!confirm(`${chuyen ? 'Chuyển khu' : 'Nhập kho'} ${where}:\n${list}\nTổng ${fmtT(kg)} tấn\n\nĐúng chưa?`)) return;
+    if (!(await ask(`${chuyen ? 'Chuyển khu' : 'Nhập kho'} ${where}:\n${list}\nTổng ${fmtT(kg)} tấn\n\nĐúng chưa?`, chuyen ? 'CHUYỂN KHU' : 'NHẬP KHO'))) return;
     const lines = N.lines.slice();
     act(async () => {
       const r = chuyen
@@ -1166,7 +1285,7 @@ const ACTIONS = {
       await loadBoot();
     });
   },
-  void(d) { if (!confirm('Hủy cả phiếu này?')) return; act(async () => { await api('DELETE', '/receipts/' + d.id); S.nhap.done = null; await loadBoot(); }, 'Đã hủy phiếu.'); },
+  async void(d) { if (!(await ask('Huỷ cả phiếu này?', 'HUỶ PHIẾU', true))) return; act(async () => { await api('DELETE', '/receipts/' + d.id); S.nhap.done = null; await loadBoot(); }, 'Đã hủy phiếu.'); },
   expand(d) { S.expand[d.p] = !S.expand[d.p]; render(); },
 
   'toggle-normal'() { S.showNormal = !S.showNormal; render(); },
@@ -1195,42 +1314,42 @@ const ACTIONS = {
     } catch (e) { if (S.subs[khu] === null) delete S.subs[khu]; say(e.message, true); }
     render();
   },
-  spick(d) {
+  async spick(d) {
     const khu = d.k, idx = Number(d.i);
     const subData = S.subs[khu];
     if (!Array.isArray(subData) || !subData[idx]) return;
     const sub = subData[idx];
-    if (!confirm('Dùng số báo của ' + sub.uname + ' (' + hhmm(sub.ts) + ') cho Khu ' + khu + '?')) return;
+    if (!(await ask('Dùng số báo của ' + sub.uname + ' (' + hhmm(sub.ts) + ') cho ' + kName(khu) + '?', 'DÙNG SỐ NÀY'))) return;
     const pick = { ...sub.vals };
-    act(async () => { await api('POST', '/conflict/resolve', { khu, pick }); delete S.subs[khu]; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã cập nhật số Khu ' + khu + '.');
+    act(async () => { await api('POST', '/conflict/resolve', { khu, pick }); delete S.subs[khu]; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã cập nhật số ' + kName(khu) + '.');
   },
-  recountclose(d) {
-    if (!confirm('Xoá số liệu Khu ' + d.k + ' và yêu cầu đếm lại?\nNgày sẽ được mở lại để người dùng nộp số mới.')) return;
-    act(async () => { await api('POST', '/recount-after-close', { khu: d.k }); S.review = await api('GET', '/review'); S.subs = {}; await loadBoot(); }, 'Đã mở lại ngày, yêu cầu Khu ' + d.k + ' đếm lại.');
+  async recountclose(d) {
+    if (!(await ask('Xoá số liệu ' + kName(d.k) + ' và yêu cầu đếm lại?\nNgày đã chốt sẽ được mở lại để người dùng nộp số mới.', 'MỞ LẠI & ĐẾM LẠI', true))) return;
+    act(async () => { await api('POST', '/recount-after-close', { khu: d.k }); S.review = await api('GET', '/review'); S.subs = {}; await loadBoot(); }, 'Đã mở lại ngày, yêu cầu ' + kName(d.k) + ' đếm lại.');
   },
-  close() {
+  async close() {
     const R = S.review; if (!R || R.closed) return;
     const note = val('note'); S.form.note = note;
     if (R.exceptions.length && !note.trim()) return say('Còn việc bất thường, hãy ghi chú lý do trước khi chốt.', true), render();
-    if (!confirm('Chốt ngày? Sau khi chốt sẽ khóa số liệu hôm nay.')) return;
+    if (!(await ask('Chốt ngày hôm nay?\nSố đếm hôm nay thành tồn chuẩn mới và ngày này bị khoá.', 'CHỐT NGÀY'))) return;
     act(async () => {
       try { await api('POST', '/close', { note }); }
       catch (e) { if (e.code === 'changed' || e.code === 'closed') { S.review = await api('GET', '/review'); await loadBoot(); } throw e; }
       S.form.note = ''; S.review = await api('GET', '/review'); await loadBoot();
     }, 'Đã chốt ngày. Số đếm hôm nay là tồn chuẩn mới.');
   },
-  reopen() {
+  async reopen() {
     const note = val('reopenNote').trim();
     if (!note) return say('Ghi lý do mở lại ngày vào ô phía trên.', true), render();
-    if (!confirm('Mở lại ngày hôm nay? Số đếm sẽ được sửa được và cần chốt lại.')) return;
+    if (!(await ask('Mở lại ngày hôm nay?\nSố đếm sẽ sửa được và cần chốt lại.', 'MỞ LẠI NGÀY', true))) return;
     act(async () => { await api('POST', '/reopen', { note }); S.form.reopenNote = ''; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã mở lại ngày. Có thể sửa số và chốt lại.');
   },
   hprev() { loadHist(ydayOf(S.hist.date)); },
   hnext() { const n = new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
   rquick(d) { [S.bc.from, S.bc.to] = repRange(d.v); S.form.rfrom = S.bc.from; S.form.rto = S.bc.to; loadRep(); },
   rload() { const a = val('rfrom'), z = val('rto'); if (!a || !z || a > z) return say('Chọn khoảng ngày hợp lệ.', true), render(); S.bc.from = a; S.bc.to = z; loadRep(); },
-  rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; location.href = `/api/report?format=csv&from=${a}&to=${z}`; },
-  exportday() { location.href = '/api/export?date=' + (val('exday') || S.boot.today); },
+  rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
+  exportday() { const d = val('exday') || S.boot.today; download('/export?date=' + d, `kho-thep_${d}.csv`); },
   logf(d) { S.logFilter = d.v; render(); },
   sscope(d) { S.statScope = d.v; render(); },
   sdays(d) { S.usageDays = Number(d.v); go('stats'); },
@@ -1244,12 +1363,12 @@ const ACTIONS = {
     });
   },
   pinok() { S.pinShown = null; render(); },
-  ureset(d) { const u = S.users.find((x) => x.id === Number(d.id)); if (!confirm('Đặt lại PIN cho ' + u.name + '? Họ sẽ bị đăng xuất khỏi mọi máy.')) return; act(async () => { const r = await api('POST', `/users/${d.id}/reset-pin`, {}); S.pinShown = { name: u.name, pin: r.pin }; S.users = (await api('GET', '/users')).users; }); },
+  async ureset(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); if (!u) return; if (!(await ask('Đặt lại PIN cho ' + u.name + '?\nHọ sẽ bị đăng xuất khỏi mọi máy và phải đổi PIN khi đăng nhập lại.', 'ĐẶT LẠI PIN'))) return; act(async () => { const r = await api('POST', `/users/${d.id}/reset-pin`, {}); S.pinShown = { name: u.name, pin: r.pin }; S.users = (await api('GET', '/users')).users; }); },
   ulock(d) { act(async () => { await api('POST', `/users/${d.id}/lock`, { locked: d.v === '1' }); S.users = (await api('GET', '/users')).users; }); },
   ulogout(d) { act(async () => { await api('POST', `/users/${d.id}/logout`, {}); }, 'Đã đăng xuất người dùng khỏi mọi máy.'); },
 
-  phiseed() {
-    if (!confirm('Khôi phục phi mặc định D6–D36?\nPhi đã có trong database sẽ KHÔNG bị thay đổi.\nChỉ thêm lại các phi bị xóa nhầm.')) return;
+  async phiseed() {
+    if (!(await ask('Khôi phục phi mặc định D6–D36?\nPhi đã có sẽ KHÔNG bị thay đổi, chỉ thêm lại các phi bị xoá nhầm.', 'KHÔI PHỤC'))) return;
     act(async () => { await api('POST', '/phi/seed', {}); await loadBoot(); say('Đã khôi phục phi mặc định.'); });
   },
   psaveall() {
@@ -1266,7 +1385,7 @@ const ACTIONS = {
     });
   },
   ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); delete S.form['kn-' + d.k]; await loadBoot(); }, 'Đã lưu tên khu.'); },
-  khide(d) { if (d.v !== '1' && !confirm('Ẩn khu này? Khu ẩn sẽ không còn trong danh sách đếm.')) return; act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.'); },
+  async khide(d) { if (d.v !== '1' && !(await ask('Ẩn ' + kName(d.k) + '?\nKhu ẩn không còn trong danh sách đếm, nhưng thép còn lại vẫn được tính vào tổng bãi.', 'ẨN KHU', true))) return; act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.'); },
   kadd() { const name = val('newk'); act(async () => { await api('POST', '/khu', { name }); S.form.newk = ''; await loadBoot(); }, 'Đã thêm khu.'); },
   ssave() { act(async () => { await api('PUT', '/settings', { hide_after_zero_days: val('s-zero'), max_keep_streak: val('s-keep'), auto_close: val('s-auto') }); await loadBoot(); }, 'Đã lưu quy tắc.'); },
 };
@@ -1288,13 +1407,14 @@ document.addEventListener('input', (e) => {
     if (k && p) k.textContent = nkgText(S.nhap.qty * uStepOf(p), p);
   }
 });
-document.addEventListener('change', (e) => {
+document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.change === 'hdate') { if (t.value) loadHist(t.value > S.boot.today ? S.boot.today : t.value); return; }
   if (t.dataset && t.dataset.change === 'role') {
-    const u = (S.users || []).find((x) => x.id === Number(t.dataset.id));
-    if (!confirm(`Đổi vai trò ${u ? u.name : ''} thành ${ROLE[t.value]}?`)) return render();
-    act(async () => { await api('POST', `/users/${t.dataset.id}/role`, { role: t.value }); S.users = (await api('GET', '/users')).users; }, 'Đã đổi vai trò.');
+    const id = t.dataset.id, role = t.value;
+    const u = (S.users || []).find((x) => x.id === Number(id));
+    if (!(await ask(`Đổi vai trò ${u ? u.name : ''} thành ${ROLE[role]}?`, 'ĐỔI VAI TRÒ'))) return render(); // vẽ lại để ô chọn quay về vai trò cũ
+    act(async () => { await api('POST', `/users/${id}/role`, { role }); S.users = (await api('GET', '/users')).users; }, 'Đã đổi vai trò.');
   }
 });
 document.addEventListener('keydown', (e) => {
@@ -1318,6 +1438,7 @@ async function refresh() {
   try {
     // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ
     const r = await api('GET', '/rev');
+    const healed = S.netBad; S.netBad = false; S.netOk = Date.now();
     if (readPending().some((j) => !j.err)) flushPending();
     if (S.boot && r.today !== S.boot.today && S.screen === 'dem') {
       // nháp đang đếm thuộc ngày cũ: không để lẫn sang ngày mới
@@ -1328,7 +1449,11 @@ async function refresh() {
     // đang nhập số ở màn Đếm thì không vẽ lại giữa chừng (trừ khi sang ngày mới)
     const busy = S.screen === 'dem' && S.sel && S.boot && r.today === S.boot.today;
     if (changed && !busy && ['home', 'ton', 'khu', 'nhap', 'dem', 'stats'].includes(S.screen)) { await loadBoot(); render(); }
-  } catch (e) { /* bỏ qua lỗi mạng khi làm mới ngầm */ }
+    else if (healed) render();
+  } catch (e) {
+    // mất mạng khi làm mới ngầm: chỉ hiện dải thông báo, không làm gián đoạn việc đang làm
+    if (!S.netBad) { S.netBad = true; render(); }
+  }
 }
 function tick() {
   if (Date.now() - lastPoll >= pollEvery()) refresh();
@@ -1358,7 +1483,9 @@ async function start() {
   lastPoll = Date.now();
   setTimeout(tick, 15000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastPoll > 30e3) refresh(); });
-  window.addEventListener('online', () => { refresh(); flushPending(); });
+  window.addEventListener('online', () => { render(); refresh(); flushPending(); });
+  window.addEventListener('offline', () => render());
+  try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 start();
