@@ -1283,6 +1283,78 @@ async function main() {
       cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 2250);
   }
 
+  /* ================= 40. Sao lưu toàn bộ và nạp lại =================
+     App đã có nút "Xoá sạch dữ liệu thép". Bản sao duy nhất trước đây là hai tệp CSV — không có
+     phiếu, không có tài khoản, và quan trọng nhất là KHÔNG nạp lại được. Mục này kiểm đúng cái
+     vòng tròn phải khép: tải bản sao → xoá sạch → nạp lại → mọi thứ như cũ. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    const rc = await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: 'trước khi sao lưu' });
+
+    eq('người đếm không tải được bản sao', (await S.call('GET', '/backup', undefined, 'An')).status, 403);
+    eq('thủ kho cũng không', (await S.call('GET', '/backup', undefined, 'Kho')).status, 403);
+    const bk = await S.call('GET', '/backup');
+    eq('admin đầu tiên tải được', bk.status, 200);
+    const f = bk.data;
+    eq('tệp nhận đúng là bản sao của app này', [f.app, f.ban], ['kho-thep', 1]);
+    ok('và ghi phiên bản cấu trúc để sau này còn kiểm', f.schema > 0, f.schema);
+    ok('ghi ai tải và lúc nào', f.boi === 'Admin' && f.luc > 0, { boi: f.boi, ngay: f.ngay });
+
+    // phải có đủ những bảng mà thiếu là không dựng lại được bãi
+    for (const t of ['phi', 'khu', 'users', 'counts', 'receipts', 'day_close', 'baseline', 'daily_summary', 'settings']) {
+      ok('bản sao có bảng ' + t, Array.isArray(f.bang[t]) && f.bang[t].length > 0, f.bang[t] && f.bang[t].length);
+    }
+    ok('và chép cả nhật ký để còn đọc lại', f.bang.audit.length > 0, f.bang.audit.length);
+    ok('phiên đăng nhập thì KHÔNG chép (không phải số liệu bãi)', f.bang.sessions === undefined);
+    eq('số đếm trong bản sao đúng là số đã duyệt',
+      f.bang.counts.filter((c) => c.duyet_v).map((c) => [c.khu_id, c.phi_id, c.duyet_v]), [['A', 'D16', 1800]]);
+
+    /* --- xoá sạch rồi nạp lại --- */
+    eq('xoá sạch', (await S.call('POST', '/reset', { mode: 'wipe', confirm: 'XOA SACH' })).status, 200);
+    eq('đúng là đã trắng', (await S.call('GET', '/review')).data.rows.filter((r) => r.cnt).length, 0);
+
+    eq('người đếm không nạp lại được', (await S.call('POST', '/restore', { file: f, confirm: 'NAP LAI' }, 'An')).status, 403);
+    const k1 = await S.call('POST', '/restore', { file: f });
+    eq('không gõ câu xác nhận: từ chối', k1.status, 409);
+    eq('mã lỗi nói rõ cần xác nhận', k1.data.code, 'need_confirm');
+    eq('tệp lạ: từ chối', (await S.call('POST', '/restore', { file: { app: 'khac' }, confirm: 'NAP LAI' })).status, 400);
+    /* Khác phiên bản cấu trúc thì phải từ chối: ghi dữ liệu cũ vào bảng đã đổi cột là hỏng kiểu
+       không sửa được, thà không nạp còn hơn nạp hỏng. */
+    const sai = await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 1 }, confirm: 'NAP LAI' });
+    eq('bản sao khác phiên bản cấu trúc: từ chối', sai.status, 400);
+    ok('và nói rõ hai phiên bản', /cấu trúc/.test(JSON.stringify(sai.data)), sai.data);
+
+    const kq = await S.call('POST', '/restore', { file: f, confirm: 'NAP LAI' });
+    eq('nạp lại được', kq.status, 200);
+    eq('tồn trở lại đúng như trước khi xoá',
+      (await S.call('GET', '/review')).data.rows.filter((r) => r.cnt).map((r) => [r.phi, r.cnt]), [['D16', 1800]]);
+    // đọc kiểu không-vỡ: mất bảng thì ra undefined và báo lỗi đọc được, chứ không ném TypeError
+    eq('tồn chuẩn dựng lại đủ',
+      (S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day) || {}).v, 1800);
+    eq('phiếu nhập dựng lại đủ, giữ nguyên trạng thái duyệt',
+      S.one('SELECT qty, duyet_day FROM receipts WHERE id=?', rc.data.id) || null, { qty: 1800, duyet_day: day });
+    eq('ngày đã chốt dựng lại đủ', S.sql('SELECT note FROM day_close WHERE day=?', day).map((x) => x.note), ['trước khi sao lưu']);
+    eq('tài khoản dựng lại đủ', S.sql('SELECT 1 FROM users').length, f.bang.users.length);
+    eq('và đăng nhập lại được bằng PIN cũ', (await S.call('POST', '/login', { phone: '0900000002', pin: '1357' }, 'An3')).status, 200);
+    eq('báo cáo theo kỳ đọc lại được', (await S.call('GET', `/report?from=${day}&to=${day}`)).data.rows.some((x) => x.phi === 'D16'), true);
+
+    /* Nhật ký KHÔNG bị thay: database từ chối xoá nó, nên nạp lại chỉ có thể cộng thêm, tức nhân
+       đôi lịch sử. Thà để nguyên và ghi một dòng nói rõ vừa nạp lại. */
+    ok('nạp lại để lại dấu trong nhật ký', S.sql("SELECT 1 FROM audit WHERE action='restore'").length === 1);
+    ok('và nhật ký cũ vẫn còn, không bị nhân đôi',
+      S.sql("SELECT 1 FROM audit WHERE action='reset_wipe'").length === 1);
+
+    // bãi dùng tiếp được bình thường sau khi nạp lại
+    addDays(1);
+    const d2 = vnDay();
+    eq('đếm tiếp được', (await bao(S, { khu: 'A', day: d2, items: items({ D16: 1700 }) }, 'An')).status, 200);
+    eq('và lượng dùng tính đúng từ tồn chuẩn vừa dựng lại',
+      (await S.call('GET', '/review')).data.rows.find((r) => r.phi === 'D16').used, 100);
+  }
+
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
   {
     const S = await setup();
@@ -1521,7 +1593,8 @@ async function main() {
   }
 
   /* ================= 27. CSV báo cáo kỳ: dòng TỔNG khớp cột với tiêu đề =================
-     Thiếu một ô rỗng là cả bốn số tấn tụt sang trái một cột và Excel đọc "tồn đầu" thành "tồn cuối". */
+     Thiếu một ô rỗng là cả năm số tấn tụt sang trái một cột và Excel đọc "tồn đầu" thành "tồn cuối".
+     Thêm cột "Điều chỉnh" đã làm đúng chuyện đó một lần, nên bài test này đếm cứng cả năm cột. */
   {
     const S = await setup();
     let day = vnDay();
@@ -1536,9 +1609,13 @@ async function main() {
     const hdr = rows.find((l) => l.startsWith('"Phi"')).split(';');
     const tot = rows.find((l) => l.startsWith('"TỔNG')).split(';');
     eq('dòng TỔNG có đúng số ô như tiêu đề', tot.length, hdr.length);
-    eq('số tấn nằm đúng dưới 4 cột tấn', hdr.slice(-4), ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Dùng (tấn)"', '"Tồn cuối (tấn)"']);
+    eq('số tấn nằm đúng dưới 5 cột tấn', hdr.slice(-5),
+      ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Điều chỉnh (tấn)"', '"Dùng (tấn)"', '"Tồn cuối (tấn)"']);
     // 1800 cây D16 × 18,48 kg = 33,264 tấn; dùng 300 cây = 5,544 tấn; còn 1500 cây = 27,720 tấn
-    eq('tồn đầu / nhập / dùng / tồn cuối theo tấn', tot.slice(-4), ['33,264', '0,000', '5,544', '27,720']);
+    eq('tồn đầu / nhập / điều chỉnh / dùng / tồn cuối theo tấn', tot.slice(-5),
+      ['33,264', '0,000', '0,000', '5,544', '27,720']);
+    eq('cột số lượng cũng có Điều chỉnh, đứng giữa Nhập và Dùng', hdr.slice(0, 7),
+      ['"Phi"', '"Đơn vị"', '"Tồn đầu"', '"Nhập"', '"Điều chỉnh"', '"Dùng"', '"Tồn cuối"']);
   }
 
   /* ================= 28. Mất một dòng users không được làm biến mất số liệu =================
@@ -1714,6 +1791,213 @@ async function main() {
     eq('PIN CŨ không còn vào được', (await S.call('POST', '/login', { phone: '0900000002', pin: '1357' }, 'An2')).status, 401);
     eq('PIN mới thì vào được', (await S.call('POST', '/login', { phone: '0900000002', pin: res.data.pin }, 'An3')).status, 200);
     eq('và vẫn bị bắt đổi PIN ngay lần đầu', S.one('SELECT must_change FROM users WHERE id = ?', anId).must_change, 1);
+  }
+
+  /* ================= 44. ĐIỀU CHỈNH TỒN: sửa sổ không được biến thành "đã dùng" =================
+     Đây là lý do cả tính năng được làm bằng một dòng receipts thay vì sửa thẳng số đếm. Lượng dùng
+     tính bằng `tồn chuẩn + inn − tổng đếm`: nếu phần điều chỉnh không vào vế inn thì một lần sửa
+     sổ giảm 300 cây lập tức thành 300 cây "đã dùng", nó vào phi_rate và kéo cảnh báo "dùng nhiều
+     bất thường" sai suốt 28 ngày sau. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+
+    addDays(1); day = vnDay();
+    // sổ ghi 1800 nhưng ngoài bãi chỉ có 1500: đếm sai kỳ trước, phải sửa sổ giảm 300
+    let r = await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 300 }], reason: 'dem_sai' });
+    eq('lập phiếu điều chỉnh được', r.status, 200);
+    const pdc = r.data.id;
+    eq('phiếu điều chỉnh ra đời ở trạng thái chờ duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', pdc).duyet_day, null);
+    eq('ghi đúng kind dc', S.one('SELECT kind FROM receipts WHERE id=?', pdc).kind, 'dc');
+    eq('qty lưu có DẤU ÂM dù người dùng gõ số dương', S.one('SELECT qty FROM receipts WHERE id=?', pdc).qty, -300);
+    ok('lý do được lưu vào note của phiếu', /Đếm sai kỳ trước/.test(S.one('SELECT note FROM receipts WHERE id=?', pdc).note || ''));
+
+    let rv = (await S.call('GET', '/review')).data;
+    eq('chưa duyệt thì chưa vào dự kiến', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 1800);
+    eq('phiếu điều chỉnh hiện trên màn Duyệt kèm kind', (rv.phieu.find((v) => v.id === pdc) || {}).kind, 'dc');
+
+    eq('duyệt phiếu điều chỉnh', (await duyetP(S, pdc)).status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    eq('duyệt rồi thì dự kiến của khu A tụt đúng 300', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 1500);
+
+    // khu đếm lại và thấy đúng 1500: đây là lúc "sửa sổ" phải cho ra lượng dùng BẰNG 0
+    await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
+    rv = (await S.call('GET', '/review')).data;
+    const row = rv.rows.find((x) => x.phi === 'D16');
+    eq('lượng dùng TRUNG TÍNH: sửa sổ không phải dùng thép', row.used, 0);
+    eq('phần điều chỉnh được tách riêng khỏi nhập', row.dc, -300);
+    eq('inn vẫn là TỔNG (gồm điều chỉnh), vì mọi phép tính tồn dựa vào nó', row.inn, -300);
+    ok('không bị gắn cờ dùng âm', !row.neg, JSON.stringify({ used: row.used, neg: row.neg }));
+
+    await chot(S, { note: '' });
+    const ds = S.one("SELECT nhap, dc, dung FROM daily_summary WHERE day = ? AND phi_id = 'D16'", day);
+    eq('bảng tổng hợp: cột nhap KHÔNG gồm điều chỉnh', ds.nhap, 0);
+    eq('bảng tổng hợp: điều chỉnh đứng cột riêng', ds.dc, -300);
+    eq('bảng tổng hợp: lượng dùng bằng 0', ds.dung, 0);
+    // đẳng thức của báo cáo kỳ phải khép kín: Tồn đầu + Nhập + Điều chỉnh − Dùng = Tồn cuối
+    const rep = (await S.call('GET', `/report?from=${day}&to=${day}`)).data;
+    const rr = rep.rows.find((x) => x.phi === 'D16');
+    eq('báo cáo kỳ khép kín', rr.dau + rr.nhap + rr.dc - rr.dung, rr.cuoi);
+    ok('báo cáo kỳ bật cờ hasDc để giao diện hiện cột', rep.hasDc, JSON.stringify({ hasDc: rep.hasDc, dc: rr.dc }));
+  }
+
+  /* ================= 45. ĐIỀU CHỈNH TỒN: các chốt chặn =================
+     Một phiếu sửa được tồn mà không có thép thật đi kèm thì mọi chốt chặn đều phải nằm ở server:
+     ẩn nút trên giao diện không chặn được ai gọi thẳng API. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 100 }) }, 'An');
+
+    eq('thiếu lý do: từ chối', (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 10 }] })).status, 400);
+    eq('lý do lạ: từ chối', (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 10 }], reason: 'abc' })).status, 400);
+    eq('thiếu chiều tăng/giảm: từ chối', (await S.call('POST', '/adjust', { khu: 'A', lines: [{ phi: 'D16', qty: 10 }], reason: 'dem_sai' })).status, 400);
+    eq('"Lý do khác" mà không ghi gì: từ chối',
+      (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 10 }], reason: 'khac' })).status, 400);
+    eq('"Lý do khác" có ghi rõ: nhận',
+      (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 1 }], reason: 'khac', note: 'kiểm kê đột xuất' })).status, 200);
+
+    /* Giảm quá số đang có: chặn NGAY LÚC LẬP. Chốt chặn này từng sai hướng vì cộng ngược phần của
+       chính phiếu vào số đang có, làm phép so thành "|qty| > have + |qty|" — vĩnh viễn sai, tức
+       lập phiếu giảm bao nhiêu cũng qua.
+       Dùng 500 cây (9,2 tấn) chứ không phải số thật to: phải ở DƯỚI ngưỡng "điều chỉnh rất lớn",
+       không thì bài này đo mất cái cổng gõ xác nhận thay vì đo chốt chặn tồn. */
+    const qua = await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 500 }], reason: 'dem_sai' });
+    eq('giảm quá số đang có: chặn ngay lúc lập', qua.status, 400);
+    ok('và nói rõ khu còn bao nhiêu', /chỉ còn/.test(qua.data.error || ''), qua.data.error);
+    ok('lời báo lỗi không nói "không duyệt được" vào mặt người vừa bấm lưu', !/duyệt/.test(qua.data.error || ''), qua.data.error);
+    eq('và không ghi dòng nào vào database', S.sql("SELECT 1 FROM receipts WHERE kind = 'dc' AND qty = -500").length, 0);
+
+    /* Hai phiếu giảm cùng rút một lô thép: phiếu thứ hai bị chặn NGAY LÚC LẬP, vì stockOf đã trừ
+       sẵn mọi phiếu giảm đang chờ duyệt. Nếu chỗ này cho qua thì duyệt cả hai là khu âm. */
+    const a = (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 60 }], reason: 'dem_sai' })).data.id;
+    eq('phiếu giảm thứ hai bị chặn, vì phiếu thứ nhất đang chờ duyệt đã giữ phần thép đó',
+      (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 60 }], reason: 'dem_sai' })).status, 400);
+    eq('phiếu giảm thứ nhất duyệt được', (await duyetP(S, a)).status, 200);
+
+    // điều chỉnh rất lớn: phải gõ tay đúng chữ xác nhận
+    const big = { khu: 'A', dir: 'tang', lines: [{ phi: 'D36', qty: 2000 }], reason: 'dem_sai' };
+    const r1 = await S.call('POST', '/adjust', big);
+    eq('điều chỉnh rất lớn mà không xác nhận: chặn', r1.status, 409);
+    eq('và báo đúng mã để giao diện hiện ô gõ', r1.data.code, 'need_confirm');
+    eq('gõ sai chữ xác nhận: vẫn chặn', (await S.call('POST', '/adjust', { ...big, confirm: 'dong' })).status, 409);
+    eq('gõ đúng chữ xác nhận: nhận', (await S.call('POST', '/adjust', { ...big, confirm: 'dong y' })).status, 200);
+
+    // phân quyền
+    eq('người đếm không lập được phiếu điều chỉnh',
+      (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 1 }], reason: 'dem_sai' }, 'An')).status, 403);
+    const kr = await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 1 }], reason: 'dem_sai' }, 'Kho');
+    eq('thủ kho LẬP được (người phát hiện sổ sai thường là thủ kho)', kr.status, 200);
+    eq('nhưng thủ kho KHÔNG duyệt được', (await duyetP(S, kr.data.id, 'Kho')).status, 403);
+    eq('phiếu đó vẫn chưa vào tồn', S.one('SELECT duyet_day FROM receipts WHERE id=?', kr.data.id).duyet_day, null);
+
+    // ngày đã chốt thì không lập được, y như phiếu nhập
+    await chot(S);
+    eq('ngày đã chốt: không lập được điều chỉnh',
+      (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 1 }], reason: 'dem_sai' })).status, 409);
+  }
+
+  /* ================= 45b. Chốt chặn lúc DUYỆT, khi trạng thái đã bị vượt cam kết =================
+     Chốt chặn lúc lập không thay được chốt chặn lúc duyệt. Bình thường hai phiếu giảm không cùng
+     tồn tại được (lúc lập, stockOf đã trừ phiếu giảm đang chờ), nhưng HAI YÊU CẦU GẦN NHƯ CÙNG LÚC
+     thì cả hai đều đọc tồn trước khi phiếu kia kịp ghi, và cả hai được tạo. Ghi thẳng dòng thứ hai
+     vào database là cách dựng lại đúng kết cục đó một cách tất định.
+     Điều phải bảo đảm: khi tổng các phiếu giảm đang chờ VƯỢT số thực có, KHÔNG phiếu nào duyệt
+     được — qua cả hai đường (duyệt riêng phiếu, và "Duyệt khu" gộp phiếu của khu đó) — nên tồn
+     không bao giờ âm. Thiếu một đường là nút này lọt qua đúng cái chốt chặn mà nút kia dựng ra. */
+  {
+    for (const qua of ['phieu', 'khu']) {
+      const S = await setup();
+      const day = vnDay();
+      await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
+      await bao(S, { khu: 'A', day, items: items({ D16: 100 }) }, 'An');
+      const p = (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 70 }], reason: 'dem_sai' })).data;
+      ok('phiếu giảm 70 lập được khi khu còn 100 (' + qua + ')', !!p.id, JSON.stringify(p));
+      // dòng thứ hai: đúng kết cục của hai yêu cầu chạy song song, cùng rút thêm 70 nữa
+      S.raw.exec(`INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, kind, grp)
+                  VALUES ('${day}', 'D16', 'A', -70, 'đua', 1, ${Date.now()}, 'dc', 'race1')`);
+      const id2 = S.one("SELECT id FROM receipts WHERE grp = 'race1'").id;
+
+      const r = qua === 'phieu' ? await duyetP(S, p.id) : await duyet(S, 'A');
+      eq('vượt số thực có: không duyệt được (' + qua + ')', r.status, 400);
+      ok('và nói rõ khu còn bao nhiêu (' + qua + ')', /chỉ còn/.test(r.data.error || ''), r.data.error);
+      eq('phiếu vẫn chưa vào tồn (' + qua + ')', S.one('SELECT duyet_day FROM receipts WHERE id=?', p.id).duyet_day, null);
+      eq('phiếu kia cũng vậy (' + qua + ')', S.one('SELECT duyet_day FROM receipts WHERE id=?', id2).duyet_day, null);
+
+      // bỏ một phiếu đi thì phần còn lại duyệt được bình thường — chốt chặn không khoá cứng khu
+      eq('từ chối phiếu dư (' + qua + ')', (await S.call('DELETE', '/receipts/' + id2)).status, 200);
+      eq('rồi phiếu còn lại duyệt được (' + qua + ')', (await duyetP(S, p.id)).status, 200);
+      const rv = (await S.call('GET', '/review')).data;
+      const exp = rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp;
+      eq('tồn còn đúng 30, không âm (' + qua + ')', exp, 30);
+    }
+  }
+
+  /* ================= 46. ĐIỀU CHỈNH TỒN: bắt khu đếm lại, và hủy được =================
+     Một phiếu sửa sổ phải kéo theo hai thứ: khu không được "giữ nguyên" lấy lại số cũ nữa (phải ra
+     đếm thật để xác minh), và phiếu phải hoàn tác được như mọi chứng từ khác. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 900 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 900 }) }, 'An');
+    await chot(S, { note: '' });
+
+    addDays(1); day = vnDay();
+    // chưa có gì đổi: "giữ nguyên" vẫn hợp lệ
+    eq('chưa điều chỉnh thì giữ nguyên được',
+      (await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An')).status, 200);
+
+    const p = (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 100 }], reason: 'hao_hut' })).data.id;
+    await duyetP(S, p);
+    const giu = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An');
+    eq('điều chỉnh rồi thì KHÔNG giữ nguyên được nữa, phải đếm thật', giu.status, 400);
+    ok('và lời nhắc không bịa ra chuyến xe nào', /thay đổi tồn/.test(giu.data.error || ''), giu.data.error);
+
+    // hủy phiếu đã duyệt: thép quay lại tồn
+    let rv = (await S.call('GET', '/review')).data;
+    eq('đang là 800 sau điều chỉnh', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 800);
+    eq('hủy phiếu điều chỉnh đã duyệt', (await S.call('DELETE', '/receipts/' + p)).status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    eq('hủy xong dự kiến trở lại 900', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 900);
+    ok('nhật ký ghi lại đủ dòng âm của phiếu điều chỉnh bị hủy',
+      /"qty":-100/.test(S.one("SELECT detail FROM audit WHERE action = 'receipt_void' ORDER BY id DESC LIMIT 1").detail || ''),
+      S.one("SELECT detail FROM audit WHERE action = 'receipt_void' ORDER BY id DESC LIMIT 1").detail);
+    eq('nhật ký có dòng riêng cho lần lập điều chỉnh', S.sql("SELECT 1 FROM audit WHERE action = 'adjust'").length, 1);
+  }
+
+  /* ================= 47. Phiếu điều chỉnh TĂNG cũng phải đúng mọi vế ================= */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await bao(S, { khu: 'A', day, items: items({ D20: 500 }) }, 'An');
+    await chot(S, { note: '' });
+
+    addDays(1); day = vnDay();
+    // ngoài bãi có 560 mà sổ ghi 500: sửa sổ TĂNG 60
+    const p = (await S.call('POST', '/adjust', { khu: 'A', dir: 'tang', lines: [{ phi: 'D20', qty: 60 }], reason: 'ghi_nham' })).data.id;
+    eq('qty dương khi tăng', S.one('SELECT qty FROM receipts WHERE id=?', p).qty, 60);
+    await duyetP(S, p);
+    await bao(S, { khu: 'A', day, items: items({ D20: 560 }) }, 'An');
+    const rv = (await S.call('GET', '/review')).data;
+    const row = rv.rows.find((x) => x.phi === 'D20');
+    eq('điều chỉnh tăng: lượng dùng vẫn trung tính', row.used, 0);
+    eq('và tách đúng dấu dương', row.dc, 60);
+    eq('tổng đếm theo số mới', row.cnt, 560);
+    await chot(S, { note: '' });
+    eq('tồn chuẩn hôm nay là 560', S.one("SELECT v FROM baseline WHERE day = ? AND khu_id = 'A' AND phi_id = 'D20'", day).v, 560);
+
+    // màn Lịch sử ngày cũ cũng phải nói được "ngày đó sổ bị sửa bao nhiêu", y như báo cáo kỳ
+    const dv = (await S.call('GET', '/day?date=' + day)).data;
+    const sm = dv.summary.find((x) => x.phi_id === 'D20');
+    eq('lịch sử ngày cũ: cột nhap không gồm điều chỉnh', sm.nhap, 0);
+    eq('lịch sử ngày cũ: có phần điều chỉnh riêng', sm.dc, 60);
+    ok('và phiếu điều chỉnh của ngày đó vẫn liệt kê được',
+      dv.receipts.some((x) => x.kind === 'dc' && x.qty === 60), JSON.stringify(dv.receipts.map((x) => [x.kind, x.qty])));
   }
 
   /* ================= kết quả ================= */

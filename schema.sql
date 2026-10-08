@@ -141,7 +141,11 @@ CREATE TABLE IF NOT EXISTS khu_report (
   PRIMARY KEY (day, khu_id)
 );
 
--- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến)
+-- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến),
+--            'dc' điều chỉnh tồn do admin khai — MỘT dòng có dấu, KHÔNG có dòng đối ứng.
+--            Vì không đối ứng nên 'dc' là loại phiếu duy nhất có thể chỉ gồm dòng âm: mọi chỗ
+--            hiển thị phiếu phải thôi giả định "phiếu luôn có ít nhất một dòng dương".
+--            note của phiếu 'dc' bắt buộc có, mở đầu bằng mã lý do (xem DC_REASONS).
 -- grp:       các dòng cùng một phiếu
 -- voided_ts: lúc hủy phiếu (cũng là lúc từ chối, phân biệt bằng nhật ký)
 -- duyet_day: NGÀY DUYỆT, cũng là ngày phiếu vào tồn. NULL = đang chờ duyệt, chưa tính vào tồn.
@@ -192,6 +196,13 @@ CREATE TABLE IF NOT EXISTS day_close (
 );
 
 -- Tổng hợp theo ngày đã chốt x phi: báo cáo theo kỳ đọc bảng này cho nhẹ hạn mức
+-- nhap: chỉ thép THẬT về (phiếu kind 'nhap'). Chuyển khu không vào đây vì nó cộng trừ triệt tiêu
+--       ở cấp phi, còn điều chỉnh tách riêng sang cột dc.
+-- dc:   phần ĐIỀU CHỈNH TỒN do admin khai (phiếu kind 'dc'), có dấu. Phải tách khỏi nhap, nếu
+--       không thì báo cáo kỳ nói "nhập 50 cây" cho một lần sửa sổ — thép không về mà sổ ghi về,
+--       và tính năng điều chỉnh thành chỗ giấu chênh lệch. Lượng dùng thì vẫn tính trên TỔNG
+--       (nhap + dc + chuyen), nhờ vậy sửa sổ không biến thành một cú "đã dùng" giả:
+--       dung = ton_truoc + (nhap + dc) - ton_nay.
 CREATE TABLE IF NOT EXISTS daily_summary (
   day TEXT NOT NULL,
   phi_id TEXT NOT NULL,
@@ -199,6 +210,7 @@ CREATE TABLE IF NOT EXISTS daily_summary (
   nhap INTEGER NOT NULL DEFAULT 0,
   dung INTEGER,
   span INTEGER NOT NULL DEFAULT 1,
+  dc INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, phi_id)
 );
 
@@ -239,7 +251,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 12);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 13);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

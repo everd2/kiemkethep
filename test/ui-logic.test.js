@@ -214,7 +214,11 @@ const run = async () => {
 
   // ---- keepBlock: phi giữ nguyên quá nhiều ngày ----
   ok('D12 giữ nguyên quá hạn -> chặn', /quá nhiều ngày/.test(r(`keepBlock('A', 'D12')`)), r(`keepBlock('A','D12')`));
-  ok('D8 có nhập/chuyển -> chặn giữ nguyên', /nhập\/chuyển/.test(r(`keepBlock('A', 'D8')`)));
+  /* Lời nhắc phải kể CẢ BA nguyên nhân (nhập, chuyển khu, điều chỉnh), vì phiếu điều chỉnh cũng
+     chặn "giữ nguyên" — mà bảo người đếm là "có thép chuyển đi" khi thực ra admin vừa sửa sổ thì
+     họ đi tìm một chuyến xe không tồn tại. */
+  ok('D8 có thay đổi tồn -> chặn giữ nguyên', /thay đổi tồn/.test(r(`keepBlock('A', 'D8')`)), r(`keepBlock('A','D8')`));
+  ok('lời nhắc kể cả điều chỉnh', /điều chỉnh/.test(r(`keepBlock('A', 'D8')`)), r(`keepBlock('A','D8')`));
 
   // ---- 2d. hàng chờ gửi khoá theo khu+ngày+giờ ----
   r(`writePending([
@@ -472,6 +476,109 @@ const run = async () => {
      S.boot.counts = []; S.boot.eff = []; S.boot.bm = {}; var H4 = vHome();`);
   ok('khu không có thép thì nói thẳng', /không có thép/.test(r('H4')));
   r(`S.khuMo = {}; S.boot = _boot(); indexBoot(S.boot);`);
+
+  /* ---- 1d-dc. ĐIỀU CHỈNH TỒN ----
+     Phiếu điều chỉnh là loại đầu tiên có thể CHỈ GỒM DÒNG ÂM, nên mọi chỗ bày phiếu phải thôi
+     giả định "phiếu luôn có ít nhất một dòng dương". Chỗ lọc qty > 0 rồi đọc pos[0] cho ra tiêu
+     đề "Nhập vào undefined" với phần mô tả rỗng — phiếu hiện ra mà không ai biết nó là gì. */
+  r(`S.boot = _boot(); indexBoot(S.boot);
+     S.boot.receipts = [
+       { id: 21, phi_id: 'D12', khu_id: 'A', qty: -30, note: 'Đếm sai kỳ trước', kind: 'dc', grp: 'x1', ts: Date.now(), user_id: 1, uname: 'A' },
+       { id: 22, phi_id: 'D10', khu_id: 'B', qty: 25, note: 'Ghi nhầm phiếu', kind: 'dc', grp: 'x2', ts: Date.now(), user_id: 1, uname: 'A' },
+     ];
+     var G = receiptGroups(S.boot.receipts);`);
+  ok('phiếu giảm có tiêu đề riêng, không gọi là "Nhập vào"', /Điều chỉnh/.test(r('G[0].title')) && !/Nhập vào/.test(r('G[0].title')), r('G[0].title'));
+  ok('phiếu giảm không ra tiêu đề undefined', !/undefined/.test(r('G[0].title')), r('G[0].title'));
+  ok('phiếu giảm có mô tả kèm dấu trừ', /−/.test(r('G[0].what')), r('G[0].what'));
+  ok('phiếu tăng có mô tả kèm dấu cộng', /\+/.test(r('G[1].what')), r('G[1].what'));
+  ok('khối lượng phiếu giảm là số âm', r('G[0].kg') < 0, r('G[0].kg'));
+  ok('cờ dc được đặt', r('G[0].dc') === true && r('G[1].dc') === true);
+  ok('màn Nhập vẽ được danh sách có phiếu điều chỉnh', /Điều chỉnh Khu A/.test(r(`S.nhap.mode='nhap'; vNhap()`)));
+
+  // "đang có X → còn Y": chạy theo từng chữ số vừa gõ, nên phải đúng ở cả ba trạng thái
+  ok('chưa gõ số: chỉ nói đang có bao nhiêu',
+    /đang có/.test(r(`dcSauText(0, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(0, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
+  ok('giảm trong tầm: 40 → 10', /40 cây → 10 cây/.test(r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
+  ok('tăng: 40 → 70', /40 cây → 70 cây/.test(r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`));
+  ok('giảm quá số đang có: báo trước sẽ bị từ chối',
+    /bị từ chối/.test(r(`dcSauText(90, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(90, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
+
+  /* Ba chế độ dùng CHUNG N.lines, nên đổi chế độ phải xoá các dòng đã gõ: một dòng gõ cho phiếu
+     nhập mang nghĩa trái ngược khi nó nằm trong phiếu điều chỉnh giảm. Giữ lại là người dùng bấm
+     sang "Điều chỉnh" rồi lưu luôn mấy dòng vừa gõ cho phiếu nhập, thành sửa sổ ngoài ý muốn. */
+  EL.nqty = mkEl('nqty'); EL.nqty.value = '';
+  r(`S.nhap.mode = 'nhap'; S.nhap.phi = 'D10'; S.nhap.lines = [{ phi: 'D10', qty: 50 }]; S.nhap.reason = null;
+     ACTIONS.nmode({ v: 'dc' });`);
+  ok('đổi sang Điều chỉnh thì xoá các dòng đã gõ', r('S.nhap.lines.length') === 0, JSON.stringify(r('S.nhap.lines')));
+  ok('và đặt lại lý do', r('S.nhap.reason') === null);
+  r(`S.nhap.lines = [{ phi: 'D10', qty: 7 }]; ACTIONS.nmode({ v: 'dc' });`);
+  ok('bấm lại đúng chế độ đang mở thì KHÔNG xoá dòng', r('S.nhap.lines.length') === 1, JSON.stringify(r('S.nhap.lines')));
+
+  // màn Điều chỉnh phải nói thẳng nó sửa sổ, và bày đủ bốn lý do
+  r(`S.nhap.mode = 'dc'; S.nhap.khu = 'A'; S.nhap.phi = 'D12'; S.nhap.qty = 0; S.nhap.lines = []; var V = vNhap();`);
+  ok('màn Điều chỉnh nói rõ là SỬA SỔ', /SỬA SỔ/.test(r('V')));
+  ok('có bước chọn tăng/giảm', /Tăng tồn/.test(r('V')) && /Giảm tồn/.test(r('V')));
+  ok('bày đủ bốn lý do', ['Đếm sai kỳ trước', 'Ghi nhầm phiếu', 'Hao hụt', 'Lý do khác'].every((x) => r('V').includes(x)));
+  ok('nói khu đang có bao nhiêu để biết sửa từ đâu', /đang có/.test(r('V')));
+  ok('nút lưu đổi chữ', /XÁC NHẬN ĐIỀU CHỈNH/.test(r('V')));
+
+  /* Thiếu lý do thì chặn ngay trên máy, khỏi phải chờ một vòng mạng mới biết. Server vẫn kiểm
+     lại — chỗ này chỉ cho nhanh, không phải chốt chặn. */
+  EL.nqty.value = '5'; EL.nnote = mkEl('nnote'); EL.nnote.value = '';
+  r(`S.nhap.reason = null; S.nhap.lines = []; S.toast = ''; ACTIONS.nconfirm();`);
+  ok('chưa chọn lý do: chặn và nhắc', /lý do/i.test(r('S.toast')), r('S.toast'));
+  r(`S.nhap.reason = 'khac'; S.nhap.lines = [{ phi: 'D12', qty: 5 }]; S.toast = ''; ACTIONS.nconfirm();`);
+  ok('"Lý do khác" mà bỏ trống ghi chú: chặn', /ghi rõ/i.test(r('S.toast')), r('S.toast'));
+
+  // Báo cáo kỳ: cột Điều chỉnh chỉ hiện khi kỳ đó thật có điều chỉnh
+  r(`S.bc = { from: '${yday}', to: '${today}', data: { rows: [{ phi: 'D10', dau: 100, nhap: 0, dc: -30, dung: 20, cuoi: 50 }],
+       days: [], closedDays: 1, openDay: '${yday}', closeDay: '${today}', hasDc: true } }; var R1 = vBaoCao();`);
+  ok('kỳ có điều chỉnh: hiện cột Điều chỉnh', /Điều chỉnh/.test(r('R1')));
+  ok('và số âm hiện kèm dấu trừ', /−30/.test(r('R1')), (r('R1').match(/.{0,20}30.{0,20}/) || [''])[0]);
+  ok('nói rõ điều chỉnh không nằm trong Nhập và không tính vào Dùng', /không nằm trong cột Nhập/.test(r('R1')));
+  r(`S.bc.data.hasDc = false; S.bc.data.rows[0].dc = 0; var R2 = vBaoCao();`);
+  ok('kỳ không có điều chỉnh: bỏ hẳn cột cho đỡ chật', !/Điều chỉnh/.test(r('R2')));
+
+  /* Phép tính trên màn Duyệt: r.inn là TỔNG (gồm điều chỉnh), nên in nguyên nó dưới chữ "Nhập" là
+     nhãn nói sai — "+ Nhập −20" trong khi không có xe thép nào. Phải tách thành nhập thật và phần
+     điều chỉnh, và tổng vẫn phải khớp đúng con số "Đã dùng". */
+  r(`S.review = { day: '${today}', last: '${yday}', span: 1, closed: false,
+       rows: [{ phi: 'D10', old: 560, inn: -20, dc: -20, cnt: 540, used: 0, neg: false, high: false, avg: 1, peak: 0, rateDays: 9, topKhu: 'A', topNet: 0 }],
+       exceptions: [], khus: [], phieu: [], pending: 0, reports: [], khu: S.boot.khu };
+     S.showNormal = true; var DV = vDuyet();`);
+  ok('phép tính tách riêng hạng điều chỉnh', /\(đc\)/.test(r('DV')), (r('DV').match(/.{0,60}\(đc\).{0,20}/) || [''])[0]);
+  /* Hạng "Nhập" phải là nhập THẬT = inn − dc = 0, không phải tổng −20. Và cả dòng phải còn đúng
+     về số học: 560 + 0 − 20(đc) − 540 = 0. */
+  ok('hạng "Nhập" hiện số nhập THẬT (0), không phải tổng −20',
+    /560 cây \+ 0 cây − 20 cây\(đc\) − 540 cây = 0 cây/.test(r('DV').replace(/<[^>]*>/g, '')),
+    (r('DV').replace(/<[^>]*>/g, '').match(/.{0,40}\(đc\).{0,20}/) || [''])[0]);
+  r(`S.review.rows[0].dc = 0; S.review.rows[0].inn = 0; S.review.rows[0].cnt = 560; var DV2 = vDuyet();`);
+  ok('phi không bị sửa sổ: dòng vẫn gọn như trước, không có hạng thêm', !/\(đc\)/.test(r('DV2')));
+  // thẻ đỏ của phi bất thường cũng phải tách, và lưới đổi sang 5 ô cho khỏi tràn
+  r(`S.review.rows[0] = { phi: 'D10', old: 560, inn: -20, dc: -20, cnt: 600, used: -40, neg: true, high: false, avg: 1, peak: 0, rateDays: 9, topKhu: 'A', topNet: 40 };
+     var DV3 = vDuyet();`);
+  ok('thẻ phi bất thường: có ô Điều chỉnh', /Điều chỉnh/.test(r('DV3')));
+  ok('và lưới phép tính chuyển sang 5 ô', /class="eq eq5"/.test(r('DV3')));
+  r(`S.showNormal = false; S.review = null;`);
+
+  // Nhật ký: điều chỉnh là nhóm riêng, không gộp vào "Nhập kho"
+  r(`var A1 = fmtAudit({ action: 'adjust', ts: Date.now(), user_name: 'A',
+       detail: JSON.stringify({ khu: 'A', dir: 'giam', reason: 'dem_sai', note: 'kiểm kê lại', lines: [{ phi: 'D12', qty: -30 }] }) });`);
+  ok('nhật ký nói rõ GIẢM', /GIẢM/.test(r('A1.text')), r('A1.text'));
+  ok('và kèm lý do', /kiểm kê lại/.test(r('A1.text')), r('A1.text'));
+  ok('xếp vào nhóm riêng "dc"', r('A1.type') === 'dc', r('A1.type'));
+  /* Hủy phiếu điều chỉnh: dòng nhật ký phải kể ĐỦ CẢ DẤU. Lọc qty > 0 như phiếu nhập/chuyển là
+     dòng ghi "hủy phiếu điều chỉnh tồn đã duyệt: " rồi hết — không nói được nó hoàn tác cái gì,
+     mà nhật ký thì không ai sửa lại được. */
+  r(`var A2 = fmtAudit({ action: 'receipt_void', ts: Date.now(), user_name: 'A',
+       detail: JSON.stringify({ id: 9, kind: 'dc', lines: [{ phi: 'D12', khu: 'A', qty: -30 }] }) });`);
+  ok('hủy phiếu điều chỉnh: gọi đúng tên', /điều chỉnh tồn/.test(r('A2.text')), r('A2.text'));
+  ok('và vẫn kể được dòng âm', /D12/.test(r('A2.text')), r('A2.text'));
+  r(`var A3 = fmtAudit({ action: 'receipt_void', ts: Date.now(), user_name: 'A',
+       detail: JSON.stringify({ id: 9, kind: 'chuyen', lines: [{ phi: 'D12', khu: 'A', qty: -30 }, { phi: 'D12', khu: 'B', qty: 30 }] }) });`);
+  ok('phiếu chuyển vẫn chỉ kể nửa dương, không nhân đôi khối lượng',
+    (r('A3.text').match(/D12/g) || []).length === 1, r('A3.text'));
+  r(`S.boot = _boot(); indexBoot(S.boot);`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

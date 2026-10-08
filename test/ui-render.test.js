@@ -84,6 +84,11 @@ const boot = {
     { id: 11, phi_id: 'D8', khu_id: 'A', qty: 110, note: 'xe 29C-123', kind: 'nhap', grp: 'g1', ts, user_id: 1, uname: 'Nguyễn Văn A' },
     { id: 12, phi_id: 'D10', khu_id: 'A', qty: -50, note: '', kind: 'chuyen', grp: 'g2', ts, user_id: 1, uname: 'Nguyễn Văn A' },
     { id: 13, phi_id: 'D10', khu_id: 'B', qty: 50, note: '', kind: 'chuyen', grp: 'g2', ts, user_id: 1, uname: 'Nguyễn Văn A' },
+    /* Phiếu ĐIỀU CHỈNH là loại duy nhất có thể CHỈ GỒM DÒNG ÂM. Nó nằm trong dữ liệu mẫu để mọi
+       màn hình bày phiếu đều phải vẽ được nó: bản cũ lọc qty > 0 rồi đọc pos[0].khu_id, nên phiếu
+       giảm hiện ra tiêu đề "Nhập vào undefined" và phần mô tả rỗng. */
+    { id: 14, phi_id: 'D12', khu_id: 'C', qty: -30, note: 'Đếm sai kỳ trước', kind: 'dc', grp: 'g3', ts, user_id: 1, uname: 'Nguyễn Văn A' },
+    { id: 15, phi_id: 'D16', khu_id: 'A', qty: 25, note: 'Ghi nhầm phiếu: thiếu một bó', kind: 'dc', grp: 'g4', ts, user_id: 1, uname: 'Nguyễn Văn A', duyet_day: today, duyet_ts: ts, duyet_name: 'Nguyễn Văn A' },
   ],
   innKhu: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }, { khu_id: 'B', phi_id: 'D10', q: 50 }],
   // khu B đã đếm D10 hôm nay; phần còn lại chưa đếm nên vẫn là "chưa được đếm"
@@ -95,9 +100,12 @@ const boot = {
 const review = {
   day: today, last: yday, span: 2, closed: false,
   rows: [
-    { phi: 'D8', old: 220, inn: 110, cnt: 180, used: 150, neg: false, high: true, avg: 33, topKhu: 'A', topNet: -40 },
-    { phi: 'D10', old: 560, inn: 0, cnt: 600, used: -40, neg: true, high: false, avg: 120, topKhu: 'B', topNet: 40 },
-    { phi: 'D12', old: 40, inn: 0, cnt: 40, used: 0, neg: false, high: false, avg: 5, topKhu: null, topNet: 0 },
+    { phi: 'D8', old: 220, inn: 110, dc: 0, cnt: 180, used: 150, neg: false, high: true, avg: 33, topKhu: 'A', topNet: -40 },
+    /* inn là TỔNG, gồm cả phần điều chỉnh: ở đây nhập thật 20, sửa sổ −20, nên phép tính trên màn
+       Duyệt phải tách ra thành "+ 20" và "− 20(đc)" mà tổng vẫn khớp. Phi này còn là phi bị gắn cờ
+       "dùng âm", tức nó đi qua cả thẻ đỏ (lưới .eq 5 ô) lẫn dòng gọn. */
+    { phi: 'D10', old: 560, inn: 0, dc: -20, cnt: 600, used: -40, neg: true, high: false, avg: 120, topKhu: 'B', topNet: 40 },
+    { phi: 'D12', old: 40, inn: 0, dc: 0, cnt: 40, used: 0, neg: false, high: false, avg: 5, topKhu: null, topNet: 0 },
   ],
   exceptions: [
     { type: 'khu_missing', khu: 'A', name: 'Khu A' },
@@ -106,6 +114,7 @@ const review = {
     { type: 'recheck', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
     { type: 'recount', khu: 'C', name: 'Khu C' },
     { type: 'receipt_pending', key: 'g1', id: 71, kind: 'nhap', day: today },
+    { type: 'receipt_pending', key: 'g3', id: 73, kind: 'dc', day: today },
     { type: 'phi', phi: 'D10', reason: 'neg' },
   ],
   /* Thẻ của từng khu: đủ các trạng thái cần vẽ — chưa báo, chờ duyệt kèm lệch và ô để trống,
@@ -130,6 +139,9 @@ const review = {
       lines: [{ phi: 'D8', khu: 'B', qty: 110 }] },
     { key: 'g2', grp: 'g2', id: 72, day: yday, ts, uname: 'Thủ kho', kind: 'chuyen', note: '',
       lines: [{ phi: 'D10', khu: 'A', qty: -50 }, { phi: 'D10', khu: 'B', qty: 50 }] },
+    // phiếu điều chỉnh chờ duyệt, chỉ có dòng âm: thẻ trên màn Duyệt phải nói rõ nó sửa sổ
+    { key: 'g3', grp: 'g3', id: 73, day: today, ts, uname: 'Thủ kho', kind: 'dc', note: 'Đếm sai kỳ trước',
+      lines: [{ phi: 'D12', khu: 'C', qty: -30 }] },
   ],
   pending: 6,
   reports: boot.reports, khu,
@@ -137,16 +149,16 @@ const review = {
 const dayData = {
   day: yday, close: { uname: 'Nguyễn Văn A', ts, note: 'bình thường', span: 1 },
   counts: [{ khu_id: 'A', phi_id: 'D8', v: 220 }], baseline: boot.baseline, prevBaseline: boot.baseline,
-  summary: [{ phi_id: 'D8', nhap: 110, dung: 55 }, { phi_id: 'D10', nhap: 0, dung: 120 }],
+  summary: [{ phi_id: 'D8', nhap: 110, dung: 55, dc: 0 }, { phi_id: 'D10', nhap: 0, dung: 120, dc: -30 }],
   reports: boot.reports, receipts: boot.receipts.map((r) => ({ ...r, voided: 0 })),
 };
 const repData = {
   rows: [
-    { phi: 'D8', dau: 220, nhap: 110, dung: 55, cuoi: 275 },
-    { phi: 'D10', dau: null, nhap: 0, dung: 120, cuoi: null },
+    { phi: 'D8', dau: 220, nhap: 110, dc: 0, dung: 55, cuoi: 275 },
+    { phi: 'D10', dau: null, nhap: 0, dc: -30, dung: 120, cuoi: null },
   ],
-  days: [{ day: yday, span: 2, nhap_kg: 4345, dung_kg: 7421, ton_kg: 23450 }],
-  closedDays: 1, openDay: yday, closeDay: yday,
+  days: [{ day: yday, span: 2, nhap_kg: 4345, dc_kg: -555, dung_kg: 7421, ton_kg: 23450 }],
+  closedDays: 1, openDay: yday, closeDay: yday, hasDc: true,
 };
 
 /* ---------- chạy ---------- */
@@ -206,6 +218,8 @@ navigator.onLine = false; one('home+offline'); navigator.onLine = true;
 S.netBad = true; one('home+chua-cap-nhat'); S.netBad = false;
 S.boot.closed = true; S.screen = 'duyet'; S.review.closed = true; one('duyet+da-chot');
 S.boot.closed = false; S.review.closed = false;
+// bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
+S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
 
 // trạng thái đang tải và tải lỗi
 for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage']]) {
@@ -240,6 +254,20 @@ S.me.role = 'nguoidem'; S.boot.user.role = 'nguoidem';
 for (const sc of ['home','more','dem','ton']) { S.screen = sc; one('nguoidem:' + sc); }
 S.me.role = 'thukho'; S.screen = 'nhap'; one('thukho:nhap');
 S.me.role = 'admin';
+
+/* Màn Nhập có ba chế độ dùng chung một hàm vẽ, nên phải render cả ba. Chế độ Điều chỉnh còn phải
+   vẽ được ở hai chiều, lúc chưa gõ số, lúc đã gõ, lúc quá số đang có (báo đỏ), và lúc vượt ngưỡng
+   "rất lớn" (hiện ô gõ chữ xác nhận). */
+S.screen = 'nhap';
+S.nhap.mode = 'chuyen'; one('nhap+chuyen-khu');
+S.nhap.mode = 'dc'; S.nhap.khu = 'A'; S.nhap.phi = 'D12'; S.nhap.qty = 0; S.nhap.reason = null;
+one('nhap+dieu-chinh+chua-go');
+S.nhap.dir = 'giam'; S.nhap.qty = 10; S.nhap.reason = 'dem_sai'; one('nhap+dieu-chinh+giam');
+S.nhap.dir = 'tang'; S.nhap.qty = 10; one('nhap+dieu-chinh+tang');
+S.nhap.reason = 'khac'; one('nhap+dieu-chinh+ly-do-khac');
+// giảm 9999 cây D12 khi khu chỉ có 40: dòng "đang có → còn" phải báo quá số, và vượt ngưỡng tấn
+S.nhap.dir = 'giam'; S.nhap.qty = 9999; S.nhap.reason = 'dem_sai'; one('nhap+dieu-chinh+qua-so-va-rat-lon');
+S.nhap.qty = 0; S.nhap.mode = 'nhap'; S.nhap.dir = 'giam'; S.nhap.reason = null;
 
 // đăng nhập / đổi PIN lần đầu
 S.me = null; S.screen = 'login'; one('login');
