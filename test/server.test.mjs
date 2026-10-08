@@ -1355,6 +1355,165 @@ async function main() {
       (await S.call('GET', '/review')).data.rows.find((r) => r.phi === 'D16').used, 100);
   }
 
+  /* ================= 41. Phiếu xuất tự nguyện =================
+     Nguyên tắc "không ai phải nhập phiếu xuất" giữ nguyên: lượng dùng VẪN suy ra từ
+     tồn cũ + nhập − đếm. Phiếu xuất không thay phép tính đó, nó chỉ giải thích được bao nhiêu
+     phần trong đó, và phần KHÔNG RÕ co lại bấy nhiêu.
+
+     Cái bẫy lớn nhất ở đây: nếu để phần xuất nằm trong vế "nhập" của phép tính thì nó tự triệt
+     tiêu với phần khu đếm hụt, và "đã dùng" tụt xuống chỉ còn phần không có phiếu. Hậu quả không
+     nằm ở con số hiển thị mà ở mức dùng trung bình: nó thành thấp hơn thực tế, rồi dự báo "còn đủ
+     dùng bao nhiêu ngày" nói dư ra — càng ghi phiếu đầy đủ thì dự báo càng sai. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+
+    addDays(1); day = vnDay();
+    eq('người đếm không lập phiếu xuất được',
+      (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 100 }], noi: 'CT X' }, 'An')).status, 403);
+    eq('không ghi nơi đến: từ chối',
+      (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] })).status, 400);
+    eq('xuất quá số đang có: từ chối',
+      (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 5000 }], noi: 'CT X' })).status, 400);
+
+    const px = await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 1100 }], noi: 'Công trình Nam Hà', note: 'xe 29C' });
+    eq('lập phiếu xuất được', px.status, 200);
+    const r = S.one('SELECT kind, qty, khu_id, note, duyet_day FROM receipts WHERE id=?', px.data.id);
+    eq('lưu đúng loại, dấu âm, và chờ duyệt', [r.kind, r.qty, r.khu_id, r.duyet_day], ['xuat', -1100, 'A', null]);
+    ok('ghi rõ xuất cho đâu', /Nam Hà/.test(r.note) && /29C/.test(r.note), r.note);
+    /* Nhật ký phải giữ NơI ĐẾN thành một khóa riêng, và ghi chú rời thành khóa 'ghi': writeReceipt
+       luôn ghi đè khóa note bằng nội dung phiếu, mà nội dung đó đã chứa sẵn nơi đến — dùng note
+       để làm ghi chú là dòng nhật ký nhắc nơi đến hai lần. Nhật ký thì không sửa lại được. */
+    const nkx = JSON.parse(S.one("SELECT detail FROM audit WHERE action='issue' ORDER BY id DESC").detail);
+    eq('nhật ký giữ nơi đến riêng một khóa', nkx.noi, 'Công trình Nam Hà');
+    eq('và ghi chú rời không bị nội dung phiếu ghi đè', nkx.ghi, 'xe 29C');
+
+    // chưa duyệt thì chưa đổi gì
+    let rv = (await S.call('GET', '/review')).data;
+    eq('phiếu xuất chưa duyệt: dự kiến của khu chưa đổi',
+      rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 1800);
+    eq('và hiện ra ở danh sách chờ duyệt', rv.phieu.filter((v) => v.kind === 'xuat').length, 1);
+
+    eq('duyệt phiếu xuất', (await duyetP(S, px.data.id)).status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    eq('duyệt rồi: dự kiến của khu tụt đúng 1.100',
+      rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 700);
+
+    /* Khu đếm ra 500: thực tế đã đi 1.300 (1.100 có phiếu + 200 không rõ).
+       "Đã dùng" phải là 1.300 — TỔNG lượng dùng — chứ không phải 200. */
+    await bao(S, { khu: 'A', day, items: items({ D16: 500 }) }, 'An');
+    rv = (await S.call('GET', '/review')).data;
+    const row = rv.rows.find((x) => x.phi === 'D16');
+    eq('đã dùng là TỔNG lượng dùng, không phải phần còn lại', row.used, 1300);
+    eq('và tách riêng phần có phiếu', row.xuat, 1100);
+    eq('nên phần không rõ là 200', row.used - row.xuat, 200);
+    eq('lệch của khu chính là phần không rõ',
+      rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').d, -200);
+
+    await chot(S, { note: 'có phiếu xuất' });
+    const ds = S.one('SELECT nhap, dung, xuat FROM daily_summary WHERE day=? AND phi_id=?', day, 'D16');
+    eq('bảng tổng hợp: nhập không lẫn phần xuất', ds.nhap, 0);
+    eq('lượng dùng vẫn là tổng', ds.dung, 1300);
+    eq('và phần có phiếu để riêng một cột', ds.xuat, 1100);
+
+    /* Mức dùng trung bình phải thấy đủ 1.300. Đây mới là chỗ sai nguy hiểm nhất nếu tính nhầm:
+       nó kéo theo dự báo "còn đủ dùng bao nhiêu ngày" nói dư ra. */
+    eq('mức dùng trung bình tính trên tổng lượng dùng',
+      S.one("SELECT per_day FROM phi_rate WHERE phi_id='D16'").per_day, 1300);
+
+    // báo cáo kỳ phải khép kín: đầu + nhập − dùng = cuối
+    const rep = (await S.call('GET', `/report?from=${day}&to=${day}`)).data;
+    const rr = rep.rows.find((x) => x.phi === 'D16');
+    eq('báo cáo kỳ vẫn khép kín', rr.dau + rr.nhap - rr.dung, rr.cuoi);
+    eq('và nêu riêng phần xuất có phiếu', rr.xuat, 1100);
+
+    /* Không ghi phiếu xuất thì app chạy y như trước — đây là điều kiện để tính năng này là
+       "tự nguyện" chứ không phải bắt buộc. */
+    addDays(1); day = vnDay();
+    await bao(S, { khu: 'A', day, items: items({ D16: 400 }) }, 'An');
+    const rv2 = (await S.call('GET', '/review')).data;
+    const row2 = rv2.rows.find((x) => x.phi === 'D16');
+    eq('không có phiếu xuất: đã dùng vẫn suy ra như cũ', row2.used, 100);
+    eq('và phần có phiếu bằng 0', row2.xuat, 0);
+  }
+
+  /* ================= 42. Mở lại ngày đã chốt =================
+     Trước bản này chỉ mở lại được ĐÚNG ngày hôm nay: chốt nhầm hôm qua mà sang ngày mới mới phát
+     hiện thì không có đường nào sửa. Nhưng cũng không được mở ngày bất kỳ: tồn chuẩn của một ngày
+     là điểm xuất phát của mọi ngày sau nó, nên mở một ngày ở GIỮA là mọi lần chốt sau đó vẫn giữ
+     con số tính từ mốc cũ — từ đó không ngày nào còn khớp với ngày trước nó, sai mà không chỗ nào
+     báo. Vậy phạm vi đúng là: chỉ LẦN CHỐT GẦN NHẤT, vì sau nó chưa có gì phái sinh. */
+  {
+    const S = await setup();
+    let d1 = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1000 }] });
+    await bao(S, { khu: 'A', day: d1, items: items({ D16: 1000 }) }, 'An');
+    await chot(S, { note: 'mo so' });
+
+    addDays(1);
+    const d2 = vnDay();
+    await bao(S, { khu: 'A', day: d2, items: items({ D16: 900 }) }, 'An');
+    await chot(S, { note: 'ngay 2' });
+
+    addDays(1);
+    const d3 = vnDay();
+    eq('ngày cũ hơn lần chốt gần nhất: từ chối',
+      (await S.call('POST', '/reopen', { day: d1, note: 'thu mo ngay dau' })).status, 400);
+    eq('và nói rõ phải dùng phiếu điều chỉnh',
+      /Điều chỉnh/.test((await S.call('POST', '/reopen', { day: d1, note: 'x' })).data.error), true);
+    eq('ngày chưa chốt: không có gì để mở',
+      (await S.call('POST', '/reopen', { day: d3, note: 'x' })).status, 400);
+    eq('thiếu lý do: từ chối', (await S.call('POST', '/reopen', { day: d2 })).status, 400);
+    eq('ngày không hợp lệ: từ chối', (await S.call('POST', '/reopen', { day: 'hom-qua', note: 'x' })).status, 400);
+
+    /* Mở ngày ĐÃ QUA thì chỉ admin đầu tiên, giống như đặt lại số liệu: nó dời tồn chuẩn mà cả
+       bãi đang dựa vào. Admin thứ hai vẫn mở được ngày HÔM NAY, vì hôm nay chưa là mốc của ai. */
+    const a2 = await S.call('POST', '/users', { name: 'Admin Hai', phone: '0900000009', role: 'admin' });
+    await S.call('POST', '/login', { phone: '0900000009', pin: a2.data.pin }, 'A2');
+    // phải đổi PIN trước, không thì 403 nào cũng là 403 "cần đổi PIN" và test đo sai thứ
+    await S.call('POST', '/change-pin', { pin: a2.data.pin, newPin: '4681' }, 'A2');
+    const t403 = await S.call('POST', '/reopen', { day: d2, note: 'x' }, 'A2');
+    eq('admin thứ hai không mở được ngày đã qua', t403.status, 403);
+    ok('và bị chặn vì không phải admin đầu tiên, không phải vì lý do khác',
+      /admin đầu tiên/.test(t403.data.error), t403.data.error);
+
+    const r = await S.call('POST', '/reopen', { day: d2, note: 'chot nham hom qua' });
+    eq('admin đầu tiên mở lại được lần chốt gần nhất', r.status, 200);
+    eq('và trả về đúng ngày đã mở', r.data.day, d2);
+    eq('mốc chốt của ngày đó bị bỏ', S.one('SELECT COUNT(*) n FROM day_close WHERE day=?', d2).n, 0);
+    eq('tồn chuẩn của ngày đó bị bỏ', S.one('SELECT COUNT(*) n FROM baseline WHERE day=?', d2).n, 0);
+    eq('bảng tổng hợp của ngày đó bị bỏ', S.one('SELECT COUNT(*) n FROM daily_summary WHERE day=?', d2).n, 0);
+    eq('lần chốt gần nhất quay về ngày đầu', S.one('SELECT MAX(day) d FROM day_close').d, d1);
+    // không để khiển trách này nổ khi không có dòng nào: nổ là che mất cả phần test còn lại
+    const nkR = (S.one("SELECT detail FROM audit WHERE action='reopen_day' ORDER BY id DESC") || {}).detail || '';
+    ok('nhật ký ghi rõ mở lại ngày cũ kèm lý do', /chot nham hom qua/.test(nkR), nkR);
+
+    /* Số đếm của ngày đã mở KHÔNG bị xoá: mở lại là bỏ mốc chốt, không phải xoá công đếm của khu.
+       Nhờ vậy app quay về đúng trạng thái "chưa chốt từ d1" mà nó vốn đã biết xử lý (span > 1). */
+    eq('số đếm của ngày mở lại vẫn còn',
+      (S.one('SELECT duyet_v v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', d2, 'A', 'D16') || {}).v, 900);
+    const rv = (await S.call('GET', '/review')).data;
+    eq('tồn cũ quay về mốc ngày đầu', rv.rows.find((x) => x.phi === 'D16').old, 1000);
+    eq('và khoảng gộp thành 2 ngày', rv.span, 2);
+
+    // sửa số rồi chốt lại: ngày d3 chốt gộp cả d2, lần này tồn ra đúng số đã sửa
+    await bao(S, { khu: 'A', day: d3, items: items({ D16: 950 }) }, 'An');
+    eq('chốt lại được', (await S.call('POST', '/close', { note: 'chot lai' })).status, 200);
+    eq('tồn chuẩn mới theo số đã sửa',
+      (S.one('SELECT v FROM baseline WHERE day=? AND khu_id=? AND phi_id=?', d3, 'A', 'D16') || {}).v, 950);
+    eq('lượng dùng gộp cả hai ngày', (S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', d3, 'D16') || {}).dung, 50);
+
+    // mở lại ngày HÔM NAY thì admin nào cũng được, như trước
+    eq('admin thứ hai vẫn mở được ngày hôm nay',
+      (await S.call('POST', '/reopen', { day: d3, note: 'bam nham' }, 'A2')).status, 200);
+    eq('không gửi ngày thì mặc định là hôm nay',
+      (await S.call('POST', '/close', { note: 'x' })).status, 200);
+    eq('và mở lại không cần nêu ngày', (await S.call('POST', '/reopen', { note: 'bam nham lan 2' })).status, 200);
+  }
+
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
   {
     const S = await setup();
@@ -1609,13 +1768,18 @@ async function main() {
     const hdr = rows.find((l) => l.startsWith('"Phi"')).split(';');
     const tot = rows.find((l) => l.startsWith('"TỔNG')).split(';');
     eq('dòng TỔNG có đúng số ô như tiêu đề', tot.length, hdr.length);
-    eq('số tấn nằm đúng dưới 5 cột tấn', hdr.slice(-5),
-      ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Điều chỉnh (tấn)"', '"Dùng (tấn)"', '"Tồn cuối (tấn)"']);
+    eq('số tấn nằm đúng dưới 6 cột tấn', hdr.slice(-6),
+      ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Điều chỉnh (tấn)"', '"Dùng (tấn)"', '"Có phiếu xuất (tấn)"', '"Tồn cuối (tấn)"']);
     // 1800 cây D16 × 18,48 kg = 33,264 tấn; dùng 300 cây = 5,544 tấn; còn 1500 cây = 27,720 tấn
-    eq('tồn đầu / nhập / điều chỉnh / dùng / tồn cuối theo tấn', tot.slice(-5),
-      ['33,264', '0,000', '0,000', '5,544', '27,720']);
-    eq('cột số lượng cũng có Điều chỉnh, đứng giữa Nhập và Dùng', hdr.slice(0, 7),
-      ['"Phi"', '"Đơn vị"', '"Tồn đầu"', '"Nhập"', '"Điều chỉnh"', '"Dùng"', '"Tồn cuối"']);
+    eq('tồn đầu / nhập / điều chỉnh / dùng / có phiếu / tồn cuối theo tấn', tot.slice(-6),
+      ['33,264', '0,000', '0,000', '5,544', '0,000', '27,720']);
+    eq('cột số lượng cũng có Điều chỉnh, đứng giữa Nhập và Dùng', hdr.slice(0, 8),
+      ['"Phi"', '"Đơn vị"', '"Tồn đầu"', '"Nhập"', '"Điều chỉnh"', '"Dùng"', '"Có phiếu xuất"', '"Tồn cuối"']);
+    // bảng theo ngày ở cuối tệp cũng phải thểm cột mới, không thì số tồn cuối ngày đứng sai cột
+    const dHdr = rows.find((l) => l.startsWith('"Ngày"')).split(';');
+    const dRow = rows[rows.indexOf(rows.find((l) => l.startsWith('"Ngày"'))) + 1].split(';');
+    eq('bảng theo ngày có đủ cột', dHdr.length, 7);
+    eq('và mỗi dòng ngày đủ ô như tiêu đề', dRow.length, dHdr.length);
   }
 
   /* ================= 28. Mất một dòng users không được làm biến mất số liệu =================

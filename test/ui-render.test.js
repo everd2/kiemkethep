@@ -149,8 +149,9 @@ const review = {
 const dayData = {
   day: yday, close: { uname: 'Nguyễn Văn A', ts, note: 'bình thường', span: 1 },
   counts: [{ khu_id: 'A', phi_id: 'D8', v: 220 }], baseline: boot.baseline, prevBaseline: boot.baseline,
-  summary: [{ phi_id: 'D8', nhap: 110, dung: 55, dc: 0 }, { phi_id: 'D10', nhap: 0, dung: 120, dc: -30 }],
+  summary: [{ phi_id: 'D8', nhap: 110, dung: 55, dc: 0, xuat: 22 }, { phi_id: 'D10', nhap: 0, dung: 120, dc: -30, xuat: 0 }],
   reports: boot.reports, receipts: boot.receipts.map((r) => ({ ...r, voided: 0 })),
+  lastClose: yday, // là lần chốt gần nhất, nên màn hình bày nút mở lại
 };
 const repData = {
   rows: [
@@ -229,6 +230,17 @@ for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],[
   S[k] = bak;
 }
 S.screen = 'lichsu'; S.hist.data = null; one('lichsu+dang-tai');
+/* Xem lại ngày cũ có ba trạng thái trái ngược nhau quanh cái nút nguy hiểm nhất của màn này:
+   là lần chốt gần nhất thì bày nút mở lại, cũ hơn thì nói rõ vì sao không mở được, chưa chốt thì
+   không liên quan. Cả ba đều phải vẽ được. */
+const HD = ${JSON.stringify(dayData)};
+S.hist = { date: '${yday}', data: HD }; S.screen = 'lichsu';
+one('lichsu+chot-gan-nhat+mo-lai-duoc');
+S.hist = { date: '${yday}', data: { ...HD, lastClose: '${today}' } };
+one('lichsu+ngay-cu-hon+khong-mo-duoc');
+S.hist = { date: '${yday}', data: { ...HD, close: null } };
+one('lichsu+chua-chot');
+S.hist = { date: '${yday}', data: HD };
 S.loadErr.lichsu = 'Lỗi 500'; one('lichsu+loi-tai'); delete S.loadErr.lichsu;
 S.screen = 'baocao'; S.bc.data = null; one('baocao+dang-tai');
 
@@ -255,7 +267,7 @@ for (const sc of ['home','more','dem','ton']) { S.screen = sc; one('nguoidem:' +
 S.me.role = 'thukho'; S.screen = 'nhap'; one('thukho:nhap');
 S.me.role = 'admin';
 
-/* Màn Nhập có ba chế độ dùng chung một hàm vẽ, nên phải render cả ba. Chế độ Điều chỉnh còn phải
+/* Màn Nhập có bốn chế độ dùng chung một hàm vẽ, nên phải render cả bốn. Chế độ Điều chỉnh còn phải
    vẽ được ở hai chiều, lúc chưa gõ số, lúc đã gõ, lúc quá số đang có (báo đỏ), và lúc vượt ngưỡng
    "rất lớn" (hiện ô gõ chữ xác nhận). */
 S.screen = 'nhap';
@@ -267,7 +279,11 @@ S.nhap.dir = 'tang'; S.nhap.qty = 10; one('nhap+dieu-chinh+tang');
 S.nhap.reason = 'khac'; one('nhap+dieu-chinh+ly-do-khac');
 // giảm 9999 cây D12 khi khu chỉ có 40: dòng "đang có → còn" phải báo quá số, và vượt ngưỡng tấn
 S.nhap.dir = 'giam'; S.nhap.qty = 9999; S.nhap.reason = 'dem_sai'; one('nhap+dieu-chinh+qua-so-va-rat-lon');
-S.nhap.qty = 0; S.nhap.mode = 'nhap'; S.nhap.dir = 'giam'; S.nhap.reason = null;
+S.nhap.qty = 0; S.nhap.reason = null;
+// Xuất kho: chỉ có dòng âm và có ô nơi đến riêng, nên vẽ cả lúc chưa gõ và lúc đã gõ số
+S.nhap.mode = 'xuat'; S.nhap.khu = 'A'; S.nhap.phi = 'D12'; one('nhap+xuat-kho+chua-go');
+S.nhap.qty = 10; one('nhap+xuat-kho+da-go');
+S.nhap.qty = 0; S.nhap.mode = 'nhap'; S.nhap.dir = 'giam';
 
 // đăng nhập / đổi PIN lần đầu
 S.me = null; S.screen = 'login'; one('login');

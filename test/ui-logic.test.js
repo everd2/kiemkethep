@@ -580,6 +580,165 @@ const run = async () => {
     (r('A3.text').match(/D12/g) || []).length === 1, r('A3.text'));
   r(`S.boot = _boot(); indexBoot(S.boot);`);
 
+  /* ---- 1d-xuat. PHIẾU XUẤT (tự nguyện) ----
+     Phiếu xuất cũng chỉ gồm dòng ÂM như phiếu điều chỉnh giảm, nên mọi chỗ bày phiếu phải thôi
+     giả định "phiếu luôn có ít nhất một dòng dương". Nhưng khác điều chỉnh ở một điểm quyết định:
+     xuất là thép ĐI THẬT, tức ĐÃ DÙNG, nên nó phải bị trừ ra khỏi vế "nhập" của phép tính
+     "đã dùng". Để nguyên trong vế nhập thì nó tự triệt tiêu với phần khu đếm hụt và "đã dùng"
+     tụt xuống chỉ còn phần không có phiếu — càng ghi phiếu đầy đủ thì con số càng sai. */
+  r(`S.boot = _boot(); indexBoot(S.boot);
+     S.boot.receipts = [
+       { id: 31, phi_id: 'D12', khu_id: 'A', qty: -30, note: 'Xuất cho Công trình Nam Hà', kind: 'xuat', grp: 'y1', ts: Date.now(), user_id: 1, uname: 'A' },
+     ];
+     var GX = receiptGroups(S.boot.receipts);`);
+  ok('phiếu xuất có tiêu đề riêng, không gọi là "Nhập vào"',
+    /Xuất từ Khu A/.test(r('GX[0].title')) && !/Nhập vào/.test(r('GX[0].title')), r('GX[0].title'));
+  ok('phiếu xuất không ra tiêu đề undefined', !/undefined/.test(r('GX[0].title')), r('GX[0].title'));
+  ok('mô tả phiếu xuất kèm dấu trừ', /−/.test(r('GX[0].what')), r('GX[0].what'));
+  ok('cờ xuat được đặt, và không nhận nhầm là dc', r('GX[0].xuat') === true && r('GX[0].dc') === false);
+  ok('màn Nhập vẽ được danh sách có phiếu xuất', /Xuất từ Khu A/.test(r(`S.nhap.mode='nhap'; vNhap()`)));
+
+  // màn Xuất kho: nói rõ là tuỳ chọn, và bắt buộc ghi nơi đến
+  r(`S.nhap.mode = 'xuat'; S.nhap.khu = 'A'; S.nhap.phi = 'D12'; S.nhap.qty = 0; S.nhap.lines = []; var VX = vNhap();`);
+  ok('màn Xuất kho nói rõ ghi phiếu là tuỳ chọn', /tuỳ bạn/.test(r('VX')));
+  ok('có ô ghi xuất cho ai / công trình nào', /id="nnoi"/.test(r('VX')));
+  ok('nói khu đang có bao nhiêu để biết xuất từ đâu', /đang có/.test(r('VX')));
+  ok('nút lưu đổi chữ', /GHI PHIẾU XUẤT/.test(r('VX')));
+  ok('không bày bước tăng/giảm của điều chỉnh', !/Tăng tồn/.test(r('VX')));
+  // các bước phải đánh số liên tục, không nhảy số và không trùng số
+  ok('các bước đánh số liên tục 1-2-3-4',
+    ['1. Lấy thép từ khu', '2. Xuất cho ai', '3. Chọn phi', '4. Số cây xuất đi'].every((x) => r('VX').includes(x)),
+    (r('VX').match(/\d\. [^<]{0,24}/g) || []).join(' | '));
+
+  /* Bỏ trống nơi đến thì chặn ngay trên máy. Server vẫn kiểm lại — nhưng phiếu xuất không nói
+     thép đi đâu thì không thêm được gì so với con số "đã dùng" app đã tự suy ra sẵn, tức nó là
+     phiếu vô nghĩa, nên chặn sớm cho người gõ biết liền. */
+  EL.nqty = mkEl('nqty'); EL.nqty.value = '5';
+  EL.nnote = mkEl('nnote'); EL.nnote.value = '';
+  EL.nnoi = mkEl('nnoi'); EL.nnoi.value = '';
+  r(`S.nhap.lines = [{ phi: 'D12', qty: 5 }]; S.toast = ''; ACTIONS.nconfirm();`);
+  ok('bỏ trống nơi đến: chặn và nhắc', /xuất cho ai/i.test(r('S.toast')), r('S.toast'));
+
+  // đổi chế độ phải bỏ luôn nơi đến đã gõ, không để nó dính sang phiếu sau
+  r(`S.form.nnoi = 'Công trình cũ'; ACTIONS.nmode({ v: 'nhap' });`);
+  ok('đổi chế độ thì bỏ luôn nơi đến đã gõ', r('S.form.nnoi') === '', r('S.form.nnoi'));
+
+  // thẻ phiếu chờ duyệt: phiếu xuất chỉ có dòng âm, lọc qty > 0 là thẻ hiện ra trống trơn
+  r(`S.review = { day: '${today}', last: '${yday}', span: 1, closed: false, rows: [], exceptions: [],
+       khus: [], pending: 1, reports: [], khu: S.boot.khu,
+       phieu: [{ key: 'p31', id: 31, kind: 'xuat', day: '${today}', ts: Date.now(), uname: 'A',
+                 note: 'Xuất cho Công trình Nam Hà', lines: [{ phi: 'D12', khu: 'A', qty: -30 }] }] };
+     var DX = vDuyet();`);
+  ok('thẻ phiếu xuất hiện đúng tên khu', /Xuất từ Khu A/.test(r('DX')), (r('DX').match(/Xuất từ[^<]*/) || [''])[0]);
+  ok('và không hiện ra trống (vẫn kể được dòng âm)', /D12/.test(r('DX')));
+  ok('nói thẳng duyệt là thép rời bãi', /rời bãi/.test(r('DX')));
+
+  /* Phép tính trên màn Duyệt: r.inn là TỔNG, gồm cả phiếu xuất với dấu ÂM. In nguyên nó dưới chữ
+     "Nhập" là hiện "+ Nhập −200" trong khi không có xe thép nào, mà phép tính cũng không cộng
+     ra đúng số "Đã dùng" bên cạnh. Hạng Nhập phải là nhập THẬT, và phần có phiếu để riêng. */
+  r(`S.review = { day: '${today}', last: '${yday}', span: 1, closed: false,
+       rows: [{ phi: 'D10', old: 300, inn: -200, dc: 0, xuat: 200, cnt: 60, used: 240, neg: false, high: false, avg: 1, peak: 0, rateDays: 9, topKhu: 'A', topNet: 0 }],
+       exceptions: [], khus: [], phieu: [], pending: 0, reports: [], khu: S.boot.khu };
+     S.showNormal = true; var DX2 = vDuyet().replace(/<[^>]*>/g, '');`);
+  ok('hạng "Nhập" hiện nhập THẬT (0), không phải tổng −200, và phép tính vẫn cộng ra 240',
+    /300 cây \+ 0 cây − 60 cây = 240 cây/.test(r('DX2')), (r('DX2').match(/300 cây[^=]*= [^ ]+ cây[^|]{0,30}/) || [''])[0]);
+  ok('và nêu riêng phần có phiếu xuất', /\(có phiếu 200 cây\)/.test(r('DX2')), (r('DX2').match(/\(có phiếu[^)]*\)/) || [''])[0]);
+  r(`S.review.rows[0].xuat = 0; S.review.rows[0].inn = 0; var DX3 = vDuyet();`);
+  ok('kỳ không có phiếu xuất: dòng vẫn gọn như trước', !/có phiếu/.test(r('DX3')));
+  // thẻ đỏ phi bất thường: tách "có phiếu" và "không rõ", vì phần không rõ mới là chỗ đáng đi hỏi
+  r(`S.review.rows[0] = { phi: 'D10', old: 300, inn: -200, dc: 0, xuat: 200, cnt: 60, used: 240, neg: false, high: true, avg: 1, peak: 0, rateDays: 9, topKhu: 'A', topNet: 0 };
+     var DX4 = vDuyet().replace(/<[^>]*>/g, '');`);
+  ok('thẻ phi bất thường tách phần có phiếu và phần không rõ',
+    /200 cây có phiếu xuất, 40 cây không rõ đi đâu/.test(r('DX4')), (r('DX4').match(/Trong số đó[^.]*\./) || [''])[0]);
+  r(`S.showNormal = false; S.review = null;`);
+
+  /* Tổng quan cũng tự tính "đã dùng", nên nó phải trừ phần xuất ra khỏi vế nhập ĐÚNG NHƯ SERVER.
+     Hai bên lệch nhau là hai màn hình nói hai con số khác nhau cho cùng một ngày. */
+  r(`S.boot = _boot();
+     S.boot.innKhu = [{ khu_id: 'A', phi_id: 'D10', kind: 'xuat', q: -50 }];
+     S.boot.mvNew = [{ khu_id: 'A', phi_id: 'D10', q: -50 }];
+     S.boot.eff = [{ khu_id: 'A', phi_id: 'D10', v: 250, day: '${today}', ts: Date.now() }];
+     indexBoot(S.boot); var TT = totals();`);
+  // tồn chuẩn A+B+Z của D10 = 300+100+70 = 470; đếm còn 250+100+70 = 420; có phiếu xuất 50
+  ok('đã dùng ở Tổng quan là TỔNG lượng dùng (50), không phải phần không rõ (0)',
+    r('TT.used.D10') === 50, r('TT.used.D10'));
+  ok('và "Nhập hôm nay" không bị phiếu xuất kéo xuống âm', r('TT.inKg') === 0, r('TT.inKg'));
+  r(`S.boot = _boot(); indexBoot(S.boot);`);
+
+  // Báo cáo kỳ: cột "Có phiếu" chỉ hiện khi kỳ đó thật có phiếu xuất
+  r(`S.bc = { from: '${yday}', to: '${today}', data: { rows: [{ phi: 'D10', dau: 100, nhap: 0, dc: 0, xuat: 12, dung: 20, cuoi: 80 }],
+       days: [], closedDays: 1, openDay: '${yday}', closeDay: '${today}', hasXuat: true } }; var RX1 = vBaoCao();`);
+  ok('kỳ có phiếu xuất: hiện cột Có phiếu', /Có phiếu/.test(r('RX1')));
+  ok('nói rõ cột đó nằm TRONG cột Dùng, không cộng thêm', /nằm TRONG cột Dùng/.test(r('RX1')));
+  r(`S.bc.data.hasXuat = false; S.bc.data.rows[0].xuat = 0; var RX2 = vBaoCao();`);
+  ok('kỳ không ai ghi phiếu xuất: bỏ hẳn cột cho đỡ chật', !/Có phiếu/.test(r('RX2')));
+
+  // Nhật ký: phải nói được thép đi đâu, vì đó là giá trị duy nhất của phiếu xuất
+  r(`var AX = fmtAudit({ action: 'issue', ts: Date.now(), user_name: 'A',
+       detail: JSON.stringify({ khu: 'A', noi: 'Công trình Nam Hà', ghi: 'xe 29C', note: 'Xuất cho Công trình Nam Hà: xe 29C', lines: [{ phi: 'D12', qty: 30 }] }) });`);
+  ok('nhật ký nói rõ xuất cho đâu', /Công trình Nam Hà/.test(r('AX.text')), r('AX.text'));
+  ok('và kèm ghi chú xe', /29C/.test(r('AX.text')), r('AX.text'));
+  // nơi đến chỉ được nhắc MỘT lần: note của phiếu đã chứa sẵn nó nên không được in thêm
+  ok('không nhắc nơi đến hai lần trong một dòng',
+    (r('AX.text').match(/Nam Hà/g) || []).length === 1, r('AX.text'));
+  r(`var AX2 = fmtAudit({ action: 'receipt_void', ts: Date.now(), user_name: 'A',
+       detail: JSON.stringify({ id: 31, kind: 'xuat', lines: [{ phi: 'D12', khu: 'A', qty: -30 }] }) });`);
+  ok('hủy phiếu xuất: gọi đúng tên', /xuất kho/.test(r('AX2.text')), r('AX2.text'));
+  ok('và vẫn kể được dòng âm', /D12/.test(r('AX2.text')), r('AX2.text'));
+  r(`S.boot = _boot(); indexBoot(S.boot); S.nhap.mode = 'nhap'; S.nhap.lines = []; S.form.nnoi = '';`);
+
+  /* ---- 1f. MỞ LẠI NGÀY ĐÃ CHỐT ----
+     Chỉ LẦN CHỐT GẦN NHẤT mở lại được: tồn chuẩn của một ngày là điểm xuất phát của mọi ngày sau
+     nó, nên mở một ngày ở giữa là mọi lần chốt sau đó vẫn giữ con số tính từ mốc cũ. Và ngày ĐÃ
+     QUA thì chỉ admin đầu tiên, vì nó dời cái mốc mà cả bãi đang dựa vào. Server mới là chỗ chặn
+     thật; phần này chỉ để khỏi bày một cái nút bấm vào là bị từ chối. */
+  const hist = (over) => `S.hist = { date: '${yday}', data: Object.assign({
+      day: '${yday}', close: { uname: 'A', ts: Date.now(), note: '', span: 1 }, lastClose: '${yday}',
+      counts: [{ khu_id: 'A', phi_id: 'D10', v: 300 }], baseline: [], prevBaseline: [],
+      summary: [{ phi_id: 'D10', nhap: 0, dung: 20, dc: 0, xuat: 12 }],
+      reports: [], receipts: [] }, ${over}) };`;
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.uFirst = 1; ${hist('{}')} var L1 = vLichSu();`);
+  ok('lần chốt gần nhất: admin đầu tiên thấy nút mở lại', /data-a="hreopen"/.test(r('L1')));
+  ok('nút ghi rõ ngày nào', /MỞ LẠI NGÀY \d\d\/\d\d/.test(r('L1')), (r('L1').match(/MỞ LẠI NGÀY[^<]*/) || [''])[0]);
+  ok('và nhắc rằng số đếm của khu vẫn còn', /vẫn còn nguyên/.test(r('L1')));
+  ok('và chỉ sang phiếu Điều chỉnh cho trường hợp sổ đã chốt mà sai', /Điều chỉnh tồn/.test(r('L1')));
+  ok('nói luôn phần đã dùng có phiếu xuất', /có phiếu xuất/.test(r('L1')));
+
+  // ngày cũ hơn lần chốt gần nhất: không có nút, nhưng phải nói vì sao
+  r(`${hist("{ lastClose: S.boot.today }")} var L2 = vLichSu();`);
+  ok('ngày cũ hơn: không bày nút mở lại', !/data-a="hreopen"/.test(r('L2')));
+  ok('nhưng nói rõ vì sao không mở được', /đã có lần chốt khác/.test(r('L2')));
+
+  // chưa chốt thì chẳng có gì để mở lại, cũng không có lời giải thích nào
+  r(`${hist('{ close: null }')} var L3 = vLichSu();`);
+  ok('ngày chưa chốt: không nút, không lời giải thích', !/data-a="hreopen"/.test(r('L3')) && !/đã có lần chốt khác/.test(r('L3')));
+
+  // không phải admin đầu tiên: ngày đã qua thì không thấy nút
+  r(`S.uFirst = 9; ${hist('{}')} var L4 = vLichSu();`);
+  ok('admin thường: ngày đã qua không thấy nút mở lại', !/data-a="hreopen"/.test(r('L4')));
+  // nhưng chính ngày HÔM NAY thì admin nào cũng mở được, vì hôm nay chưa là mốc của ngày nào
+  r(`${hist('{ day: S.boot.today, lastClose: S.boot.today }')} var L5 = vLichSu();`);
+  ok('ngày hôm nay: admin thường vẫn mở lại được', /data-a="hreopen"/.test(r('L5')));
+
+  // người đếm thì không bao giờ thấy
+  r(`S.me = { id: 9, name: 'B', role: 'nguoidem' }; ${hist('{}')} var L6 = vLichSu();`);
+  ok('người đếm không thấy nút mở lại', !/data-a="hreopen"/.test(r('L6')));
+  ok('và cũng không thấy lời giải thích dành cho admin', !/đã có lần chốt khác/.test(r('L6')));
+
+  // bỏ trống lý do thì chặn ngay, khỏi phải chờ một vòng mạng mới biết
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.uFirst = 1;`);
+  EL.hreopenNote = mkEl('hreopenNote'); EL.hreopenNote.value = '';
+  r(`S.toast = ''; ACTIONS.hreopen({ d: '${yday}' });`);
+  ok('bỏ trống lý do: chặn và nhắc', /lý do/i.test(r('S.toast')), r('S.toast'));
+
+  /* Bootstrap gửi sẵn id admin đầu tiên. Trước đây chỉ /users gửi, mà /users chỉ nạp khi vào đúng
+     màn Người dùng — nên nút dành riêng cho chủ hệ thống biến mất ở những màn khác. */
+  r(`S.uFirst = null; var BB = _boot(); BB.uFirst = 7; indexBoot(BB);`);
+  ok('indexBoot nhận uFirst từ bootstrap', r('S.uFirst') === 7, r('S.uFirst'));
+  r(`S.uFirst = 7; var BC = _boot(); delete BC.uFirst; indexBoot(BC);`);
+  ok('bootstrap không gửi thì không xoá trắng giá trị đang có', r('S.uFirst') === 7, r('S.uFirst'));
+  r(`S.hist = { date: '${yday}', data: null }; S.uFirst = 1; S.boot = _boot(); indexBoot(S.boot);`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

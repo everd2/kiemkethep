@@ -91,7 +91,7 @@ function seedPhi(env) {
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -237,6 +237,13 @@ const MIGRATIONS = {
      "sửa sổ" khi báo cáo kỳ đọc lại sau này.
      Không backfill: trước bản này chưa có phiếu 'dc' nào, nên dc = 0 ở mọi ngày đã chốt là đúng,
      và cột nhap của những ngày đó vẫn mang đúng nghĩa cũ (nhập thật, chuyển khu đã triệt tiêu). */
+  /* PHIẾU XUẤT: thép thật rời bãi, có nơi đến. Khác hẳn 'dc' (sửa sổ, không có xe nào chạy).
+     daily_summary.xuat giữ riêng phần xuất CÓ PHIẾU để báo cáo kỳ tách được "đã dùng" thành
+     "có phiếu" và "không rõ". Không backfill: trước bản này chưa có phiếu xuất nào nên xuat = 0
+     ở mọi ngày đã chốt là đúng. */
+  14: [
+    'ALTER TABLE daily_summary ADD COLUMN xuat INTEGER NOT NULL DEFAULT 0',
+  ],
   13: [
     'ALTER TABLE daily_summary ADD COLUMN dc INTEGER NOT NULL DEFAULT 0',
   ],
@@ -504,7 +511,7 @@ async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -522,9 +529,11 @@ async function bootstrap(env, user) {
                     WHERE r.voided = 0 AND (r.day = ?1 OR r.duyet_day IS NULL OR r.duyet_day = ?1) ORDER BY r.id DESC`).bind(day),
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
-    /* Nhập/chuyển ĐÃ DUYỆT kể từ lần chốt gần nhất theo khu × phi (gồm cả ngày quên chốt).
-       Lọc theo duyet_day chứ không phải day: phiếu chỉ tác động tới tồn kể từ ngày được duyệt. */
-    env.DB.prepare('SELECT khu_id, phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ? GROUP BY khu_id, phi_id').bind(last, day),
+    /* Nhập/chuyển/xuất ĐÃ DUYỆT kể từ lần chốt gần nhất theo khu × phi × LOẠI (gồm cả ngày
+       quên chốt). Lọc theo duyet_day chứ không phải day: phiếu chỉ tác động tới tồn kể từ ngày được
+       duyệt. Phải tách theo kind vì màn Tổng quan cũng tính "đã dùng", và phần XUẤT phải bị trừ
+       ra khỏi vế nhập đúng như server làm — hai bên lệch nhau là hai màn nói hai con số khác nhau. */
+    env.DB.prepare('SELECT khu_id, phi_id, kind, SUM(qty) q FROM receipts WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ? GROUP BY khu_id, phi_id, kind').bind(last, day),
     // số đếm hiệu lực của từng ô: khu báo hôm qua mà hôm nay chưa báo thì vẫn phải lấy số hôm qua,
     // không được quay về tồn chuẩn cũ (xem EFF_SELECT)
     env.DB.prepare(EFF_SELECT).bind(last, day),
@@ -539,6 +548,10 @@ async function bootstrap(env, user) {
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
     env.DB.prepare('SELECT khu_id, user_id FROM khu_user'),
+    /* Id admin ĐẦU TIÊN (xem firstAdminId). Gửi trong bootstrap chứ không chỉ trong /users: những
+       việc dành riêng cho chủ hệ thống nằm rải ở nhiều màn (đặt lại số liệu, mở lại ngày đã qua),
+       mà /users chỉ nạp khi vào đúng màn Người dùng — thiếu nó thì nút biến mất đúng lúc cần. */
+    env.DB.prepare("SELECT MIN(id) id FROM users WHERE role = 'admin' AND deleted = 0"),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -546,6 +559,7 @@ async function bootstrap(env, user) {
     lastClosed: last || null,
     closed: closed.results.length > 0,
     user: { id: user.id, name: user.name, role: user.role },
+    uFirst: (uFirst.results[0] || {}).id || 0,
     phi: phi.results,
     khu: khu.results,
     khuPhi: khuPhi.results,
@@ -866,7 +880,7 @@ async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
       `INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, kind, grp)
        SELECT ?1, ${J('phi')}, ${J('khu')}, ${J('qty')}, ?2, ?3, ?4, ?5, ?6 FROM json_each(?7) j`
     ).bind(ctx.day, note, user.id, ts, kind, grp, data),
-    auditStmt(env, user, { chuyen: 'transfer', dc: 'adjust' }[kind] || 'receipt', { ...audit, grp, note }),
+    auditStmt(env, user, { chuyen: 'transfer', dc: 'adjust', xuat: 'issue' }[kind] || 'receipt', { ...audit, grp, note }),
     bump(env),
     env.DB.prepare('SELECT id FROM receipts WHERE grp = ?').bind(grp),
   ], closedErr());
@@ -891,7 +905,7 @@ async function checkTransferStock(env, day, lines, opt) {
   const o = opt || {};
   const dc = o.kind === 'dc';
   const dau = o.duyet === false ? '' : 'Không duyệt được: ';
-  const viec = dc ? 'điều chỉnh giảm' : 'phiếu chuyển';
+  const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất' }[o.kind] || 'phiếu chuyển';
   const byKhu = {};
   out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
   const phiR = await env.DB.prepare('SELECT id, bo_size, unit FROM phi').all();
@@ -931,7 +945,7 @@ async function duyetReceipt(env, user, id) {
   const list = r.grp && rows.length ? rows : [{ phi_id: r.phi_id, khu_id: r.khu_id, qty: r.qty }];
   // chuyển khu và điều chỉnh giảm đều RÚT thép khỏi một khu, nên cùng phải kiểm lại tồn lúc duyệt
   const rk = r.kind || 'nhap';
-  await checkTransferStock(env, day, rk === 'chuyen' || rk === 'dc' ? list : [], { kind: rk });
+  await checkTransferStock(env, day, ['chuyen', 'dc', 'xuat'].includes(rk) ? list : [], { kind: rk });
   const ts = Date.now();
   await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     r.grp
@@ -1014,6 +1028,39 @@ const DC_REASONS = {
    khoảng sáu bó, dưới một xe thép: đủ lớn để đáng dừng lại, đủ cao để không kêu oan. */
 const DC_BIG_KG = 20000;
 const DC_WORD = 'DONG Y';
+
+/* PHIẾU XUẤT — tự nguyện, không bắt buộc.
+   Nguyên tắc "không ai phải nhập phiếu xuất" giữ nguyên: lượng dùng VẪN suy ra như cũ từ
+   tồn cũ + nhập − đếm. Phiếu xuất không thay phép tính đó, nó chỉ GIẢI THÍCH được bao nhiêu
+   phần trong đó. Ghi được bao nhiêu thì phần "không rõ" co lại bấy nhiêu, và chính phần không rõ
+   mới là con số đáng đi hỏi. Không ghi gì thì app chạy y như trước.
+
+   Vì sao vẫn đi qua duyệt như mọi phiếu: một phiếu xuất làm số dự kiến của khu tụt xuống, tức
+   nó đổi cái thước mà người duyệt dùng để soi khu đó. Thứ gì đổi được thước thì phải có người
+   duyệt, không thì tự ghi phiếu xuất là tự xoá dấu vết hụt thép. */
+async function postXuat(req, env, user) {
+  const b = await readJson(req);
+  const khuId = String(b.khu || '');
+  const ctx = await receiptCtx(env, [khuId]);
+  const lines = parseLines(b, ctx);
+  /* Nơi đến là BẮT BUỘC. Phiếu xuất mà không nói đi đâu thì chỉ là một lần trừ kho không lý do —
+     đúng bằng cái mà con số "đã dùng" suy ra sẵn đã nói, tức không thêm được gì. Giá trị duy nhất
+     của phiếu xuất nằm ở chỗ nó trả lời "thép đi đâu". */
+  const noi = String(b.noi || '').trim().slice(0, 120);
+  if (!noi) throw bad('Phải ghi rõ xuất cho ai hoặc cho công trình nào');
+  const free = String(b.note || '').trim().slice(0, 160);
+  const rows = lines.map((l) => ({ phi: l.phi, khu: khuId, qty: -l.qty }));
+  /* Xuất quá số khu đang thực có thì tồn khu thành âm. Dùng CHUNG chốt chặn với chuyển khu và
+     điều chỉnh: stockOf đã trừ sẵn mọi phiếu âm đang chờ duyệt nên hai phiếu xuất cùng rút một
+     lô thép không lọt được cả hai. Kiểm lại lần nữa lúc duyệt, vì lúc lập còn đủ không có nghĩa
+     lúc duyệt còn đủ. */
+  await checkTransferStock(env, ctx.day, rows.map((r) => ({ phi_id: r.phi, khu_id: r.khu, qty: r.qty })), { kind: 'xuat', duyet: false });
+  const note = 'Xuất cho ' + noi + (free ? ': ' + free : '');
+  /* Ghi chú rời để khóa riêng (ghi) chứ không phải note: writeReceipt luôn ghi đè note bằng nội
+     dung của phiếu, mà nội dung đó đã chứa sẵn nơi đến — để nguyên thì dòng nhật ký nhắc nơi
+     đến hai lần trong cùng một câu. */
+  return writeReceipt(env, user, ctx, rows, 'xuat', note, { khu: khuId, noi, ghi: free, lines });
+}
 
 async function postAdjust(req, env, user) {
   const b = await readJson(req);
@@ -1162,18 +1209,19 @@ async function computeReview(env, day) {
     db.prepare("SELECT value FROM meta WHERE key = 'rev'"),
   ]);
 
-  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, rcTs = {};
+  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, rcTs = {};
   effR.results.forEach((r) => (eff[r.khu_id + '|' + r.phi_id] = r.v));
   subR.results.forEach((r) => (sub[r.khu_id + '|' + r.phi_id] = r));
   baseR.results.forEach((r) => (base[r.khu_id + '|' + r.phi_id] = r.v));
   /* PHẢI CỘNG DỒN, không gán: từ khi câu truy vấn gộp thêm kind, một ô (khu × phi) có thể trả về
      nhiều dòng — nhập thật một dòng, điều chỉnh một dòng. Gán như trước là dòng sau đè dòng
      trước, tức mất hẳn phần nhập hoặc phần điều chỉnh khỏi dự kiến và khỏi lượng dùng.
-     inn = TỔNG mọi loại (dùng cho tồn, dự kiến, used). dcc = riêng phần điều chỉnh (chỉ hiển thị). */
+     inn = TỔNG mọi loại (dùng cho tồn và dự kiến). dcc = riêng điều chỉnh, xc = riêng xuất. */
   rcR.results.forEach((r) => {
     const key = r.khu_id + '|' + r.phi_id;
     inn[key] = (inn[key] || 0) + r.q;
     if (r.kind === 'dc') dcc[key] = (dcc[key] || 0) + r.q;
+    if (r.kind === 'xuat') xc[key] = (xc[key] || 0) + r.q;
   });
   mvTsR.results.forEach((r) => (rcTs[r.khu_id] = Math.max(r.a || 0, r.b || 0)));
   const khuAct = khuR.results.filter((k) => k.active);
@@ -1199,13 +1247,13 @@ async function computeReview(env, day) {
 
   const rows = phiR.results.map((p) => {
     const phiOff = p.active === 0;
-    let old = 0, innT = 0, dcT = 0, cn = 0, topKhu = null, topNet = 0;
+    let old = 0, innT = 0, dcT = 0, xT = 0, cn = 0, topKhu = null, topNet = 0;
     for (const k of khuR.results) {
       const key = k.id + '|' + p.id;
       const b = base[key] || 0;
       const i = inn[key] || 0;
       const e = eff[key] !== undefined ? eff[key] : b;
-      old += b; innT += i; dcT += dcc[key] || 0; cn += e;
+      old += b; innT += i; dcT += dcc[key] || 0; xT += xc[key] || 0; cn += e;
       const net = e - (b + i);
       if (Math.abs(net) > Math.abs(topNet)) { topNet = net; topKhu = k.id; }
     }
@@ -1214,7 +1262,13 @@ async function computeReview(env, day) {
        nó vào phi_rate và kéo cảnh báo "dùng nhiều bất thường" sai suốt 28 ngày — đúng cái bẫy mà
        mục "Đặt tồn về 0" phải tránh bằng cách để dung = NULL. Gộp vào thì used về 0 sau khi khu
        đếm lại, tức "sửa sổ không phải dùng thép", và đẳng thức báo cáo kỳ vẫn khép kín. */
-    const used = hasBase ? old + innT - cn : null;
+    /* Phần XUẤT thì ngược hẳn với điều chỉnh: phải TRỪ nó ra khỏi vế này. Xuất là thép ra khỏi
+       bãi, tức ĐÃ DÙNG thật — để nguyên trong innT thì nó tự triệt tiêu với phần khu đếm hụt, và
+       "đã dùng" tụt xuống chỉ còn phần KHÔNG có phiếu. Hậu quả không nằm ở con số hiển thị mà ở
+       phi_rate: mức dùng trung bình thành thấp hơn thực tế, rồi "còn đủ dùng bao nhiêu ngày" nói
+       dư ra — càng ghi phiếu xuất đầy đủ thì dự báo càng sai, đúng chiều ngược với ý định.
+       Giữ used = TỔNG lượng dùng, rồi tách riêng phần có phiếu để đối chiếu. */
+    const used = hasBase ? old + (innT - xT) - cn : null;
     const perDay = used === null ? null : used / span;
     const arr = hist[p.id] || [];
     const peak = arr.length ? Math.max(...arr) : 0;
@@ -1228,7 +1282,8 @@ async function computeReview(env, day) {
       && perDay > RATE_K * rt && perDay > PEAK_K * peak && kgOf(used) > HIGH_KG;
     return {
       // inn = tổng (dùng cho mọi phép tính), dc = riêng phần điều chỉnh, nhap = inn − dc (chỉ hiển thị)
-      phi: p.id, kg: p.kg_per_cay, old, inn: innT, dc: dcT, cnt: cn, used,
+      // xuat: phần đã dùng CÓ PHIẾU (số dương); used − xuat là phần không rõ
+      phi: p.id, kg: p.kg_per_cay, old, inn: innT, dc: dcT, xuat: -xT, cnt: cn, used,
       avg: rt === null ? null : Math.round(rt * 10) / 10,
       peak: Math.round(peak * 10) / 10,
       rateDays: rtDays,
@@ -1375,9 +1430,9 @@ async function doClose(env, user, rv, note, action) {
       /* nhap = inn − dc: cột này mang nghĩa THÉP THẬT VỀ, nên phải trừ phần điều chỉnh ra.
          dung thì vẫn tính từ TỔNG (rv.rows[].used đã dùng inn đầy đủ), nhờ vậy đẳng thức của
          báo cáo kỳ là `Tồn đầu + Nhập + Điều chỉnh − Dùng = Tồn cuối` và vẫn khép kín. */
-      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc)
-       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')}, ${J('used')}, ?2, ${J('dc')} FROM json_each(?3) j`
-    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, used: r.used })))),
+      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat)
+       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')} FROM json_each(?3) j`
+    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, used: r.used })))),
     env.DB.prepare(RATE_SQL).bind(day),
     /* Tồn chuẩn chốt theo số ĐÃ DUYỆT (EFF_JOIN đã lọc duyet_v IS NOT NULL): báo cáo chưa duyệt
        không bao giờ thành tồn chuẩn. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
@@ -1403,14 +1458,36 @@ async function doClose(env, user, rv, note, action) {
   ], new HttpError(409, 'Vừa có số liệu mới hoặc ngày đã được chốt. Hãy tải lại màn Duyệt rồi chốt.', 'changed'));
 }
 
-// Chỉ mở lại được ngày hôm nay (bấm chốt nhầm). Ngày cũ hơn đã thành tồn chuẩn cho ngày sau nên không mở.
+/* MỞ LẠI NGÀY ĐÃ CHỐT — chỉ LẦN CHỐT GẦN NHẤT, không phải ngày bất kỳ.
+   Vì sao chỉ lần gần nhất: tồn chuẩn của một ngày là điểm xuất phát của MỌI ngày sau nó. Mở lại
+   một ngày ở giữa là mọi lần chốt sau đó vẫn giữ con số tính từ mốc cũ, và từ đó trở đi không có
+   ngày nào còn khớp với ngày trước nó — sai mà không chỗ nào báo. Mở lần chốt gần nhất thì sau nó
+   chưa có gì phái sinh, nên app chỉ quay về đúng trạng thái "chưa chốt" mà nó vốn đã biết xử lý
+   (kể cả trường hợp quên chốt nhiều ngày: span > 1).
+   Sổ đã chốt hôm qua mà hôm nay phát hiện sai THÌ KHÔNG NÊN mở lại: cách đúng là lập phiếu
+   Điều chỉnh tồn, sửa số hiện tại và để lại dấu vết. Mở lại dành cho trường hợp vừa chốt nhầm. */
 async function reopenDay(req, env, user) {
   const b = await readJson(req);
-  const day = vnDay();
+  const today = vnDay();
+  const day = String(b.day || today);
+  if (!DAY_RE.test(day) || day > today) throw bad('Ngày không hợp lệ');
   const note = String(b.note || '').trim().slice(0, 500);
   if (!note) throw bad('Cần ghi lý do mở lại ngày');
+  /* Mở lại NGÀY CŨ thì chỉ admin đầu tiên, giống như đặt lại số liệu: nó dời tồn chuẩn mà cả bãi
+     đang dựa vào, và làm mất bảng tổng hợp của ngày đó. Chốt nhầm trong hôm nay thì admin nào
+     cũng sửa được, vì ngày hôm nay chưa là mốc của ngày nào cả. */
+  if (day !== today) {
+    const first = await firstAdminId(env);
+    if (user.id !== first) {
+      throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới mở lại ngày đã qua');
+    }
+  }
   const c = await env.DB.prepare('SELECT kind, undo_json FROM day_close WHERE day = ?').bind(day).first();
-  if (!c) throw bad('Hôm nay chưa chốt, không cần mở lại');
+  if (!c) throw bad(day === today ? 'Hôm nay chưa chốt, không cần mở lại' : 'Ngày này chưa chốt, không có gì để mở lại');
+  const maxR = await env.DB.prepare('SELECT MAX(day) d FROM day_close').first();
+  if (maxR && maxR.d && maxR.d !== day) {
+    throw bad('Chỉ mở lại được lần chốt gần nhất (ngày ' + fmtDay(maxR.d) + '). Ngày cũ hơn thì dùng phiếu Điều chỉnh tồn.');
+  }
   const laReset = c.kind === 'reset';
   let snap = { counts: [], reports: [] };
   if (laReset && c.undo_json) { try { snap = JSON.parse(c.undo_json); } catch (e) { /* ảnh chụp lỗi: coi như rỗng */ } }
@@ -1449,11 +1526,11 @@ async function reopenDay(req, env, user) {
   }
   stmts.push(
     env.DB.prepare(RATE_SQL).bind(day),
-    auditStmt(env, user, 'reopen_day', { day, note, reset: laReset || undefined }),
+    auditStmt(env, user, 'reopen_day', { day, note, reset: laReset || undefined, cu: day !== today || undefined }),
     bump(env)
   );
   await env.DB.batch(stmts);
-  return json({ ok: true, reset: laReset });
+  return json({ ok: true, reset: laReset, day });
 }
 
 /* Duyệt báo cáo đếm của MỘT khu (hoặc all = mọi khu đang chờ). Duyệt là chuyển số của lần báo
@@ -1507,7 +1584,8 @@ async function reviewDuyet(req, env, user) {
      Kiểm TRƯỚC khi dựng batch: thà từ chối cả lần bấm còn hơn duyệt số của khu rồi mới phát hiện
      phiếu không duyệt được, vì lúc đó admin không biết nửa nào đã vào. */
   for (const v of phieu) {
-    if (v.kind === 'chuyen' || v.kind === 'dc') {
+    // mọi loại phiếu RÚT thép khỏi khu đều phải qua cùng một chốt chặn âm tồn
+    if (v.kind === 'chuyen' || v.kind === 'dc' || v.kind === 'xuat') {
       await checkTransferStock(env, day, v.lines.map((l) => ({ phi_id: l.phi, khu_id: l.khu, qty: l.qty })), { kind: v.kind });
     }
   }
@@ -1645,9 +1723,9 @@ async function resetData(req, env, user) {
         .bind(day, user.id, ts, note, '{}', '[]', 1, undo),
       env.DB.prepare(
         // như lúc chốt thường: nhap là thép thật về, phần điều chỉnh đứng riêng ở cột dc
-        `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc)
-         SELECT ?1, ${J('phi')}, 0, ${J('inn')} - ${J('dc')}, NULL, 1, ${J('dc')} FROM json_each(?2) j`
-      ).bind(day, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, inn: r.inn, dc: r.dc || 0 })))),
+        `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat)
+         SELECT ?1, ${J('phi')}, 0, ${J('inn')} - ${J('dc')} + ${J('xuat')}, NULL, 1, ${J('dc')}, ${J('xuat')} FROM json_each(?2) j`
+      ).bind(day, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0 })))),
       env.DB.prepare(RATE_SQL).bind(day),
       // tồn chuẩn hôm nay = 0 ở MỌI ô từng có số, kể cả ô thuộc khu/phi đã bị ẩn mà còn thép
       env.DB.prepare(
@@ -2148,7 +2226,7 @@ async function dayView(env, url) {
   const day = url.searchParams.get('date') || '';
   if (!DAY_RE.test(day) || day > vnDay()) throw bad('Ngày không hợp lệ');
   const db = env.DB;
-  const [closeR, cntR, baseR, prevR, rcR, sumR, mvR, repR] = await db.batch([
+  const [closeR, cntR, baseR, prevR, rcR, sumR, mvR, repR, lastR] = await db.batch([
     db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
     /* Xem lại một ngày là xem số ĐÃ DUYỆT của ngày đó: đó mới là số liệu chính thức.
        Lần báo chưa duyệt (nếu còn) không phải số liệu của ngày, nên không lấy ra đây. */
@@ -2161,14 +2239,17 @@ async function dayView(env, url) {
                 FROM receipts r LEFT JOIN users u ON u.id = r.user_id
                 WHERE (r.duyet_day = ?1 OR (r.duyet_day IS NULL AND r.day = ?1)) ORDER BY r.id`).bind(day),
     // dc đi kèm nhap: màn Lịch sử phải nói được "ngày đó sổ bị sửa bao nhiêu", y như báo cáo kỳ
-    db.prepare('SELECT phi_id, ton, nhap, dung, span, dc FROM daily_summary WHERE day = ?').bind(day),
+    db.prepare('SELECT phi_id, ton, nhap, dung, span, dc, xuat FROM daily_summary WHERE day = ?').bind(day),
     // ngày CHƯA chốt thì tồn còn phải cộng phần thép đã duyệt mà khu chưa kịp đếm, y như Tồn bãi
     db.prepare(MV_CHUA_DEM).bind(day),
     db.prepare(`SELECT r.khu_id, r.ts, ${UNAME} FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
+    // lần chốt gần nhất: chỉ ngày đó mở lại được, nên giao diện mới biết có bày nút hay không
+    db.prepare('SELECT MAX(day) d FROM day_close'),
   ]);
   return json({
     day, close: closeR.results[0] || null, counts: cntR.results, baseline: baseR.results, prevBaseline: prevR.results,
     receipts: rcR.results, summary: sumR.results, mvNew: mvR.results, reports: repR.results,
+    lastClose: (lastR.results[0] || {}).d || null,
   });
 }
 
@@ -2196,21 +2277,23 @@ async function report(env, url) {
   const [phiR, openR, sumR, closeR, daysR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, bo_size, unit FROM phi ORDER BY sort'),
     db.prepare('SELECT day, phi_id, ton FROM daily_summary WHERE day = ?').bind(baseDay),
-    db.prepare('SELECT phi_id, SUM(nhap) nhap, SUM(dung) dung, SUM(dc) dc FROM daily_summary WHERE day > ? AND day <= ? GROUP BY phi_id').bind(baseDay, to),
+    db.prepare('SELECT phi_id, SUM(nhap) nhap, SUM(dung) dung, SUM(dc) dc, SUM(xuat) xuat FROM daily_summary WHERE day > ? AND day <= ? GROUP BY phi_id').bind(baseDay, to),
     db.prepare('SELECT day, phi_id, ton FROM daily_summary WHERE day = (SELECT MAX(day) FROM daily_summary WHERE day >= ? AND day <= ?)').bind(from, to),
     db.prepare(
-      `SELECT d.day, MAX(d.span) span, SUM(d.nhap * p.kg_per_cay) nhap_kg, SUM(COALESCE(d.dung, 0) * p.kg_per_cay) dung_kg, SUM(d.ton * p.kg_per_cay) ton_kg, SUM(d.dc * p.kg_per_cay) dc_kg
+      `SELECT d.day, MAX(d.span) span, SUM(d.nhap * p.kg_per_cay) nhap_kg, SUM(COALESCE(d.dung, 0) * p.kg_per_cay) dung_kg, SUM(d.ton * p.kg_per_cay) ton_kg, SUM(d.dc * p.kg_per_cay) dc_kg, SUM(d.xuat * p.kg_per_cay) xuat_kg
        FROM daily_summary d JOIN phi p ON p.id = d.phi_id WHERE d.day > ? AND d.day <= ? GROUP BY d.day ORDER BY d.day`
     ).bind(baseDay, to),
   ]);
   const by = (rs, f) => Object.fromEntries(rs.map((r) => [r.phi_id, r[f]]));
   const open = by(openR.results, 'ton'), close = by(closeR.results, 'ton');
   const nhap = by(sumR.results, 'nhap'), dung = by(sumR.results, 'dung'), dcs = by(sumR.results, 'dc');
+  // xuat: phần lượng dùng CÓ PHIẾU. Nằm trong 'dung' chứ không cộng thêm, nên không phá đẳng thức.
+  const xus = by(sumR.results, 'xuat');
   const hasOpen = openR.results.length > 0, hasClose = closeR.results.length > 0;
   const rows = phiR.results.map((p) => {
     const o = hasOpen ? open[p.id] || 0 : null;
     const c = hasClose ? close[p.id] || 0 : o;
-    return { phi: p.id, kg: p.kg_per_cay, dau: o, nhap: nhap[p.id] || 0, dc: dcs[p.id] || 0, dung: dung[p.id] == null ? 0 : dung[p.id], cuoi: c };
+    return { phi: p.id, kg: p.kg_per_cay, dau: o, nhap: nhap[p.id] || 0, dc: dcs[p.id] || 0, xuat: xus[p.id] || 0, dung: dung[p.id] == null ? 0 : dung[p.id], cuoi: c };
   });
   const out = {
     from, to, openDay: hasOpen ? baseDay : null, closeDay: hasClose ? closeR.results[0].day : null,
@@ -2219,6 +2302,8 @@ async function report(env, url) {
        màn hình điện thoại đã chật. Cột trong CSV thì LUÔN có: tệp mang đi đối chiếu phải cùng một
        bộ cột ở mọi kỳ, không thì mỗi lần xuất lại lệch đầu cột. */
     hasDc: rows.some((r) => r.dc),
+    // cột "có phiếu xuất" cũng theo lệ đó: kỳ nào không ai ghi phiếu xuất thì không bày cột rỗng
+    hasXuat: rows.some((r) => r.xuat),
   };
   if (url.searchParams.get('format') !== 'csv') return json(out);
 
@@ -2227,23 +2312,23 @@ async function report(env, url) {
   const pBy = Object.fromEntries(phiR.results.map((p) => [p.id, p]));
   const lines = [
     esc(`Báo cáo Nhập - Dùng - Tồn từ ${fmtDay(from)} đến ${fmtDay(to)} (${out.closedDays} ngày đã chốt)`),
-    csvRow(['Phi', 'Đơn vị', 'Tồn đầu', 'Nhập', 'Điều chỉnh', 'Dùng', 'Tồn cuối', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Dùng (tấn)', 'Tồn cuối (tấn)'].map(esc)),
+    csvRow(['Phi', 'Đơn vị', 'Tồn đầu', 'Nhập', 'Điều chỉnh', 'Dùng', 'Có phiếu xuất', 'Tồn cuối', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối (tấn)'].map(esc)),
   ];
-  const tot = { dau: 0, nhap: 0, dc: 0, dung: 0, cuoi: 0 };
+  const tot = { dau: 0, nhap: 0, dc: 0, xuat: 0, dung: 0, cuoi: 0 };
   for (const r of rows) {
     const p = pBy[r.phi], n = (x) => (x == null ? '' : csvQty(x, p));
-    lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dc), n(r.dung), n(r.cuoi),
-      t(r.dau, r.kg), t(r.nhap, r.kg), t(r.dc, r.kg), t(r.dung, r.kg), t(r.cuoi, r.kg)]));
+    lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dc), n(r.dung), n(r.xuat), n(r.cuoi),
+      t(r.dau, r.kg), t(r.nhap, r.kg), t(r.dc, r.kg), t(r.dung, r.kg), t(r.xuat, r.kg), t(r.cuoi, r.kg)]));
     tot.dau += (r.dau || 0) * r.kg; tot.nhap += r.nhap * r.kg; tot.dc += r.dc * r.kg;
-    tot.dung += r.dung * r.kg; tot.cuoi += (r.cuoi || 0) * r.kg;
+    tot.xuat += r.xuat * r.kg; tot.dung += r.dung * r.kg; tot.cuoi += (r.cuoi || 0) * r.kg;
   }
-  /* Đúng 12 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả năm số tấn tụt sang trái một cột
-     và Excel đọc "tồn đầu" thành "tồn cuối" — sai ngay trên tệp mang đi đối chiếu. Thêm cột Điều chỉnh
-     là thêm MỘT ô rỗng ở đây nữa, đếm lại cho đủ 6 chứ đừng đoán. */
-  const totCells = ['', '', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dc, tot.dung, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
+  /* Đúng 14 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả khối số tấn tụt sang trái một
+     cột và Excel đọc "tồn đầu" thành "tồn cuối" — sai ngay trên tệp mang đi đối chiếu. Thêm một cột là
+     thêm MỘT ô rỗng ở đây nữa: 7 ô rỗng (đứng sau nhãn TỔNG) rồi 6 số tấn, đếm lại chứ đừng đoán. */
+  const totCells = ['', '', '', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dc, tot.dung, tot.xuat, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
   lines.push(csvRow([esc('TỔNG (tấn)'), ...totCells]));
-  lines.push('', csvRow(['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Dùng (tấn)', 'Tồn cuối ngày (tấn)'].map(esc)));
-  for (const d of out.days) lines.push(csvRow([esc(fmtDay(d.day)), d.span, csvDec(d.nhap_kg / 1000, 3), csvDec((d.dc_kg || 0) / 1000, 3), csvDec(d.dung_kg / 1000, 3), csvDec(d.ton_kg / 1000, 3)]));
+  lines.push('', csvRow(['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối ngày (tấn)'].map(esc)));
+  for (const d of out.days) lines.push(csvRow([esc(fmtDay(d.day)), d.span, csvDec(d.nhap_kg / 1000, 3), csvDec((d.dc_kg || 0) / 1000, 3), csvDec(d.dung_kg / 1000, 3), csvDec((d.xuat_kg || 0) / 1000, 3), csvDec(d.ton_kg / 1000, 3)]));
   return new Response(CSV_HEAD + lines.join('\r\n'), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
@@ -2492,6 +2577,7 @@ async function handle(req, env, url) {
      phiếu chưa vào tồn cho tới khi được duyệt. DUYỆT thì chỉ admin, như mọi phiếu khác (chốt chặn
      nằm ở nhánh receipts/duyet bên trên). Muốn siết lại chỉ admin được lập thì bỏ 'thukho' ở đây. */
   if (r0 === 'adjust' && method === 'POST') { need(['admin', 'thukho']); return postAdjust(req, env, user); }
+  if (r0 === 'xuat' && method === 'POST') { need(['admin', 'thukho']); return postXuat(req, env, user); }
   if (r0 === 'report' && method === 'GET') { need(['admin', 'thukho']); return report(env, url); }
 
   // --- chỉ admin ---
