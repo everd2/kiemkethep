@@ -77,11 +77,16 @@ class D1 {
   }
 }
 
-/* ---------- dựng môi trường ---------- */
-export async function boot(root) {
-  const raw = new DatabaseSync(':memory:');
-  raw.exec('PRAGMA foreign_keys=OFF');
-  raw.exec(readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+/* ---------- dựng môi trường ----------
+   reuse: dùng lại một database đã có thay vì dựng mới từ schema.sql. Dùng để thử NÂNG CẤP:
+   worker ghi nhớ "đã nâng cấp rồi" theo từng isolate (ensureSchema), nên muốn migration chạy
+   lại trên cùng dữ liệu thì phải có một isolate MỚI trỏ vào đúng database cũ. */
+export async function boot(root, reuse) {
+  const raw = reuse || new DatabaseSync(':memory:');
+  if (!reuse) {
+    raw.exec('PRAGMA foreign_keys=OFF');
+    raw.exec(readFileSync(path.join(root, 'schema.sql'), 'utf8'));
+  }
   const DB = new D1(raw);
   const env = {
     DB, PEPPER: 'pepper-test', SETUP_TOKEN: 'setup-tok', RECOVERY_TOKEN: 'rec-tok',

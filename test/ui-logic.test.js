@@ -129,8 +129,24 @@ const run = async () => {
   r(`S.draft.cells['D8'] = { v: 248, kind: 'dem', bo: 22, le: 6 }; var H2 = demView();`);
   ok('lệch lẻ hiện theo cuộn thập phân', /−0,45 cuộn/.test(r('H2')), (r('H2').match(/<i>[^<]*<\/i>/) || [''])[0]);
 
+  /* ---- 1c. "Hết (0)" là ĐẾM THẬT, để trống mới là 'zero' ----
+     Hai cái đều ra số 0 nhưng mang nghĩa trái nhau, và màn Duyệt dựa vào kind để nói
+     "khu để trống phi này" hay "khu đã đếm, phi này hết thật". Ghi sai kind là người duyệt
+     bị bày sai thông tin ở đúng chỗ dễ mất thép nhất. */
+  r(`S.khu = 'A'; loadDraft(true); S.sel = 'D10'; S.bo = ''; S.le = ''; ACTIONS.zero();`);
+  ok('bấm "Hết (0)": ghi kind dem với v = 0 (đã đếm, xác nhận hết)',
+    r("JSON.stringify(S.draft.cells['D10'])") === JSON.stringify({ v: 0, kind: 'dem', bo: 0, le: 0 }),
+    r("JSON.stringify(S.draft.cells['D10'])"));
+  // ô không chạm tới thì chính lúc GỬI mới điền kind 'zero' (để trống)
+  r(`S.khu = 'A'; loadDraft(true); S.draft.cells = {}; var its = myPhiList().map((p) => { const c = S.draft.cells[p.id]; return c ? { phi: p.id, v: c.v, kind: c.kind } : { phi: p.id, v: 0, kind: 'zero' }; });`);
+  ok('ô để trống gửi lên kind zero', r("its.every((x) => x.kind === 'zero' && x.v === 0)"), r('JSON.stringify(its.slice(0,2))'));
+  ok('và gửi ĐỦ mọi phi đang bật, không gửi thiếu', r('its.length') === r('S.boot.phiAct.length'), r('its.length') + '/' + r('S.boot.phiAct.length'));
+  // ô đã gửi ở trạng thái để trống: bảng đếm phải nói "để trống", không để người đếm tưởng mình đã đếm ra 0
+  r(`S.sel = null; S.draft.cells['D10'] = { v: 0, kind: 'zero', bo: 0, le: 0 }; var HZ = demView();`);
+  ok('bảng đếm ghi rõ ô đó là "để trống"', /để trống/.test(r('HZ')), (r('HZ').match(/.{0,30}để trống.{0,10}/) || [''])[0]);
+
   // ---- 4a. tổng bãi ở màn Đếm gồm cả khu đã ẩn ----
-  r(`S.draft = { cells: {}, added: {}, baseTs: 0 }; var tot = totals(); var HD = demView();`);
+  r(`S.draft = { cells: {}, baseTs: 0 }; var tot = totals(); var HD = demView();`);
   ok('totals(): tách riêng kg của khu ẩn', r('tot.hidKg') > 0, r('tot.hidKg'));
   ok('Đếm: "Tổng bãi" khớp Tổng quan', r('HD').indexOf(r('fmtT(tot.kg)')) > 0, r('fmtT(tot.kg)'));
   ok('Tổng quan: nói rõ phần thép ở khu ẩn', /khu đã ẩn/.test(r('vHome()')));

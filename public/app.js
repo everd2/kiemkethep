@@ -140,7 +140,7 @@ const IC = {
 /* ===================== TRẠNG THÁI ===================== */
 const S = {
   me: null, boot: null, screen: 'login', khu: null,
-  draft: { cells: {}, added: {} }, sel: null, bo: '', le: '', field: 'bo', rep: { bo: false, le: false }, zoomK: null,
+  draft: { cells: {} }, sel: null, bo: '', le: '', field: 'bo', rep: { bo: false, le: false }, zoomK: null,
   toast: '', toastErr: false, form: {}, err: '',
   review: null, showNormal: false, audit: null, logFilter: 'all', users: null, pinShown: null,
   usage: null, usageDays: 30, statScope: 'all', expand: {},
@@ -202,7 +202,7 @@ function indexBoot(b) {
   b.khuBy = {}; b.khu.forEach((k) => (b.khuBy[k.id] = k));
   b.khuAct = b.khu.filter((k) => k.active);
   b.kp = {}; b.khuPhi.forEach((r) => (b.kp[r.khu_id + '|' + r.phi_id] = r));
-  b.cm = {}; b.counts.forEach((c) => (b.cm[c.khu_id + '|' + c.phi_id] = c)); // chỉ lần báo HÔM NAY (mồi nháp đếm)
+  // b.khuPhi giờ chỉ còn keep_streak có nghĩa (xem khu_phi trong schema.sql)
   // số đếm hiệu lực: lần báo gần nhất kể từ lần chốt trước. Khu báo hôm qua mà hôm nay chưa báo
   // thì vẫn phải lấy số hôm qua, không được quay về tồn chuẩn cũ.
   b.em = {}; (b.eff || []).forEach((c) => (b.em[c.khu_id + '|' + c.phi_id] = c));
@@ -373,7 +373,7 @@ function loadDraft(fresh) {
   // nháp cũ trên máy, nhưng sau đó người khác đã gửi báo cáo khu này: hỏi dùng số nào
   if (d && d.cells && rep && rep.user_id !== S.me.id && rep.ts > (d.baseTs || 0) && Object.keys(d.cells).length) S.draftWarn = { uname: rep.uname, ts: rep.ts };
   if (!d || !d.cells) {
-    d = { cells: {}, added: {}, baseTs: rep ? rep.ts : 0 };
+    d = { cells: {}, baseTs: rep ? rep.ts : 0 };
     for (const c of S.boot.counts) {
       if (c.khu_id === S.khu) d.cells[c.phi_id] = { v: c.v, kind: c.kind, bo: c.bo == null ? undefined : c.bo, le: c.le == null ? undefined : c.le };
     }
@@ -991,7 +991,8 @@ function vDuyet() {
   const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Chốt ngày này để số đã duyệt hôm nay trở thành tồn chuẩn đầu tiên.</span></div>` : '';
 
   /* --- Thẻ của từng khu: NỘI DUNG NHƯ NHAU dù lệch hay không --- */
-  const nCho = khus.filter((k) => k.waiting || k.phieu.length).length;
+  // khu "cần xem lại" cũng cần một lần bấm Duyệt khu, nên tính vào số khu đang chờ
+  const nCho = khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length;
   const nDuyet = khus.filter((k) => k.rep && !k.waiting).length;
   const khuHead = nCho
     ? `<span class="sm b" style="color:var(--warn)">${nCho} khu chờ duyệt</span>`
@@ -1001,10 +1002,12 @@ function vDuyet() {
   const khuSec = `<div class="col gap8"><div class="row" style="justify-content:space-between;align-items:baseline"><span class="sec">Báo cáo theo khu</span>${khuHead}</div>${duyetAll}${khus.map((k) => {
     const subOpen = S.subs[k.khu] !== undefined;
     const cho = k.waiting > 0, choP = k.phieu.length;
-    const edge = !k.rep ? 'border:2px solid var(--warn)' : cho || choP ? 'border:2px solid var(--pri)' : '';
+    const edge = !k.rep ? 'border:2px solid var(--warn)' : cho || choP ? 'border:2px solid var(--pri)' : k.recheck ? 'border:2px solid var(--warn)' : '';
     const badge = !k.rep ? '<span class="badge warn">Chưa báo</span>'
       : cho ? '<span class="badge" style="background:var(--pri);color:#fff">Chờ duyệt</span>'
       : choP ? '<span class="badge warn">Còn phiếu chờ</span>'
+      // đã duyệt nhưng dự kiến vừa đổi vì phiếu: không được mang nhãn xanh như đã xong
+      : k.recheck ? '<span class="badge warn">Cần xem lại</span>'
       : '<span class="badge ok">Đã duyệt</span>';
     // lần báo của ngày trước (quên chốt): phải nói rõ ngày, không thì admin tưởng là số hôm nay
     const cuNgay = k.rep && k.rep.day !== R.day ? ` · <b style="color:var(--warn)">báo ngày ${esc(fmtDay(k.rep.day))}</b>` : '';
@@ -1576,7 +1579,11 @@ function settle(kind) {
     const why = keepBlock(S.khu, p);
     if (why) return say(why, true);
     S.draft.cells[p] = { v: refOf(S.khu, p), kind: 'giu' };
-  } else if (kind === 'zero') S.draft.cells[p] = { v: 0, kind: 'zero', bo: 0, le: 0 };
+  /* Bấm "Hết (0)" là ĐẾM THẬT và xác nhận hết thép, nên ghi kind 'dem' với v = 0 — khác hẳn
+     ĐỂ TRỐNG, cái đó mới là kind 'zero' và do sendCountsInner điền cho ô người đếm không chạm tới.
+     Phân biệt hai cái này là lý do màn Duyệt nói được "khu để trống D25 trong khi dự kiến 72 cây",
+     rất khác "khu đã đếm, D25 hết thật". Trước bản 1.3 'zero' mang nghĩa ngược lại (xem migration 10). */
+  } else if (kind === 'zero') S.draft.cells[p] = { v: 0, kind: 'dem', bo: 0, le: 0 };
   else if (S.bo !== '' || S.le !== '') S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN };
   // chưa gõ gì mà bấm TIẾP: đứng lại, không lặng lẽ nhảy qua phi chưa đếm
   else return say((isCuon(p) ? 'Gõ số cuộn nguyên / % cuộn dở' : 'Gõ số bó / cây lẻ') + ', hoặc bấm "Hết (0)" nếu khu không còn phi này.', true);
@@ -1905,7 +1912,7 @@ const ACTIONS = {
   },
   async khuduyetall() {
     const R = S.review; if (!R) return;
-    const ks = (R.khus || []).filter((k) => k.waiting || k.phieu.length);
+    const ks = (R.khus || []).filter((k) => k.waiting || k.phieu.length || k.recheck);
     if (!ks.length) return say('Không còn khu nào chờ duyệt.', true), render();
     if (!(await ask('Duyệt cả ' + ks.length + ' khu đang chờ?\n' + ks.map((k) => k.name).join(', ')
       + '\nSố của các khu này sẽ thành tồn chính thức. Hãy xem bảng lệch trước khi duyệt hàng loạt.', 'DUYỆT TẤT CẢ'))) return;

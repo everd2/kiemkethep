@@ -178,16 +178,26 @@ const MIGRATIONS = {
     'ALTER TABLE receipts ADD COLUMN duyet_by INTEGER',
     'ALTER TABLE receipts ADD COLUMN duyet_name TEXT',
     /* Dữ liệu đang chạy phải coi như ĐÃ DUYỆT. Thiếu hai câu này là tồn toàn bãi về 0 ngay
-       lúc nâng cấp, vì mọi đường đọc tồn sau bản này đều đòi duyet_v/duyet_day. */
-    'UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ts, duyet_by = user_id WHERE duyet_v IS NULL',
+       lúc nâng cấp, vì mọi đường đọc tồn sau bản này đều đòi duyet_v/duyet_day.
+
+       Câu đầu đổi luôn kind, vì 'zero' ĐẢO NGHĨA ở bản này: nay nó là "người đếm ĐỂ TRỐNG, hệ
+       thống mặc định 0", còn bấm "Hết (0)" ghi 'dem' với v = 0 (đếm thật, xác nhận hết thép).
+       Phải phân biệt được hai cái đó để màn Duyệt nói được "khu để trống D25 trong khi dự kiến
+       72 cây" — rất khác "khu đã đếm và D25 hết thật". Dòng 'zero' của bản cũ mang nghĩa bấm
+       "Hết (0)" nên đổi về 'dem'. Không thêm loại mới vào KINDS vì counts.kind có CHECK, mà đổi
+       CHECK thì phải dựng lại bảng — đúng thao tác mà đầu schema.sql cảnh báo.
+
+       Phép đổi kind nằm TRONG câu backfill, dùng chung điều kiện duyet_v IS NULL, chứ không
+       tách thành câu riêng: tách ra thì chạy lại migration lần hai (ai đó hạ meta.schema khi
+       deploy lỗi) sẽ biến mọi ô "để trống" của dữ liệu MỚI thành "đã đếm ra 0" — xoá sạch đúng
+       cái phân biệt vừa dựng. Gộp vào đây thì nó chỉ chạm dữ liệu từ trước bản 1.3. */
+    `UPDATE counts SET
+       kind = CASE WHEN kind = 'zero' THEN 'dem' ELSE kind END,
+       duyet_v = v,
+       duyet_kind = CASE WHEN kind = 'zero' THEN 'dem' ELSE kind END,
+       duyet_ts = ts, duyet_at = ts, duyet_by = user_id
+     WHERE duyet_v IS NULL`,
     'UPDATE receipts SET duyet_day = day, duyet_ts = ts, duyet_by = user_id WHERE duyet_day IS NULL AND voided = 0',
-    /* kind đảo nghĩa: 'zero' nay là "người đếm ĐỂ TRỐNG, hệ thống mặc định 0", còn bấm "Hết (0)"
-       ghi 'dem' v=0 (đếm thật, xác nhận hết thép). Phải phân biệt để màn Duyệt nói được
-       "khu để trống D25 trong khi dự kiến 72 cây" — rất khác "khu đếm và D25 hết thật".
-       Dòng 'zero' cũ mang nghĩa bấm "Hết (0)" nên đổi về 'dem' cho khỏi bị đọc sai về sau.
-       Không thêm loại mới vào KINDS vì counts.kind có CHECK, đổi CHECK phải dựng lại bảng. */
-    "UPDATE counts SET kind = 'dem' WHERE kind = 'zero'",
-    "UPDATE counts SET duyet_kind = 'dem' WHERE duyet_kind = 'zero'",
     /* Bỏ tự ẩn phi khỏi khu: mọi khu luôn hiện đủ phi, để trống thì mặc định 0. Mở khoá lại
        mọi ô đang bị ẩn. khu_phi.active và zero_days thành vô dụng nhưng GIỮ CỘT, không DROP:
        xem lời cảnh báo đầu schema.sql, ALTER TABLE ... DROP COLUMN trên SQLite dựng lại câu
@@ -546,6 +556,11 @@ const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v FROM counts c
 /* Mọi (khu x phi) đang dùng. Thay cho khu_phi làm bảng liệt kê: từ bản 1.3 khu nào cũng có đủ phi,
    nên tồn chuẩn thành đặc (8 khu x 13 phi) và bỏ được trường hợp "khu hôm qua không có phi đó". */
 const KHU_X_PHI = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p WHERE k.active = 1 AND p.active = 1`;
+/* Như trên nhưng KHÔNG lọc theo cờ đang dùng. Dùng cho CHỐT CHẶN (đếm thép trước khi cho ẩn khu
+   hoặc ẩn phi): chốt chặn phải thấy cả thép nằm ở ô đã bị ẩn, nếu không thì ẩn khu rồi ẩn phi là
+   lọt qua cả hai lần kiểm. Hệ thống không cho ẩn khu/phi còn thép, nhưng dữ liệu cũ bị ẩn bằng
+   tay trong DB thì vẫn còn (xem mục 9 của bộ test), nên chỗ kiểm phải dè dặt hơn chỗ hiển thị. */
+const KHU_X_PHI_ALL = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p`;
 
 /* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
    So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
@@ -793,6 +808,35 @@ async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
   return json({ ok: true, grp, ids, id: ids[0] === undefined ? null : ids[0] });
 }
 
+/* Chuyển khu: phải kiểm lại tồn khu nguồn ĐÚNG LÚC DUYỆT. Lúc lập phiếu còn đủ thép không có
+   nghĩa là lúc duyệt còn đủ — ở giữa khu có thể đã đếm xuống, hoặc một phiếu chuyển đi khác đã
+   được duyệt trước. Không kiểm lại thì số "đang có" của khu nguồn thành âm.
+   Dùng CHUNG cho hai đường duyệt phiếu: duyệt riêng một phiếu, và duyệt khu (gộp cả phiếu đang
+   chờ của khu đó). Trước đây chỉ đường thứ nhất kiểm, nên cùng một việc mà hai nút cho hai kết
+   quả khác nhau — bấm "Duyệt khu" là lọt qua đúng cái chốt chặn mà "Duyệt phiếu" dựng ra.
+   `lines`: các dòng của phiếu chuyển (rỗng = không có gì phải kiểm). */
+async function checkTransferStock(env, day, lines) {
+  const out = lines.filter((x) => x.qty < 0);
+  if (!out.length) return;
+  const byKhu = {};
+  out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
+  const phiR = await env.DB.prepare('SELECT id, bo_size, unit FROM phi').all();
+  const phiBy = Object.fromEntries(phiR.results.map((x) => [x.id, x]));
+  const khuR = await env.DB.prepare('SELECT id, name FROM khu').all();
+  const nameOf = Object.fromEntries(khuR.results.map((x) => [x.id, x.name]));
+  for (const khuId of Object.keys(byKhu)) {
+    const have = await stockOf(env, day, khuId, byKhu[khuId].map((x) => x.phi_id));
+    for (const x of byKhu[khuId]) {
+      /* stockOf đã trừ MỌI phiếu chuyển đi đang chờ duyệt, kể cả chính phiếu này, nên phải cộng
+         ngược phần của chính nó vào trước khi so, không thì phiếu nào cũng tự thấy thiếu. */
+      const h = (have[x.phi_id] || 0) - x.qty;
+      if (-x.qty > h) {
+        throw bad(`Không duyệt được: ${nameOf[khuId] || khuId} chỉ còn ${qtyWord(h, phiBy[x.phi_id])} ${x.phi_id}, phiếu chuyển ${qtyWord(-x.qty, phiBy[x.phi_id])}`);
+      }
+    }
+  }
+}
+
 /* Duyệt một phiếu (cả grp). duyet_day là NGÀY HÔM NAY, không phải ngày nhập: phiếu vào tồn kể từ
    lúc được duyệt, nên nó thuộc về ngày duyệt. Phiếu nhập chiều ngày 7 mà duyệt sáng ngày 8 sẽ
    nằm trong số liệu ngày 8, còn chứng từ vẫn ghi đủ "nhập 07/10, duyệt 08/10". Nhờ vậy phiếu
@@ -806,27 +850,7 @@ async function duyetReceipt(env, user, id) {
   const rows = (await env.DB.prepare('SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND voided = 0 AND duyet_day IS NULL')
     .bind(r.grp || '').all()).results;
   const list = r.grp && rows.length ? rows : [{ phi_id: r.phi_id, khu_id: r.khu_id, qty: r.qty }];
-  /* Chuyển khu: phải kiểm lại tồn khu nguồn ĐÚNG LÚC DUYỆT. Lúc lập phiếu còn đủ thép không có
-     nghĩa là lúc duyệt còn đủ — ở giữa khu có thể đã đếm xuống, hoặc một phiếu chuyển đi khác
-     đã được duyệt trước. Không kiểm lại thì khu nguồn âm. */
-  if ((r.kind || 'nhap') === 'chuyen') {
-    const out = list.filter((x) => x.qty < 0);
-    const byKhu = {};
-    out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
-    const phiR = await env.DB.prepare('SELECT id, bo_size, unit FROM phi').all();
-    const phiBy = Object.fromEntries(phiR.results.map((x) => [x.id, x]));
-    for (const khuId of Object.keys(byKhu)) {
-      const have = await stockOf(env, day, khuId, byKhu[khuId].map((x) => x.phi_id));
-      for (const x of byKhu[khuId]) {
-        /* stockOf đã trừ MỌI phiếu chuyển đi đang chờ duyệt, kể cả chính phiếu này, nên phải
-           cộng ngược phần của chính nó vào trước khi so, không thì phiếu nào cũng tự thấy thiếu. */
-        const h = (have[x.phi_id] || 0) - x.qty;
-        if (-x.qty > h) {
-          throw bad(`Không duyệt được: khu ${x.khu_id} chỉ còn ${qtyWord(h, phiBy[x.phi_id])} ${x.phi_id}, phiếu chuyển ${qtyWord(-x.qty, phiBy[x.phi_id])}`);
-        }
-      }
-    }
-  }
+  await checkTransferStock(env, day, (r.kind || 'nhap') === 'chuyen' ? list : []);
   const ts = Date.now();
   await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     r.grp
@@ -933,7 +957,7 @@ async function computeReview(env, day) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, pendR, usedR, rateR, closedR, revR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -953,10 +977,21 @@ async function computeReview(env, day) {
                                WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id
                                  AND c2.day > ?1 AND c2.day <= ?2)`).bind(last, day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
-    // chỉ phiếu ĐÃ DUYỆT mới vào dự kiến, và tính theo NGÀY DUYỆT; mts = lần duyệt phiếu gần nhất
-    db.prepare(`SELECT phi_id, khu_id, SUM(qty) q, MAX(duyet_ts) mts FROM receipts
+    // chỉ phiếu ĐÃ DUYỆT và chưa bị hủy mới vào dự kiến, tính theo NGÀY DUYỆT
+    db.prepare(`SELECT phi_id, khu_id, SUM(qty) q FROM receipts
                 WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ?
                 GROUP BY phi_id, khu_id`).bind(last, day),
+    /* Mốc "lần gần nhất dự kiến của khu bị phiếu làm đổi". Phải gồm CẢ HAI chiều:
+       - duyet_ts: lúc một phiếu được duyệt (thép cộng vào dự kiến)
+       - voided_ts: lúc một phiếu ĐÃ DUYỆT bị hủy (thép rút khỏi dự kiến)
+       Thiếu chiều thứ hai thì hủy phiếu lại LÀM GIẢM mốc này nên cảnh báo im lặng, trong khi
+       khu vẫn mang nhãn "Đã duyệt" mà số đã duyệt không còn khớp dự kiến — đúng cái bản 1.2 bắt
+       được bằng exception 'late' với q < 0. Chỉ xét phiếu từng được duyệt: phiếu lập rồi từ chối
+       luôn chưa bao giờ vào tồn nên không làm dự kiến đổi. */
+    db.prepare(`SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b
+                FROM receipts
+                WHERE duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ?
+                GROUP BY khu_id`).bind(last, day),
     /* Phiếu đang chờ duyệt, của BẤT KỲ ngày nào: phiếu lập hôm qua chưa ai duyệt thì hôm nay vẫn
        phải nằm trên màn Duyệt, không được rơi khỏi màn hình chỉ vì sang ngày mới. */
     db.prepare(`SELECT r.id, r.grp, r.day, r.phi_id, r.khu_id, r.qty, r.kind, r.note, r.ts, ${UNAME}
@@ -972,10 +1007,8 @@ async function computeReview(env, day) {
   effR.results.forEach((r) => (eff[r.khu_id + '|' + r.phi_id] = r.v));
   subR.results.forEach((r) => (sub[r.khu_id + '|' + r.phi_id] = r));
   baseR.results.forEach((r) => (base[r.khu_id + '|' + r.phi_id] = r.v));
-  rcR.results.forEach((r) => {
-    inn[r.khu_id + '|' + r.phi_id] = r.q;
-    if (r.mts) rcTs[r.khu_id] = Math.max(rcTs[r.khu_id] || 0, r.mts);
-  });
+  rcR.results.forEach((r) => (inn[r.khu_id + '|' + r.phi_id] = r.q));
+  mvTsR.results.forEach((r) => (rcTs[r.khu_id] = Math.max(r.a || 0, r.b || 0)));
   const khuAct = khuR.results.filter((k) => k.active);
   const hasBase = !!last;
   // quên chốt N ngày thì lượng dùng là của cả N ngày: chia đều khi so với mức bình thường
@@ -1043,8 +1076,18 @@ async function computeReview(env, day) {
     pendBy[g].lines.push({ phi: r.phi_id, khu: r.khu_id, qty: r.qty });
   });
   const phieu = pendOrder.map((g) => pendBy[g]);
+  /* Một phiếu nhiều phi có NHIỀU dòng cùng một khu, nên phải lọc trùng: không lọc thì thẻ khu
+     báo "còn 3 phiếu chờ duyệt" trong khi thực tế là một phiếu ba phi, và con số "việc cần xử lý"
+     cũng phồng theo. Phiếu chuyển khu nằm ở cả hai khu là đúng — nó là một chứng từ của hai khu. */
   const pendKhu = {};
-  phieu.forEach((v) => v.lines.forEach((l) => { (pendKhu[l.khu] = pendKhu[l.khu] || []).push(v.key); }));
+  phieu.forEach((v) => {
+    const seenK = new Set();
+    v.lines.forEach((l) => {
+      if (seenK.has(l.khu)) return;
+      seenK.add(l.khu);
+      (pendKhu[l.khu] = pendKhu[l.khu] || []).push(v.key);
+    });
+  });
 
   /* MỘT thẻ cho MỖI khu đang dùng, nội dung như nhau dù lệch hay không — đây là chỗ thay cho
      khu_up/khu_down. Chỉ bày phi có số để nói (dự kiến khác 0, hoặc khu báo khác 0), nếu không
@@ -1121,8 +1164,13 @@ async function computeReview(env, day) {
      mảng: một khu vừa chờ duyệt vừa đang lệch vẫn chỉ là một nút "Duyệt khu". Con số này phải
      đối chiếu được với những gì admin đang thấy, nếu không bấm một lần mà nó tụt ba đơn vị thì
      không ai hiểu còn lại là gì. */
-  const pending = new Set(exceptions.map((e) =>
-    e.type === 'receipt_pending' ? 'phieu|' + e.key : e.type + '|' + (e.khu || e.phi))).size;
+  const pending = new Set(exceptions.map((e) => {
+    if (e.type === 'receipt_pending') return 'phieu|' + e.key;
+    /* "Chờ duyệt" và "cần xem lại" của cùng một khu dùng CHUNG một nút Duyệt khu, nên là một
+       việc. Xung đột hai người báo thì khác: admin phải chọn số trước, rồi mới duyệt được. */
+    if (e.type === 'khu_pending' || e.type === 'recheck') return 'khu|' + e.khu;
+    return e.type + '|' + (e.khu || e.phi);
+  })).size;
   return {
     day, last: last || null, span, rev, closed: closedR.results.length > 0,
     rows, khus, phieu, exceptions, pending,
@@ -1159,10 +1207,18 @@ async function doClose(env, user, rv, note, action) {
        không bao giờ thành tồn chuẩn. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
        chuẩn thành ĐẶC — mọi ô đều có dòng. Nhờ vậy ngày sau không còn trường hợp "khu này hôm
        qua không có phi đó" phải đoán xem dự kiến là 0 hay là không biết. */
+    /* Liệt kê các ô ĐANG DÙNG, CỘNG mọi ô còn số liệu khác 0 dù khu hoặc phi đã bị ẩn.
+       Phần UNION không phải cho đẹp: hệ thống từ chối ẩn khu/phi còn thép, nhưng dữ liệu cũ bị
+       ẩn bằng tay trong DB thì vẫn còn (mục 9 của bộ test dựng đúng cảnh đó). Thiếu nó thì một
+       lần chốt là xoá sạch số thép ở những ô ấy khỏi tồn chuẩn, im lặng, không cảnh báo gì —
+       và ngày sau mọi phép tính đều lệch mà không ai biết tại sao. */
     env.DB.prepare(
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kx.khu_id, kx.phi_id, COALESCE(c.duyet_v, b.v, 0)
-       FROM (${KHU_X_PHI}) kx
+       FROM (${KHU_X_PHI}
+             UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?2 AND v <> 0
+             UNION SELECT khu_id, phi_id FROM counts
+                   WHERE duyet_v IS NOT NULL AND duyet_v <> 0 AND day > ?2 AND day <= ?1) kx
        ${EFF_JOIN(2, 1)}
        LEFT JOIN baseline b ON b.day = ?2 AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id`
     ).bind(day, rv.last || ''),
@@ -1209,7 +1265,11 @@ async function reviewDuyet(req, env, user) {
   const rv = await computeReview(env, day);
   if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   const all = !!b.all, khu = String(b.khu || '');
-  const list = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length));
+  /* Nhận cả khu đang bị nhắc "xem lại" (recheck) dù nó không có ô nào chờ duyệt: khi một phiếu
+     được duyệt hoặc bị hủy SAU lúc số của khu đã duyệt, số dự kiến đổi mà số đã duyệt thì không,
+     và đường gỡ chính là admin xem bảng lệch mới rồi DUYỆT LẠI. Không nhận thì nút "Duyệt lại"
+     bị từ chối và cảnh báo treo vĩnh viễn — đúng cái bệnh của exception 'late' bản cũ. */
+  const list = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length || k.recheck));
   if (!list.length) {
     throw bad(all ? 'Không còn khu nào chờ duyệt' : rv.khus.some((k) => k.khu === khu) ? 'Khu này không có gì chờ duyệt' : 'Khu không hợp lệ');
   }
@@ -1217,9 +1277,14 @@ async function reviewDuyet(req, env, user) {
   const ts = Date.now();
   const stmts = [];
   for (const k of list) {
+    /* Cố ý KHÔNG lọc "duyet_ts <> ts": câu này phục vụ cả hai việc.
+       - Ô đang chờ duyệt: duyet_v = v, duyet_ts = ts là duyệt số mới.
+       - Ô đã duyệt rồi: hai phép trên là vô tác dụng (duyet_v đã bằng v, duyet_ts đã bằng ts),
+         chỉ còn duyet_at nhảy lên — tức "admin vừa xem lại và vẫn chấp nhận số này".
+       Chính nhờ duyet_at nhảy lên mà cảnh báo recheck gỡ được: nó so duyet_at với mốc phiếu. */
     stmts.push(env.DB.prepare(
       `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
-       WHERE khu_id = ?4 AND day > ?5 AND day <= ?6 AND (duyet_ts IS NULL OR duyet_ts <> ts)`
+       WHERE khu_id = ?4 AND day > ?5 AND day <= ?6`
     ).bind(ts, user.id, user.name, k.khu, last, day));
   }
   // phiếu chờ duyệt có dòng thuộc các khu đang duyệt; phiếu chuyển khu nằm ở cả hai khu nên
@@ -1227,6 +1292,14 @@ async function reviewDuyet(req, env, user) {
   const keys = new Set();
   list.forEach((k) => k.phieu.forEach((g) => keys.add(g)));
   const phieu = rv.phieu.filter((v) => keys.has(v.key));
+  /* Phiếu chuyển bị gộp vào đây cũng phải qua đúng chốt chặn như khi duyệt riêng từng phiếu.
+     Kiểm TRƯỚC khi dựng batch: thà từ chối cả lần bấm còn hơn duyệt số của khu rồi mới phát hiện
+     phiếu không duyệt được, vì lúc đó admin không biết nửa nào đã vào. */
+  for (const v of phieu) {
+    if (v.kind === 'chuyen') {
+      await checkTransferStock(env, day, v.lines.map((l) => ({ phi_id: l.phi, khu_id: l.khu, qty: l.qty })));
+    }
+  }
   for (const v of phieu) {
     stmts.push(v.grp
       ? env.DB.prepare('UPDATE receipts SET duyet_day = ?1, duyet_ts = ?2, duyet_by = ?3, duyet_name = ?4 WHERE grp = ?5 AND voided = 0 AND duyet_day IS NULL')
@@ -1395,7 +1468,7 @@ async function khuUpdate(req, env, admin, id) {
     // khu ẩn thì không ai đếm được nữa: còn thép mà ẩn sẽ làm số tồn "đóng băng"
     const day = vnDay();
     const st = await env.DB.prepare(
-      `SELECT COALESCE(SUM(COALESCE(c.duyet_v, b.v, 0)), 0) n FROM (${KHU_X_PHI}) kx
+      `SELECT COALESCE(SUM(COALESCE(c.duyet_v, b.v, 0)), 0) n FROM (${KHU_X_PHI_ALL}) kx
        LEFT JOIN counts c ON c.day = ?2 AND c.khu_id = kx.khu_id AND c.phi_id = kx.phi_id
        LEFT JOIN baseline b ON b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id
        WHERE kx.khu_id = ?1`
@@ -1424,7 +1497,7 @@ async function phiUpdate(req, env, admin, id) {
     // ẩn phi còn thép sẽ làm số tồn "đóng băng" đúng như trường hợp ẩn khu
     const day = vnDay();
     const st = await env.DB.prepare(
-      `SELECT COALESCE(SUM(COALESCE(c.duyet_v, b.v, 0)), 0) n FROM (${KHU_X_PHI}) kx
+      `SELECT COALESCE(SUM(COALESCE(c.duyet_v, b.v, 0)), 0) n FROM (${KHU_X_PHI_ALL}) kx
        LEFT JOIN counts c ON c.day = ?2 AND c.khu_id = kx.khu_id AND c.phi_id = kx.phi_id
        LEFT JOIN baseline b ON b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id
        WHERE kx.phi_id = ?1`

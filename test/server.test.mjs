@@ -500,6 +500,21 @@ async function main() {
     eq('tự ẩn phi đã bỏ: mọi ô mở lại', S.sql('SELECT 1 FROM khu_phi WHERE active = 0').length, 0);
     ok('cài đặt "tự ẩn sau N ngày đếm 0" đã bỏ',
       !S.sql("SELECT 1 FROM settings WHERE key='hide_after_zero_days'").length);
+
+    /* Chạy LẠI migration không được phá dữ liệu của bản mới. Xảy ra thật khi deploy lỗi rồi có
+       người hạ meta.schema xuống để chạy lại. Phép đổi kind 'zero' -> 'dem' nằm trong cùng câu
+       backfill (điều kiện duyet_v IS NULL) nên nó chỉ chạm dữ liệu từ trước bản 1.3; tách thành
+       câu riêng là mọi ô "để trống" của dữ liệu mới bị biến thành "đã đếm ra 0". */
+    S.raw.exec(`INSERT INTO counts (day, khu_id, phi_id, v, kind, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by)
+      VALUES ('${day}', 'B', 'D25', 0, 'zero', 1, 5000, 0, 'zero', 5000, 5000, 1)`);
+    S.raw.exec("UPDATE meta SET value = 9 WHERE key = 'schema'");
+    const S2 = await boot(ROOT, S.raw); // isolate MỚI trên cùng database: ensureSchema chạy lại từ bản 9
+    await S2.call('GET', '/rev');
+    eq('chạy lại migration: phiên bản vẫn lên 10', S.one("SELECT value FROM meta WHERE key='schema'").value, 10);
+    eq('và KHÔNG phá ô "để trống" của dữ liệu mới',
+      S.one("SELECT kind, duyet_kind FROM counts WHERE khu_id='B' AND phi_id='D25'"), { kind: 'zero', duyet_kind: 'zero' });
+    eq('dữ liệu cũ vẫn giữ nguyên số đã duyệt',
+      S.one("SELECT duyet_v FROM counts WHERE khu_id='A' AND phi_id='D16'").duyet_v, 1800);
   }
 
   /* ================= 18. Không nạp lại phi mặc định mỗi lần khởi động ================= */
@@ -720,6 +735,204 @@ async function main() {
     eq('duyệt được báo cáo treo từ ngày trước', (await duyet(S, 'A')).status, 200);
     eq('số ngày 2 vào tồn', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day2, 'A', 'D20').duyet_v, 20);
     eq('hết việc chờ', (await S.call('GET', '/review')).data.pending, 0);
+  }
+
+  /* ================= 32. "Để trống" khác "đếm ra 0", và phiếu nhiều phi là MỘT phiếu =================
+     Hai lỗi thật, cùng ở chỗ đếm/hiển thị:
+     - Quy tắc "không điền = 0" chỉ an toàn khi người duyệt phân biệt được "khu để trống phi này"
+       với "khu đã đếm và phi này hết thật". Nhầm hai cái đó là duyệt bừa mất vài tấn.
+     - Một phiếu nhiều phi có nhiều dòng cùng một khu, nên nếu không lọc trùng thì thẻ khu báo
+       "còn 3 phiếu chờ duyệt" trong khi thực tế là một phiếu ba phi. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D25', qty: 72 }, { phi: 'D28', qty: 57 }] });
+    await bao(S, { khu: 'A', day, items: items({ D25: 72, D28: 57 }) }, 'An');
+    await chot(S, { note: '' });
+    addDays(1); day = vnDay();
+
+    /* An đếm D28 ra 0 (bấm "Hết (0)" -> kind 'dem' v=0), còn D25 thì ĐỂ TRỐNG (kind 'zero').
+       Cả hai đều là 0 và đều lệch −72/−57, nhưng chỉ D25 được đánh dấu "để trống". */
+    await S.call('PUT', '/counts', {
+      khu: 'A', day,
+      items: items({ D25: { v: 0, kind: 'zero' }, D28: { v: 0, kind: 'dem' } }),
+    }, 'An');
+    let rv = (await S.call('GET', '/review')).data;
+    const kA = rv.khus.find((k) => k.khu === 'A');
+    const d25 = kA.items.find((x) => x.phi === 'D25'), d28 = kA.items.find((x) => x.phi === 'D28');
+    eq('để trống phi đang có thép: đánh dấu riêng cho người duyệt', [d25.kind, d25.blank, d25.d], ['zero', true, -72]);
+    eq('đếm thật ra 0 thì KHÔNG phải là để trống', [d28.kind, d28.blank, d28.d], ['dem', false, -57]);
+    eq('đếm số to để trống: khu nêu rõ có mấy phi bị để trống', kA.blank, 1);
+
+    // phi khu vốn không có, để trống: dự kiến 0 nên không tính là "để trống đáng ngờ"
+    ok('phi dự kiến 0 mà để trống thì không bị nêu', !kA.items.some((x) => x.phi === 'D12'), JSON.stringify(kA.items.map((x) => x.phi)));
+
+    /* Một phiếu BA phi vào cùng khu B = một phiếu chờ duyệt, không phải ba. */
+    const r = await S.call('POST', '/receipts', { khu: 'B', lines: [{ phi: 'D10', qty: 440 }, { phi: 'D12', qty: 320 }, { phi: 'D14', qty: 222 }] });
+    eq('ghi được phiếu ba phi', r.status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    eq('phiếu ba phi vẫn là MỘT phiếu chờ duyệt', rv.phieu.length, 1);
+    eq('và thẻ khu B chỉ đếm một phiếu', rv.khus.find((k) => k.khu === 'B').phieu.length, 1);
+    eq('việc cần xử lý không bị phồng theo số phi',
+      rv.exceptions.filter((e) => e.type === 'receipt_pending').length, 1);
+
+    // phiếu chuyển khu nằm ở CẢ HAI khu, vì nó là một chứng từ của hai khu — không phải lỗi đếm trùng
+    await duyetAll(S);
+    const t = await S.call('POST', '/transfers', { from: 'B', to: 'C', lines: [{ phi: 'D10', qty: 100 }, { phi: 'D12', qty: 50 }] });
+    eq('ghi được phiếu chuyển hai phi', t.status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    eq('phiếu chuyển: một phiếu', rv.phieu.length, 1);
+    eq('nhưng hiện ở cả khu đi và khu đến, mỗi khu một lần',
+      [rv.khus.find((k) => k.khu === 'B').phieu.length, rv.khus.find((k) => k.khu === 'C').phieu.length], [1, 1]);
+    // duyệt từ phía khu đi là duyệt cả phiếu
+    const dB = await S.call('POST', '/review/duyet', { khu: 'B' });
+    eq('duyệt khu đi là duyệt cả phiếu chuyển', dB.data.phieu, 1);
+    eq('không còn phiếu nào chờ', (await S.call('GET', '/review')).data.phieu.length, 0);
+  }
+
+  /* ================= 33. Hủy phiếu ĐÃ DUYỆT sau khi số của khu đã duyệt =================
+     Hủy một phiếu đã duyệt làm số dự kiến của khu đổi y như duyệt thêm một phiếu, nên phải nhắc
+     xem lại khu y như vậy. Bản 1.2 bắt được chuyện này (exception 'late' với q < 0, dựa vào
+     voided_ts). Nếu chỉ so "lần duyệt phiếu gần nhất" thì hủy phiếu lại LÀM GIẢM mốc đó, cảnh
+     báo im lặng, và khu vẫn mang nhãn "Đã duyệt" trong khi số đã duyệt không còn khớp dự kiến. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+    addDays(1); day = vnDay();
+
+    // phiếu +180 duyệt TRƯỚC, khu đếm 1980 rồi duyệt SAU: đúng trình tự, không nhắc gì
+    const rc = await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+    advance(5000);
+    await bao(S, { khu: 'A', day, items: items({ D16: 1980 }) }, 'An');
+    let rv = (await S.call('GET', '/review')).data;
+    ok('đúng trình tự: chưa nhắc xem lại', !rv.khus.find((k) => k.khu === 'A').recheck);
+    eq('và hết việc chờ', rv.pending, 0);
+
+    // giờ hủy phiếu đã duyệt đó: dự kiến tụt về 1800 mà số đã duyệt vẫn 1980
+    advance(5000);
+    eq('hủy phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    const kA = rv.khus.find((k) => k.khu === 'A');
+    eq('dự kiến tụt đúng 180', kA.items.find((x) => x.phi === 'D16').exp, 1800);
+    eq('và lệch hiện ra +180', kA.items.find((x) => x.phi === 'D16').d, 180);
+    ok('hủy phiếu sau khi khu đã duyệt: nhắc xem lại khu', kA.recheck, JSON.stringify(kA));
+    ok('và nó là một việc chặn chốt', rv.exceptions.some((e) => e.type === 'recheck' && e.khu === 'A'),
+      JSON.stringify(rv.exceptions.map((e) => e.type + ':' + (e.khu || e.phi))));
+    /* Gỡ được bằng cách admin DUYỆT LẠI, không cần khu đếm lại: người duyệt xem bảng lệch mới
+       rồi chấp nhận. Đây là đường gỡ chính, vì thường hủy phiếu chính là để sửa cho đúng số khu
+       đã đếm. Khu lúc này KHÔNG có gì "chờ duyệt" (mọi ô đã duyệt), nên nếu reviewDuyet chỉ nhận
+       khu đang chờ thì nút DUYỆT LẠI bị từ chối và cảnh báo treo vĩnh viễn. */
+    advance(1000);
+    const dl = await duyet(S, 'A');
+    eq('duyệt lại được dù khu không có gì đang chờ', dl.status, 200);
+    rv = (await S.call('GET', '/review')).data;
+    ok('duyệt lại là hết nhắc', !rv.khus.find((k) => k.khu === 'A').recheck, JSON.stringify(rv.khus.find((k) => k.khu === 'A')));
+    /* Nhưng CHƯA phải hết việc: admin chấp nhận số của khu, mà cả bãi vẫn đang thừa 180 cây so
+       với tính toán, nên cờ "dùng âm" cấp phi còn đó và chốt vẫn phải ghi chú. Đúng ra phải vậy —
+       duyệt lại là nói "số khu đếm đúng", không phải nói "sổ sách đã khớp". */
+    eq('việc còn lại là cờ dùng âm của D16, không phải nhắc xem lại khu',
+      rv.exceptions.map((e) => e.type + ':' + (e.khu || e.phi)), ['phi:D16']);
+    eq('và số đã duyệt KHÔNG bị đổi, chỉ ghi lại mốc duyệt mới',
+      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16').duyet_v, 1980);
+
+    // khu đếm lại rồi duyệt cũng gỡ được (đường còn lại)
+    advance(1000);
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    ok('đếm lại rồi duyệt cũng hết nhắc', !(await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').recheck);
+
+    /* Phiếu lập rồi TỪ CHỐI luôn (chưa bao giờ được duyệt) thì không được nhắc gì: nó chưa từng
+       vào tồn nên dự kiến không hề đổi. */
+    advance(1000);
+    const r2 = await S.call('POST', '/receipts', { khu: 'B', lines: [{ phi: 'D12', qty: 320 }] });
+    await S.call('DELETE', '/receipts/' + r2.data.id);
+    const kB = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'B');
+    ok('phiếu chưa duyệt mà bị từ chối: không nhắc khu nào', !kB.recheck, JSON.stringify(kB));
+  }
+
+  /* ================= 34. Khu/phi bị ẩn bằng tay mà còn thép: chốt không được bỏ rơi =================
+     Hệ thống từ chối ẩn khu/phi còn thép, nhưng dữ liệu cũ (ẩn bằng tay trong DB trước khi có
+     chốt chặn đó) vẫn tồn tại — xem mục 9. Tồn chuẩn ghi lúc chốt nay liệt kê theo khu × phi
+     ĐANG BẬT, nên nếu không giữ lại những ô còn thép thì một lần chốt là xoá sạch số thép đó
+     khỏi sổ, không có cảnh báo nào. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D14', qty: 222 }] });
+    await nhap(S, { khu: 'B', lines: [{ phi: 'D16', qty: 180 }] });
+    await bao(S, { khu: 'A', day, items: items({ D14: 222 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D16: 180 }) }, 'Binh');
+    await chot(S, { note: '' });
+    eq('tồn chuẩn ngày đầu có thép của khu A', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D14'", day).v, 222);
+
+    // dữ liệu cũ: ẩn khu A và ẩn phi D16 bằng tay, cả hai vẫn còn thép
+    S.raw.exec("UPDATE khu SET active = 0 WHERE id = 'A'");
+    S.raw.exec("UPDATE phi SET active = 0 WHERE id = 'D16'");
+    addDays(1); day = vnDay();
+    // khu B báo tiếp (D16 đã tắt nên không còn được hỏi), rồi chốt
+    await bao(S, { khu: 'B', day, items: items({}) }, 'Binh');
+    const cl = await chot(S, { note: 'khu A và D16 bị ẩn tay' });
+    eq('chốt được', cl.status, 200);
+
+    const bl = Object.fromEntries(S.sql('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?', day).map((x) => [x.khu_id + '|' + x.phi_id, x.v]));
+    eq('thép ở khu đã ẩn vẫn còn trong tồn chuẩn', bl['A|D14'], 222);
+    eq('thép của phi đã tắt vẫn còn trong tồn chuẩn', bl['B|D16'], 180);
+    const rv = (await S.call('GET', '/review')).data;
+    eq('và tổng bãi của D14 vẫn đếm thép ở khu đã ẩn', rv.rows.find((r) => r.phi === 'D14').old, 222);
+    eq('D16 vẫn được bày ra màn Duyệt vì còn số liệu', !!rv.rows.find((r) => r.phi === 'D16'), true);
+  }
+
+  /* ================= 35. Chốt chặn chuyển quá tồn: hai đường duyệt phải giống nhau =================
+     "Duyệt phiếu" và "Duyệt khu" (gộp cả phiếu đang chờ của khu) làm cùng một việc nên phải cùng
+     một chốt chặn, nếu không thì bấm nút này được mà nút kia không — và thép chuyển đi nhiều hơn
+     số khu thực có.
+
+     Cảnh dựng ra đây là cảnh xảy ra thật: nhập sai một xe, đã lập phiếu chuyển dựa trên số đó,
+     rồi mới hủy phiếu nhập. Lúc lập phiếu chuyển thì còn đủ thép, lúc duyệt thì không. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    // nhập 440 vào khu A và duyệt, rồi lập phiếu chuyển 400 sang B (hợp lệ vì A đang có 440)
+    const rin = await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
+    const t = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D10', qty: 400 }] });
+    eq('lập phiếu chuyển 400/440: được', t.status, 200);
+
+    // hủy phiếu nhập đã duyệt: khu A không còn thép, phiếu chuyển 400 thành vô căn cứ
+    advance(2000);
+    eq('hủy phiếu nhập đã duyệt', (await S.call('DELETE', '/receipts/' + rin.data.id)).status, 200);
+
+    const d1 = await S.call('POST', '/receipts/' + t.data.id + '/duyet', {});
+    eq('ĐƯỜNG 1 — duyệt riêng phiếu: bị từ chối', d1.status, 400);
+    ok('nói rõ khu nào còn bao nhiêu', /Khu A/.test(JSON.stringify(d1.data)), JSON.stringify(d1.data));
+
+    // ĐƯỜNG 2 — duyệt khu A, phiếu bị gộp theo: phải bị từ chối y như vậy
+    advance(1000);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({}) }, 'An');
+    const d2 = await S.call('POST', '/review/duyet', { khu: 'A' });
+    eq('ĐƯỜNG 2 — duyệt khu (gộp phiếu): cũng bị từ chối', d2.status, 400);
+    /* Và không được duyệt nửa vời: phép kiểm chạy TRƯỚC khi dựng batch, nên số của khu vẫn đang
+       chờ. Nếu kiểm sau thì admin không biết nửa nào đã vào tồn. */
+    eq('số của khu vẫn đang chờ duyệt',
+      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D10').duyet_v, null);
+    eq('phiếu chuyển cũng vẫn đang chờ', S.one('SELECT duyet_day FROM receipts WHERE id=?', t.data.id).duyet_day, null);
+
+    // từ chối phiếu chuyển rồi thì duyệt khu được bình thường
+    eq('từ chối phiếu chuyển', (await S.call('DELETE', '/receipts/' + t.data.id)).status, 200);
+    const d3 = await duyet(S, 'A');
+    eq('giờ duyệt khu A được', d3.status, 200);
+    eq('số của khu đã vào tồn',
+      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D10').duyet_v, 0);
+
+    // chuyển trong khả năng thì đường 2 duyệt được cả phiếu
+    advance(1000);
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 100 }] });
+    const t2 = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D10', qty: 60 }] });
+    eq('chuyển 60/100: lập được', t2.status, 200);
+    const d4 = await S.call('POST', '/review/duyet', { khu: 'A' });
+    eq('duyệt khu gộp phiếu trong khả năng: được', [d4.status, d4.data.phieu], [200, 1]);
+    eq('phiếu vào tồn theo ngày duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', t2.data.id).duyet_day, day);
   }
 
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
