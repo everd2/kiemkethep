@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS phi (
   sort INTEGER NOT NULL,
   kg_per_cay REAL NOT NULL,
   bo_size INTEGER NOT NULL,
-  min_stock INTEGER NOT NULL
+  min_stock INTEGER NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'cay'  -- 'cay' = cây nguyên, 'cuon' = dây cuộn (D8)
 );
 
 CREATE TABLE IF NOT EXISTS khu (
@@ -172,11 +173,11 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 3);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 4);
 
 -- Dữ liệu mặc định (kg/cây = 0,00617 x D x D x 11,7 m)
-INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock) VALUES
- ('D8', 1, 4.62, 100, 100),
+INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock, unit) VALUES
+ ('D8', 1, 4.62, 100, 100, 'cuon'),
  ('D10', 2, 7.22, 80, 200),
  ('D12', 3, 10.40, 60, 300),
  ('D14', 4, 14.15, 50, 100),

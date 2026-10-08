@@ -47,7 +47,7 @@ const SYSTEM = { id: 0, name: 'Hệ thống' };
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -75,6 +75,11 @@ const MIGRATIONS = {
     `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
      SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
      WHERE dung IS NOT NULL AND day > date((SELECT MAX(day) FROM daily_summary), '-28 days') GROUP BY phi_id`,
+  ],
+  4: [
+    // unit: 'cay' = cây nguyên (D10-D36), 'cuon' = dây cuộn (D8); thống kê hiển thị khác nhau
+    "ALTER TABLE phi ADD COLUMN unit TEXT NOT NULL DEFAULT 'cay'",
+    "UPDATE phi SET unit = 'cuon' WHERE id = 'D8'",
   ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
@@ -285,7 +290,7 @@ async function bootstrap(env, user) {
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
   const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, settings, rates] = await env.DB.batch([
-    env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock FROM phi ORDER BY sort'),
+    env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, active, keep_streak FROM khu_phi'),
     env.DB.prepare('SELECT c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, u.name uname, c.ts FROM counts c JOIN users u ON u.id = c.user_id WHERE c.day = ?').bind(day),

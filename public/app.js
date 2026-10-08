@@ -5,6 +5,19 @@ const $app = document.getElementById('app');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtInt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 const fmtT = (kg) => (kg / 1000).toFixed(2).replace('.', ',');
+// phi có unit='cuon' (D8) đếm theo cuộn, không phải cây; nội bộ vẫn lưu cây, chỉ hiển thị đổi sang cuộn
+const isCuon = (p) => { const o = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p; return !!(o && o.unit === 'cuon'); };
+const unitLbl = (p) => isCuon(p) ? 'cuộn' : 'cây';
+// hiển thị đầy đủ: "X cuọn + Y cây" nếu có lẻ, hoặc "X cây"
+const fmtCount = (v, p) => {
+  const po = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p;
+  if (isCuon(po)) { const c = Math.floor(v / po.bo_size), r = v % po.bo_size; return r ? `${fmtInt(c)} cuộn + ${fmtInt(r)} cây` : `${fmtInt(c)} cuộn`; }
+  return `${fmtInt(v)} cây`;
+};
+// hiển thị gọn: "X cuọn" hoặc "X cây"
+const fmtCountShort = (v, p) => { const po = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p; return isCuon(po) ? `${fmtInt(Math.floor(v / po.bo_size))} cuộn` : `${fmtInt(v)} cây`; };
+// tồn tối thiểu theo đúng đơn vị
+const minStockLbl = (p) => isCuon(p) ? `${fmtInt(Math.floor(p.min_stock / p.bo_size))} cuộn` : `${fmtInt(p.min_stock)} cây`;
 const two = (n) => String(n).padStart(2, '0');
 const hhmm = (ts) => { const d = new Date(ts); return two(d.getHours()) + ':' + two(d.getMinutes()); };
 const dmy = (ts) => { const d = new Date(ts); return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + hhmm(ts); };
@@ -131,8 +144,8 @@ function totals() {
   for (const k of b.khu) {
     for (const p of b.phi) {
       const v = valOf(k.id, p.id);
-      T.perPhi[p.id] += v; T.cay += v; T.kg += v * p.kg_per_cay;
-      if (T.perKhu[k.id]) { T.perKhu[k.id].cay += v; T.perKhu[k.id].kg += v * p.kg_per_cay; }
+      T.perPhi[p.id] += v; if (!isCuon(p)) T.cay += v; T.kg += v * p.kg_per_cay;
+      if (T.perKhu[k.id]) { if (!isCuon(p)) T.perKhu[k.id].cay += v; T.perKhu[k.id].kg += v * p.kg_per_cay; }
     }
   }
   // "Nhập hôm nay" chỉ tính thép về, không tính chuyển khu
@@ -312,13 +325,15 @@ function vHome() {
     if (r.recount) alerts.push({ bad: false, t: k.name + ' cần đếm lại', s: 'Admin yêu cầu đếm lại', to: 'dem' });
   });
   b.phi.forEach((p) => {
-    if (b.lastClosed && T.used[p.id] < 0) alerts.push({ bad: true, t: p.id + ' đã dùng âm (' + T.used[p.id] + ' cây)', s: 'Nhập sót phiếu hoặc đếm sai?', to: isAdmin() ? 'duyet' : 'home' });
+    if (b.lastClosed && T.used[p.id] < 0) alerts.push({ bad: true, t: p.id + ' đã dùng âm (' + fmtCountShort(T.used[p.id], p) + ')', s: 'Nhập sót phiếu hoặc đếm sai?', to: isAdmin() ? 'duyet' : 'home' });
     const dl = daysLeft(p.id, T.perPhi[p.id]);
-    if (T.perPhi[p.id] >= p.min_stock && dl !== null && dl < 3) alerts.push({ bad: false, t: p.id + ' chỉ còn đủ dùng ' + daysTxt(dl), s: 'Còn ' + fmtInt(T.perPhi[p.id]) + ' cây, dùng trung bình ' + fmtInt(b.rate[p.id]) + ' cây/ngày', to: 'ton' });
-    if (T.perPhi[p.id] < p.min_stock) alerts.push({ bad: true, t: p.id + ' dưới mức tối thiểu', s: 'Còn ' + fmtInt(T.perPhi[p.id]) + ' cây, tối thiểu ' + p.min_stock, to: 'ton' });
+    const rateDisp = b.rate[p.id] ? (isCuon(p) ? fmtInt(Math.round(b.rate[p.id] / p.bo_size)) + ' cuộn/ngày' : fmtInt(b.rate[p.id]) + ' cây/ngày') : '';
+    if (T.perPhi[p.id] >= p.min_stock && dl !== null && dl < 3) alerts.push({ bad: false, t: p.id + ' chỉ còn đủ dùng ' + daysTxt(dl), s: 'Còn ' + fmtCountShort(T.perPhi[p.id], p) + (rateDisp ? ', dùng TB ' + rateDisp : ''), to: 'ton' });
+    if (T.perPhi[p.id] < p.min_stock) alerts.push({ bad: true, t: p.id + ' dưới mức tối thiểu', s: 'Còn ' + fmtCountShort(T.perPhi[p.id], p) + ', tối thiểu ' + minStockLbl(p), to: 'ton' });
   });
   const maxKhu = Math.max(1, ...b.khuAct.map((k) => T.perKhu[k.id].kg));
-  const maxCay = Math.max(1, ...b.phi.map((p) => T.perPhi[p.id]), ...b.phi.map((p) => p.min_stock));
+  // dùng kg để scale bar (so sánh D8 cuọn vs D10+ cây trên cùng thước đo)
+  const maxBarKg = Math.max(1, ...b.phi.map((p) => T.perPhi[p.id] * p.kg_per_cay), ...b.phi.map((p) => p.min_stock * p.kg_per_cay));
   const khuCards = b.khuAct.map((k) => {
     const st = khuStatus(k), tk = T.perKhu[k.id];
     const unrep = !b.rm[k.id];
@@ -330,7 +345,9 @@ function vHome() {
   }).join('');
   const bars = b.phi.map((p) => {
     const v = T.perPhi[p.id], low = v < p.min_stock;
-    return `<div class="r"><span class="l">${p.id}</span><div class="t"><i class="${low ? 'low' : ''}" style="width:${Math.max(2, Math.round(v / maxCay * 100))}%"></i><u style="left:${Math.round(p.min_stock / maxCay * 100)}%"></u></div><span class="v ${low ? 'low' : ''}">${fmtInt(v)}</span></div>`;
+    const vKg = v * p.kg_per_cay, minKg = p.min_stock * p.kg_per_cay;
+    const dispV = isCuon(p) ? `${fmtInt(Math.floor(v / p.bo_size))} cuộn` : fmtInt(v);
+    return `<div class="r"><span class="l">${p.id}</span><div class="t"><i class="${low ? 'low' : ''}" style="width:${Math.max(2, Math.round(vKg / maxBarKg * 100))}%"></i><u style="left:${Math.round(minKg / maxBarKg * 100)}%"></u></div><span class="v ${low ? 'low' : ''}">${dispV}</span></div>`;
   }).join('');
   // quên chốt ngày trước thì "đã dùng" là lượng dùng gộp từ sau ngày chốt gần nhất
   const yday = new Date(Date.parse(b.today) - 864e5).toISOString().slice(0, 10);
@@ -339,7 +356,7 @@ function vHome() {
   return `<div class="f1 scroll" id="body">
     <div class="hero">
       <div class="row" style="justify-content:space-between"><span>Tổng quan · ${esc(b.today.split('-').reverse().join('/'))}</span><span class="badge" style="background:#fff;color:var(--pri)">${ROLE[S.me.role]}</span></div>
-      <div class="row" style="justify-content:space-between;align-items:flex-end"><div class="col"><span style="font-size:15px">Tồn toàn bãi</span><span class="big">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;padding-bottom:6px">${fmtInt(T.cay)} cây</span></div>
+      <div class="row" style="justify-content:space-between;align-items:flex-end"><div class="col"><span style="font-size:15px">Tồn toàn bãi</span><span class="big">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;padding-bottom:6px">${fmtInt(T.cay)} cây nguyên</span></div>
       <div class="sm" style="color:#D6E0EE">${note}</div>
       <div class="mini"><div><span>Nhập hôm nay</span><b>${fmtT(T.inKg)} tấn</b></div><div><span>${usedLabel}</span><b>${T.usedKg === null ? '—' : fmtT(T.usedKg) + ' tấn'}</b></div></div>
     </div>
@@ -382,8 +399,8 @@ function demView() {
   const curV = (p) => boN * size(p) + leN;
   const list = myPhiList(), pend = pendingList();
   const T = { own: 0, ownKg: 0, all: 0, allKg: 0 };
-  const colTot = {};
-  b.khuAct.forEach((x) => (colTot[x.id] = 0));
+  const colTot = {}, colTotKg = {};
+  b.khuAct.forEach((x) => { colTot[x.id] = 0; colTotKg[x.id] = 0; });
 
   const lrows = [], rrows = [];
   b.phi.forEach((p, idx) => {
@@ -393,34 +410,35 @@ function demView() {
     const ref = expOf(k, p.id), mv = movedOf(k, p.id);
     // so với số dự kiến (hôm qua + nhập/chuyển), không phải số hôm qua
     const delta = (v) => { if (ref === undefined) return null; const d = v - ref; return { big: ref >= 10 && Math.abs(d) / ref > 0.5, t: d === 0 ? 'đúng dự kiến' : d > 0 ? '+' + d : '−' + Math.abs(d) }; };
+    const toDisp = (v) => isCuon(p.id) ? Math.floor(v / p.bo_size) : v;
     let cls, txt, sub = '';
     if (!present) { cls = 'abs'; txt = '·'; }
-    else if (isSel) { cls = 'sel'; txt = hasIn ? String(curV(p.id)) : '__'; const dl = hasIn ? delta(curV(p.id)) : null; sub = dl ? dl.t : ''; if (dl && dl.big) cls += ' big'; }
+    else if (isSel) { cls = 'sel'; txt = hasIn ? String(toDisp(curV(p.id))) : '__'; const dl = hasIn ? delta(curV(p.id)) : null; sub = dl ? dl.t : ''; if (dl && dl.big) cls += ' big'; }
     else if (cell) {
-      if (cell.kind === 'giu') { cls = 'giu'; txt = '=' + cell.v; sub = 'giữ nguyên'; }
-      else { const dl = delta(cell.v); cls = dl && dl.big ? 'big' : 'okc'; txt = String(cell.v); sub = dl ? dl.t : ''; }
-    } else { cls = 'pend'; txt = ref === undefined ? '?' : String(ref); sub = mv ? 'dự kiến' : 'hôm qua'; }
+      if (cell.kind === 'giu') { cls = 'giu'; txt = '=' + toDisp(cell.v); sub = 'giữ nguyên'; }
+      else { const dl = delta(cell.v); cls = dl && dl.big ? 'big' : 'okc'; txt = String(toDisp(cell.v)); sub = dl ? dl.t : ''; }
+    } else { cls = 'pend'; txt = ref === undefined ? '?' : String(toDisp(ref)); sub = mv ? 'dự kiến' : 'hôm qua'; }
     let total = 0;
     b.khuAct.forEach((x) => {
       let v;
       if (x.id === k) v = isSel && hasIn ? curV(p.id) : (cell ? cell.v : valOf(k, p.id));
       else v = valOf(x.id, p.id);
-      colTot[x.id] += v; total += v;
+      colTot[x.id] += v; colTotKg[x.id] += v * p.kg_per_cay; total += v;
       T.all += v; T.allKg += v * p.kg_per_cay;
       if (x.id === k) { T.own += v; T.ownKg += v * p.kg_per_cay; }
     });
     const bg = isSel ? ' sel' : idx % 2 ? ' alt' : '';
-    lrows.push(`<div class="mxrow${bg}"><div style="width:40px;padding-left:4px;font-weight:700">${p.id}</div><div style="width:72px;display:flex;justify-content:center"><button class="own ${cls}" aria-label="Nhập ${p.id}" data-a="cell" data-p="${p.id}"><b>${txt}</b><i>${sub}</i></button></div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtInt(total)}</div></div>`);
+    lrows.push(`<div class="mxrow${bg}"><div style="width:40px;padding-left:4px;font-weight:700">${p.id}</div><div style="width:72px;display:flex;justify-content:center"><button class="own ${cls}" aria-label="Nhập ${p.id}" data-a="cell" data-p="${p.id}"><b>${txt}</b><i>${sub}</i></button></div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtInt(toDisp(total))}</div></div>`);
     rrows.push(`<div class="mxrow${bg}">${shown.map((x) => {
       const st = khuStatus(x);
       const has = S.boot.cm[x.id + '|' + p.id] || S.boot.bm[x.id + '|' + p.id] !== undefined || (S.boot.kp[x.id + '|' + p.id] && S.boot.kp[x.id + '|' + p.id].active);
       const v = valOf(x.id, p.id);
       const unrep = !b.rm[x.id];
-      return `<div class="oc" style="${cwStyle};font-size:${zk ? 20 : 13}px;color:${has ? (unrep ? '#6B6F76' : '#1C1F22') : '#B9B4A8'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#F0EEE8' : 'transparent'}">${has ? v : '·'}</div>`;
+      return `<div class="oc" style="${cwStyle};font-size:${zk ? 20 : 13}px;color:${has ? (unrep ? '#6B6F76' : '#1C1F22') : '#B9B4A8'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#F0EEE8' : 'transparent'}">${has ? (isCuon(p.id) ? Math.floor(v / p.bo_size) : v) : '·'}</div>`;
     }).join('')}</div>`);
   });
   const hdrs = shown.map((x) => `<button class="khh" aria-label="Phóng to ${esc(x.name)}" data-a="zoom" data-k="${esc(x.id)}" style="${cwStyle};font-size:${zk ? 15 : 14}px">${zk ? esc(x.name) + ' (chạm để thu nhỏ)' : esc(x.id)}</button>`).join('');
-  const tots = shown.map((x) => `<div class="oc" style="${cwStyle};font-size:${zk ? 16 : 12}px;font-weight:700;height:40px">${fmtInt(colTot[x.id])}</div>`).join('');
+  const tots = shown.map((x) => `<div class="oc" style="${cwStyle};font-size:${zk ? 16 : 12}px;font-weight:700;height:40px">${fmtT(colTotKg[x.id])} t</div>`).join('');
 
   const keepable = pend.filter((p) => !keepBlock(k, p.id));
   const keepTxt = pend.length === 0 ? 'Đã xử lý hết phi của khu' : S.confirmKeep ? `Bấm lần nữa để giữ nguyên ${keepable.length} phi` : `Giữ nguyên ${keepable.length} phi còn lại`;
@@ -431,11 +449,12 @@ function demView() {
   if (S.sel) {
     const p = S.sel, ref = refOf(k, p), mv = movedOf(k, p), ex = expOf(k, p);
     const streakOk = !keepBlock(k, p);
-    const refTxt = 'Hôm qua: ' + (ref === undefined ? 'chưa có' : ref + ' cây') + (mv ? ` · ${mv > 0 ? 'nhập/chuyển vào +' + mv : 'chuyển đi −' + Math.abs(mv)} · <b>dự kiến ${ex}</b>` : '');
+    const selPhi = b.phiBy[p];
+    const refTxt = 'Hôm qua: ' + (ref === undefined ? 'chưa có' : fmtCountShort(ref, selPhi)) + (mv ? ` · ${mv > 0 ? 'nhập/chuyển vào +' + fmtCountShort(mv, selPhi) : 'chuyển đi −' + fmtCountShort(Math.abs(mv), selPhi)} · <b>dự kiến ${fmtCountShort(ex, selPhi)}</b>` : '');
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'Xóa', '0', S.field === 'bo' ? 'Lẻ ›' : '‹ Bó'];
     sheet = `<div class="pad-sheet">
-      <div class="row" style="justify-content:space-between;gap:8px"><div class="col"><b style="font-size:16px">${esc(kname)} · ${p}${hasIn ? '  = ' + fmtInt(curV(p)) + ' cây · ' + fmtT(curV(p) * b.phiBy[p].kg_per_cay) + ' tấn' : ''}</b><span class="sm muted">${refTxt} · 1 bó = ${size(p)} cây</span></div><button class="btn s" style="height:40px" data-a="closesel">Đóng</button></div>
-      <div class="row gap6"><button class="boxn ${S.field === 'bo' ? 'on' : ''}" data-a="fld" data-v="bo"><span>Số bó</span><b>${S.bo || '0'}</b></button><span class="sm b" style="white-space:nowrap">× ${size(p)} +</span><button class="boxn ${S.field === 'le' ? 'on' : ''}" data-a="fld" data-v="le"><span>Cây lẻ</span><b>${S.le || '0'}</b></button></div>
+      <div class="row" style="justify-content:space-between;gap:8px"><div class="col"><b style="font-size:16px">${esc(kname)} · ${p}${hasIn ? '  = ' + fmtCount(curV(p), b.phiBy[p]) + ' · ' + fmtT(curV(p) * b.phiBy[p].kg_per_cay) + ' tấn' : ''}</b><span class="sm muted">${refTxt} · 1 ${isCuon(p) ? 'cuọn' : 'bó'} = ${size(p)} cây</span></div><button class="btn s" style="height:40px" data-a="closesel">Đóng</button></div>
+      <div class="row gap6"><button class="boxn ${S.field === 'bo' ? 'on' : ''}" data-a="fld" data-v="bo"><span>${isCuon(p) ? 'Số cuộn' : 'Số bó'}</span><b>${S.bo || '0'}</b></button><span class="sm b" style="white-space:nowrap">× ${size(p)} +</span><button class="boxn ${S.field === 'le' ? 'on' : ''}" data-a="fld" data-v="le"><span>Cây lẻ</span><b>${S.le || '0'}</b></button></div>
       <div class="keys">${keys.map((d, i) => `<button class="key ${d.length > 1 ? 'fn' : ''}" data-a="key" data-d="${i}">${d}</button>`).join('')}</div>
       <div class="acts"><button class="btn ${streakOk ? '' : 'dis'}" data-a="keep">Giữ nguyên</button><button class="btn bad" data-a="zero">Hết (0)</button><button class="btn pri" data-a="next">TIẾP</button></div>
     </div>`;
@@ -452,14 +471,14 @@ function demView() {
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Nét đứt vàng: chưa nhập (số mờ là số dự kiến) · Vàng đậm: lệch lớn so với dự kiến · Chấm: không có (chạm để thêm phi). Chạm chữ cái khu để phóng to.</div>' : ''}
       ${absent.length ? `<div class="sm b">Không có: ${absent.join(', ')} (${absent.length} phi)</div>` : ''}</div>`}
     <div class="f1" id="mx"><div class="mxw">
-      <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:14px;font-weight:700;color:var(--pri);line-height:1.1">${esc(kname)}<br>(bạn)</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtInt(colTot[k])}</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtInt(T.all)}</div></div></div>
+      <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:14px;font-weight:700;color:var(--pri);line-height:1.1">${esc(kname)}<br>(bạn)</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtT(T.ownKg)} t</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtT(T.allKg)} t</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
     ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(kname.toUpperCase()) : 'Còn ' + pend.length + ' phi chưa nhập'}</button></div>`}`;
 }
 
 /* --- Nhập kho / chuyển khu --- */
-const nkgText = (qty, p) => `= ${fmtInt(qty * p.kg_per_cay)} kg (${fmtT(qty * p.kg_per_cay)} tấn) · 1 bó = ${p.bo_size} cây`;
+const nkgText = (qty, p) => `= ${fmtInt(qty * p.kg_per_cay)} kg (${fmtT(qty * p.kg_per_cay)} tấn) · 1 ${isCuon(p) ? 'cuọn' : 'bó'} = ${p.bo_size} cây`;
 const kName = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
 // Gom các dòng cùng phiếu (grp) để hiện và hoàn tác cả phiếu
 function receiptGroups(list) {
@@ -471,7 +490,7 @@ function receiptGroups(list) {
     const pos = rows.filter((r) => r.qty > 0);
     const from = chuyen ? (rows.find((r) => r.qty < 0) || {}).khu_id : null;
     const kg = pos.reduce((a, r) => a + r.qty * (S.boot.phiBy[r.phi_id] ? S.boot.phiBy[r.phi_id].kg_per_cay : 0), 0);
-    const what = pos.map((r) => `${r.phi_id} ${fmtInt(r.qty)}`).join(' · ') + ' cây';
+    const what = pos.map((r) => { const rp = S.boot.phiBy[r.phi_id]; return `${r.phi_id} ${fmtCountShort(r.qty, rp)}`; }).join(' · ');
     const title = chuyen ? `Chuyển ${esc(kName(from))} → ${esc(kName(pos[0] ? pos[0].khu_id : ''))}` : `Nhập vào ${esc(kName(r0.khu_id))}`;
     return { id: Math.min(...rows.map((r) => r.id)), r0, chuyen, title, what, kg, voided: !!r0.voided };
   });
@@ -488,7 +507,7 @@ function vNhap() {
   const chuyen = N.mode === 'chuyen';
   const khuChips = (sel, f, skip) => `<div class="wrap">${b.khuAct.filter((k) => k.id !== skip).map((k) => `<button class="chip s ${k.id === sel ? 'on' : ''}" data-a="nkhu" data-f="${f}" data-v="${esc(k.id)}">${esc(k.name)}</button>`).join('')}</div>`;
   const lineKg = N.lines.reduce((a, l) => a + l.qty * b.phiBy[l.phi].kg_per_cay, 0);
-  const lines = N.lines.length ? `<div class="card" style="padding:0;overflow:hidden">${N.lines.map((l, i) => `<div class="li"><span><b>${l.phi}</b> · ${fmtInt(l.qty)} cây · ${fmtT(l.qty * b.phiBy[l.phi].kg_per_cay)} tấn</span><button class="btn s bad" data-a="nrm" data-i="${i}">Xóa</button></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>${N.lines.length} dòng</b><b>${fmtT(lineKg)} tấn</b></div></div>` : '';
+  const lines = N.lines.length ? `<div class="card" style="padding:0;overflow:hidden">${N.lines.map((l, i) => { const lp = b.phiBy[l.phi]; return `<div class="li"><span><b>${l.phi}</b> · ${fmtCountShort(l.qty, lp)} · ${fmtT(l.qty * lp.kg_per_cay)} tấn</span><button class="btn s bad" data-a="nrm" data-i="${i}">Xóa</button></div>`; }).join('')}<div class="li" style="background:#E8EEF6"><b>${N.lines.length} dòng</b><b>${fmtT(lineKg)} tấn</b></div></div>` : '';
   const groups = receiptGroups(b.receipts);
   const recs = groups.map((g) => {
     const can = isAdmin() || (g.r0.user_id === S.me.id && Date.now() - g.r0.ts < 10 * 60e3);
@@ -503,10 +522,10 @@ function vNhap() {
       ? `<div class="col gap8"><b style="font-size:18px">1. Từ khu</b>${khuChips(N.from, 'from')}</div><div class="col gap8"><b style="font-size:18px">2. Sang khu</b>${khuChips(N.to, 'to', N.from)}</div>`
       : `<div class="col gap8"><b style="font-size:18px">1. Để vào khu</b>${khuChips(N.khu, 'khu')}</div>`}
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 3 : 2}. Chọn phi</b><div class="grid4">${b.phi.map((x) => `<button class="chip ${x.id === N.phi ? 'on' : ''}" data-a="nphi" data-v="${x.id}">${x.id}</button>`).join('')}</div></div>
-    <div class="col gap8"><b style="font-size:18px">${chuyen ? 4 : 3}. Số cây ${N.phi}</b>
+    <div class="col gap8"><b style="font-size:18px">${chuyen ? 4 : 3}. Số ${isCuon(p) ? 'cuộn' : 'cây'} ${N.phi}</b>
       <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><input class="f1" id="nqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số cây" placeholder="0" value="${N.qty || ''}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
       <span class="muted" id="nkg">${nkgText(N.qty, p)}</span>
-      <div class="row gap6"><button class="btn s f1" data-a="nq" data-v="bo">+1 bó (${p.bo_size})</button><button class="btn s f1" data-a="nadd">+ Thêm phi khác</button></div></div>
+      <div class="row gap6"><button class="btn s f1" data-a="nq" data-v="bo">+1 ${isCuon(p) ? 'cuọn' : 'bó'} (${p.bo_size})</button><button class="btn s f1" data-a="nadd">+ Thêm phi khác</button></div></div>
     ${lines}
     <input class="inp s" id="nnote" maxlength="200" placeholder="Ghi chú: số phiếu, biển số xe... (không bắt buộc)" data-model="nnote" value="${esc(S.form.nnote || '')}">
     <button class="btn pri full" style="height:60px;font-size:20px" data-a="nconfirm">${saveLbl}</button>
@@ -526,12 +545,14 @@ function vTon() {
   const rows = b.phi.map((p) => {
     const v = T.perPhi[p.id], low = v < p.min_stock, open = S.expand[p.id];
     const dl = daysLeft(p.id, v), short = dl !== null && dl < 3;
-    const det = open ? `<div class="card" style="margin:-4px 0 4px;border-radius:0 0 16px 16px">${b.khu.map((k) => { const x = valOf(k.id, p.id); return x ? `<div class="li"><span>${esc(k.name)}${k.active ? '' : ' (ẩn)'}</span><b>${fmtInt(x)} cây · ${fmtT(x * p.kg_per_cay)} tấn</b></div>` : ''; }).join('') || '<div class="muted">Không có ở khu nào</div>'}${b.rate[p.id] ? `<div class="li"><span class="sm muted">Dùng trung bình</span><span class="sm">${fmtInt(b.rate[p.id])} cây/ngày</span></div>` : ''}</div>` : '';
-    const sub = low ? 'Dưới mức tối thiểu (' + p.min_stock + ')' + (dl !== null ? ' · còn ' + daysTxt(dl) : '') : dl !== null ? 'Còn đủ dùng ' + daysTxt(dl) : 'Đủ dùng';
-    return `<button class="tonrow ${low ? 'low' : ''}" data-a="expand" data-p="${p.id}"><span class="col" style="gap:2px"><b style="font-size:24px">${p.id}</b><span class="sm" style="${low ? 'color:var(--bad);font-weight:700' : short ? 'color:var(--warn);font-weight:700' : 'color:#5F6670'}">${sub}</span></span><span class="col" style="align-items:flex-end"><b style="font-size:30px;line-height:1.1">${fmtInt(v)}</b><span class="sm muted">cây · ${fmtT(v * p.kg_per_cay)} tấn</span></span></button>${det}`;
+    const rateDisp = b.rate[p.id] ? (isCuon(p) ? `${Math.round(b.rate[p.id] / p.bo_size * 10) / 10} cuọn/ngày` : `${fmtInt(b.rate[p.id])} cây/ngày`) : null;
+    const det = open ? `<div class="card" style="margin:-4px 0 4px;border-radius:0 0 16px 16px">${b.khu.map((k) => { const x = valOf(k.id, p.id); return x ? `<div class="li"><span>${esc(k.name)}${k.active ? '' : ' (ẩn)'}</span><b>${fmtCount(x, p)} · ${fmtT(x * p.kg_per_cay)} tấn</b></div>` : ''; }).join('') || '<div class="muted">Không có ở khu nào</div>'}${rateDisp ? `<div class="li"><span class="sm muted">Dùng trung bình</span><span class="sm">${rateDisp}</span></div>` : ''}</div>` : '';
+    const sub = low ? 'Dưới mức tối thiểu (' + minStockLbl(p) + ')' + (dl !== null ? ' · còn ' + daysTxt(dl) : '') : dl !== null ? 'Còn đủ dùng ' + daysTxt(dl) : 'Đủ dùng';
+    const dispV = isCuon(p) ? Math.floor(v / p.bo_size) : v;
+    return `<button class="tonrow ${low ? 'low' : ''}" data-a="expand" data-p="${p.id}"><span class="col" style="gap:2px"><b style="font-size:24px">${p.id}</b><span class="sm" style="${low ? 'color:var(--bad);font-weight:700' : short ? 'color:var(--warn);font-weight:700' : 'color:#5F6670'}">${sub}</span></span><span class="col" style="align-items:flex-end"><b style="font-size:30px;line-height:1.1">${fmtInt(dispV)}</b><span class="sm muted">${unitLbl(p)} · ${fmtT(v * p.kg_per_cay)} tấn</span></span></button>${det}`;
   }).join('');
   return `${head('Tồn bãi', b.lastClosed ? 'Tồn chuẩn chốt ngày ' + fmtDay(b.lastClosed) + ' · chạm phi để xem từng khu' : 'Chưa có ngày nào được chốt', 'home')}
-    <div class="hero" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:15px">Tổng toàn bãi</span><span style="font-size:30px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px">${fmtInt(T.cay)} cây</span></div></div>
+    <div class="hero" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:15px">Tổng toàn bãi</span><span style="font-size:30px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px">${fmtInt(T.cay)} cây nguyên</span></div></div>
     <div class="f1 scroll pad col gap8" id="body">${rows}</div>`;
 }
 
@@ -562,18 +583,21 @@ function vDuyet() {
         ${cmp || `<div class="row gap8"><button class="btn s warnb f1" data-a="cview" data-k="${esc(e.khu)}">SO SÁNH 2 SỐ</button><button class="btn s warnb f1" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button></div><button class="btn s warnb full" data-a="recount" data-k="${esc(e.khu)}">YÊU CẦU ĐẾM LẠI</button>`}
         ${C && C.data && !C.data.diffs.length ? `<button class="btn s warnb full" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button>` : ''}</div>`;
     }
-    if (e.type === 'late') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)}: có thép nhập/chuyển sau khi khu báo (${hhmm(e.reportTs)})</b><span class="sm">${e.items.map((x) => esc(x.phi) + ' ' + (x.q > 0 ? '+' : '−') + fmtInt(Math.abs(x.q)) + ' cây').join(' · ')}. Số đếm của khu chưa gồm lượng này nên tính "đã dùng" sẽ sai.</span><button class="btn s warnb full" data-a="recount" data-k="${esc(e.khu)}">YÊU CẦU ${esc(e.name.toUpperCase())} ĐẾM LẠI</button></div>`;
+    if (e.type === 'late') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)}: có thép nhập/chuyển sau khi khu báo (${hhmm(e.reportTs)})</b><span class="sm">${e.items.map((x) => { const xp = S.boot.phiBy[x.phi]; return esc(x.phi) + ' ' + (x.q > 0 ? '+' : '−') + fmtCountShort(Math.abs(x.q), xp); }).join(' · ')}. Số đếm của khu chưa gồm lượng này nên tính "đã dùng" sẽ sai.</span><button class="btn s warnb full" data-a="recount" data-k="${esc(e.khu)}">YÊU CẦU ${esc(e.name.toUpperCase())} ĐẾM LẠI</button></div>`;
     if (e.type === 'recount') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)} đang chờ đếm lại</b><span class="sm">Đã yêu cầu, chưa có số mới.</span></div>`;
     return '';
   }).join('');
   const cards = badRows.map((r) => {
     nExc++;
-    const sign = r.topNet > 0 ? '+' + r.topNet : '−' + Math.abs(r.topNet);
     const canRe = r.topKhu && R.reports.some((x) => x.khu_id === r.topKhu);
+    const rp = S.boot.phiBy[r.phi];
+    const fmtEq = (v) => v === null ? '—' : fmtCountShort(v, rp);
+    const avgDisp = r.avg === null ? '' : (isCuon(rp) ? (r.avg / rp.bo_size).toFixed(1) + ' cuọn/ngày' : r.avg + ' cây/ngày');
+    const topNetDisp = isCuon(rp) ? (r.topNet >= 0 ? '+' : '−') + Math.abs(Math.round(r.topNet / rp.bo_size)) + ' cuọn' : (r.topNet >= 0 ? '+' : '−') + Math.abs(r.topNet) + ' cây';
     return `<div class="card bad col gap8"><div class="row" style="justify-content:space-between"><b style="font-size:24px">${r.phi}</b><span class="badge bad">Bất thường</span></div>
-      <div class="eq"><div><span>Tồn cũ</span><b>${r.old}</b></div><div><span>+ Nhập</span><b>${r.inn}</b></div><div><span>− Đếm mới</span><b>${r.cnt}</b></div><div><span>= Đã dùng</span><b style="color:var(--bad)">${r.used}</b></div></div>
-      <b style="font-size:16px">${r.neg ? 'Đã dùng âm: có thể nhập sót phiếu hoặc đếm sai.' : 'Dùng gấp hơn 3 lần mức bình thường (' + r.avg + ' cây/ngày).'}</b>
-      ${r.topKhu ? `<span class="sm">Khu biến động lớn nhất: <b>${esc(kname(r.topKhu))}</b> (${sign} cây)</span>` : ''}
+      <div class="eq"><div><span>Tồn cũ</span><b>${fmtEq(r.old)}</b></div><div><span>+ Nhập</span><b>${fmtEq(r.inn)}</b></div><div><span>− Đếm mới</span><b>${fmtEq(r.cnt)}</b></div><div><span>= Đã dùng</span><b style="color:var(--bad)">${fmtEq(r.used)}</b></div></div>
+      <b style="font-size:16px">${r.neg ? 'Đã dùng âm: có thể nhập sót phiếu hoặc đếm sai.' : 'Dùng gấp hơn 3 lần mức bình thường (' + avgDisp + ').'}</b>
+      ${r.topKhu ? `<span class="sm">Khu biến động lớn nhất: <b>${esc(kname(r.topKhu))}</b> (${topNetDisp})</span>` : ''}
       ${canRe ? `<button class="btn s bad full" data-a="recount" data-k="${esc(r.topKhu)}">YÊU CẦU ${esc(kname(r.topKhu).toUpperCase())} ĐẾM LẠI</button>` : ''}</div>`;
   }).join('');
   const allOk = R.exceptions.length === 0;
@@ -582,7 +606,7 @@ function vDuyet() {
     : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Có ${R.exceptions.length} việc cần xem trước khi chốt</b><span class="sm" style="line-height:1.4">Tự đề xuất chốt khi: đủ khu, không phi dùng âm, không phi dùng quá 3 lần mức bình thường.</span></div>`;
   const gap = R.span > 1 && !R.closed ? `<div class="card warn col" style="gap:4px"><b>Có ${R.span - 1} ngày chưa chốt</b><span class="sm" style="line-height:1.4">Lượng dùng dưới đây gộp ${R.span} ngày kể từ ngày chốt ${esc(fmtDay(R.last))}. Cảnh báo "dùng nhiều" đã chia theo số ngày.</span></div>` : '';
   const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Chốt ngày này để số đếm hôm nay trở thành tồn chuẩn đầu tiên.</span></div>` : '';
-  const normalHtml = S.showNormal ? `<div class="card" style="padding:0;overflow:hidden">${normal.map((r) => `<div class="li"><b>${r.phi}</b><span class="sm">${R.last ? r.old + ' + ' + r.inn + ' − ' + r.cnt + ' = ' + r.used : 'đếm ' + r.cnt + ' cây'}</span></div>`).join('')}</div>` : '';
+  const normalHtml = S.showNormal ? `<div class="card" style="padding:0;overflow:hidden">${normal.map((r) => { const np = S.boot.phiBy[r.phi]; const fE = (v) => fmtCountShort(v, np); return `<div class="li"><b>${r.phi}</b><span class="sm">${R.last ? fE(r.old) + ' + ' + fE(r.inn) + ' − ' + fE(r.cnt) + ' = ' + fE(r.used) : 'đếm ' + fE(r.cnt)}</span></div>`; }).join('')}</div>` : '';
   return `${head('Duyệt ngày ' + b.today.split('-').reverse().slice(0, 2).join('/'), 'Chỉ hiện những gì cần xem', 'home')}
   <div class="f1 scroll pad col gap12" id="body">
     ${R.closed ? '<div class="card ok"><b>Đã chốt ngày hôm nay.</b> Số đếm hôm nay là tồn chuẩn mới, ngày này đã khóa.</div>' : verdict}
@@ -617,8 +641,10 @@ function vLichSu() {
     totKg += v * p.kg_per_cay;
     if (s) { totIn += s.nhap * p.kg_per_cay; totUse += (s.dung || 0) * p.kg_per_cay; }
     const open = S.expand['h' + p.id];
-    const det = open ? b.khu.map((k) => { const x = val(k.id, p.id); return x ? `<div class="li" style="padding-left:28px"><span class="sm">${esc(k.name)}</span><span class="sm">${fmtInt(x)} cây</span></div>` : ''; }).join('') : '';
-    return `<button class="li" style="width:100%;background:#fff;border:0;border-bottom:1px solid var(--line);text-align:left" data-a="expand" data-p="h${p.id}"><b style="width:44px">${p.id}</b><span class="sm" style="flex:1;text-align:right">${fmtInt(v)} cây${s ? ` · nhập ${fmtInt(s.nhap)} · dùng ${s.dung == null ? '—' : fmtInt(s.dung)}` : ''}</span></button>${det}`;
+    const det = open ? b.khu.map((k) => { const x = val(k.id, p.id); return x ? `<div class="li" style="padding-left:28px"><span class="sm">${esc(k.name)}</span><span class="sm">${fmtCountShort(x, p)}</span></div>` : ''; }).join('') : '';
+    const nDisp = s ? (isCuon(p) ? Math.floor(s.nhap / p.bo_size) + ' cuọn' : fmtInt(s.nhap) + ' cây') : '';
+    const dDisp = s ? (s.dung == null ? '—' : (isCuon(p) ? Math.floor(s.dung / p.bo_size) + ' cuọn' : fmtInt(s.dung) + ' cây')) : '';
+    return `<button class="li" style="width:100%;background:#fff;border:0;border-bottom:1px solid var(--line);text-align:left" data-a="expand" data-p="h${p.id}"><b style="width:44px">${p.id}</b><span class="sm" style="flex:1;text-align:right">${fmtCountShort(v, p)}${s ? ` · nhập ${nDisp} · dùng ${dDisp}` : ''}</span></button>${det}`;
   }).join('');
   const reps = D.reports.map((r) => `${esc(kName(r.khu_id))}: ${esc(r.uname)} ${hhmm(r.ts)}`).join(' · ');
   const groups = receiptGroups(D.receipts.slice().reverse());
@@ -654,10 +680,11 @@ function vBaoCao() {
   const kgOf = (id) => (b.phiBy[id] ? b.phiBy[id].kg_per_cay : 0);
   const t = { dau: 0, nhap: 0, dung: 0, cuoi: 0 };
   const rows = D.rows.map((r) => {
-    const kg = kgOf(r.phi);
+    const kg = kgOf(r.phi), rp = b.phiBy[r.phi];
     t.dau += (r.dau || 0) * kg; t.nhap += r.nhap * kg; t.dung += r.dung * kg; t.cuoi += (r.cuoi || 0) * kg;
+    const toU = (x) => x == null ? null : (isCuon(rp) ? Math.floor(x / rp.bo_size) : x);
     const dash = (x) => (x == null ? '—' : fmtInt(x));
-    return `<tr><th>${r.phi}</th><td>${dash(r.dau)}</td><td>${fmtInt(r.nhap)}</td><td>${fmtInt(r.dung)}</td><td><b>${dash(r.cuoi)}</b></td></tr>`;
+    return `<tr><th>${r.phi}${isCuon(rp) ? '<small class="muted"> (cuọn)</small>' : ''}</th><td>${dash(toU(r.dau))}</td><td>${fmtInt(toU(r.nhap))}</td><td>${fmtInt(toU(r.dung))}</td><td><b>${dash(toU(r.cuoi))}</b></td></tr>`;
   }).join('');
   const days = D.days.slice().reverse().map((d) => `<div class="li"><span>${fmtDay(d.day)}${d.span > 1 ? ` <span class="sm muted">(gộp ${d.span} ngày)</span>` : ''}</span><span class="sm">nhập ${fmtT(d.nhap_kg)} · dùng ${fmtT(d.dung_kg)} · tồn <b>${fmtT(d.ton_kg)}</b> tấn</span></div>`).join('');
   return `${top}<div class="f1 scroll pad col gap12" id="body">
@@ -665,7 +692,7 @@ function vBaoCao() {
     ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt trước kỳ nên không có số tồn đầu kỳ.</div>'}
     <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>Phi</th><th>Tồn đầu</th><th>Nhập</th><th>Dùng</th><th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><th>Tấn</th><td>${fmtT(t.dau)}</td><td>${fmtT(t.nhap)}</td><td>${fmtT(t.dung)}</td><td><b>${fmtT(t.cuoi)}</b></td></tr></tfoot></table></div>
-    <div class="sm muted">Đơn vị: cây (dòng cuối: tấn). Tồn đầu là ngày chốt ${D.openDay ? fmtDay(D.openDay) : '—'}, tồn cuối là ngày chốt ${D.closeDay ? fmtDay(D.closeDay) : '—'}. Chuyển khu không tính vào nhập.</div>
+    <div class="sm muted">Đơn vị: cây nguyên (D10–D36) hoặc cuọn (D8), dòng cuối: tấn. Tồn đầu là ngày chốt ${D.openDay ? fmtDay(D.openDay) : '—'}, tồn cuối là ngày chốt ${D.closeDay ? fmtDay(D.closeDay) : '—'}. Chuyển khu không tính vào nhập.</div>
     ${days ? `<h2 class="sec">Theo ngày (${D.closedDays} ngày đã chốt)</h2><div class="card" style="padding:0;overflow:hidden">${days}</div>` : ''}
   </div>`;
 }
@@ -688,7 +715,7 @@ async function loadRep() {
 
 /* --- Nhật ký (admin) --- */
 // dòng phiếu trong nhật ký: bản mới có lines, bản cũ có phi/qty
-const lineTxt = (d) => (d.lines ? d.lines.map((l) => l.phi + ' ' + l.qty).join(', ') : (d.phi || '') + ' ' + (d.qty || '')) + ' cây';
+const lineTxt = (d) => { const items = d.lines ? d.lines : (d.phi !== undefined ? [{ phi: d.phi, qty: d.qty }] : []); return items.map((l) => { const lp = S.boot && S.boot.phiBy[l.phi]; return l.phi + ' ' + fmtCountShort(l.qty, lp); }).join(', '); };
 function fmtAudit(a) {
   let d = {};
   try { d = a.detail ? JSON.parse(a.detail) : {}; } catch (e) { d = {}; }
@@ -731,19 +758,20 @@ function vStats() {
     const v = scope === 'all' ? T.perPhi[p.id] : valOf(scope, p.id);
     return { p, v };
   }).filter((r) => scope === 'all' || r.v > 0 || isPresent(scope, r.p.id));
-  const sumCay = rows.reduce((a, r) => a + r.v, 0), sumKg = rows.reduce((a, r) => a + r.v * r.p.kg_per_cay, 0);
+  const sumCay = rows.filter((r) => !isCuon(r.p)).reduce((a, r) => a + r.v, 0);
+  const sumKg = rows.reduce((a, r) => a + r.v * r.p.kg_per_cay, 0);
   let usageHtml = '<div class="muted">Đang tải...</div>';
   if (S.usage) {
     const per = {}; let tot = 0;
     S.usage.forEach((d) => { let dayKg = 0; for (const p in d.used) { per[p] = (per[p] || 0) + d.used[p]; const ph = b.phiBy[p]; if (ph) dayKg += d.used[p] * ph.kg_per_cay; } d.kg = dayKg; tot += dayKg; });
-    usageHtml = S.usage.length ? `<div class="card" style="padding:0;overflow:hidden">${b.phi.filter((p) => per[p.id]).map((p) => `<div class="li"><b>${p.id}</b><span>${fmtInt(per[p.id])} cây · ${fmtT(per[p.id] * p.kg_per_cay)} tấn</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Tổng dùng</b><b>${fmtT(tot)} tấn</b></div></div>
+    usageHtml = S.usage.length ? `<div class="card" style="padding:0;overflow:hidden">${b.phi.filter((p) => per[p.id]).map((p) => `<div class="li"><b>${p.id}</b><span>${fmtCountShort(per[p.id], p)} · ${fmtT(per[p.id] * p.kg_per_cay)} tấn</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Tổng dùng</b><b>${fmtT(tot)} tấn</b></div></div>
       <h2 class="sec">Theo ngày</h2><div class="card" style="padding:0;overflow:hidden">${S.usage.map((d) => `<div class="li"><span>${d.day.split('-').reverse().join('/')}</span><b>${fmtT(d.kg)} tấn</b></div>`).join('')}</div>` : '<div class="muted">Chưa có ngày nào được chốt trong khoảng này.</div>';
   }
   return `${head('Thống kê', 'Theo khu hoặc toàn bãi', 'more')}
   <div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Tồn hiện tại</h2>
     <div class="wrap">${chips.map((c) => `<button class="chip s ${scope === c[0] ? 'on' : ''}" data-a="sscope" data-v="${esc(c[0])}">${esc(c[1])}</button>`).join('')}</div>
-    <div class="card" style="padding:0;overflow:hidden">${rows.map((r) => `<div class="li"><b>${r.p.id}</b><span>${fmtInt(r.v)} cây · ${fmtT(r.v * r.p.kg_per_cay)} tấn</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Cộng</b><b>${fmtInt(sumCay)} cây · ${fmtT(sumKg)} tấn</b></div></div>
+    <div class="card" style="padding:0;overflow:hidden">${rows.map((r) => `<div class="li"><b>${r.p.id}</b><span>${fmtCount(r.v, r.p)} · ${fmtT(r.v * r.p.kg_per_cay)} tấn</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Cộng</b><b>${fmtInt(sumCay)} cây nguyên · ${fmtT(sumKg)} tấn</b></div></div>
     <div class="row" style="justify-content:space-between"><h2 class="sec">Thép đã dùng (toàn bãi)</h2></div>
     <div class="wrap">${[7, 30, 90].map((d) => `<button class="chip s ${S.usageDays === d ? 'on' : ''}" data-a="sdays" data-v="${d}">${d} ngày</button>`).join('')}</div>
     ${usageHtml}
@@ -794,8 +822,8 @@ function vUsers() {
 /* --- Cài đặt (admin) --- */
 function vSettings() {
   const b = S.boot;
-  const phi = b.phi.map((p) => `<div class="card col gap6"><b style="font-size:18px">${p.id}</b>
-    <div class="row gap6"><label class="f1 sm">Cây/bó<input class="inp s" style="width:100%" id="bo-${p.id}" inputmode="numeric" value="${p.bo_size}"></label><label class="f1 sm">Tối thiểu<input class="inp s" style="width:100%" id="mn-${p.id}" inputmode="numeric" value="${p.min_stock}"></label><label class="f1 sm">kg/cây<input class="inp s" style="width:100%" id="kg-${p.id}" inputmode="decimal" value="${String(p.kg_per_cay).replace('.', ',')}"></label></div></div>`).join('');
+  const phi = b.phi.map((p) => `<div class="card col gap6"><b style="font-size:18px">${p.id}${isCuon(p) ? ' <span class="sm muted">(cuọn)</span>' : ''}</b>
+    <div class="row gap6"><label class="f1 sm">${isCuon(p) ? 'Cây/cuọn' : 'Cây/bó'}<input class="inp s" style="width:100%" id="bo-${p.id}" inputmode="numeric" value="${p.bo_size}"></label><label class="f1 sm">Tối thiểu${isCuon(p) ? ' (cuọn)' : ''}<input class="inp s" style="width:100%" id="mn-${p.id}" inputmode="numeric" value="${isCuon(p) ? Math.floor(p.min_stock / p.bo_size) : p.min_stock}"></label><label class="f1 sm">kg/cây<input class="inp s" style="width:100%" id="kg-${p.id}" inputmode="decimal" value="${String(p.kg_per_cay).replace('.', ',')}"></label></div></div>`).join('');
   const khu = b.khu.map((k) => `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" value="${esc(k.name)}"></div><div class="row gap6"><button class="btn s f1" data-a="ksave" data-k="${esc(k.id)}">Lưu tên</button><button class="btn s f1 ${k.active ? 'bad' : ''}" data-a="khide" data-k="${esc(k.id)}" data-v="${k.active ? 0 : 1}">${k.active ? 'Ẩn khu' : 'Hiện lại'}</button></div></div>`).join('');
   return `${head('Cài đặt', 'Khu, phi và quy tắc', 'more')}<div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Quy tắc</h2>
@@ -1039,7 +1067,7 @@ const ACTIONS = {
     const note = val('nnote').trim();
     const kg = N.lines.reduce((a, l) => a + l.qty * b.phiBy[l.phi].kg_per_cay, 0);
     const where = chuyen ? `từ ${kName(N.from)} sang ${kName(N.to)}` : `vào ${kName(N.khu)}`;
-    const list = N.lines.map((l) => `  ${l.phi}: ${fmtInt(l.qty)} cây`).join('\n');
+    const list = N.lines.map((l) => { const lp = b.phiBy[l.phi]; return `  ${l.phi}: ${fmtCountShort(l.qty, lp)}`; }).join('\n');
     render();
     if (!confirm(`${chuyen ? 'Chuyển khu' : 'Nhập kho'} ${where}:\n${list}\nTổng ${fmtT(kg)} tấn\n\nĐúng chưa?`)) return;
     const lines = N.lines.slice();
@@ -1048,7 +1076,7 @@ const ACTIONS = {
         ? await api('POST', '/transfers', { from: N.from, to: N.to, lines, note })
         : await api('POST', '/receipts', { khu: N.khu, lines, note });
       N.lines = []; S.form.nnote = '';
-      N.done = { id: r.id, text: `${lines.map((l) => l.phi + ' ' + fmtInt(l.qty)).join(' · ')} cây · ${fmtT(kg)} tấn · ${where}` };
+      N.done = { id: r.id, text: `${lines.map((l) => { const lp = b.phiBy[l.phi]; return l.phi + ' ' + fmtCountShort(l.qty, lp); }).join(' · ')} · ${fmtT(kg)} tấn · ${where}` };
       await loadBoot();
     });
   },
@@ -1108,7 +1136,11 @@ const ACTIONS = {
   ulogout(d) { act(async () => { await api('POST', `/users/${d.id}/logout`, {}); }, 'Đã đăng xuất người dùng khỏi mọi máy.'); },
 
   psaveall() {
-    const items = S.boot.phi.map((p) => ({ id: p.id, bo_size: val('bo-' + p.id), min_stock: val('mn-' + p.id), kg_per_cay: val('kg-' + p.id).replace(',', '.') }));
+    const items = S.boot.phi.map((p) => {
+      const mnRaw = parseInt(val('mn-' + p.id)) || 0;
+      const minStock = isCuon(p) ? mnRaw * p.bo_size : mnRaw;
+      return { id: p.id, bo_size: val('bo-' + p.id), min_stock: minStock, kg_per_cay: val('kg-' + p.id).replace(',', '.') };
+    });
     act(async () => { const r = await api('PUT', '/phi', { items }); await loadBoot(); say(r.n ? 'Đã lưu ' + r.n + ' phi.' : 'Không có thay đổi.'); });
   },
   ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); await loadBoot(); }, 'Đã lưu tên khu.'); },
