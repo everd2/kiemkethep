@@ -44,10 +44,35 @@ const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt li
 const IP_FAIL_MAX = 30; // số lần sai PIN tối đa mỗi ngày từ một địa chỉ IP
 const SYSTEM = { id: 0, name: 'Hệ thống' };
 
+/* ========================= DỮ LIỆU MẶC ĐỊNH PHI =========================
+   Nguồn chân lý duy nhất: kg/cây = 0,00617 × D² × 11,7 m
+   INSERT OR IGNORE → không ghi đè nếu admin đã chỉnh sửa (bo_size, min_stock, kg_per_cay) */
+const PHI_DEFAULTS = [
+  { id: 'D6',  sort: 0,  kg: 2.60,  bo: 100, min: 100, unit: 'cuon' },
+  { id: 'D8',  sort: 1,  kg: 4.62,  bo: 100, min: 100, unit: 'cuon' },
+  { id: 'D10', sort: 2,  kg: 7.22,  bo: 80,  min: 200, unit: 'cay'  },
+  { id: 'D12', sort: 3,  kg: 10.40, bo: 60,  min: 300, unit: 'cay'  },
+  { id: 'D14', sort: 4,  kg: 14.15, bo: 50,  min: 100, unit: 'cay'  },
+  { id: 'D16', sort: 5,  kg: 18.48, bo: 40,  min: 150, unit: 'cay'  },
+  { id: 'D18', sort: 6,  kg: 23.39, bo: 30,  min: 80,  unit: 'cay'  },
+  { id: 'D20', sort: 7,  kg: 28.88, bo: 25,  min: 80,  unit: 'cay'  },
+  { id: 'D22', sort: 8,  kg: 34.94, bo: 20,  min: 40,  unit: 'cay'  },
+  { id: 'D25', sort: 9,  kg: 45.11, bo: 15,  min: 80,  unit: 'cay'  },
+  { id: 'D28', sort: 10, kg: 56.60, bo: 12,  min: 30,  unit: 'cay'  },
+  { id: 'D32', sort: 11, kg: 73.92, bo: 10,  min: 60,  unit: 'cay'  },
+  { id: 'D36', sort: 12, kg: 93.55, bo: 8,   min: 20,  unit: 'cay'  },
+];
+function seedPhi(env) {
+  return env.DB.batch(PHI_DEFAULTS.map((p) =>
+    env.DB.prepare('INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock, unit) VALUES (?,?,?,?,?,?)')
+      .bind(p.id, p.sort, p.kg, p.bo, p.min, p.unit)
+  ));
+}
+
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -81,6 +106,11 @@ const MIGRATIONS = {
     "ALTER TABLE phi ADD COLUMN unit TEXT NOT NULL DEFAULT 'cay'",
     "UPDATE phi SET unit = 'cuon' WHERE id = 'D8'",
   ],
+  5: [
+    // thêm D6 (dây cuộn, kg/cây = 0,00617 × 6² × 11,7m = 2,60)
+    // INSERT OR IGNORE: an toàn nếu D6 đã tồn tại (do thêm tay trước đó)
+    "INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock, unit) VALUES ('D6', 0, 2.60, 100, 100, 'cuon')",
+  ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
   SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
@@ -99,6 +129,8 @@ async function migrate(env) {
     }
     await env.DB.prepare("INSERT INTO meta (key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(n).run();
   }
+  // Mỗi lần Worker khởi động: đảm bảo phi mặc định tồn tại (INSERT OR IGNORE không ghi đè dữ liệu hiện có)
+  await seedPhi(env);
 }
 
 function normPhone(p) {
@@ -819,6 +851,12 @@ async function phiUpdate(req, env, admin, id) {
   return json({ ok: true });
 }
 
+async function seedPhiApi(env, user) {
+  await seedPhi(env);
+  await env.DB.batch([auditStmt(env, user, 'phi_seed', null), bump(env)]);
+  return json({ ok: true, n: PHI_DEFAULTS.length });
+}
+
 async function phiBulk(req, env, admin) {
   const b = await readJson(req);
   const items = Array.isArray(b.items) ? b.items : [];
@@ -1008,6 +1046,46 @@ async function conflictResolve(req, env, user) {
   return json({ ok: true, changed: changes.length });
 }
 
+// Tất cả lần báo của một khu trong ngày hôm nay (gom theo user + ts)
+async function submissionsView(env, url) {
+  const khu = String(url.searchParams.get('khu') || '');
+  const day = vnDay();
+  const { results } = await env.DB.prepare(
+    'SELECT l.phi_id, l.v, l.user_id, l.ts, u.name uname FROM counts_log l JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id'
+  ).bind(day, khu).all();
+  const subs = [];
+  for (const r of results) {
+    let s = subs[subs.length - 1];
+    if (!s || s.user_id !== r.user_id || s.ts !== r.ts) { s = { user_id: r.user_id, uname: r.uname, ts: r.ts, vals: {} }; subs.push(s); }
+    s.vals[r.phi_id] = r.v;
+  }
+  return json({ khu, subs: subs.map((s) => ({ uname: s.uname, ts: s.ts, vals: s.vals })) });
+}
+
+// Mở lại ngày và xoá số đếm của một khu để yêu cầu đếm lại sau khi đã chốt
+async function recountAfterClose(req, env, user) {
+  const b = await readJson(req);
+  const khu = String(b.khu || '');
+  const day = vnDay();
+  const [closedR, repR] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT 1 x FROM khu_report WHERE day = ? AND khu_id = ?').bind(day, khu),
+  ]);
+  if (!closedR.results[0]) throw bad('Ngày chưa chốt, dùng nút đếm lại thông thường');
+  if (!repR.results[0]) throw bad('Khu này chưa có báo cáo');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
+    env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
+    env.DB.prepare(RATE_SQL).bind(day),
+    env.DB.prepare('DELETE FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
+    env.DB.prepare('UPDATE khu_report SET recount = 1, resolved = 0 WHERE day = ? AND khu_id = ?').bind(day, khu),
+    auditStmt(env, user, 'recount_after_close', { day, khu }),
+    bump(env),
+  ]);
+  return json({ ok: true });
+}
+
 async function auditList(env, url) {
   const limit = Math.min(Number(url.searchParams.get('limit')) || 150, 500);
   const { results } = await env.DB.prepare('SELECT id, ts, user_name, action, detail FROM audit ORDER BY id DESC LIMIT ?').bind(limit).all();
@@ -1121,6 +1199,8 @@ async function handle(req, env, url) {
   }
   if (r0 === 'conflict' && !p[1] && method === 'GET') return conflictView(env, url);
   if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') return conflictResolve(req, env, user);
+  if (r0 === 'submissions' && method === 'GET') return submissionsView(env, url);
+  if (r0 === 'recount-after-close' && method === 'POST') return recountAfterClose(req, env, user);
   if (r0 === 'audit' && method === 'GET') return auditList(env, url);
   if (r0 === 'export' && method === 'GET') return exportCsv(env, url);
   if (r0 === 'users') {
@@ -1134,6 +1214,7 @@ async function handle(req, env, url) {
   }
   if (r0 === 'phi' && method === 'PATCH' && p.length === 2) return phiUpdate(req, env, user, p[1]);
   if (r0 === 'phi' && method === 'PUT' && p.length === 1) return phiBulk(req, env, user);
+  if (r0 === 'phi' && method === 'POST' && p[1] === 'seed') return seedPhiApi(env, user);
   if (r0 === 'settings' && method === 'PUT') return settingsUpdate(req, env, user);
 
   throw new HttpError(404, 'Không tìm thấy');
