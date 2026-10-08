@@ -316,6 +316,15 @@ function valOf(k, p, useDraft) {
   const r = b.bm[k + '|' + p];
   return r === undefined ? 0 : r;
 }
+/* Thép ĐANG CÓ ở một ô = số đếm đã duyệt gần nhất + phần nhập/chuyển ĐÃ DUYỆT sau lần đếm đó.
+   Phải cộng phần sau, nếu không thì một phiếu đã duyệt lại KHÔNG vào tồn — trái đúng quy tắc
+   trung tâm của bản này ("chưa duyệt thì không vào tồn", tức đã duyệt là phải vào). Trước đây
+   Tổng quan chỉ lấy số đếm nên một khu vừa nhận 180 cây đã duyệt mà chưa kịp đếm vẫn hiện số cũ,
+   trong khi màn Đếm lại ghi dự kiến đã gồm 180 đó: hai màn hình nói hai số cho cùng một khu.
+   movedOf chỉ gồm phiếu duyệt SAU lần đếm (xem mvNew ở server), nên không cộng trùng phần khu
+   đã đếm thấy tận mắt. */
+const tonOf = (k, p) => valOf(k, p) + movedOf(k, p);
+
 function totals() {
   const b = S.boot;
   const T = { cay: 0, kg: 0, perPhi: {}, perKhu: {}, used: {}, usedKg: null, inKg: 0, hidKg: 0 };
@@ -324,7 +333,7 @@ function totals() {
   // cộng cả khu đang ẩn (nếu còn thép) để tổng khớp với màn Duyệt
   for (const k of b.khu) {
     for (const p of b.phi) {
-      const v = valOf(k.id, p.id);
+      const v = tonOf(k.id, p.id);
       T.perPhi[p.id] += v; if (!isCuon(p)) T.cay += v; T.kg += v * p.kg_per_cay;
       if (T.perKhu[k.id]) { if (!isCuon(p)) T.perKhu[k.id].cay += v; T.perKhu[k.id].kg += v * p.kg_per_cay; }
       else T.hidKg += v * p.kg_per_cay; // khu đã ẩn mà còn thép: vẫn vào tổng bãi, nói rõ ở Tổng quan
@@ -339,6 +348,9 @@ function totals() {
     for (const p of b.phi) {
       let old = 0;
       for (const k of b.khu) old += b.bm[k.id + '|' + p.id] || 0;
+      /* Ở đây CỐ Ý dùng valOf chứ không phải tonOf: phép tính là "tồn cũ + nhập − đếm", mà
+         phần nhập đã nằm ở inn rồi. Lấy tonOf thì lượng nhập bị cộng hai lần và "đã dùng" ra sai.
+         Server tính y hệt (xem rows trong computeReview), hai bên phải khớp nhau. */
       let cnt = 0;
       for (const k of b.khu) cnt += valOf(k.id, p.id);
       const u = old + (inn[p.id] || 0) - cnt;
@@ -640,7 +652,7 @@ function khuChiTiet(k) {
   });
   const coCho = Object.keys(cho).length > 0;
   const rows = b.phiAct.map((p) => {
-    const v = valOf(k.id, p.id);
+    const v = tonOf(k.id, p.id);
     const c = cho[p.id];
     return { p, v, moi: c ? c.v : null, trong: c ? c.kind === 'zero' : false };
   }).filter((r) => r.v > 0 || (r.moi !== null && r.moi !== r.v));
@@ -736,7 +748,9 @@ function demView() {
     // tổng bãi cộng cả khu đã ẩn còn thép, cho khớp số với Tổng quan và màn Duyệt
     let total = 0;
     for (const x of b.khu) {
-      const v = x.id === k ? (isSel && hasIn ? curV(p.id) : (cell ? cell.v : valOf(k, p.id))) : valOf(x.id, p.id);
+      /* Ô người đếm đã gõ số thì lấy đúng số đó: đó là đếm tận mắt, đã gồm cả thép vừa về.
+         Ô chưa gõ, và mọi khu khác, thì lấy thép đang có (tonOf). */
+      const v = x.id === k ? (isSel && hasIn ? curV(p.id) : (cell ? cell.v : tonOf(k, p.id))) : tonOf(x.id, p.id);
       total += v; T.all += v; T.allKg += v * p.kg_per_cay;
       if (colTotKg[x.id] !== undefined) colTotKg[x.id] += v * p.kg_per_cay;
       if (x.id === k) { T.own += v; T.ownKg += v * p.kg_per_cay; }
@@ -746,7 +760,7 @@ function demView() {
     rrows.push(`<div class="mxrow${bg}">${shown.map((x) => {
       const st = khuStatus(x);
       // mọi khu nay đều có đủ 13 dòng mà phần lớn là 0: hiện dấu · cho bảng đỡ rối
-      const v = valOf(x.id, p.id);
+      const v = tonOf(x.id, p.id);
       const has = v !== 0;
       const unrep = !b.rm[x.id];
       return `<div class="oc" style="${cwStyle};font-size:${cFont}px;color:${has ? (unrep ? '#4B5360' : '#1C1F22') : '#9A9489'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#EDEBE4' : 'transparent'}">${has ? (isCuon(p.id) ? fmtDec(v / p.bo_size) : v) : '·'}</div>`;
@@ -901,7 +915,7 @@ function vTon() {
     const rateDisp = !b.rate[p.id] ? null
       : !rateReady(p.id) ? `chưa đủ dữ liệu (${b.rateDays[p.id] || 0}/${minRateDays()} ngày)`
       : isCuon(p) ? `${fmtDec(b.rate[p.id] / p.bo_size)} cuộn/ngày` : `${fmtInt(b.rate[p.id])} cây/ngày`;
-    const det = open ? `<div class="card" style="margin:-4px 0 4px;border-radius:0 0 16px 16px">${b.khu.map((k) => { const x = valOf(k.id, p.id); return x ? `<div class="li"><span>${esc(k.name)}${k.active ? '' : ' (ẩn)'}</span><span class="col" style="align-items:flex-end"><b>${qMain(x, p)}</b><span class="sm muted">${qSub(x, p)}</span></span></div>` : ''; }).join('') || '<div class="muted">Không có ở khu nào</div>'}${rateDisp ? `<div class="li"><span class="sm muted">Dùng trung bình</span><span class="sm">${rateDisp}</span></div>` : ''}</div>` : '';
+    const det = open ? `<div class="card" style="margin:-4px 0 4px;border-radius:0 0 16px 16px">${b.khu.map((k) => { const x = tonOf(k.id, p.id); return x ? `<div class="li"><span>${esc(k.name)}${k.active ? '' : ' (ẩn)'}</span><span class="col" style="align-items:flex-end"><b>${qMain(x, p)}</b><span class="sm muted">${qSub(x, p)}</span></span></div>` : ''; }).join('') || '<div class="muted">Không có ở khu nào</div>'}${rateDisp ? `<div class="li"><span class="sm muted">Dùng trung bình</span><span class="sm">${rateDisp}</span></div>` : ''}</div>` : '';
     // số lớn bên phải và mức báo động ở dòng phụ phải cùng đơn vị mới so được
     const [curTxt, minTxt] = qPair(v, p.min_stock, p);
     /* Không khẳng định "Đủ dùng" khi chính app nói chưa đủ dữ liệu để dự báo: mở chi tiết ra
@@ -1285,7 +1299,7 @@ function vStats() {
   const scope = S.statScope;
   const chips = [['all', 'Toàn bãi']].concat(b.khuAct.map((k) => [k.id, k.name]));
   const rows = b.phiAct.map((p) => {
-    const v = scope === 'all' ? T.perPhi[p.id] : valOf(scope, p.id);
+    const v = scope === 'all' ? T.perPhi[p.id] : tonOf(scope, p.id);
     return { p, v };
     // phi nào cũng có ở mọi khu, nên chỉ hiện dòng còn thép cho bảng tồn khỏi toàn số 0
   }).filter((r) => scope === 'all' || r.v > 0);

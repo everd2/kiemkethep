@@ -404,6 +404,29 @@ const run = async () => {
   ok('vẫn bày người đếm còn dùng', /data-a="kupick" data-v="2"/.test(r('HK')));
   r(`S.kuEdit = null; S.screen = 'home';`);
 
+  /* ---- 1h. Thép ĐANG CÓ phải gồm phiếu đã duyệt mà khu chưa kịp đếm ----
+     Quy tắc trung tâm của bản này là "chưa duyệt thì không vào tồn", tức đã duyệt là PHẢI vào.
+     Trước đây Tổng quan chỉ lấy số đếm, nên một khu vừa nhận thép đã duyệt mà chưa kịp đếm vẫn
+     hiện số cũ, trong khi màn Đếm lại ghi dự kiến đã gồm lượng đó — hai màn hình nói hai số cho
+     cùng một khu. Fixture: khu A có tồn chuẩn D8 = 220 và một phiếu 33 đã duyệt chưa ai đếm. */
+  r(`S.boot = _boot(); indexBoot(S.boot); S.khuMo = {}; S.draft = { cells: {}, baseTs: 0 };`);
+  ok('số ĐẾM của ô vẫn là 220 (chưa ai đếm lại)', r("valOf('A','D8')") === 220, r("valOf('A','D8')"));
+  ok('nhưng thép ĐANG CÓ là 253 (gồm phiếu đã duyệt)', r("tonOf('A','D8')") === 253, r("tonOf('A','D8')"));
+  ok('tổng theo phi ở Tổng quan lấy số đang có', r('totals().perPhi.D8') === 253, r('totals().perPhi.D8'));
+  ok('tổng của riêng khu A cũng vậy', r("Math.round(totals().perKhu.A.kg)") === Math.round(253 * 0.395 + 300 * 0.617 + 40 * 0.888),
+    r('totals().perKhu.A.kg'));
+
+  /* Nhưng phép "đã dùng" thì CỐ Ý vẫn lấy số đếm: công thức là "tồn cũ + nhập − đếm", mà phần
+     nhập đã nằm ở vế nhập rồi. Lấy số đang có thì lượng nhập bị cộng hai lần và "đã dùng" ra 0
+     trong khi đúng ra là 33. Server tính y hệt, hai bên không được lệch nhau. */
+  ok('"đã dùng" KHÔNG cộng trùng lượng nhập', r('totals().used.D8') === 33, r('totals().used.D8'));
+
+  // khu đã đếm SAU khi thép về: server không còn kể lượng đó nữa, nên không cộng trùng
+  r(`S.boot.eff = [{ khu_id: 'A', phi_id: 'D8', v: 250 }]; S.boot.mvNew = []; indexBoot(S.boot);`);
+  ok('khu đếm rồi thì đang có = đúng số vừa đếm', r("tonOf('A','D8')") === 250, r("tonOf('A','D8')"));
+  ok('và không cộng thêm phiếu một lần nữa', r('totals().perPhi.D8') === 250, r('totals().perPhi.D8'));
+  r(`S.boot = _boot(); indexBoot(S.boot);`);
+
   /* ---- 1g. Chạm thẻ khu ở Tổng quan: mở chi tiết thép trong khu ----
      Điều quan trọng nhất ở đây là số nào được hiện. Tồn của khu là số ĐÃ DUYỆT, nên chi tiết
      phải hiện đúng số đó — tức số liệu TRƯỚC báo cáo đang chờ — và tự đổi sang số mới khi báo
