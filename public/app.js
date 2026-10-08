@@ -108,8 +108,17 @@ const canIn = () => S.me && (S.me.role === 'admin' || S.me.role === 'thukho');
 function say(msg, err) {
   S.toast = msg; S.toastErr = !!err;
   clearTimeout(say.t);
-  say.t = setTimeout(() => { S.toast = ''; render(); }, 5000);
+  say.t = setTimeout(hideToast, 5000);
 }
+// Hết 5 giây thì bỏ đúng thẻ thông báo, KHÔNG vẽ lại cả màn hình:
+// vẽ lại sẽ xoá sạch những gì người dùng đang gõ trong các ô cấu hình.
+function hideToast() {
+  S.toast = ''; S.toastErr = false;
+  const t = document.querySelectorAll('[data-toast]');
+  if (t.length) t.forEach((e) => e.remove()); else render();
+}
+// giá trị ô nhập: ưu tiên những gì người dùng đang gõ (S.form), chưa gõ thì lấy số hiện tại
+const fv = (k, dflt) => (S.form[k] === undefined ? String(dflt == null ? '' : dflt) : S.form[k]);
 
 /* ===================== TÍNH TOÁN ===================== */
 const isPresent = (k, p) => {
@@ -215,6 +224,8 @@ function readPending() {
 }
 function writePending(q) { try { localStorage.setItem(PKEY, JSON.stringify(q)); } catch (e) { /* đầy bộ nhớ */ } }
 const sameJob = (a, b) => a.khu === b.khu && a.day === b.day && a.ts === b.ts;
+// khoá nhận dạng một báo cáo trong hàng chờ: vị trí trong mảng đổi sau mỗi lần tự gửi, không dùng được
+const pendKey = (j) => j.khu + '|' + (j.day || '') + '|' + j.ts;
 function queuePending(job) {
   writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day)).concat([job]));
 }
@@ -279,9 +290,9 @@ function pendingHtml() {
   const kn = (id) => (S.boot && S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
   const waiting = q.filter((j) => !j.err).length;
   return (waiting ? `<div class="card warn sm b">${waiting} báo cáo đang chờ gửi (mất mạng), sẽ tự gửi khi có mạng.</div>` : '') +
-    q.map((j, i) => (j.err ? `<div class="card bad col gap8"><b style="font-size:17px">Báo cáo ${esc(kn(j.khu))}${j.day ? ' đếm ngày ' + esc(fmtDay(j.day)) : ''} chưa gửi được</b>
+    q.map((j) => (j.err ? `<div class="card bad col gap8"><b style="font-size:17px">Báo cáo ${esc(kn(j.khu))}${j.day ? ' đếm ngày ' + esc(fmtDay(j.day)) : ''} chưa gửi được</b>
       <span class="sm">${esc(j.err)}</span>
-      <div class="row gap6"><button class="btn s f1" data-a="pendsend" data-i="${i}">Gửi làm số hôm nay</button><button class="btn s bad f1" data-a="pendrm" data-i="${i}">Bỏ báo cáo</button></div></div>` : '')).join('');
+      <div class="row gap6"><button class="btn s f1" data-a="pendsend" data-j="${esc(pendKey(j))}">Gửi làm số hôm nay</button><button class="btn s bad f1" data-a="pendrm" data-j="${esc(pendKey(j))}">Bỏ báo cáo</button></div></div>` : '')).join('');
 }
 
 
@@ -296,7 +307,7 @@ function vLogin() {
     <div class="col gap8"><div class="logo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
       <div style="font-size:30px;font-weight:700;line-height:1.2">Kho Thép Bãi</div>
       <div class="muted" style="font-size:18px">Đăng nhập bằng số điện thoại và PIN 4 số</div></div>
-    <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric" autocomplete="username" data-enter="login" value="${esc(S.form.phone || lastPhone())}"></label>
+    <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric" autocomplete="username" data-model="phone" data-enter="login" value="${esc(S.form.phone || lastPhone())}"></label>
     <label class="field">PIN 4 số<input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="current-password" data-enter="login"></label>
     <div class="err" id="err">${esc(S.err)}</div>
     <button class="btn pri full" style="height:60px;font-size:20px" data-a="login">ĐĂNG NHẬP</button>
@@ -472,7 +483,7 @@ function demView() {
 
   return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Đếm ${esc(kname)}</h1><small>Bảng toàn bãi, nhập ngay trong bảng</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
-    ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}">${esc(S.toast)}</div>` : ''}
+    ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}
     ${b.closed ? '<div class="toast err">Ngày hôm nay đã chốt, không sửa được nữa.</div>' : ''}
     ${S.sel ? '' : `<div class="col gap6" style="padding:6px 12px 2px"><button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
       ${S.draftWarn ? `<div class="card warn col gap6"><b>${esc(S.draftWarn.uname)} đã gửi báo cáo khu này lúc ${hhmm(S.draftWarn.ts)}, sau khi bạn bắt đầu nháp.</b><div class="row gap6"><button class="btn s f1" data-a="draftnew">Dùng số mới</button><button class="btn s f1" data-a="draftkeep">Giữ nháp của tôi</button></div></div>` : ''}
@@ -731,7 +742,7 @@ function vBaoCao() {
   const b = S.boot, R = S.bc, D = R.data;
   const top = `${head('Báo cáo Nhập – Dùng – Tồn', 'Theo các ngày đã chốt', 'more')}
     <div class="col gap8" style="padding:4px 16px">
-      <div class="row gap8"><label class="f1 sm">Từ ngày<input class="inp s" style="width:100%" type="date" id="rfrom" max="${b.today}" value="${R.from}"></label><label class="f1 sm">Đến ngày<input class="inp s" style="width:100%" type="date" id="rto" max="${b.today}" value="${R.to}"></label></div>
+      <div class="row gap8"><label class="f1 sm">Từ ngày<input class="inp s" style="width:100%" type="date" id="rfrom" data-model="rfrom" max="${b.today}" value="${esc(fv('rfrom', R.from))}"></label><label class="f1 sm">Đến ngày<input class="inp s" style="width:100%" type="date" id="rto" data-model="rto" max="${b.today}" value="${esc(fv('rto', R.to))}"></label></div>
       <div class="wrap"><button class="chip s" data-a="rquick" data-v="week">7 ngày</button><button class="chip s" data-a="rquick" data-v="month">Tháng này</button><button class="chip s" data-a="rquick" data-v="last">Tháng trước</button></div>
       <div class="row gap8"><button class="btn s pri f1" data-a="rload">XEM</button><button class="btn s f1" data-a="rcsv">Tải Excel (CSV)</button></div></div>`;
   if (!D) return `${top}<div class="pad muted">Đang tải...</div>`;
@@ -848,7 +859,7 @@ function vMore() {
     ${a ? `<button class="menu" data-a="nav" data-s="nhatky">Nhật ký hoạt động</button>
     <button class="menu" data-a="nav" data-s="users">Người dùng và PIN</button>
     <button class="menu" data-a="nav" data-s="settings">Cài đặt khu, phi, quy tắc</button>
-    <div class="card col gap6"><b>Xuất Excel (CSV) bảng khu × phi</b><div class="row gap6"><input class="inp s f1" type="date" id="exday" max="${S.boot.today}" value="${S.boot.today}"><button class="btn s" data-a="exportday">Tải về</button></div></div>` : ''}
+    <div class="card col gap6"><b>Xuất Excel (CSV) bảng khu × phi</b><div class="row gap6"><input class="inp s f1" type="date" id="exday" data-model="exday" max="${S.boot.today}" value="${esc(fv('exday', S.boot.today))}"><button class="btn s" data-a="exportday">Tải về</button></div></div>` : ''}
     <button class="menu" data-a="nav" data-s="pin">Đổi PIN của tôi</button>
     <button class="menu" style="color:var(--bad)" data-a="logout">Đăng xuất</button>
     <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.2</div>
@@ -881,8 +892,8 @@ function vUsers() {
 function vSettings() {
   const b = S.boot;
   const phi = b.phi.map((p) => `<div class="card col gap6"><b style="font-size:18px">${p.id}${isCuon(p) ? ' <span class="sm muted">(cuộn)</span>' : ''}</b>
-    <div class="row gap6"><label class="f1 sm">${isCuon(p) ? 'Cây/cuộn' : 'Cây/bó'}<input class="inp s" style="width:100%" id="bo-${p.id}" inputmode="numeric" value="${p.bo_size}"></label><label class="f1 sm">Tối thiểu${isCuon(p) ? ' (cuộn)' : ''}<input class="inp s" style="width:100%" id="mn-${p.id}" inputmode="numeric" value="${isCuon(p) ? Math.floor(p.min_stock / p.bo_size) : p.min_stock}"></label><label class="f1 sm">kg/cây<input class="inp s" style="width:100%" id="kg-${p.id}" inputmode="decimal" value="${String(p.kg_per_cay).replace('.', ',')}"></label></div></div>`).join('');
-  const khu = b.khu.map((k) => `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" value="${esc(k.name)}"></div><div class="row gap6"><button class="btn s f1" data-a="ksave" data-k="${esc(k.id)}">Lưu tên</button><button class="btn s f1 ${k.active ? 'bad' : ''}" data-a="khide" data-k="${esc(k.id)}" data-v="${k.active ? 0 : 1}">${k.active ? 'Ẩn khu' : 'Hiện lại'}</button></div></div>`).join('');
+    <div class="row gap6"><label class="f1 sm">${isCuon(p) ? 'Cây/cuộn' : 'Cây/bó'}<input class="inp s" style="width:100%" id="bo-${p.id}" data-model="bo-${p.id}" inputmode="numeric" value="${esc(fv('bo-' + p.id, p.bo_size))}"></label><label class="f1 sm">Tối thiểu${isCuon(p) ? ' (cuộn)' : ''}<input class="inp s" style="width:100%" id="mn-${p.id}" data-model="mn-${p.id}" inputmode="numeric" value="${esc(fv('mn-' + p.id, isCuon(p) ? Math.floor(p.min_stock / p.bo_size) : p.min_stock))}"></label><label class="f1 sm">kg/cây<input class="inp s" style="width:100%" id="kg-${p.id}" data-model="kg-${p.id}" inputmode="decimal" value="${esc(fv('kg-' + p.id, String(p.kg_per_cay).replace('.', ',')))}"></label></div></div>`).join('');
+  const khu = b.khu.map((k) => `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" data-model="kn-${esc(k.id)}" value="${esc(fv('kn-' + k.id, k.name))}"></div><div class="row gap6"><button class="btn s f1" data-a="ksave" data-k="${esc(k.id)}">Lưu tên</button><button class="btn s f1 ${k.active ? 'bad' : ''}" data-a="khide" data-k="${esc(k.id)}" data-v="${k.active ? 0 : 1}">${k.active ? 'Ẩn khu' : 'Hiện lại'}</button></div></div>`).join('');
   return `${head('Cài đặt', 'Khu, phi và quy tắc', 'more')}<div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Quy tắc</h2>
     <div class="card col gap8"><label class="sm">Tự ẩn phi khỏi khu khi đếm bằng 0 liên tiếp (ngày)<input class="inp s" style="width:100%" id="s-zero" inputmode="numeric" value="${b.settings.hide_after_zero_days}"></label>
@@ -925,7 +936,7 @@ function vMain() {
   const noTabs = S.screen === 'dem' && S.sel;
   const staleBar = S.stale ? `<div class="toast err" style="margin-top:calc(8px + env(safe-area-inset-top))">Mất kết nối: đang xem số liệu lưu lúc ${dmy(S.stale)}. Tự cập nhật khi có mạng.</div>` : '';
   const busyBar = S.busy ? '<div class="busy"><span>Đang lưu...</span></div>' : '';
-  return `${busyBar}${staleBar}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}`;
+  return `${busyBar}${staleBar}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}`;
 }
 
 function render() {
@@ -1027,6 +1038,8 @@ function settle(kind) {
     S.draft.cells[p] = { v: refOf(S.khu, p), kind: 'giu' };
   } else if (kind === 'zero') S.draft.cells[p] = { v: 0, kind: 'zero', bo: 0, le: 0 };
   else if (S.bo !== '' || S.le !== '') S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN };
+  // chưa gõ gì mà bấm TIẾP: đứng lại, không lặng lẽ nhảy qua phi chưa đếm
+  else return say('Gõ số ' + (isCuon(p) ? 'cuộn' : 'bó') + ' / cây, hoặc bấm "Hết (0)" nếu khu không còn phi này.', true);
   saveDraft();
   const nx = nextPhi(p);
   S.sel = nx; fillSel(nx); S.scrollSel = nx; S.confirmKeep = false;
@@ -1089,16 +1102,23 @@ const ACTIONS = {
   draftnew() { try { localStorage.removeItem(draftKey()); } catch (e) { /* bỏ qua */ } loadDraft(true); render(); },
   draftkeep() { const r = S.boot.rm[S.khu]; S.draft.baseTs = r ? r.ts : Date.now(); S.draftWarn = null; saveDraft(); render(); },
   pendsend(d) {
-    const q = readPending(), j = q[Number(d.i)];
-    if (!j) return;
-    if (!confirm('Gửi báo cáo này làm số đếm của HÔM NAY? Chỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.')) return;
-    q[Number(d.i)] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now() };
-    writePending(q); flushPending(); render();
+    const q = readPending(), i = q.findIndex((x) => pendKey(x) === d.j);
+    if (i < 0) return say('Báo cáo này không còn trong hàng chờ.', true), render();
+    const j = q[i];
+    ask('Gửi báo cáo này làm số đếm của HÔM NAY?\nChỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.', 'Gửi làm số hôm nay').then((ok) => {
+      if (!ok) return;
+      const q2 = readPending(), i2 = q2.findIndex((x) => pendKey(x) === d.j);
+      if (i2 < 0) return say('Báo cáo này không còn trong hàng chờ.', true), render();
+      q2[i2] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now() };
+      writePending(q2); flushPending(); render();
+    });
   },
   pendrm(d) {
-    const q = readPending();
-    if (!q[Number(d.i)] || !confirm('Bỏ báo cáo này? Số liệu trong báo cáo sẽ mất.')) return;
-    q.splice(Number(d.i), 1); writePending(q); render();
+    if (readPending().every((x) => pendKey(x) !== d.j)) return say('Báo cáo này không còn trong hàng chờ.', true), render();
+    ask('Bỏ báo cáo này? Số liệu trong báo cáo sẽ mất.', 'Bỏ báo cáo', true).then((ok) => {
+      if (!ok) return;
+      writePending(readPending().filter((x) => pendKey(x) !== d.j)); render();
+    });
   },
 
   nmode(d) { syncQty(); S.nhap.mode = d.v; S.nhap.done = null; render(); },
@@ -1207,7 +1227,7 @@ const ACTIONS = {
   },
   hprev() { loadHist(ydayOf(S.hist.date)); },
   hnext() { const n = new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
-  rquick(d) { [S.bc.from, S.bc.to] = repRange(d.v); loadRep(); },
+  rquick(d) { [S.bc.from, S.bc.to] = repRange(d.v); S.form.rfrom = S.bc.from; S.form.rto = S.bc.to; loadRep(); },
   rload() { const a = val('rfrom'), z = val('rto'); if (!a || !z || a > z) return say('Chọn khoảng ngày hợp lệ.', true), render(); S.bc.from = a; S.bc.to = z; loadRep(); },
   rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; location.href = `/api/report?format=csv&from=${a}&to=${z}`; },
   exportday() { location.href = '/api/export?date=' + (val('exday') || S.boot.today); },
@@ -1239,9 +1259,13 @@ const ACTIONS = {
       const minStock = isCuon(p) ? mnRaw * boNew : mnRaw;
       return { id: p.id, bo_size: boNew, min_stock: minStock, kg_per_cay: val('kg-' + p.id).replace(',', '.') };
     });
-    act(async () => { const r = await api('PUT', '/phi', { items }); await loadBoot(); say(r.n ? 'Đã lưu ' + r.n + ' phi.' : 'Không có thay đổi.'); });
+    act(async () => {
+      const r = await api('PUT', '/phi', { items });
+      items.forEach((it) => { delete S.form['bo-' + it.id]; delete S.form['mn-' + it.id]; delete S.form['kg-' + it.id]; });
+      await loadBoot(); say(r.n ? 'Đã lưu ' + r.n + ' phi.' : 'Không có thay đổi.');
+    });
   },
-  ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); await loadBoot(); }, 'Đã lưu tên khu.'); },
+  ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); delete S.form['kn-' + d.k]; await loadBoot(); }, 'Đã lưu tên khu.'); },
   khide(d) { if (d.v !== '1' && !confirm('Ẩn khu này? Khu ẩn sẽ không còn trong danh sách đếm.')) return; act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.'); },
   kadd() { const name = val('newk'); act(async () => { await api('POST', '/khu', { name }); S.form.newk = ''; await loadBoot(); }, 'Đã thêm khu.'); },
   ssave() { act(async () => { await api('PUT', '/settings', { hide_after_zero_days: val('s-zero'), max_keep_streak: val('s-keep'), auto_close: val('s-auto') }); await loadBoot(); }, 'Đã lưu quy tắc.'); },
