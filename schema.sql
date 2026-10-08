@@ -59,6 +59,15 @@ CREATE TABLE IF NOT EXISTS khu_phi (
   PRIMARY KEY (khu_id, phi_id)
 );
 
+-- Phân công người phụ trách khu: khu có tên trong bảng này thì CHỈ người được gán (và admin) mới đếm được.
+-- Khu không có dòng nào ở đây = chưa phân công, mọi người đều đếm được.
+CREATE TABLE IF NOT EXISTS khu_user (
+  khu_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  PRIMARY KEY (khu_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_khu_user_u ON khu_user(user_id);
+
 -- Số đếm hiệu lực của từng ô (ngày x khu x phi)
 CREATE TABLE IF NOT EXISTS counts (
   day TEXT NOT NULL,
@@ -173,23 +182,25 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 5);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 6);
 
--- Dữ liệu mặc định (kg/cây = 0,00617 x D x D x 11,7 m)
+-- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
+-- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
+-- Thép cuộn: 100 phần = 1 cuộn ~2.000 kg -> 20 kg/phần
 INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock, unit) VALUES
- ('D6',  0, 2.60, 100, 100, 'cuon'),
- ('D8',  1, 4.62, 100, 100, 'cuon'),
- ('D10', 2, 7.22, 80, 200),
- ('D12', 3, 10.40, 60, 300),
- ('D14', 4, 14.15, 50, 100),
- ('D16', 5, 18.48, 40, 150),
- ('D18', 6, 23.39, 30, 80),
- ('D20', 7, 28.88, 25, 80),
- ('D22', 8, 34.94, 20, 40),
- ('D25', 9, 45.11, 15, 80),
- ('D28', 10, 56.60, 12, 30),
- ('D32', 11, 73.92, 10, 60),
- ('D36', 12, 93.55, 8, 20);
+ ('D6',  0, 20,    100, 200, 'cuon'),
+ ('D8',  1, 20,    100, 200, 'cuon'),
+ ('D10', 2, 7.22,  440, 440, 'cay'),
+ ('D12', 3, 10.40, 320, 320, 'cay'),
+ ('D14', 4, 14.15, 222, 222, 'cay'),
+ ('D16', 5, 18.48, 180, 180, 'cay'),
+ ('D18', 6, 23.39, 138, 138, 'cay'),
+ ('D20', 7, 28.88, 114, 114, 'cay'),
+ ('D22', 8, 34.94, 90,  90,  'cay'),
+ ('D25', 9, 45.11, 72,  36,  'cay'),
+ ('D28', 10, 56.60, 57, 29,  'cay'),
+ ('D32', 11, 73.92, 45, 23,  'cay'),
+ ('D36', 12, 93.55, 35, 18,  'cay');
 
 INSERT OR IGNORE INTO khu (id, name, sort, active) VALUES
  ('A','Khu A',1,1),('B','Khu B',2,1),('C','Khu C',3,1),('D','Khu D',4,1),

@@ -47,22 +47,26 @@ const IP_FAIL_MAX = 300;
 const SYSTEM = { id: 0, name: 'Hệ thống' };
 
 /* ========================= DỮ LIỆU MẶC ĐỊNH PHI =========================
-   Nguồn chân lý duy nhất: kg/cây = 0,00617 × D² × 11,7 m
-   INSERT OR IGNORE → không ghi đè nếu admin đã chỉnh sửa (bo_size, min_stock, kg_per_cay) */
+   Thông số chuẩn; admin sửa riêng trong Cài đặt. INSERT OR IGNORE không ghi đè số admin đã sửa.
+   - Thép cây: kg/cây 11,7 m theo TCVN 1651-2 (0,00617 × D²), giống nhau giữa các nhà máy.
+     Cây/bó theo bó nhà máy Hòa Phát (~3,2–3,3 tấn/bó); bó Việt Ý hoặc bó tách ở bãi thì sửa riêng.
+   - Thép cuộn: 1 cuộn lưu thành `bo` phần (100 phần = 1 cuộn), kg = kg mỗi phần.
+     Cuộn Hòa Phát / Việt Ý ~2.000 kg → 20 kg/phần.
+   - min: mức báo động (đơn vị lưu: cây hoặc phần cuộn) = 1 bó, ½ bó với phi lớn, 2 cuộn với D6/D8. */
 const PHI_DEFAULTS = [
-  { id: 'D6',  sort: 0,  kg: 2.60,  bo: 100, min: 100, unit: 'cuon' },
-  { id: 'D8',  sort: 1,  kg: 4.62,  bo: 100, min: 100, unit: 'cuon' },
-  { id: 'D10', sort: 2,  kg: 7.22,  bo: 80,  min: 200, unit: 'cay'  },
-  { id: 'D12', sort: 3,  kg: 10.40, bo: 60,  min: 300, unit: 'cay'  },
-  { id: 'D14', sort: 4,  kg: 14.15, bo: 50,  min: 100, unit: 'cay'  },
-  { id: 'D16', sort: 5,  kg: 18.48, bo: 40,  min: 150, unit: 'cay'  },
-  { id: 'D18', sort: 6,  kg: 23.39, bo: 30,  min: 80,  unit: 'cay'  },
-  { id: 'D20', sort: 7,  kg: 28.88, bo: 25,  min: 80,  unit: 'cay'  },
-  { id: 'D22', sort: 8,  kg: 34.94, bo: 20,  min: 40,  unit: 'cay'  },
-  { id: 'D25', sort: 9,  kg: 45.11, bo: 15,  min: 80,  unit: 'cay'  },
-  { id: 'D28', sort: 10, kg: 56.60, bo: 12,  min: 30,  unit: 'cay'  },
-  { id: 'D32', sort: 11, kg: 73.92, bo: 10,  min: 60,  unit: 'cay'  },
-  { id: 'D36', sort: 12, kg: 93.55, bo: 8,   min: 20,  unit: 'cay'  },
+  { id: 'D6',  sort: 0,  kg: 20,    bo: 100, min: 200, unit: 'cuon' },
+  { id: 'D8',  sort: 1,  kg: 20,    bo: 100, min: 200, unit: 'cuon' },
+  { id: 'D10', sort: 2,  kg: 7.22,  bo: 440, min: 440, unit: 'cay'  },
+  { id: 'D12', sort: 3,  kg: 10.40, bo: 320, min: 320, unit: 'cay'  },
+  { id: 'D14', sort: 4,  kg: 14.15, bo: 222, min: 222, unit: 'cay'  },
+  { id: 'D16', sort: 5,  kg: 18.48, bo: 180, min: 180, unit: 'cay'  },
+  { id: 'D18', sort: 6,  kg: 23.39, bo: 138, min: 138, unit: 'cay'  },
+  { id: 'D20', sort: 7,  kg: 28.88, bo: 114, min: 114, unit: 'cay'  },
+  { id: 'D22', sort: 8,  kg: 34.94, bo: 90,  min: 90,  unit: 'cay'  },
+  { id: 'D25', sort: 9,  kg: 45.11, bo: 72,  min: 36,  unit: 'cay'  },
+  { id: 'D28', sort: 10, kg: 56.60, bo: 57,  min: 29,  unit: 'cay'  },
+  { id: 'D32', sort: 11, kg: 73.92, bo: 45,  min: 23,  unit: 'cay'  },
+  { id: 'D36', sort: 12, kg: 93.55, bo: 35,  min: 18,  unit: 'cay'  },
 ];
 function seedPhi(env) {
   return env.DB.batch(PHI_DEFAULTS.map((p) =>
@@ -74,7 +78,7 @@ function seedPhi(env) {
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -109,9 +113,13 @@ const MIGRATIONS = {
     "UPDATE phi SET unit = 'cuon' WHERE id = 'D8'",
   ],
   5: [
-    // thêm D6 (dây cuộn, kg/cây = 0,00617 × 6² × 11,7m = 2,60)
-    // INSERT OR IGNORE: an toàn nếu D6 đã tồn tại (do thêm tay trước đó)
-    "INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock, unit) VALUES ('D6', 0, 2.60, 100, 100, 'cuon')",
+    // thêm D6 (thép cuộn ~2.000 kg = 100 phần × 20 kg); INSERT OR IGNORE: an toàn nếu D6 đã có
+    "INSERT OR IGNORE INTO phi (id, sort, kg_per_cay, bo_size, min_stock, unit) VALUES ('D6', 0, 20, 100, 200, 'cuon')",
+  ],
+  6: [
+    // phân công người phụ trách khu; khu chưa gán ai thì mọi người vẫn đếm được như trước
+    'CREATE TABLE IF NOT EXISTS khu_user (khu_id TEXT NOT NULL, user_id INTEGER NOT NULL, PRIMARY KEY (khu_id, user_id))',
+    'CREATE INDEX IF NOT EXISTS idx_khu_user_u ON khu_user(user_id)',
   ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
@@ -334,7 +342,7 @@ async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, settings, rates] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, settings, rates, khuUser] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, active, keep_streak FROM khu_phi'),
@@ -348,6 +356,7 @@ async function bootstrap(env, user) {
     env.DB.prepare('SELECT khu_id, phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND day > ? AND day <= ? GROUP BY khu_id, phi_id').bind(last, day),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
+    env.DB.prepare('SELECT khu_id, user_id FROM khu_user'),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -364,7 +373,9 @@ async function bootstrap(env, user) {
     receipts: receipts.results,
     innKhu: innKhu.results,
     rates: rates.results,
+    khuUser: khuUser.results,
     settings: parseSettings(settings.results),
+    phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
   };
 }
 
@@ -385,9 +396,9 @@ async function putCounts(req, env, user) {
   if (!items.length) throw bad('Chưa có số liệu nào');
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
-  const [closedR, khuR, setR, phiR, kpR, prevR, innR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('SELECT id, active FROM khu WHERE id = ?').bind(khuId),
+    env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT id FROM phi'),
     env.DB.prepare('SELECT phi_id, active, zero_days, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khuId),
@@ -396,11 +407,17 @@ async function putCounts(req, env, user) {
       `SELECT phi_id, SUM(qty) q FROM receipts WHERE voided = 0 AND khu_id = ?1
        AND day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND day <= ?2 GROUP BY phi_id HAVING SUM(qty) <> 0`
     ).bind(khuId, day),
+    env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(khuId),
   ]);
   const moved = Object.fromEntries(innR.results.map((r) => [r.phi_id, r.q]));
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã được chốt, không sửa được nữa', 'closed');
   const k = khuR.results[0];
   if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
+  // Khu đã phân công thì chỉ người phụ trách mới đếm được; admin luôn đếm được để xử lý khi có người nghỉ
+  const asg = asgR.results;
+  if (asg.length && user.role !== 'admin' && !asg.some((r) => r.user_id === user.id)) {
+    throw new HttpError(403, `Bạn không phụ trách ${k.name}. Nhờ admin gán quyền nếu cần đếm khu này.`, 'not_assigned');
+  }
   const settings = parseSettings(setR.results);
   const phiSet = new Set(phiR.results.map((r) => r.id));
   const kp = Object.fromEntries(kpR.results.map((r) => [r.phi_id, r]));
@@ -830,6 +847,29 @@ async function khuCreate(req, env, admin) {
   return json({ ok: true, id });
 }
 
+// Thay toàn bộ danh sách người phụ trách của một khu. Mảng rỗng = bỏ phân công (ai cũng đếm được).
+async function khuUsers(req, env, admin, id) {
+  const b = await readJson(req);
+  const k = await env.DB.prepare('SELECT id, name FROM khu WHERE id = ?').bind(id).first();
+  if (!k) throw new HttpError(404, 'Không tìm thấy khu');
+  const raw = Array.isArray(b.users) ? b.users : [];
+  if (raw.length > 50) throw bad('Quá nhiều người trong một khu');
+  const ids = [...new Set(raw.map((x) => intIn(x, 1, 1e9, 'Mã tài khoản')))];
+  if (ids.length) {
+    const have = await env.DB.prepare('SELECT id FROM users WHERE id IN (SELECT value FROM json_each(?))')
+      .bind(JSON.stringify(ids)).all();
+    if (have.results.length !== ids.length) throw bad('Có tài khoản không tồn tại');
+  }
+  const stmts = [env.DB.prepare('DELETE FROM khu_user WHERE khu_id = ?').bind(id)];
+  if (ids.length) {
+    stmts.push(env.DB.prepare('INSERT INTO khu_user (khu_id, user_id) SELECT ?1, value FROM json_each(?2)')
+      .bind(id, JSON.stringify(ids)));
+  }
+  stmts.push(auditStmt(env, admin, 'khu_users', { khu: id, n: ids.length, users: ids }), bump(env));
+  await env.DB.batch(stmts);
+  return json({ ok: true });
+}
+
 async function khuUpdate(req, env, admin, id) {
   const b = await readJson(req);
   const k = await env.DB.prepare('SELECT * FROM khu WHERE id = ?').bind(id).first();
@@ -1231,6 +1271,7 @@ async function handle(req, env, url) {
   if (r0 === 'khu') {
     if (method === 'POST' && p.length === 1) return khuCreate(req, env, user);
     if (method === 'PATCH' && p.length === 2) return khuUpdate(req, env, user, p[1]);
+    if (method === 'PUT' && p.length === 3 && p[2] === 'users') return khuUsers(req, env, user, p[1]);
   }
   if (r0 === 'phi' && method === 'PATCH' && p.length === 2) return phiUpdate(req, env, user, p[1]);
   if (r0 === 'phi' && method === 'PUT' && p.length === 1) return phiBulk(req, env, user);
