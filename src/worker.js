@@ -41,7 +41,9 @@ const ROLES = ['admin', 'thukho', 'nguoidem'];
 const SESSION_MS = 30 * 24 * 3600e3;
 const LOCK_AFTER = 5;
 const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khóa lâu dần
-const IP_FAIL_MAX = 30; // số lần sai PIN tối đa mỗi ngày từ một địa chỉ IP
+// số lần sai PIN tối đa mỗi ngày từ một địa chỉ IP; cả bãi dùng chung Wi-Fi/4G (chung IP) nên để cao,
+// việc chặn dò PIN từng tài khoản đã do LOCK_AFTER/LOCK_STEPS đảm nhận
+const IP_FAIL_MAX = 300;
 const SYSTEM = { id: 0, name: 'Hệ thống' };
 
 /* ========================= DỮ LIỆU MẶC ĐỊNH PHI =========================
@@ -160,6 +162,17 @@ async function readJson(req) {
 }
 
 const bump = (env) => env.DB.prepare("UPDATE meta SET value = value + 1 WHERE key = 'rev'");
+
+// Kiểm tra rồi mới ghi ở hai lượt khác nhau thì có khe hở (vd. vừa kiểm tra xong thì admin chốt ngày).
+// Câu chặn đặt đầu batch: điều kiện đúng thì vi phạm NOT NULL, D1 hủy cả batch vì batch là một giao dịch.
+const guardStmt = (env, cond, ...args) =>
+  env.DB.prepare(`INSERT INTO meta (key, value) SELECT 'guard', NULL WHERE ${cond}`).bind(...args);
+async function batchGuarded(env, guard, stmts, err) {
+  try { return (await env.DB.batch([guard, ...stmts])).slice(1); }
+  catch (e) { if (/NOT NULL constraint failed: meta\.value/i.test(String(e && e.message))) throw err; throw e; }
+}
+const IS_CLOSED = 'EXISTS (SELECT 1 FROM day_close WHERE day = ?)';
+const closedErr = (msg) => new HttpError(409, msg || 'Ngày hôm nay vừa được chốt, không ghi được nữa', 'closed');
 
 function auditStmt(env, user, action, detail) {
   return env.DB.prepare('INSERT INTO audit (ts, user_id, user_name, action, detail) VALUES (?,?,?,?,?)')
@@ -436,7 +449,7 @@ async function putCounts(req, env, user) {
   });
   const data = JSON.stringify(rows);
 
-  await env.DB.batch([
+  await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     env.DB.prepare(
       `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
        SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4 FROM json_each(?5) j WHERE 1
@@ -454,13 +467,13 @@ async function putCounts(req, env, user) {
     env.DB.prepare(
       `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount) VALUES (?,?,?,?,?,0,0)
        ON CONFLICT(day, khu_id) DO UPDATE SET user_id=excluded.user_id, ts=excluded.ts,
-         conflict = CASE WHEN excluded.conflict = 1 THEN 1 ELSE khu_report.conflict END,
-         resolved = CASE WHEN excluded.conflict = 1 THEN 0 ELSE khu_report.resolved END,
+         conflict = CASE WHEN excluded.conflict = 1 OR khu_report.user_id != excluded.user_id THEN 1 ELSE khu_report.conflict END,
+         resolved = CASE WHEN excluded.conflict = 1 OR khu_report.user_id != excluded.user_id THEN 0 ELSE khu_report.resolved END,
          recount = 0`
     ).bind(day, khuId, user.id, ts, conflict),
     auditStmt(env, user, 'count', { khu: khuId, n: clean.length, changes: changes.slice(0, 30), conflict: !!conflict }),
     bump(env),
-  ]);
+  ], closedErr());
   return json({ ok: true, conflict: !!conflict });
 }
 
@@ -501,7 +514,7 @@ async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
   const grp = rand(8);
   const ts = Date.now();
   const data = JSON.stringify(rows);
-  const res = await env.DB.batch([
+  const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, ctx.day), [
     env.DB.prepare(
       `INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, kind, grp)
        SELECT ?1, ${J('phi')}, ${J('khu')}, ${J('qty')}, ?2, ?3, ?4, ?5, ?6 FROM json_each(?7) j`
@@ -514,7 +527,7 @@ async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
     auditStmt(env, user, kind === 'chuyen' ? 'transfer' : 'receipt', { ...audit, grp, note }),
     bump(env),
     env.DB.prepare('SELECT id FROM receipts WHERE grp = ?').bind(grp),
-  ]);
+  ], closedErr());
   return json({ ok: true, grp, ids: res[4].results.map((r) => r.id), id: res[4].results[0] ? res[4].results[0].id : null });
 }
 
@@ -553,13 +566,13 @@ async function voidReceipt(env, user, id) {
   const rows = r.grp
     ? (await env.DB.prepare('SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND voided = 0').bind(r.grp).all()).results
     : [r];
-  await env.DB.batch([
+  await batchGuarded(env, guardStmt(env, IS_CLOSED, r.day), [
     r.grp
       ? env.DB.prepare('UPDATE receipts SET voided = 1 WHERE grp = ? AND voided = 0').bind(r.grp)
       : env.DB.prepare('UPDATE receipts SET voided = 1 WHERE id = ?').bind(id),
     auditStmt(env, user, 'receipt_void', { id, kind: r.kind || 'nhap', lines: rows.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
-  ]);
+  ], closedErr('Ngày đã chốt, không hủy được'));
   return json({ ok: true });
 }
 
@@ -569,7 +582,7 @@ async function computeReview(env, day) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, kpR, repR, cntR, baseR, rcR, usedR, closedR, todayR] = await db.batch([
+  const [phiR, khuR, kpR, repR, cntR, baseR, rcR, usedR, closedR, todayR, revR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     db.prepare('SELECT khu_id, COUNT(*) n FROM khu_phi WHERE active = 1 GROUP BY khu_id'),
@@ -580,6 +593,7 @@ async function computeReview(env, day) {
     db.prepare('SELECT used_json, span FROM day_close ORDER BY day DESC LIMIT 7'),
     db.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     db.prepare('SELECT khu_id, phi_id, qty, kind, ts FROM receipts WHERE voided = 0 AND day = ?').bind(day),
+    db.prepare("SELECT value FROM meta WHERE key = 'rev'"),
   ]);
   const cnt = {}, base = {}, inn = {};
   cntR.results.forEach((r) => (cnt[r.khu_id + '|' + r.phi_id] = r.v));
@@ -642,7 +656,8 @@ async function computeReview(env, day) {
     if (r.neg) exceptions.push({ type: 'phi', phi: r.phi, reason: 'neg' });
     else if (r.high) exceptions.push({ type: 'phi', phi: r.phi, reason: 'high' });
   });
-  return { day, last: last || null, span, closed: closedR.results.length > 0, rows, exceptions, reports: repR.results, khu: khuR.results };
+  const rev = revR.results[0] ? revR.results[0].value : 0;
+  return { day, last: last || null, span, rev, closed: closedR.results.length > 0, rows, exceptions, reports: repR.results, khu: khuR.results };
 }
 
 async function closeDay(req, env, user) {
@@ -659,7 +674,9 @@ async function doClose(env, user, rv, note, action) {
   const day = rv.day;
   const used = {};
   rv.rows.forEach((r) => { if (r.used !== null) used[r.phi] = r.used; });
-  await env.DB.batch([
+  // số liệu đổi sau lúc tính duyệt (có người vừa gửi số/phiếu) hoặc người khác vừa chốt: không chốt bằng số cũ
+  const guard = guardStmt(env, "(SELECT value FROM meta WHERE key = 'rev') <> ?1 OR EXISTS (SELECT 1 FROM day_close WHERE day = ?2)", rv.rev, day);
+  await batchGuarded(env, guard, [
     env.DB.prepare('INSERT INTO day_close (day, closed_by, ts, note, used_json, exc_json, span) VALUES (?,?,?,?,?,?,?)')
       .bind(day, user.id, Date.now(), note, JSON.stringify(used), JSON.stringify(rv.exceptions), rv.span),
     // bảng tổng hợp theo ngày × phi: báo cáo theo kỳ chỉ đọc 12 dòng/ngày, không phải tính lại
@@ -678,7 +695,7 @@ async function doClose(env, user, rv, note, action) {
     ).bind(day, rv.last || ''),
     auditStmt(env, user, action, { day, exceptions: rv.exceptions.length, note }),
     bump(env),
-  ]);
+  ], new HttpError(409, 'Vừa có số liệu mới hoặc ngày đã được chốt. Hãy tải lại màn Duyệt rồi chốt.', 'changed'));
 }
 
 // Chỉ mở lại được ngày hôm nay (bấm chốt nhầm). Ngày cũ hơn đã thành tồn chuẩn cho ngày sau nên không mở.
@@ -712,7 +729,10 @@ async function nightly(env) {
       if (!rv.reports.length) reasons.push('chưa khu nào báo');
       if (rv.exceptions.length) reasons.push(rv.exceptions.length + ' việc bất thường');
       if (reasons.length) await auditStmt(env, SYSTEM, 'auto_close_skip', { day, reason: reasons.join(', ') }).run();
-      else await doClose(env, SYSTEM, rv, 'Tự chốt: ngày bình thường', 'auto_close');
+      else {
+        try { await doClose(env, SYSTEM, rv, 'Tự chốt: ngày bình thường', 'auto_close'); }
+        catch (e) { if (!(e instanceof HttpError)) throw e; await auditStmt(env, SYSTEM, 'auto_close_skip', { day, reason: e.message }).run(); }
+      }
     }
   }
   await env.DB.batch([
@@ -1042,7 +1062,7 @@ async function conflictResolve(req, env, user) {
     auditStmt(env, user, 'conflict_resolve', { khu, changes: changes.map((c) => ({ phi: c.phi, from: c.prev, to: c.v })) }),
     bump(env)
   );
-  await env.DB.batch(stmts);
+  await batchGuarded(env, guardStmt(env, IS_CLOSED, day), stmts, closedErr());
   return json({ ok: true, changed: changes.length });
 }
 

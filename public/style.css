@@ -19,7 +19,7 @@ a{color:var(--pri)}
 /* header */
 .top{display:flex;align-items:center;gap:6px;padding:calc(8px + env(safe-area-inset-top)) 12px 6px 8px}
 .top .t{flex:1;min-width:0}
-.top h1{margin:0;font-size:22px;line-height:1.2}
+.top h1{margin:0;font-size:22px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .top small{display:block;font-size:14px;color:var(--mut)}
 .iconbtn{width:48px;height:48px;border:0;background:transparent;border-radius:14px;display:flex;align-items:center;justify-content:center;flex:none}
 

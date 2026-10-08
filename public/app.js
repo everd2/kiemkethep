@@ -8,17 +8,21 @@ const fmtT = (kg) => (kg / 1000).toFixed(2).replace('.', ',');
 // phi có unit='cuon' (D8) đếm theo cuộn, không phải cây; nội bộ vẫn lưu cây, chỉ hiển thị đổi sang cuộn
 const isCuon = (p) => { const o = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p; return !!(o && o.unit === 'cuon'); };
 const unitLbl = (p) => isCuon(p) ? 'cuộn' : 'cây';
-// hiển thị đầy đủ: "X cuọn + Y cây" nếu có lẻ, hoặc "X cây"
+// nhập kho: 1 đơn vị người dùng gõ = bao nhiêu cây (D8 gõ theo cuộn, còn lại gõ theo cây)
+const uStepOf = (p) => { const o = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p; return o && o.unit === 'cuon' ? o.bo_size : 1; };
+// hiển thị đầy đủ: "X cuộn + Y cây" nếu có lẻ, hoặc "X cây"
 const fmtCount = (v, p) => {
   const po = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p;
   if (isCuon(po)) { const c = Math.floor(v / po.bo_size), r = v % po.bo_size; return r ? `${fmtInt(c)} cuộn + ${fmtInt(r)} cây` : `${fmtInt(c)} cuộn`; }
   return `${fmtInt(v)} cây`;
 };
-// hiển thị gọn: "X cuọn" hoặc "X cây"
+// hiển thị gọn: "X cuộn" hoặc "X cây"
 const fmtCountShort = (v, p) => { const po = typeof p === 'string' ? (S.boot && S.boot.phiBy[p]) : p; return isCuon(po) ? `${fmtInt(Math.floor(v / po.bo_size))} cuộn` : `${fmtInt(v)} cây`; };
 // tồn tối thiểu theo đúng đơn vị
 const minStockLbl = (p) => isCuon(p) ? `${fmtInt(Math.floor(p.min_stock / p.bo_size))} cuộn` : `${fmtInt(p.min_stock)} cây`;
 const two = (n) => String(n).padStart(2, '0');
+// cắt tên dài cho nhãn nút khỏi tràn
+const cut = (s, n) => { const t = String(s == null ? '' : s); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const hhmm = (ts) => { const d = new Date(ts); return two(d.getHours()) + ':' + two(d.getMinutes()); };
 const dmy = (ts) => { const d = new Date(ts); return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + hhmm(ts); };
 const ROLE = { admin: 'Admin', thukho: 'Thủ kho', nguoidem: 'Người đếm' };
@@ -332,7 +336,7 @@ function vHome() {
     if (T.perPhi[p.id] < p.min_stock) alerts.push({ bad: true, t: p.id + ' dưới mức tối thiểu', s: 'Còn ' + fmtCountShort(T.perPhi[p.id], p) + ', tối thiểu ' + minStockLbl(p), to: 'ton' });
   });
   const maxKhu = Math.max(1, ...b.khuAct.map((k) => T.perKhu[k.id].kg));
-  // dùng kg để scale bar (so sánh D8 cuọn vs D10+ cây trên cùng thước đo)
+  // dùng kg để scale bar (so sánh D8 cuộn vs D10+ cây trên cùng thước đo)
   const maxBarKg = Math.max(1, ...b.phi.map((p) => T.perPhi[p.id] * p.kg_per_cay), ...b.phi.map((p) => p.min_stock * p.kg_per_cay));
   const khuCards = b.khuAct.map((k) => {
     const st = khuStatus(k), tk = T.perKhu[k.id];
@@ -346,8 +350,8 @@ function vHome() {
   const bars = b.phi.map((p) => {
     const v = T.perPhi[p.id], low = v < p.min_stock;
     const vKg = v * p.kg_per_cay, minKg = p.min_stock * p.kg_per_cay;
-    const dispV = isCuon(p) ? `${fmtInt(Math.floor(v / p.bo_size))} cuộn` : fmtInt(v);
-    return `<div class="r"><span class="l">${p.id}</span><div class="t"><i class="${low ? 'low' : ''}" style="width:${Math.max(2, Math.round(vKg / maxBarKg * 100))}%"></i><u style="left:${Math.round(minKg / maxBarKg * 100)}%"></u></div><span class="v ${low ? 'low' : ''}">${dispV}</span></div>`;
+    const dispV = isCuon(p) ? fmtInt(Math.floor(v / p.bo_size)) : fmtInt(v);
+    return `<div class="r"><span class="l">${p.id}</span><div class="t"><i class="${low ? 'low' : ''}" style="width:${Math.max(2, Math.round(vKg / maxBarKg * 100))}%"></i><u style="left:${Math.round(minKg / maxBarKg * 100)}%"></u></div><span class="v ${low ? 'low' : ''}">${dispV}<i>${unitLbl(p)}</i></span></div>`;
   }).join('');
   // quên chốt ngày trước thì "đã dùng" là lượng dùng gộp từ sau ngày chốt gần nhất
   const yday = new Date(Date.parse(b.today) - 864e5).toISOString().slice(0, 10);
@@ -388,19 +392,22 @@ function vKhu() {
 /* --- Bảng đếm toàn bãi --- */
 function demView() {
   const b = S.boot, k = S.khu, kname = b.khuBy[k].name;
-  const zk = S.zoomK && S.zoomK !== k ? S.zoomK : null;
+  if (!b.phi.length) return `${head('Đếm ' + esc(kname), '', 'home')}<div class="pad muted">Chưa có phi thép nào trong hệ thống. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
+  const zk =S.zoomK && S.zoomK !== k ? S.zoomK : null;
   const others = b.khuAct.filter((x) => x.id !== k);
   const shown = zk ? others.filter((x) => x.id === zk) : others;
   const n = Math.max(1, shown.length);
-  const cwStyle = zk ? 'flex:1' : `width:${Math.max(24, Math.floor(226 / n))}px;flex:1 1 0`;
+  // vừa màn thì chia đều, quá nhiều khu thì cố định 42px và kéo ngang (không co chữ đến mức không đọc được)
+  const cwStyle = zk || Math.floor(300 / n) >= 30 ? 'flex:1 1 0;min-width:0' : 'flex:0 0 42px';
+  const cFont = zk ? 20 : n > 6 ? 13 : 15;
   const size = (p) => b.phiBy[p].bo_size;
   const boN = parseInt(S.bo || '0', 10), leN = parseInt(S.le || '0', 10);
   const hasIn = S.bo !== '' || S.le !== '';
   const curV = (p) => boN * size(p) + leN;
   const list = myPhiList(), pend = pendingList();
   const T = { own: 0, ownKg: 0, all: 0, allKg: 0 };
-  const colTot = {}, colTotKg = {};
-  b.khuAct.forEach((x) => { colTot[x.id] = 0; colTotKg[x.id] = 0; });
+  const colTotKg = {};
+  b.khuAct.forEach((x) => { colTotKg[x.id] = 0; });
 
   const lrows = [], rrows = [];
   b.phi.forEach((p, idx) => {
@@ -409,7 +416,9 @@ function demView() {
     const isSel = S.sel === p.id;
     const ref = expOf(k, p.id), mv = movedOf(k, p.id);
     // so với số dự kiến (hôm qua + nhập/chuyển), không phải số hôm qua
-    const delta = (v) => { if (ref === undefined) return null; const d = v - ref; return { big: ref >= 10 && Math.abs(d) / ref > 0.5, t: d === 0 ? 'đúng dự kiến' : d > 0 ? '+' + d : '−' + Math.abs(d) }; };
+    // lệch hiển thị theo đúng đơn vị của phi: tròn cuộn thì ghi cuộn, lẻ thì ghi cây
+    const dTxt = (d) => { const a = Math.abs(d), sg = d > 0 ? '+' : '−'; if (!isCuon(p)) return sg + fmtInt(a); return a % p.bo_size === 0 ? sg + fmtInt(a / p.bo_size) + ' cuộn' : sg + fmtInt(a) + ' cây'; };
+    const delta = (v) => { if (ref === undefined) return null; const d = v - ref; return { big: ref >= 10 && Math.abs(d) / ref > 0.5, t: d === 0 ? 'đúng dự kiến' : dTxt(d) }; };
     const toDisp = (v) => isCuon(p.id) ? Math.floor(v / p.bo_size) : v;
     let cls, txt, sub = '';
     if (!present) { cls = 'abs'; txt = '·'; }
@@ -418,15 +427,14 @@ function demView() {
       if (cell.kind === 'giu') { cls = 'giu'; txt = '=' + toDisp(cell.v); sub = 'giữ nguyên'; }
       else { const dl = delta(cell.v); cls = dl && dl.big ? 'big' : 'okc'; txt = String(toDisp(cell.v)); sub = dl ? dl.t : ''; }
     } else { cls = 'pend'; txt = ref === undefined ? '?' : String(toDisp(ref)); sub = mv ? 'dự kiến' : 'hôm qua'; }
+    // tổng bãi cộng cả khu đã ẩn còn thép, cho khớp số với Tổng quan và màn Duyệt
     let total = 0;
-    b.khuAct.forEach((x) => {
-      let v;
-      if (x.id === k) v = isSel && hasIn ? curV(p.id) : (cell ? cell.v : valOf(k, p.id));
-      else v = valOf(x.id, p.id);
-      colTot[x.id] += v; colTotKg[x.id] += v * p.kg_per_cay; total += v;
-      T.all += v; T.allKg += v * p.kg_per_cay;
+    for (const x of b.khu) {
+      const v = x.id === k ? (isSel && hasIn ? curV(p.id) : (cell ? cell.v : valOf(k, p.id))) : valOf(x.id, p.id);
+      total += v; T.all += v; T.allKg += v * p.kg_per_cay;
+      if (colTotKg[x.id] !== undefined) colTotKg[x.id] += v * p.kg_per_cay;
       if (x.id === k) { T.own += v; T.ownKg += v * p.kg_per_cay; }
-    });
+    }
     const bg = isSel ? ' sel' : idx % 2 ? ' alt' : '';
     lrows.push(`<div class="mxrow${bg}"><div style="width:40px;padding-left:4px;font-weight:700">${p.id}</div><div style="width:72px;display:flex;justify-content:center"><button class="own ${cls}" aria-label="Nhập ${p.id}" data-a="cell" data-p="${p.id}"><b>${txt}</b><i>${sub}</i></button></div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtInt(toDisp(total))}</div></div>`);
     rrows.push(`<div class="mxrow${bg}">${shown.map((x) => {
@@ -434,14 +442,15 @@ function demView() {
       const has = S.boot.cm[x.id + '|' + p.id] || S.boot.bm[x.id + '|' + p.id] !== undefined || (S.boot.kp[x.id + '|' + p.id] && S.boot.kp[x.id + '|' + p.id].active);
       const v = valOf(x.id, p.id);
       const unrep = !b.rm[x.id];
-      return `<div class="oc" style="${cwStyle};font-size:${zk ? 20 : 13}px;color:${has ? (unrep ? '#6B6F76' : '#1C1F22') : '#B9B4A8'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#F0EEE8' : 'transparent'}">${has ? (isCuon(p.id) ? Math.floor(v / p.bo_size) : v) : '·'}</div>`;
+      return `<div class="oc" style="${cwStyle};font-size:${cFont}px;color:${has ? (unrep ? '#4B5360' : '#1C1F22') : '#9A9489'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#EDEBE4' : 'transparent'}">${has ? (isCuon(p.id) ? Math.floor(v / p.bo_size) : v) : '·'}</div>`;
     }).join('')}</div>`);
   });
   const hdrs = shown.map((x) => `<button class="khh" aria-label="Phóng to ${esc(x.name)}" data-a="zoom" data-k="${esc(x.id)}" style="${cwStyle};font-size:${zk ? 15 : 14}px">${zk ? esc(x.name) + ' (chạm để thu nhỏ)' : esc(x.id)}</button>`).join('');
   const tots = shown.map((x) => `<div class="oc" style="${cwStyle};font-size:${zk ? 16 : 12}px;font-weight:700;height:40px">${fmtT(colTotKg[x.id])} t</div>`).join('');
 
   const keepable = pend.filter((p) => !keepBlock(k, p.id));
-  const keepTxt = pend.length === 0 ? 'Đã xử lý hết phi của khu' : S.confirmKeep ? `Bấm lần nữa để giữ nguyên ${keepable.length} phi` : `Giữ nguyên ${keepable.length} phi còn lại`;
+  const empty = list.length === 0; // khu chưa có phi nào: không phải "đã xong", mà là chưa bắt đầu
+  const keepTxt = empty ? 'Khu chưa có phi nào' : pend.length === 0 ? 'Đã xử lý hết phi của khu' : S.confirmKeep ? `Bấm lần nữa để giữ nguyên ${keepable.length} phi` : `Giữ nguyên ${keepable.length} phi còn lại`;
   const canSend = pend.length === 0 && list.length > 0;
   const absent = b.phi.filter((p) => !isPresent(k, p.id)).map((p) => p.id);
 
@@ -453,7 +462,7 @@ function demView() {
     const refTxt = 'Hôm qua: ' + (ref === undefined ? 'chưa có' : fmtCountShort(ref, selPhi)) + (mv ? ` · ${mv > 0 ? 'nhập/chuyển vào +' + fmtCountShort(mv, selPhi) : 'chuyển đi −' + fmtCountShort(Math.abs(mv), selPhi)} · <b>dự kiến ${fmtCountShort(ex, selPhi)}</b>` : '');
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'Xóa', '0', S.field === 'bo' ? 'Lẻ ›' : '‹ Bó'];
     sheet = `<div class="pad-sheet">
-      <div class="row" style="justify-content:space-between;gap:8px"><div class="col"><b style="font-size:16px">${esc(kname)} · ${p}${hasIn ? '  = ' + fmtCount(curV(p), b.phiBy[p]) + ' · ' + fmtT(curV(p) * b.phiBy[p].kg_per_cay) + ' tấn' : ''}</b><span class="sm muted">${refTxt} · 1 ${isCuon(p) ? 'cuọn' : 'bó'} = ${size(p)} cây</span></div><button class="btn s" style="height:40px" data-a="closesel">Đóng</button></div>
+      <div class="row" style="justify-content:space-between;gap:8px"><div class="col"><b style="font-size:16px">${esc(kname)} · ${p}${hasIn ? '  = ' + fmtCount(curV(p), b.phiBy[p]) + ' · ' + fmtT(curV(p) * b.phiBy[p].kg_per_cay) + ' tấn' : ''}</b><span class="sm muted">${refTxt} · 1 ${isCuon(p) ? 'cuộn' : 'bó'} = ${size(p)} cây</span></div><button class="btn s" style="height:40px" data-a="closesel">Đóng</button></div>
       <div class="row gap6"><button class="boxn ${S.field === 'bo' ? 'on' : ''}" data-a="fld" data-v="bo"><span>${isCuon(p) ? 'Số cuộn' : 'Số bó'}</span><b>${S.bo || '0'}</b></button><span class="sm b" style="white-space:nowrap">× ${size(p)} +</span><button class="boxn ${S.field === 'le' ? 'on' : ''}" data-a="fld" data-v="le"><span>Cây lẻ</span><b>${S.le || '0'}</b></button></div>
       <div class="keys">${keys.map((d, i) => `<button class="key ${d.length > 1 ? 'fn' : ''}" data-a="key" data-d="${i}">${d}</button>`).join('')}</div>
       <div class="acts"><button class="btn ${streakOk ? '' : 'dis'}" data-a="keep">Giữ nguyên</button><button class="btn bad" data-a="zero">Hết (0)</button><button class="btn pri" data-a="next">TIẾP</button></div>
@@ -462,7 +471,7 @@ function demView() {
   const pendingNote = readPending().length;
 
   return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Đếm ${esc(kname)}</h1><small>Bảng toàn bãi, nhập ngay trong bảng</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
-    <div class="mxhead"><div><span>${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
+    <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
     ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}">${esc(S.toast)}</div>` : ''}
     ${b.closed ? '<div class="toast err">Ngày hôm nay đã chốt, không sửa được nữa.</div>' : ''}
     ${S.sel ? '' : `<div class="col gap6" style="padding:6px 12px 2px"><button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
@@ -471,14 +480,14 @@ function demView() {
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Nét đứt vàng: chưa nhập (số mờ là số dự kiến) · Vàng đậm: lệch lớn so với dự kiến · Chấm: không có (chạm để thêm phi). Chạm chữ cái khu để phóng to.</div>' : ''}
       ${absent.length ? `<div class="sm b">Không có: ${absent.join(', ')} (${absent.length} phi)</div>` : ''}</div>`}
     <div class="f1" id="mx"><div class="mxw">
-      <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:14px;font-weight:700;color:var(--pri);line-height:1.1">${esc(kname)}<br>(bạn)</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtT(T.ownKg)} t</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtT(T.allKg)} t</div></div></div>
+      <div class="mxl"><div class="mxh"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Phi</div><div style="width:72px;text-align:center;font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div style="width:52px;text-align:right;padding-right:6px;font-size:13px;font-weight:700">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div style="width:40px;padding-left:4px;font-size:13px;font-weight:700">Cộng</div><div style="width:72px;text-align:center;font-weight:700;color:var(--pri)">${fmtT(T.ownKg)} t</div><div style="width:52px;text-align:right;padding-right:6px;font-weight:700">${fmtT(T.allKg)} t</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
-    ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(kname.toUpperCase()) : 'Còn ' + pend.length + ' phi chưa nhập'}</button></div>`}`;
+    ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(kname.toUpperCase()) : empty ? 'CHẠM Ô · ĐỂ THÊM PHI VÀO KHU' : 'Còn ' + pend.length + ' phi chưa nhập'}</button></div>`}`;
 }
 
 /* --- Nhập kho / chuyển khu --- */
-const nkgText = (qty, p) => `= ${fmtInt(qty * p.kg_per_cay)} kg (${fmtT(qty * p.kg_per_cay)} tấn) · 1 ${isCuon(p) ? 'cuọn' : 'bó'} = ${p.bo_size} cây`;
+const nkgText = (qty, p) => `= ${fmtInt(qty * p.kg_per_cay)} kg (${fmtT(qty * p.kg_per_cay)} tấn) · 1 ${isCuon(p) ? 'cuộn' : 'bó'} = ${p.bo_size} cây`;
 const kName = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
 // Gom các dòng cùng phiếu (grp) để hiện và hoàn tác cả phiếu
 function receiptGroups(list) {
@@ -502,8 +511,11 @@ function vNhap() {
   if (!okKhu(N.khu)) N.khu = okKhu(S.khu) ? S.khu : b.khuAct[0].id;
   if (!okKhu(N.from)) N.from = b.khuAct[0].id;
   if (!okKhu(N.to) || N.to === N.from) N.to = (b.khuAct.find((k) => k.id !== N.from) || {}).id || null;
+  if (!b.phi.length) return `${head('Nhập kho', '', 'home')}<div class="pad muted">Chưa có phi thép nào. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
+  N.lines = N.lines.filter((l) => b.phiBy[l.phi]);
   if (!b.phiBy[N.phi]) N.phi = b.phi[0].id;
   const p = b.phiBy[N.phi];
+  const uStep = uStepOf(p); // N.qty giữ theo ĐƠN VỊ NGƯỜI DÙNG GÕ (cuộn với D8), đổi sang cây khi thêm dòng
   const chuyen = N.mode === 'chuyen';
   const khuChips = (sel, f, skip) => `<div class="wrap">${b.khuAct.filter((k) => k.id !== skip).map((k) => `<button class="chip s ${k.id === sel ? 'on' : ''}" data-a="nkhu" data-f="${f}" data-v="${esc(k.id)}">${esc(k.name)}</button>`).join('')}</div>`;
   const lineKg = N.lines.reduce((a, l) => a + l.qty * b.phiBy[l.phi].kg_per_cay, 0);
@@ -523,9 +535,9 @@ function vNhap() {
       : `<div class="col gap8"><b style="font-size:18px">1. Để vào khu</b>${khuChips(N.khu, 'khu')}</div>`}
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 3 : 2}. Chọn phi</b><div class="grid4">${b.phi.map((x) => `<button class="chip ${x.id === N.phi ? 'on' : ''}" data-a="nphi" data-v="${x.id}">${x.id}</button>`).join('')}</div></div>
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 4 : 3}. Số ${isCuon(p) ? 'cuộn' : 'cây'} ${N.phi}</b>
-      <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><input class="f1" id="nqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số cây" placeholder="0" value="${N.qty || ''}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
-      <span class="muted" id="nkg">${nkgText(N.qty, p)}</span>
-      <div class="row gap6"><button class="btn s f1" data-a="nq" data-v="bo">+1 ${isCuon(p) ? 'cuọn' : 'bó'} (${p.bo_size})</button><button class="btn s f1" data-a="nadd">+ Thêm phi khác</button></div></div>
+      <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><input class="f1" id="nqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số ${unitLbl(p)} ${N.phi}" placeholder="0" value="${N.qty || ''}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
+      <span class="muted" id="nkg">${nkgText(N.qty * uStep, p)}</span>
+      <div class="row gap6">${isCuon(p) ? '' : `<button class="btn s f1" data-a="nq" data-v="bo">+1 bó (${p.bo_size})</button>`}<button class="btn s f1" data-a="nadd">+ Thêm phi khác</button></div></div>
     ${lines}
     <input class="inp s" id="nnote" maxlength="200" placeholder="Ghi chú: số phiếu, biển số xe... (không bắt buộc)" data-model="nnote" value="${esc(S.form.nnote || '')}">
     <button class="btn pri full" style="height:60px;font-size:20px" data-a="nconfirm">${saveLbl}</button>
@@ -545,7 +557,7 @@ function vTon() {
   const rows = b.phi.map((p) => {
     const v = T.perPhi[p.id], low = v < p.min_stock, open = S.expand[p.id];
     const dl = daysLeft(p.id, v), short = dl !== null && dl < 3;
-    const rateDisp = b.rate[p.id] ? (isCuon(p) ? `${Math.round(b.rate[p.id] / p.bo_size * 10) / 10} cuọn/ngày` : `${fmtInt(b.rate[p.id])} cây/ngày`) : null;
+    const rateDisp = b.rate[p.id] ? (isCuon(p) ? `${Math.round(b.rate[p.id] / p.bo_size * 10) / 10} cuộn/ngày` : `${fmtInt(b.rate[p.id])} cây/ngày`) : null;
     const det = open ? `<div class="card" style="margin:-4px 0 4px;border-radius:0 0 16px 16px">${b.khu.map((k) => { const x = valOf(k.id, p.id); return x ? `<div class="li"><span>${esc(k.name)}${k.active ? '' : ' (ẩn)'}</span><b>${fmtCount(x, p)} · ${fmtT(x * p.kg_per_cay)} tấn</b></div>` : ''; }).join('') || '<div class="muted">Không có ở khu nào</div>'}${rateDisp ? `<div class="li"><span class="sm muted">Dùng trung bình</span><span class="sm">${rateDisp}</span></div>` : ''}</div>` : '';
     const sub = low ? 'Dưới mức tối thiểu (' + minStockLbl(p) + ')' + (dl !== null ? ' · còn ' + daysTxt(dl) : '') : dl !== null ? 'Còn đủ dùng ' + daysTxt(dl) : 'Đủ dùng';
     const dispV = isCuon(p) ? Math.floor(v / p.bo_size) : v;
@@ -629,8 +641,8 @@ function vDuyet() {
     const canRe = r.topKhu && R.reports.some((x) => x.khu_id === r.topKhu);
     const rp = S.boot.phiBy[r.phi];
     const fmtEq = (v) => v === null ? '—' : fmtCountShort(v, rp);
-    const avgDisp = r.avg === null ? '' : (isCuon(rp) ? (r.avg / rp.bo_size).toFixed(1) + ' cuọn/ngày' : r.avg + ' cây/ngày');
-    const topNetDisp = isCuon(rp) ? (r.topNet >= 0 ? '+' : '−') + Math.abs(Math.round(r.topNet / rp.bo_size)) + ' cuọn' : (r.topNet >= 0 ? '+' : '−') + Math.abs(r.topNet) + ' cây';
+    const avgDisp = r.avg === null ? '' : (isCuon(rp) ? (r.avg / rp.bo_size).toFixed(1) + ' cuộn/ngày' : r.avg + ' cây/ngày');
+    const topNetDisp = isCuon(rp) ? (r.topNet >= 0 ? '+' : '−') + Math.abs(Math.round(r.topNet / rp.bo_size)) + ' cuộn' : (r.topNet >= 0 ? '+' : '−') + Math.abs(r.topNet) + ' cây';
     return `<div class="card bad col gap8"><div class="row" style="justify-content:space-between"><b style="font-size:24px">${r.phi}</b><span class="badge bad">Bất thường</span></div>
       <div class="eq"><div><span>Tồn cũ</span><b>${fmtEq(r.old)}</b></div><div><span>+ Nhập</span><b>${fmtEq(r.inn)}</b></div><div><span>− Đếm mới</span><b>${fmtEq(r.cnt)}</b></div><div><span>= Đã dùng</span><b style="color:var(--bad)">${fmtEq(r.used)}</b></div></div>
       <b style="font-size:16px">${r.neg ? 'Đã dùng âm: có thể nhập sót phiếu hoặc đếm sai.' : 'Dùng gấp hơn 3 lần mức bình thường (' + avgDisp + ').'}</b>
@@ -688,8 +700,8 @@ function vLichSu() {
     if (s) { totIn += s.nhap * p.kg_per_cay; totUse += (s.dung || 0) * p.kg_per_cay; }
     const open = S.expand['h' + p.id];
     const det = open ? b.khu.map((k) => { const x = val(k.id, p.id); return x ? `<div class="li" style="padding-left:28px"><span class="sm">${esc(k.name)}</span><span class="sm">${fmtCountShort(x, p)}</span></div>` : ''; }).join('') : '';
-    const nDisp = s ? (isCuon(p) ? Math.floor(s.nhap / p.bo_size) + ' cuọn' : fmtInt(s.nhap) + ' cây') : '';
-    const dDisp = s ? (s.dung == null ? '—' : (isCuon(p) ? Math.floor(s.dung / p.bo_size) + ' cuọn' : fmtInt(s.dung) + ' cây')) : '';
+    const nDisp = s ? (isCuon(p) ? Math.floor(s.nhap / p.bo_size) + ' cuộn' : fmtInt(s.nhap) + ' cây') : '';
+    const dDisp = s ? (s.dung == null ? '—' : (isCuon(p) ? Math.floor(s.dung / p.bo_size) + ' cuộn' : fmtInt(s.dung) + ' cây')) : '';
     return `<button class="li" style="width:100%;background:#fff;border:0;border-bottom:1px solid var(--line);text-align:left" data-a="expand" data-p="h${p.id}"><b style="width:44px">${p.id}</b><span class="sm" style="flex:1;text-align:right">${fmtCountShort(v, p)}${s ? ` · nhập ${nDisp} · dùng ${dDisp}` : ''}</span></button>${det}`;
   }).join('');
   const reps = D.reports.map((r) => `${esc(kName(r.khu_id))}: ${esc(r.uname)} ${hhmm(r.ts)}`).join(' · ');
@@ -730,7 +742,7 @@ function vBaoCao() {
     t.dau += (r.dau || 0) * kg; t.nhap += r.nhap * kg; t.dung += r.dung * kg; t.cuoi += (r.cuoi || 0) * kg;
     const toU = (x) => x == null ? null : (isCuon(rp) ? Math.floor(x / rp.bo_size) : x);
     const dash = (x) => (x == null ? '—' : fmtInt(x));
-    return `<tr><th>${r.phi}${isCuon(rp) ? '<small class="muted"> (cuọn)</small>' : ''}</th><td>${dash(toU(r.dau))}</td><td>${fmtInt(toU(r.nhap))}</td><td>${fmtInt(toU(r.dung))}</td><td><b>${dash(toU(r.cuoi))}</b></td></tr>`;
+    return `<tr><th>${r.phi}${isCuon(rp) ? '<small class="muted"> (cuộn)</small>' : ''}</th><td>${dash(toU(r.dau))}</td><td>${fmtInt(toU(r.nhap))}</td><td>${fmtInt(toU(r.dung))}</td><td><b>${dash(toU(r.cuoi))}</b></td></tr>`;
   }).join('');
   const days = D.days.slice().reverse().map((d) => `<div class="li"><span>${fmtDay(d.day)}${d.span > 1 ? ` <span class="sm muted">(gộp ${d.span} ngày)</span>` : ''}</span><span class="sm">nhập ${fmtT(d.nhap_kg)} · dùng ${fmtT(d.dung_kg)} · tồn <b>${fmtT(d.ton_kg)}</b> tấn</span></div>`).join('');
   return `${top}<div class="f1 scroll pad col gap12" id="body">
@@ -738,7 +750,7 @@ function vBaoCao() {
     ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt trước kỳ nên không có số tồn đầu kỳ.</div>'}
     <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>Phi</th><th>Tồn đầu</th><th>Nhập</th><th>Dùng</th><th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><th>Tấn</th><td>${fmtT(t.dau)}</td><td>${fmtT(t.nhap)}</td><td>${fmtT(t.dung)}</td><td><b>${fmtT(t.cuoi)}</b></td></tr></tfoot></table></div>
-    <div class="sm muted">Đơn vị: cây nguyên (D10–D36) hoặc cuọn (D8), dòng cuối: tấn. Tồn đầu là ngày chốt ${D.openDay ? fmtDay(D.openDay) : '—'}, tồn cuối là ngày chốt ${D.closeDay ? fmtDay(D.closeDay) : '—'}. Chuyển khu không tính vào nhập.</div>
+    <div class="sm muted">Đơn vị: cây nguyên (D10–D36) hoặc cuộn (D8), dòng cuối: tấn. Tồn đầu là ngày chốt ${D.openDay ? fmtDay(D.openDay) : '—'}, tồn cuối là ngày chốt ${D.closeDay ? fmtDay(D.closeDay) : '—'}. Chuyển khu không tính vào nhập.</div>
     ${days ? `<h2 class="sec">Theo ngày (${D.closedDays} ngày đã chốt)</h2><div class="card" style="padding:0;overflow:hidden">${days}</div>` : ''}
   </div>`;
 }
@@ -868,8 +880,8 @@ function vUsers() {
 /* --- Cài đặt (admin) --- */
 function vSettings() {
   const b = S.boot;
-  const phi = b.phi.map((p) => `<div class="card col gap6"><b style="font-size:18px">${p.id}${isCuon(p) ? ' <span class="sm muted">(cuọn)</span>' : ''}</b>
-    <div class="row gap6"><label class="f1 sm">${isCuon(p) ? 'Cây/cuọn' : 'Cây/bó'}<input class="inp s" style="width:100%" id="bo-${p.id}" inputmode="numeric" value="${p.bo_size}"></label><label class="f1 sm">Tối thiểu${isCuon(p) ? ' (cuọn)' : ''}<input class="inp s" style="width:100%" id="mn-${p.id}" inputmode="numeric" value="${isCuon(p) ? Math.floor(p.min_stock / p.bo_size) : p.min_stock}"></label><label class="f1 sm">kg/cây<input class="inp s" style="width:100%" id="kg-${p.id}" inputmode="decimal" value="${String(p.kg_per_cay).replace('.', ',')}"></label></div></div>`).join('');
+  const phi = b.phi.map((p) => `<div class="card col gap6"><b style="font-size:18px">${p.id}${isCuon(p) ? ' <span class="sm muted">(cuộn)</span>' : ''}</b>
+    <div class="row gap6"><label class="f1 sm">${isCuon(p) ? 'Cây/cuộn' : 'Cây/bó'}<input class="inp s" style="width:100%" id="bo-${p.id}" inputmode="numeric" value="${p.bo_size}"></label><label class="f1 sm">Tối thiểu${isCuon(p) ? ' (cuộn)' : ''}<input class="inp s" style="width:100%" id="mn-${p.id}" inputmode="numeric" value="${isCuon(p) ? Math.floor(p.min_stock / p.bo_size) : p.min_stock}"></label><label class="f1 sm">kg/cây<input class="inp s" style="width:100%" id="kg-${p.id}" inputmode="decimal" value="${String(p.kg_per_cay).replace('.', ',')}"></label></div></div>`).join('');
   const khu = b.khu.map((k) => `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" value="${esc(k.name)}"></div><div class="row gap6"><button class="btn s f1" data-a="ksave" data-k="${esc(k.id)}">Lưu tên</button><button class="btn s f1 ${k.active ? 'bad' : ''}" data-a="khide" data-k="${esc(k.id)}" data-v="${k.active ? 0 : 1}">${k.active ? 'Ẩn khu' : 'Hiện lại'}</button></div></div>`).join('');
   return `${head('Cài đặt', 'Khu, phi và quy tắc', 'more')}<div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Quy tắc</h2>
@@ -944,10 +956,12 @@ function addLine(phi, qty) {
   const l = S.nhap.lines.find((x) => x.phi === phi);
   if (l) l.qty += qty; else S.nhap.lines.push({ phi, qty });
 }
-// số cây nhập kho gõ trực tiếp: đọc từ ô trước mỗi thao tác
+// số lượng nhập kho gõ trực tiếp: đọc từ ô trước mỗi thao tác (theo đơn vị của phi)
 function syncQty() {
   const e = document.getElementById('nqty');
-  if (e) S.nhap.qty = Math.min(99999, parseInt(e.value.replace(/\D/g, '') || '0', 10));
+  if (!e) return;
+  const cap = Math.floor(99999 / uStepOf(S.nhap.phi)); // server chặn 99999 cây mỗi phi mỗi phiếu
+  S.nhap.qty = Math.min(cap, parseInt(e.value.replace(/\D/g, '') || '0', 10));
 }
 
 async function go(screen) {
@@ -1088,7 +1102,12 @@ const ACTIONS = {
   },
 
   nmode(d) { syncQty(); S.nhap.mode = d.v; S.nhap.done = null; render(); },
-  nphi(d) { syncQty(); S.nhap.phi = d.v; S.nhap.done = null; render(); },
+  nphi(d) {
+    syncQty();
+    const o = S.boot.phiBy[S.nhap.phi], nw = S.boot.phiBy[d.v];
+    if (o && nw && isCuon(o) !== isCuon(nw)) S.nhap.qty = 0; // cuộn và cây không cùng đơn vị, không giữ số cũ
+    S.nhap.phi = d.v; S.nhap.done = null; render();
+  },
   nkhu(d) { syncQty(); S.nhap[d.f || 'khu'] = d.v; S.nhap.done = null; render(); },
   nq(d) {
     const N = S.nhap, v = d.v;
@@ -1097,18 +1116,18 @@ const ACTIONS = {
     N.done = null; render();
   },
   nadd() {
-    const N = S.nhap;
+    const N = S.nhap, b = S.boot;
     syncQty();
-    if (N.qty <= 0) return say('Nhập số cây của ' + N.phi + ' trước khi thêm phi khác.', true), render();
-    addLine(N.phi, N.qty); N.qty = 0; N.done = null;
+    if (N.qty <= 0) return say('Nhập số ' + unitLbl(b.phiBy[N.phi]) + ' của ' + N.phi + ' trước khi thêm phi khác.', true), render();
+    addLine(N.phi, N.qty * uStepOf(N.phi)); N.qty = 0; N.done = null;
     render();
   },
   nrm(d) { S.nhap.lines.splice(Number(d.i), 1); render(); },
   nconfirm() {
     const N = S.nhap, b = S.boot;
     syncQty();
-    if (N.qty > 0) { addLine(N.phi, N.qty); N.qty = 0; } // số đang gõ dở cũng được tính vào phiếu
-    if (!N.lines.length) return say('Nhập số cây lớn hơn 0.', true), render();
+    if (N.qty > 0) { addLine(N.phi, N.qty * uStepOf(N.phi)); N.qty = 0; } // số đang gõ dở cũng được tính vào phiếu
+    if (!N.lines.length) return say('Nhập số ' + unitLbl(b.phiBy[N.phi]) + ' lớn hơn 0.', true), render();
     const chuyen = N.mode === 'chuyen';
     if (chuyen && (!N.to || N.from === N.to)) return say('Chọn khu đi và khu đến khác nhau.', true), render();
     const note = val('nnote').trim();
@@ -1174,7 +1193,11 @@ const ACTIONS = {
     const note = val('note'); S.form.note = note;
     if (R.exceptions.length && !note.trim()) return say('Còn việc bất thường, hãy ghi chú lý do trước khi chốt.', true), render();
     if (!confirm('Chốt ngày? Sau khi chốt sẽ khóa số liệu hôm nay.')) return;
-    act(async () => { await api('POST', '/close', { note }); S.form.note = ''; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã chốt ngày. Số đếm hôm nay là tồn chuẩn mới.');
+    act(async () => {
+      try { await api('POST', '/close', { note }); }
+      catch (e) { if (e.code === 'changed' || e.code === 'closed') { S.review = await api('GET', '/review'); await loadBoot(); } throw e; }
+      S.form.note = ''; S.review = await api('GET', '/review'); await loadBoot();
+    }, 'Đã chốt ngày. Số đếm hôm nay là tồn chuẩn mới.');
   },
   reopen() {
     const note = val('reopenNote').trim();
@@ -1212,8 +1235,9 @@ const ACTIONS = {
   psaveall() {
     const items = S.boot.phi.map((p) => {
       const mnRaw = parseInt(val('mn-' + p.id)) || 0;
-      const minStock = isCuon(p) ? mnRaw * p.bo_size : mnRaw;
-      return { id: p.id, bo_size: val('bo-' + p.id), min_stock: minStock, kg_per_cay: val('kg-' + p.id).replace(',', '.') };
+      const boNew = parseInt(val('bo-' + p.id)) || p.bo_size; // đổi cây/cuộn cùng lúc: quy đổi theo số MỚI
+      const minStock = isCuon(p) ? mnRaw * boNew : mnRaw;
+      return { id: p.id, bo_size: boNew, min_stock: minStock, kg_per_cay: val('kg-' + p.id).replace(',', '.') };
     });
     act(async () => { const r = await api('PUT', '/phi', { items }); await loadBoot(); say(r.n ? 'Đã lưu ' + r.n + ' phi.' : 'Không có thay đổi.'); });
   },
@@ -1232,9 +1256,12 @@ document.addEventListener('input', (e) => {
   const m = e.target.dataset && e.target.dataset.model;
   if (m) S.form[m] = e.target.value;
   if (e.target.id === 'nqty' && S.boot) { // cập nhật số kg ngay, không vẽ lại cả màn hình khi đang gõ
+    const raw = e.target.value.replace(/\D/g, '');
     syncQty(); S.nhap.done = null;
+    // gõ chữ, số 0 đứng đầu hoặc vượt trần: viết lại ô cho khớp số thật
+    if (raw !== e.target.value || (raw !== '' && String(S.nhap.qty) !== raw)) e.target.value = S.nhap.qty ? String(S.nhap.qty) : '';
     const k = document.getElementById('nkg'), p = S.boot.phiBy[S.nhap.phi];
-    if (k && p) k.textContent = nkgText(S.nhap.qty, p);
+    if (k && p) k.textContent = nkgText(S.nhap.qty * uStepOf(p), p);
   }
 });
 document.addEventListener('change', (e) => {
