@@ -225,6 +225,16 @@ writePending([
 ]);
 S.screen = 'home'; one('home+hang-cho-gui');
 
+/* Thẻ khu ở Tổng quan mở ra bảng chi tiết: dựng cả hai cảnh, khu có báo cáo đang chờ duyệt
+   (bày thêm cột "Khu báo") và khu không có gì chờ. */
+S.screen = 'home'; S.khuMo = { A: 1, B: 1 }; one('home+chi-tiet-khu');
+S.boot.counts = [
+  { khu_id: 'A', phi_id: 'D10', v: 250, kind: 'dem', ts: 2000, duyet_v: null, duyet_ts: null },
+  { khu_id: 'A', phi_id: 'D12', v: 0, kind: 'zero', ts: 2000, duyet_v: null, duyet_ts: null },
+];
+one('home+chi-tiet-khu+cho-duyet');
+S.boot.counts = []; S.khuMo = {};
+
 // vai trò khác
 S.me.role = 'nguoidem'; S.boot.user.role = 'nguoidem';
 for (const sc of ['home','more','dem','ton']) { S.screen = sc; one('nguoidem:' + sc); }

@@ -366,6 +366,90 @@ const run = async () => {
   ok('nói rõ lý do ngay tại bàn số', /quá lớn/.test(r('S.toast')), r('S.toast'));
   r(`S.sel = null; S.bo = ''; S.le = ''; S.toast = '';`);
 
+  /* ---- 1f. Màn Người dùng và bảng chọn người phụ trách: nút phải bày đúng người ----
+     Hai chỗ sai ngược nhau: một chỗ ẩn nút đúng người cần nó nhất, một chỗ bày ra lựa chọn mà
+     server chắc chắn từ chối. Server vẫn là chỗ chặn thật; phần này giữ cho màn hình không tự
+     tay vô hiệu hoá một tính năng và không dẫn người bấm vào một lỗi 400. */
+  r(`S.me = { id: 1, name: 'admin', role: 'admin' }; S.uFirst = 1; S.screen = 'users'; S.pinShown = null; S.uRename = null;
+     S.users = [
+       { id: 1, name: 'admin', phone: '0900000001', role: 'admin', locked: 0, deleted: 0, must_change: 0 },
+       { id: 2, name: 'An', phone: '0900000002', role: 'nguoidem', locked: 0, deleted: 0, must_change: 0 },
+       { id: 3, name: 'Cu', phone: '0900000003', role: 'nguoidem', locked: 1, deleted: 1, must_change: 0 },
+     ];
+     var HU = vUsers();`);
+  ok('chủ hệ thống sửa được tên CHÍNH MÌNH (tài khoản hay đặt theo chức danh)', /data-a="urename" data-id="1"/.test(r('HU')),
+    (r('HU').match(/data-a="urename" data-id="\d+"/g) || []).join(','));
+  ok('và vẫn sửa được tên người khác', /data-a="urename" data-id="2"/.test(r('HU')));
+  ok('tài khoản đã xoá mà đang khoá: nói rõ khôi phục xong vẫn còn khoá', /vẫn còn khóa/.test(r('HU')));
+
+  r(`S.me = { id: 2, name: 'Admin Hai', role: 'admin' }; S.users[1].role = 'admin'; var HU2 = vUsers();`);
+  ok('admin khác KHÔNG thấy nút đặt lại PIN của admin đầu tiên', !/data-a="ureset" data-id="1"/.test(r('HU2')),
+    (r('HU2').match(/data-a="ureset" data-id="\d+"/g) || []).join(','));
+  ok('nhưng vẫn đặt lại được PIN của người khác', /data-a="ureset" data-id="2"/.test(r('HU2')));
+  ok('và không thấy nút sửa tên của bất kỳ ai', !/data-a="urename"/.test(r('HU2')));
+
+  // hộp xác nhận xoá phải nói ra khu sẽ không còn ai phụ trách, trước khi bấm
+  r(`S.me = { id: 1, name: 'admin', role: 'admin' }; S.users[1].role = 'nguoidem';
+     S.boot.khuUser = [{ khu_id: 'A', user_id: 2 }, { khu_id: 'B', user_id: 2 }, { khu_id: 'B', user_id: 4 }];
+     indexBoot(S.boot); S.ask = null; S.busy = false; ACTIONS.udelete({ id: '2' });`);
+  ok('hộp xác nhận xoá nói rõ khu sẽ mở ra cho cả bãi', /phụ trách DUY NHẤT của A/.test(r('(S.ask && S.ask.msg) || ""')),
+    r('(S.ask && S.ask.msg) || ""'));
+  ok('và chỉ kể khu không còn ai, không kể khu còn người khác', !/B Khu B/.test(r('(S.ask && S.ask.msg) || ""')));
+  r(`if (S.ask) { const a = S.ask; S.ask = null; a.resolve(false); }`);
+
+  // bảng chọn người phụ trách khu: tài khoản đã xoá không gán được, đừng bày ra
+  r(`S.kuEdit = 'A'; S.kuPick = []; S.screen = 'settings'; var HK = vSettings();`);
+  ok('bảng chọn KHÔNG bày tài khoản đã xoá', !/data-a="kupick" data-v="3"/.test(r('HK')),
+    (r('HK').match(/data-a="kupick" data-v="\d+"/g) || []).join(','));
+  ok('vẫn bày người đếm còn dùng', /data-a="kupick" data-v="2"/.test(r('HK')));
+  r(`S.kuEdit = null; S.screen = 'home';`);
+
+  /* ---- 1g. Chạm thẻ khu ở Tổng quan: mở chi tiết thép trong khu ----
+     Điều quan trọng nhất ở đây là số nào được hiện. Tồn của khu là số ĐÃ DUYỆT, nên chi tiết
+     phải hiện đúng số đó — tức số liệu TRƯỚC báo cáo đang chờ — và tự đổi sang số mới khi báo
+     cáo được duyệt. Hiện nhầm số đang chờ duyệt là nói với người xem rằng thép đã về/đã đi trong
+     khi sổ sách chưa ghi nhận. */
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home'; S.khuMo = {}; var H0 = vHome();`);
+  ok('thẻ khu bấm được để mở chi tiết', /data-a="khumo" data-k="A"/.test(r('H0')));
+  ok('chưa mở thì chưa có bảng chi tiết', !/Đang có/.test(r('H0')));
+
+  r(`ACTIONS.khumo({ k: 'A' }); var H1 = vHome();`);
+  ok('mở ra bảng chi tiết của đúng khu đó', /Đang có/.test(r('H1')));
+  ok('và liệt kê phi đang có thép', /D8/.test(r('H1')) && /D10/.test(r('H1')));
+  ok('phi không có thép thì không bày', !/>D14</.test(r('H1')), (r('H1').match(/>D\d+</g) || []).join(','));
+  ok('chưa có báo cáo chờ thì nói rõ đây là số đã duyệt', /số đã duyệt/.test(r('H1')));
+  ok('không bày cột "Khu báo" khi không có gì đang chờ', !/Khu báo/.test(r('H1')));
+
+  /* Khu A báo số mới nhưng CHƯA được duyệt: tồn phải giữ nguyên số cũ, và bày thêm số khu báo
+     đặt cạnh để thấy ngay sẽ đổi thành bao nhiêu. */
+  r(`S.boot.counts = [
+       { khu_id: 'A', phi_id: 'D10', v: 250, kind: 'dem', ts: 2000, duyet_v: null, duyet_ts: null },
+       { khu_id: 'A', phi_id: 'D12', v: 0, kind: 'zero', ts: 2000, duyet_v: null, duyet_ts: null }
+     ]; var H2 = vHome();
+     // chỉ lấy riêng khối chi tiết của khu A, để khỏi khớp nhầm số ở phần khác của màn hình
+     var CT2 = H2.slice(H2.indexOf('Đang có'), H2.indexOf('Tồn theo phi'));`);
+  ok('có báo cáo chờ duyệt thì bày thêm cột Khu báo', /Khu báo/.test(r('CT2')));
+  ok('tồn vẫn là số ĐÃ DUYỆT (300), chưa nhận số đang chờ (250)',
+    /300 cây/.test(r('CT2')), (r('CT2').match(/\d+ cây/g) || []).join(','));
+  ok('số khu báo và phần lệch bày ngay cạnh', /250 cây/.test(r('CT2')) && /−50 cây/.test(r('CT2')),
+    (r('CT2').match(/\d+ cây[^<]*/g) || []).join(' | '));
+  ok('và nói rõ số bên trái chưa tính báo cáo mới', /chưa tính báo cáo mới/.test(r('CT2')));
+  ok('ô người đếm để trống thì ghi "để trống", không ghi 0 trơ', /để trống/.test(r('CT2')));
+
+  // duyệt rồi: chi tiết tự hiện số mới, không còn cột chờ
+  r(`S.boot.counts = S.boot.counts.map((c) => ({ ...c, duyet_v: c.v, duyet_ts: c.ts }));
+     S.boot.eff = [{ khu_id: 'A', phi_id: 'D10', v: 250 }];
+     indexBoot(S.boot); var H3 = vHome();
+     var CT3 = H3.slice(H3.indexOf('Đang có'), H3.indexOf('Tồn theo phi'));`);
+  ok('duyệt xong thì chi tiết hiện số mới', /250 cây/.test(r('CT3')), (r('CT3').match(/\d+ cây/g) || []).join(','));
+  ok('và không còn cột Khu báo', !/Khu báo/.test(r('CT3')));
+
+  // khu không có thép: nói thẳng, đừng để bảng trống
+  r(`ACTIONS.khumo({ k: 'A' }); ACTIONS.khumo({ k: 'B' });
+     S.boot.counts = []; S.boot.eff = []; S.boot.bm = {}; var H4 = vHome();`);
+  ok('khu không có thép thì nói thẳng', /không có thép/.test(r('H4')));
+  r(`S.khuMo = {}; S.boot = _boot(); indexBoot(S.boot);`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

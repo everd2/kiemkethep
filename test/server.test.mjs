@@ -1007,7 +1007,8 @@ async function main() {
     const anId = uid('Nguyễn Văn An');
     await S.call('PUT', `/khu/A/users`, { users: [anId] });
     eq('An đang phụ trách khu A', S.sql('SELECT 1 FROM khu_user WHERE user_id = ?', anId).length, 1);
-    const del = await S.call('POST', `/users/${anId}/delete`, {});
+    // An là người phụ trách DUY NHẤT của khu A nên phải xác nhận một lần — mục 41 kiểm riêng
+    const del = await S.call('POST', `/users/${anId}/delete`, { confirm_khu: true });
     eq('xoá được', del.status, 200);
     eq('DÒNG users KHÔNG bị xoá — đây là điều kiện để giữ tên',
       S.one('SELECT name, deleted FROM users WHERE id = ?', anId), { name: 'Nguyễn Văn An', deleted: 1 });
@@ -1525,6 +1526,121 @@ async function main() {
       S.raw.exec('ROLLBACK TO dc; RELEASE dc');
     }
     eq('drop được cột cuối của mọi bảng', broken, []);
+  }
+
+  /* ================= 39. PIN của admin đầu tiên: chỉ chính người đó đặt lại được =================
+     Đây là đường chiếm tài khoản chủ hệ thống, và nó đi vòng qua đúng những chốt dựng lên để chặn
+     mình: admin thứ hai không khoá, không hạ quyền, không xoá được admin đầu tiên — nhưng nếu đặt
+     lại được PIN của người đó thì PIN mới hiện ngay trên màn hình cho họ đọc, họ đăng nhập vào
+     chính tài khoản chủ hệ thống và làm được tất cả, kể cả xoá mọi admin khác. */
+  {
+    const S = await setup();
+    const first = S.one('SELECT id FROM users WHERE name = ?', 'Admin').id;
+    const a2 = await S.call('POST', '/users', { name: 'Admin Hai', phone: '0900000009', role: 'admin' });
+    await S.login('A2', '0900000009', a2.data.pin);
+    await S.call('POST', '/change-pin', { pin: a2.data.pin, newPin: '2846' }, 'A2');
+
+    const rp = await S.call('POST', `/users/${first}/reset-pin`, {}, 'A2');
+    eq('admin khác KHÔNG đặt lại được PIN của admin đầu tiên', rp.status, 403);
+    ok('và không để lộ PIN nào ra màn hình', !rp.data.pin, JSON.stringify(rp.data));
+    eq('PIN cũ của admin đầu tiên vẫn còn nguyên hiệu lực',
+      (await S.call('POST', '/login', { phone: '0900000001', pin: '2468' }, 'kt')).status, 200);
+    eq('phiên của admin đầu tiên không bị thu hồi', (await S.call('GET', '/users')).status, 200);
+    // chính chủ thì vẫn phải làm được: quên PIN mà không ai đặt lại thay là tắc hẳn hệ thống
+    eq('chính admin đầu tiên đặt lại được PIN của mình',
+      (await S.call('POST', `/users/${first}/reset-pin`, {})).status, 200);
+  }
+
+  /* ================= 40. "Admin đầu tiên" phải là ADMIN có id nhỏ nhất =================
+     Trên database đã dùng từ trước, dòng id nhỏ nhất có thể không còn là admin — đường đổi vai trò
+     cũ chỉ chặn tự hạ quyền chính mình, nên một admin khác hạ quyền được nó. Lấy MIN(id) trơn thì
+     lúc đó cả bãi mất đường quản lý người dùng: sửa tên / xoá / khôi phục tắt với MỌI người, mà
+     chính dòng đó lại được PROTECT_FIRST che nên cũng không nâng quyền lại được — khoá cứng. */
+  {
+    const S = await setup();
+    const uid = (n) => S.one('SELECT id FROM users WHERE name = ?', n).id;
+    const a2 = await S.call('POST', '/users', { name: 'Admin Hai', phone: '0900000009', role: 'admin' });
+    await S.login('A2', '0900000009', a2.data.pin);
+    await S.call('POST', '/change-pin', { pin: a2.data.pin, newPin: '2846' }, 'A2');
+    // dựng lại đúng cảnh của một database cũ: dòng id nhỏ nhất không còn là admin
+    S.raw.prepare("UPDATE users SET role = 'nguoidem' WHERE id = 1").run();
+
+    const ls = (await S.call('GET', '/users', undefined, 'A2')).data;
+    eq('chủ hệ thống chuyển sang admin có id nhỏ nhất', ls.first, uid('Admin Hai'));
+    eq('sửa tên không bị khoá cứng',
+      (await S.call('POST', `/users/${uid('An')}/rename`, { name: 'An B' }, 'A2')).status, 200);
+    eq('xoá cũng dùng được', (await S.call('POST', `/users/${uid('An B')}/delete`, {}, 'A2')).status, 200);
+    // và dòng id 1 giờ không còn được PROTECT_FIRST che, nên sửa lại được từ trong app
+    eq('nâng quyền lại cho dòng id 1', (await S.call('POST', '/users/1/role', { role: 'admin' }, 'A2')).status, 200);
+    eq('nâng xong thì chủ hệ thống về lại dòng id 1', (await S.call('GET', '/users', undefined, 'A2')).data.first, 1);
+  }
+
+  /* ================= 41. Xoá người phụ trách duy nhất của một khu =================
+     Khu KHÔNG còn ai phụ trách nghĩa là MỌI người đếm đều đếm được khu đó. Nên xoá một tài khoản
+     có thể âm thầm mở một khu ra cho cả bãi — ngược hẳn ý của người vừa bấm "xoá". Phải hỏi lại
+     một lần, và phải để lại dấu trong nhật ký như mọi lần đổi phân công khác. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    const uid = (n) => S.one('SELECT id FROM users WHERE name = ?', n).id;
+    const anId = uid('An'), binhId = uid('Binh');
+    await S.call('PUT', '/khu/A/users', { users: [anId] });
+    eq('khu A của An: Bình không đếm được', (await bao(S, { khu: 'A', day, items: items({ D16: 10 }) }, 'Binh')).status, 403);
+
+    const d1 = await S.call('POST', `/users/${anId}/delete`, {});
+    eq('xoá người phụ trách duy nhất: phải xác nhận trước', [d1.status, d1.data.code], [409, 'khu_open']);
+    ok('và nói rõ hậu quả, không chỉ "không xoá được"', /MỌI người đếm/.test(d1.data.error), d1.data.error);
+    eq('chưa xác nhận thì chưa đổi gì', S.sql('SELECT 1 FROM khu_user WHERE khu_id = ? AND user_id = ?', 'A', anId).length, 1);
+
+    const d2 = await S.call('POST', `/users/${anId}/delete`, { confirm_khu: true });
+    eq('xác nhận rồi thì xoá được, kèm danh sách khu vừa mở ra', [d2.status, d2.data.mo], [200, ['A']]);
+    const nk = S.sql("SELECT detail FROM audit WHERE action = 'khu_users' ORDER BY id DESC");
+    eq('nhật ký ghi lần bỏ phân công khu A đó', nk.length && JSON.parse(nk[0].detail), { khu: 'A', n: 0, users: [] });
+    eq('giờ Bình đếm được khu A — đúng như lời cảnh báo', (await bao(S, { khu: 'A', day, items: items({ D16: 10 }) }, 'Binh')).status, 200);
+
+    // còn người khác phụ trách thì không phải hỏi, nhưng phân công mới vẫn phải vào nhật ký
+    const khoId = uid('Kho');
+    await S.call('PUT', '/khu/B/users', { users: [binhId, khoId] });
+    const d3 = await S.call('POST', `/users/${binhId}/delete`, {});
+    eq('xoá một trong hai người phụ trách: không phải hỏi', [d3.status, d3.data.mo], [200, []]);
+    eq('khu B vẫn còn thủ kho phụ trách', S.sql('SELECT user_id FROM khu_user WHERE khu_id = ?', 'B').map((x) => x.user_id), [khoId]);
+    eq('và nhật ký ghi phân công còn lại', JSON.parse(S.sql("SELECT detail FROM audit WHERE action = 'khu_users' ORDER BY id DESC")[0].detail),
+      { khu: 'B', n: 1, users: [khoId] });
+  }
+
+  /* ================= 42. Khoá có chủ đích phải sống qua một vòng xoá / khôi phục =================
+     Xoá mà dọn luôn cờ locked thì tài khoản bị khoá cố ý quay về trạng thái MỞ sau khi khôi phục,
+     không dòng nhật ký nào nói là ai mở. Khoá và xoá là hai việc khác nhau, mở khoá phải là một
+     thao tác riêng có dấu vết riêng. */
+  {
+    const S = await setup();
+    const anId = S.one('SELECT id FROM users WHERE name = ?', 'An').id;
+    await S.call('POST', `/users/${anId}/lock`, { locked: 1 });
+    await S.call('POST', `/users/${anId}/delete`, {});
+    eq('xoá KHÔNG âm thầm mở khoá', S.one('SELECT locked, deleted FROM users WHERE id = ?', anId), { locked: 1, deleted: 1 });
+
+    const res = await S.call('POST', `/users/${anId}/restore`, {});
+    eq('khôi phục xong vẫn đúng trạng thái bị khoá',
+      [res.status, res.data.locked, S.one('SELECT locked FROM users WHERE id = ?', anId).locked], [200, 1, 1]);
+    eq('nên vẫn chưa đăng nhập được', (await S.call('POST', '/login', { phone: '0900000002', pin: res.data.pin }, 'An2')).status, 403);
+    eq('mở khoá là việc riêng, làm xong mới vào được', (await S.call('POST', `/users/${anId}/lock`, { locked: 0 })).status, 200);
+    eq('vào được bằng PIN mới', (await S.call('POST', '/login', { phone: '0900000002', pin: res.data.pin }, 'An2')).status, 200);
+    eq('và lần mở khoá đó có dòng nhật ký riêng', S.sql("SELECT 1 FROM audit WHERE action = 'user_unlock'").length, 1);
+  }
+
+  /* ================= 43. Khôi phục phải thu hồi PIN cũ =================
+     must_change một mình là không đủ: nó chỉ có tác dụng SAU khi đăng nhập được. Để nguyên PIN cũ
+     là mở lại đúng cánh cửa vừa đóng — người đã rời bãi mà còn nhớ PIN vẫn vào được, rồi tự đặt
+     PIN mới và ở lại trong hệ thống. Suốt thời gian bị xoá, PIN cũ nằm ngoài tầm kiểm soát. */
+  {
+    const S = await setup();
+    const anId = S.one('SELECT id FROM users WHERE name = ?', 'An').id;
+    await S.call('POST', `/users/${anId}/delete`, {});
+    const res = await S.call('POST', `/users/${anId}/restore`, {});
+    ok('khôi phục cấp PIN MỚI để admin đưa lại cho người dùng', /^\d{4}$/.test(String(res.data.pin)), JSON.stringify(res.data));
+    eq('PIN CŨ không còn vào được', (await S.call('POST', '/login', { phone: '0900000002', pin: '1357' }, 'An2')).status, 401);
+    eq('PIN mới thì vào được', (await S.call('POST', '/login', { phone: '0900000002', pin: res.data.pin }, 'An3')).status, 200);
+    eq('và vẫn bị bắt đổi PIN ngay lần đầu', S.one('SELECT must_change FROM users WHERE id = ?', anId).must_change, 1);
   }
 
   /* ================= kết quả ================= */

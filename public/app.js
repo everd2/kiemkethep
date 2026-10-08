@@ -140,6 +140,7 @@ const IC = {
 /* ===================== TRẠNG THÁI ===================== */
 const S = {
   me: null, boot: null, screen: 'login', khu: null,
+  khuMo: {}, // thẻ khu nào ở Tổng quan đang mở chi tiết
   draft: { cells: {} }, sel: null, bo: '', le: '', field: 'bo', rep: { bo: false, le: false }, zoomK: null,
   toast: '', toastErr: false, form: {}, err: '',
   review: null, showNormal: false, audit: null, logFilter: 'all', users: null, pinShown: null,
@@ -575,10 +576,15 @@ function vHome() {
   const khuCards = b.khuAct.map((k) => {
     const st = khuStatus(k), tk = T.perKhu[k.id];
     const unrep = !b.rm[k.id];
+    const open = !!S.khuMo[k.id];
     return `<div class="card col gap8" style="${st.cls === 'warn' ? 'background:var(--warnbg);border:2px solid var(--warn)' : ''}">
-      <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b class="clamp2" style="font-size:20px;min-width:0">${esc(k.name)}</b><b style="font-size:20px;white-space:nowrap;flex:none">${fmtT(tk.kg)} tấn</b></div>
-      <div class="bar"><i style="width:${Math.round(tk.kg / maxKhu * 100)}%"></i></div>
-      <div class="row" style="justify-content:space-between;gap:8px"><span class="sm">${esc(st.who)}${unrep && b.lastClosed ? ' · tạm lấy số hôm qua' : ''}</span><span class="badge ${st.cls}">${st.label}</span></div>
+      <button class="col gap8" style="background:transparent;border:0;padding:0;width:100%;text-align:left;align-items:stretch" aria-expanded="${open}" data-a="khumo" data-k="${esc(k.id)}">
+        <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b class="clamp2" style="font-size:20px;min-width:0">${esc(k.name)}</b><b style="font-size:20px;white-space:nowrap;flex:none">${fmtT(tk.kg)} tấn</b></div>
+        <div class="bar"><i style="width:${Math.round(tk.kg / maxKhu * 100)}%"></i></div>
+        <div class="row" style="justify-content:space-between;gap:8px"><span class="sm">${esc(st.who)}${unrep && b.lastClosed ? ' · tạm lấy số hôm qua' : ''}</span><span class="badge ${st.cls}">${st.label}</span></div>
+        <span class="sm" style="color:var(--pri);text-decoration:underline">${open ? 'Ẩn chi tiết' : 'Xem chi tiết thép trong khu'}</span>
+      </button>
+      ${open ? khuChiTiet(k) : ''}
     </div>`;
   }).join('');
   const bars = b.phiAct.map((p) => {
@@ -615,6 +621,47 @@ function vHome() {
       <div class="sm muted">Vạch đen là mức báo động. Thanh đỏ là tồn đã xuống dưới mức báo động.</div>
       <div class="bars">${bars}</div>
     </div></div>`;
+}
+
+/* Chi tiết thép đang có trong một khu, mở ra khi chạm vào thẻ khu ở Tổng quan.
+   Cột "Đang có" là số ĐÃ DUYỆT — tức số liệu TRƯỚC báo cáo đang chờ. Đó không phải chọn cho tiện
+   mà là đúng quy tắc của bản này: báo cáo chưa duyệt thì chưa vào tồn. Khi admin duyệt, cùng ô
+   này tự hiện số mới, không cần làm gì thêm.
+   Khu đang có báo cáo chờ duyệt thì bày thêm cột "Khu báo" đặt cạnh, để thấy ngay số sẽ đổi
+   thành bao nhiêu và lệch bao nhiêu — xem mà không phải sang màn Duyệt. */
+function khuChiTiet(k) {
+  const b = S.boot;
+  // lần báo mới nhất của hôm nay, chỉ lấy phần CHƯA được duyệt
+  const cho = {};
+  (b.counts || []).forEach((c) => {
+    if (c.khu_id !== k.id) return;
+    if (c.duyet_ts != null && c.duyet_ts === c.ts) return; // đã duyệt rồi, không phải số đang chờ
+    cho[c.phi_id] = c;
+  });
+  const coCho = Object.keys(cho).length > 0;
+  const rows = b.phiAct.map((p) => {
+    const v = valOf(k.id, p.id);
+    const c = cho[p.id];
+    return { p, v, moi: c ? c.v : null, trong: c ? c.kind === 'zero' : false };
+  }).filter((r) => r.v > 0 || (r.moi !== null && r.moi !== r.v));
+  if (!rows.length) {
+    return `<div class="sm muted" style="border-top:1px solid var(--line);padding-top:8px;line-height:1.45">Khu này đang không có thép.${coCho ? ' Báo cáo đang chờ duyệt cũng báo 0.' : ''}</div>`;
+  }
+  const tongKg = rows.reduce((a, r) => a + r.v * r.p.kg_per_cay, 0);
+  const dong = (r) => {
+    const lech = r.moi === null ? null : r.moi - r.v;
+    return `<div class="li" style="gap:6px"><b style="width:44px">${r.p.id}</b>
+      <span class="f1 sm">${fmtQs(r.v, r.p)} · ${fmtT(r.v * r.p.kg_per_cay)} tấn</span>
+      ${r.moi === null ? '' : `<span class="sm" style="white-space:nowrap;color:${lech ? 'var(--warn)' : 'var(--mut)'}">${r.trong ? 'để trống' : fmtQs(r.moi, r.p)}${lech ? ' (' + (lech > 0 ? '+' : '−') + fmtQs(Math.abs(lech), r.p) + ')' : ''}</span>`}</div>`;
+  };
+  return `<div class="col gap6" style="border-top:1px solid var(--line);padding-top:8px">
+    <div class="li sm b" style="background:#E8EEF6"><span style="width:44px">Phi</span><span class="f1">Đang có${coCho ? ' (trước báo cáo)' : ''}</span>${coCho ? '<span>Khu báo</span>' : ''}</div>
+    <div class="card" style="padding:0;overflow:hidden;margin:0">${rows.map(dong).join('')}</div>
+    <div class="row sm" style="justify-content:space-between"><span class="muted">${rows.length} phi có thép</span><b>${fmtT(tongKg)} tấn</b></div>
+    ${coCho
+      ? `<span class="sm" style="line-height:1.45;color:var(--warn)"><b>Số bên trái là số đang dùng, chưa tính báo cáo mới.</b> Khi admin duyệt báo cáo, nó đổi thành số ở cột "Khu báo".</span>`
+      : '<span class="sm muted" style="line-height:1.45">Đây là số đã duyệt, cũng là số đang dùng để tính tồn bãi.</span>'}
+  </div>`;
 }
 
 /* --- Chọn khu --- */
@@ -1849,6 +1896,7 @@ const ACTIONS = {
     }, cho ? 'Đã rút lại phiếu.' : 'Đã hủy phiếu.');
   },
   expand(d) { S.expand[d.p] = !S.expand[d.p]; render(); },
+  khumo(d) { S.khuMo[d.k] = !S.khuMo[d.k]; render(); },
 
   'toggle-normal'() { S.showNormal = !S.showNormal; render(); },
   resolve(d) { act(async () => { await api('POST', '/conflict/resolve', { khu: d.k }); S.cmp = null; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã giữ số báo sau.'); },
