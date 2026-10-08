@@ -91,7 +91,7 @@ function seedPhi(env) {
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -214,6 +214,21 @@ const MIGRATIONS = {
      khôi phục được tài khoản xoá nhầm mà không cần mở database. */
   11: [
     'ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0',
+  ],
+  /* kind: 'reset' = ngày này là MỐC KIỂM KÊ LẠI (đặt tồn cả bãi về 0), NULL = chốt ngày thường.
+     Cần phân biệt vì "Mở lại ngày" phải hoàn tác hai thứ khác nhau: chốt thường thì chỉ bỏ mốc
+     chốt, còn mốc kiểm kê thì phải bỏ luôn các số 0 mà nó đã ghi vào số đếm — không thì mở lại
+     ngày xong tồn vẫn bằng 0 và lần đặt lại coi như không hoàn tác được. */
+  12: [
+    'ALTER TABLE day_close ADD COLUMN kind TEXT',
+    /* undo_json: ảnh chụp số đếm và dấu "khu đã báo" của ngày đó NGAY TRƯỚC khi mốc kiểm kê ghi
+       đè lên. Chỉ mốc kiểm kê dùng cột này.
+       Lý do phải chụp: mốc kiểm kê ghi 0 vào số đếm của mọi ô, nên "Mở lại ngày" buộc phải xoá
+       các số 0 đó — mà xoá xong thì lùi về đâu? Nếu ngày đó CHƯA có lần chốt nào trước (bãi mới
+       dùng, hoặc vừa xoá sạch) thì không có tồn chuẩn nào để lùi, và số liệu gốc mất hẳn: nó chỉ
+       còn trong lịch sử đếm, không đường nào dựng lại. Có ảnh chụp thì hoàn tác là trả về đúng
+       từng ô như trước, không phụ thuộc có tồn chuẩn cũ hay không. */
+    'ALTER TABLE day_close ADD COLUMN undo_json TEXT',
   ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
@@ -1253,17 +1268,51 @@ async function reopenDay(req, env, user) {
   const day = vnDay();
   const note = String(b.note || '').trim().slice(0, 500);
   if (!note) throw bad('Cần ghi lý do mở lại ngày');
-  const c = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
+  const c = await env.DB.prepare('SELECT kind, undo_json FROM day_close WHERE day = ?').bind(day).first();
   if (!c) throw bad('Hôm nay chưa chốt, không cần mở lại');
-  await env.DB.batch([
+  const laReset = c.kind === 'reset';
+  let snap = { counts: [], reports: [] };
+  if (laReset && c.undo_json) { try { snap = JSON.parse(c.undo_json); } catch (e) { /* ảnh chụp lỗi: coi như rỗng */ } }
+  /* Mốc kiểm kê lại đã GHI SỐ 0 vào số đếm của mọi ô, nên mở lại ngày phải bỏ luôn các số đó;
+     chỉ bỏ mốc chốt thì tồn vẫn bằng 0 và lần đặt lại thành không hoàn tác được.
+     Bỏ cả khu_report của hôm nay: số đếm đã mất thì để lại dấu "khu đã báo" chỉ sinh ra một khu
+     mang nhãn đã báo mà không có số nào. Các khu báo trước lúc đặt lại sẽ phải báo lại — số cũ
+     của họ đã bị mốc kiểm kê ghi đè lên, chỉ còn trong lịch sử đếm (bảng chỉ-ghi-thêm). */
+  const stmts = [
     env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
+  ];
+  if (laReset) {
+    // bỏ các số 0 mà mốc kiểm kê ghi, rồi DỰNG LẠI đúng những gì có trước đó từ ảnh chụp
+    stmts.push(
+      env.DB.prepare('DELETE FROM counts WHERE day = ?').bind(day),
+      env.DB.prepare('DELETE FROM khu_report WHERE day = ?').bind(day),
+      env.DB.prepare('UPDATE khu_phi SET keep_streak = 0')
+    );
+    if (snap.counts && snap.counts.length) {
+      stmts.push(env.DB.prepare(
+        `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name)
+         SELECT ?1, ${J('khu_id')}, ${J('phi_id')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ${J('user_id')}, ${J('ts')},
+                ${J('duyet_v')}, ${J('duyet_kind')}, ${J('duyet_ts')}, ${J('duyet_at')}, ${J('duyet_by')}, ${J('duyet_name')}
+         FROM json_each(?2) j`
+      ).bind(day, JSON.stringify(snap.counts)));
+    }
+    if (snap.reports && snap.reports.length) {
+      stmts.push(env.DB.prepare(
+        `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
+         SELECT ?1, ${J('khu_id')}, ${J('user_id')}, ${J('ts')}, ${J('conflict')}, ${J('resolved')}, ${J('recount')}
+         FROM json_each(?2) j`
+      ).bind(day, JSON.stringify(snap.reports)));
+    }
+  }
+  stmts.push(
     env.DB.prepare(RATE_SQL).bind(day),
-    auditStmt(env, user, 'reopen_day', { day, note }),
-    bump(env),
-  ]);
-  return json({ ok: true });
+    auditStmt(env, user, 'reopen_day', { day, note, reset: laReset || undefined }),
+    bump(env)
+  );
+  await env.DB.batch(stmts);
+  return json({ ok: true, reset: laReset });
 }
 
 /* Duyệt báo cáo đếm của MỘT khu (hoặc all = mọi khu đang chờ). Duyệt là chuyển số của lần báo
@@ -1338,6 +1387,139 @@ async function reviewDuyet(req, env, user) {
   );
   await batchGuarded(env, guardStmt(env, IS_CLOSED, day), stmts, closedErr());
   return json({ ok: true, khu: list.length, phieu: phieu.length });
+}
+
+/* ========================= ĐẶT LẠI SỐ LIỆU THÉP =========================
+   Hai việc khác nhau, cố ý tách làm hai đường vì hậu quả khác nhau một trời một vực.
+
+   1. ĐẶT TỒN VỀ 0 (mode 'zero') — kiểm kê lại. Ghi một mốc "cả bãi = 0" cho hôm nay, giữ nguyên
+      toàn bộ lịch sử: báo cáo theo kỳ cũ vẫn xem được, và thống kê tính lại từ mốc này. Hoàn tác
+      được bằng chính nút "Mở lại ngày hôm nay" ở màn Duyệt.
+      Điểm phải cẩn thận: lượng dùng của ngày đặt lại để TRỐNG (dung = NULL) chứ không ghi số.
+      Nếu ghi thì chênh lệch giữa tồn cũ và 0 thành một cú "đã dùng" khổng lồ, nó vào phi_rate và
+      kéo theo cảnh báo "dùng nhiều bất thường" sai suốt 28 ngày sau. Để trống là đúng nghĩa:
+      ngày kiểm kê lại không nói gì về lượng dùng, y như ngày mở sổ đầu tiên.
+
+   2. XOÁ SẠCH (mode 'wipe') — như bãi mới dựng. Xoá số đếm, tồn chuẩn, phiếu, các ngày đã chốt,
+      bảng tổng hợp và tốc độ dùng. Báo cáo theo kỳ cũ mất theo. KHÔNG hoàn tác được.
+
+   Cả hai KHÔNG chạm được hai bảng chỉ-ghi-thêm: nhật ký (audit) và lịch sử đếm (counts_log),
+   vì trigger của database từ chối mọi lệnh xoá. Đó là may chứ không phải vướng: dòng nhật ký của
+   chính lần đặt lại này ghi kèm TỔNG SỐ THÉP TRƯỚC KHI XOÁ theo từng phi, nên con số cũ còn một
+   chỗ đọc lại được mãi mãi, kể cả sau khi xoá sạch. */
+const WIPE_WORD = 'XOA SACH';
+
+async function resetData(req, env, user) {
+  const b = await readJson(req);
+  const mode = String(b.mode || '');
+  if (mode !== 'zero' && mode !== 'wipe') throw bad('Kiểu đặt lại không hợp lệ');
+  const first = await firstAdminId(env);
+  if (user.id !== first) {
+    throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới đặt lại số liệu thép');
+  }
+  const day = vnDay();
+  const rv = await computeReview(env, day);
+
+  /* Tổng thép đang có theo từng phi, tính TRƯỚC khi xoá, để ghi vào nhật ký. rv.rows[].cnt là số
+     đã duyệt cộng toàn bãi (gồm cả khu đã ẩn còn thép), đúng con số màn Tồn bãi đang hiện. */
+  const truoc = rv.rows.filter((r) => r.cnt).map((r) => ({ phi: r.phi, v: r.cnt, kg: Math.round(r.cnt * r.kg) }));
+  const tanTruoc = Math.round(truoc.reduce((a, x) => a + x.kg, 0) / 1000 * 100) / 100;
+
+  if (mode === 'wipe') {
+    if (String(b.confirm || '').trim().toUpperCase() !== WIPE_WORD) {
+      throw new HttpError(409, `Chưa xác nhận. Hãy gõ đúng "${WIPE_WORD}" để xoá sạch số liệu thép.`, 'need_confirm');
+    }
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM counts'),
+      env.DB.prepare('DELETE FROM khu_report'),
+      env.DB.prepare('DELETE FROM receipts'),
+      env.DB.prepare('DELETE FROM day_close'),
+      env.DB.prepare('DELETE FROM baseline'),
+      env.DB.prepare('DELETE FROM daily_summary'),
+      env.DB.prepare('DELETE FROM phi_rate'),
+      // chuỗi "giữ nguyên" cũng phải về 0, không thì người đếm bị bắt đếm thật vì chuỗi của bãi cũ
+      env.DB.prepare('UPDATE khu_phi SET keep_streak = 0, zero_days = 0, active = 1'),
+      auditStmt(env, user, 'reset_wipe', { day, tan: tanTruoc, truoc }),
+      bump(env),
+    ]);
+    return json({ ok: true, mode, tan: tanTruoc });
+  }
+
+  // mode 'zero'
+  if (rv.closed) {
+    throw new HttpError(409, 'Hôm nay đã chốt. Hãy mở lại ngày hôm nay ở màn Duyệt rồi đặt tồn về 0.', 'closed');
+  }
+  const last = rv.last || '';
+  const ts = Date.now();
+  const note = 'Đặt tồn về 0 (kiểm kê lại từ đầu)';
+  /* Chụp số đếm và dấu "khu đã báo" của hôm nay TRƯỚC khi ghi đè, để "Mở lại ngày" trả về đúng
+     từng ô. Không có ảnh chụp thì hoàn tác chỉ còn cách lùi về tồn chuẩn cũ — và ngày chưa có
+     lần chốt nào trước đó thì không có tồn chuẩn nào, số liệu gốc mất hẳn. */
+  const [snapC, snapR] = await env.DB.batch([
+    env.DB.prepare(`SELECT khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name
+                    FROM counts WHERE day = ?`).bind(day),
+    env.DB.prepare('SELECT khu_id, user_id, ts, conflict, resolved, recount FROM khu_report WHERE day = ?').bind(day),
+  ]);
+  const undo = JSON.stringify({ counts: snapC.results, reports: snapR.results });
+  /* Mốc kiểm kê = một lần chốt ngày với mọi số bằng 0. Nhờ đi qua đúng cơ chế chốt ngày mà mọi
+     thứ sau đó tự đúng: ngày mai lấy tồn chuẩn này (= 0) làm số dự kiến, số đếm và phiếu của
+     hôm nay rơi ra khỏi cửa sổ tính (vì cửa sổ là "sau lần chốt gần nhất"), nên không còn việc
+     nào treo lại. used_json để rỗng nên phi_rate không bị cú dùng giả kéo lệch. */
+  await batchGuarded(
+    env,
+    guardStmt(env, "(SELECT value FROM meta WHERE key = 'rev') <> ?1 OR EXISTS (SELECT 1 FROM day_close WHERE day = ?2)", rv.rev, day),
+    [
+      /* GHI SỐ ĐẾM = 0 CHO MỌI Ô, đã duyệt luôn. Không có bước này thì bấm nút xong màn Tồn bãi
+         VẪN hiện số cũ: tồn đọc theo số đếm hiệu lực, còn tồn chuẩn chỉ có tác dụng từ ngày mai.
+         Người dùng bấm "Đặt tồn về 0" mà không thấy gì đổi là hỏng hẳn ý nghĩa của nút.
+         kind 'dem' vì đây là một lần KIỂM KÊ THẬT do admin khai, không phải ô để trống. */
+      env.DB.prepare(
+        `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name)
+         SELECT ?1, kx.khu_id, kx.phi_id, 0, 'dem', 0, 0, ?2, ?3, 0, 'dem', ?3, ?3, ?2, ?4
+         FROM (${KHU_X_PHI}
+               UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?5
+               UNION SELECT khu_id, phi_id FROM counts WHERE day > ?5 AND day <= ?1) kx
+         WHERE 1
+         ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET
+           v = 0, kind = 'dem', bo = 0, le = 0, user_id = ?2, ts = ?3,
+           duyet_v = 0, duyet_kind = 'dem', duyet_ts = ?3, duyet_at = ?3, duyet_by = ?2, duyet_name = ?4`
+      ).bind(day, user.id, ts, user.name, last),
+      /* Đánh dấu MỌI KHU đã báo, do chính admin: lần đặt lại là một cuộc kiểm kê toàn bãi, admin
+         khai số cho từng khu. Thiếu dòng này thì các khu chưa báo hôm nay vẫn hiện "Chưa báo"
+         ngay sau khi kiểm kê xong, và màn Duyệt đòi họ báo lại một con số admin vừa khai. */
+      env.DB.prepare(
+        `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
+         SELECT ?1, k.id, ?2, ?3, 0, 0, 0 FROM khu k WHERE k.active = 1
+         ON CONFLICT(day, khu_id) DO UPDATE SET user_id = ?2, ts = ?3, conflict = 0, resolved = 0, recount = 0`
+      ).bind(day, user.id, ts),
+      // lịch sử đếm là bảng chỉ-ghi-thêm: lần kiểm kê này cũng phải để lại dấu ở đó
+      env.DB.prepare(
+        `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
+         SELECT ?1, kx.khu_id, kx.phi_id, NULL, 0, 'dem', ?2, ?3
+         FROM (${KHU_X_PHI}
+               UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?4) kx`
+      ).bind(day, user.id, ts, last),
+      env.DB.prepare("INSERT INTO day_close (day, closed_by, ts, note, used_json, exc_json, span, kind, undo_json) VALUES (?,?,?,?,?,?,?,'reset',?)")
+        .bind(day, user.id, ts, note, '{}', '[]', 1, undo),
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span)
+         SELECT ?1, ${J('phi')}, 0, ${J('inn')}, NULL, 1 FROM json_each(?2) j`
+      ).bind(day, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, inn: r.inn })))),
+      env.DB.prepare(RATE_SQL).bind(day),
+      // tồn chuẩn hôm nay = 0 ở MỌI ô từng có số, kể cả ô thuộc khu/phi đã bị ẩn mà còn thép
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
+         SELECT ?1, kx.khu_id, kx.phi_id, 0
+         FROM (${KHU_X_PHI}
+               UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?2
+               UNION SELECT khu_id, phi_id FROM counts WHERE duyet_v IS NOT NULL AND day > ?2 AND day <= ?1) kx`
+      ).bind(day, last),
+      auditStmt(env, user, 'reset_zero', { day, tan: tanTruoc, truoc }),
+      bump(env),
+    ],
+    new HttpError(409, 'Vừa có số liệu mới hoặc ngày đã được chốt. Hãy tải lại trang rồi làm lại.', 'changed')
+  );
+  return json({ ok: true, mode, tan: tanTruoc });
 }
 
 /* ========================= VIỆC TỰ ĐỘNG (CRON) =========================
@@ -1998,6 +2180,8 @@ async function handle(req, env, url) {
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
   if (r0 === 'close' && method === 'POST') return closeDay(req, env, user);
   if (r0 === 'reopen' && method === 'POST') return reopenDay(req, env, user);
+  // đặt lại số liệu thép: chỉ admin đầu tiên (chốt chặn thật nằm trong resetData)
+  if (r0 === 'reset' && method === 'POST') return resetData(req, env, user);
   if (r0 === 'recount' && method === 'POST') {
     const b = await readJson(req);
     const day = vnDay();

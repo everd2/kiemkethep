@@ -172,6 +172,13 @@ CREATE INDEX IF NOT EXISTS idx_receipts_grp ON receipts(grp);
 
 -- Chốt ngày: khóa số liệu, lưu mức dùng để tính trung bình
 -- span: số ngày gộp (quên chốt thì > 1)
+-- kind: 'reset' = ngày này là MỐC KIỂM KÊ LẠI (đặt tồn cả bãi về 0), NULL = chốt ngày thường.
+--       "Mở lại ngày" phải hoàn tác hai thứ khác nhau: chốt thường chỉ bỏ mốc chốt, còn mốc kiểm
+--       kê thì phải bỏ luôn các số 0 nó đã ghi vào số đếm, không thì tồn vẫn bằng 0 sau khi mở lại.
+-- undo_json: ảnh chụp số đếm và dấu "khu đã báo" của ngày đó NGAY TRƯỚC khi mốc kiểm kê ghi đè.
+--       Chỉ mốc kiểm kê dùng cột này. Thiếu nó thì hoàn tác chỉ còn cách lùi về tồn chuẩn cũ, mà
+--       ngày chưa có lần chốt nào trước đó thì không có tồn chuẩn nào để lùi: số liệu gốc mất hẳn,
+--       chỉ còn trong lịch sử đếm và không đường nào dựng lại.
 CREATE TABLE IF NOT EXISTS day_close (
   day TEXT PRIMARY KEY,
   closed_by INTEGER NOT NULL,
@@ -179,7 +186,9 @@ CREATE TABLE IF NOT EXISTS day_close (
   note TEXT,
   used_json TEXT,
   exc_json TEXT,
-  span INTEGER NOT NULL DEFAULT 1
+  span INTEGER NOT NULL DEFAULT 1,
+  kind TEXT,
+  undo_json TEXT
 );
 
 -- Tổng hợp theo ngày đã chốt x phi: báo cáo theo kỳ đọc bảng này cho nhẹ hạn mức
@@ -230,7 +239,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 11);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 12);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

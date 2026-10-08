@@ -145,6 +145,24 @@ const run = async () => {
   r(`S.sel = null; S.draft.cells['D10'] = { v: 0, kind: 'zero', bo: 0, le: 0 }; var HZ = demView();`);
   ok('bảng đếm ghi rõ ô đó là "để trống"', /để trống/.test(r('HZ')), (r('HZ').match(/.{0,30}để trống.{0,10}/) || [''])[0]);
 
+  /* ---- 1d. Đặt lại số liệu thép: chỉ admin đầu tiên thấy, và nút xoá sạch phải khoá ----
+     Đây là hai nút phá dữ liệu, một trong hai không hoàn tác được, nên chốt chặn phải chắc ở cả
+     hai phía. Server là chỗ chặn thật; phần này giữ cho nút không bày ra sai người và không bấm
+     được khi chưa gõ câu xác nhận. */
+  r(`S.uFirst = 1; S.screen = 'settings'; var HS = vSettings();`);
+  ok('admin đầu tiên thấy mục Dữ liệu thép', /Dữ liệu thép/.test(r('HS')));
+  ok('có nút đặt tồn về 0', /data-a="resetzero"/.test(r('HS')));
+  ok('và nhắc tải bản sao trước', /Tải tồn theo khu|Tải cả kỳ/.test(r('HS')));
+  ok('nút xoá sạch bị khoá khi chưa gõ câu xác nhận', /data-a="resetwipe"/.test(r('HS')) && /dis" data-a="resetwipe"/.test(r('HS')),
+    (r('HS').match(/class="[^"]*" data-a="resetwipe"/) || [''])[0]);
+  r(`S.form.wipeword = ' xoa sach '; var HS2 = vSettings();`);
+  ok('gõ đúng (kể cả chữ thường, có khoảng trắng) thì nút mở', /bad" data-a="resetwipe"/.test(r('HS2')),
+    (r('HS2').match(/class="[^"]*" data-a="resetwipe"/) || [''])[0]);
+  r(`S.form.wipeword = ''; S.uFirst = 99; var HS3 = vSettings();`);
+  ok('admin KHÔNG phải người đầu tiên thì không thấy mục này', !/Dữ liệu thép/.test(r('HS3')));
+  ok('và không thấy nút xoá sạch', !/resetwipe/.test(r('HS3')));
+  r(`S.uFirst = 1; S.screen = 'home';`);
+
   // ---- 4a. tổng bãi ở màn Đếm gồm cả khu đã ẩn ----
   r(`S.draft = { cells: {}, baseTs: 0 }; var tot = totals(); var HD = demView();`);
   ok('totals(): tách riêng kg của khu ẩn', r('tot.hidKg') > 0, r('tot.hidKg'));

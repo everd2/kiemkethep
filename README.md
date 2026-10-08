@@ -35,6 +35,16 @@ Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Ngườ
 - **Admin đầu tiên** (tài khoản tạo ở màn Thiết lập) là chủ hệ thống: chỉ người này **sửa tên, xoá và khôi phục** tài khoản. Ngược lại, chính tài khoản đó thì **không ai khóa, hạ quyền hay xoá được** — kể cả một admin khác — để cả bãi không bao giờ mất đường quản lý người dùng. Mọi admin đều tạo được tài khoản mới.
 - Số điện thoại của tài khoản đã xoá vẫn bị giữ (mỗi số một tài khoản), nên muốn dùng lại số đó thì **khôi phục** tài khoản cũ thay vì tạo mới.
 
+### Đặt lại số liệu thép
+
+Hai việc khác nhau, nằm ở **Thêm → Cài đặt → Dữ liệu thép**, chỉ **admin đầu tiên** thấy:
+
+- **Đặt tồn về 0 (kiểm kê lại)** — ghi một mốc *cả bãi = 0* cho hôm nay. Lịch sử và **báo cáo theo kỳ cũ vẫn xem được**; thống kê tính lại từ mốc này. Hôm nay thành **đã chốt**, từ mai đếm và nhập bình thường từ 0. Bấm nhầm thì vào **Duyệt → Mở lại ngày hôm nay**: tồn và các báo cáo của hôm nay trở lại **đúng như trước**. Hoàn tác được là vì lúc đặt lại hệ thống **chụp lại** số đếm và dấu "khu đã báo" của ngày đó; thiếu ảnh chụp thì hoàn tác chỉ còn cách lùi về tồn chuẩn cũ, mà ngày chưa có lần chốt nào trước đó thì không có tồn chuẩn nào để lùi và số liệu gốc mất hẳn. Lượng dùng của ngày đặt lại để **trống** chứ không ghi số: nếu ghi thì chênh lệch giữa tồn cũ và 0 thành một cú "đã dùng" khổng lồ, nó vào mức dùng trung bình và kéo cảnh báo "dùng nhiều bất thường" sai suốt 28 ngày sau.
+- **Xoá sạch dữ liệu thép** — xoá mọi số đếm, tồn chuẩn, phiếu, ngày đã chốt và bảng tổng hợp; bãi trở lại như mới dựng, lần chốt tiếp theo tạo tồn chuẩn đầu tiên. **Báo cáo theo kỳ cũ mất theo và KHÔNG hoàn tác được.** Dùng khi chạy thử xong, bắt đầu dùng thật. Phải gõ đúng `XOA SACH` để mở nút, rồi còn một hộp xác nhận nữa.
+- Cả hai **không chạm được nhật ký và lịch sử đếm** (database chặn mọi lệnh xoá hai bảng đó). Nhờ vậy dòng nhật ký của chính lần đặt lại ghi kèm **tổng số thép trước khi xoá theo từng phi** — đó là chỗ đọc lại được số cũ, kể cả sau khi đã xoá sạch.
+- Giữ nguyên: tài khoản, khu, cấu hình phi, cài đặt. Nên **tải bản sao CSV** trước khi đặt lại (có nút ngay cạnh).
+
+
 ---
 
 ## Deploy lên Cloudflare (làm một lần, khoảng 15 phút)
@@ -111,6 +121,8 @@ Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tê
 | Mất điện thoại | Admin **Khóa** tài khoản hoặc **Đăng xuất máy**, thiết bị bị đăng xuất ngay |
 | Người nghỉ việc | Admin đầu tiên vào **Người dùng → Xoá tài khoản**. Hoạt động cũ vẫn giữ nguyên tên họ |
 | Đặt sai tên tài khoản | Admin đầu tiên vào **Người dùng → Sửa tên**. Số đếm và phiếu cũ hiện tên mới ngay |
+| Chạy thử xong, muốn dùng thật | Admin đầu tiên vào **Cài đặt → Dữ liệu thép → Xoá sạch**. Tải bản sao CSV trước |
+| Kiểm kê lại cả bãi | **Cài đặt → Dữ liệu thép → Đặt tồn về 0**. Lịch sử cũ vẫn giữ, hoàn tác được |
 
 Nên sao lưu `backup.sql` định kỳ (ví dụ mỗi tuần) và cất ngoài Cloudflare.
 

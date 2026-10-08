@@ -1207,6 +1207,12 @@ function fmtAudit(a) {
     user_rename: ['đổi tên "' + d.from + '" thành "' + d.to + '"', 'admin'],
     user_delete: ['xoá tài khoản ' + d.name + ' (' + (ROLE[d.role] || d.role) + ')' + (d.phone ? ' · ' + d.phone : '') + ' — hoạt động cũ vẫn giữ tên', 'flag'],
     user_restore: ['khôi phục tài khoản ' + d.name, 'admin'],
+    /* Hai dòng này là chỗ DUY NHẤT còn đọc lại được số thép trước khi đặt lại, vì nhật ký không
+       xoá được. Nên hiện luôn tổng tấn và số theo từng phi, đừng chỉ ghi "đã đặt lại". */
+    reset_zero: ['ĐẶT TỒN CẢ BÃI VỀ 0 — trước đó ' + d.tan + ' tấn'
+      + (d.truoc && d.truoc.length ? ' (' + d.truoc.map((x) => x.phi + ' ' + x.v).join(', ') + ')' : ''), 'flag'],
+    reset_wipe: ['XOÁ SẠCH DỮ LIỆU THÉP — trước đó ' + d.tan + ' tấn'
+      + (d.truoc && d.truoc.length ? ' (' + d.truoc.map((x) => x.phi + ' ' + x.v).join(', ') + ')' : ''), 'flag'],
     khu_create: ['thêm ' + d.name, 'admin'], khu_update: ['sửa ' + d.name + (d.active ? '' : ' (ẩn)'), 'admin'],
     khu_users: [d.n ? 'gán ' + d.n + ' người phụ trách ' + kn(d.khu) : 'bỏ phân công ' + kn(d.khu) + ' (mọi người đếm được)', 'admin'], phi_update: ['sửa cấu hình ' + (d.items ? d.items.map((x) => x.id).join(', ') : d.id), 'admin'], phi_seed: ['khôi phục phi mặc định D6–D36', 'admin'], settings_update: ['sửa cài đặt', 'admin'],
   };
@@ -1426,7 +1432,33 @@ function vSettings() {
     <button class="btn s full" data-a="pstdall">Điền số chuẩn cho tất cả phi (xem lại rồi bấm LƯU)</button>
     ${phi}
     <button class="btn pri full" data-a="psaveall">LƯU CẤU HÌNH PHI</button>
-    <button class="btn full" style="border:2px dashed var(--bad);color:var(--bad)" data-a="phiseed">Khôi phục phi bị xoá (D6–D36)</button></div>`;
+    <button class="btn full" style="border:2px dashed var(--bad);color:var(--bad)" data-a="phiseed">Khôi phục phi bị xoá (D6–D36)</button>
+    ${vReset()}</div>`;
+}
+
+/* Đặt lại số liệu thép. Hai việc tách làm hai nút vì hậu quả khác nhau một trời một vực, và nút
+   phá được thì đặt riêng ở cuối, sau một ô phải gõ câu xác nhận — không để nó nằm cạnh nút dùng
+   hằng ngày. Chỉ admin đầu tiên thấy mục này; chốt chặn thật nằm ở server (resetData). */
+function vReset() {
+  if (!isOwner()) return '';
+  const b = S.boot, T = totals();
+  const dangCo = fmtT(T.kg);
+  const go = (S.form.wipeword || '').trim().toUpperCase() === 'XOA SACH';
+  return `<h2 class="sec">Dữ liệu thép</h2>
+  <div class="card col gap8"><b style="font-size:17px">Đang có trong bãi: ${dangCo} tấn</b>
+    <span class="sm muted" style="line-height:1.45">Nên tải một bản sao trước khi đặt lại. Nhật ký và lịch sử đếm thì không bao giờ xoá được (database chặn), nên con số cũ vẫn còn một chỗ đọc lại.</span>
+    <div class="row gap6"><button class="btn s f1" data-a="exportday" data-d="${esc(b.today)}">Tải tồn theo khu (CSV)</button>
+      <button class="btn s f1" data-a="dlall">Tải cả kỳ (CSV)</button></div>
+  </div>
+  <div class="card col gap8"><b style="font-size:17px">Đặt tồn về 0 (kiểm kê lại)</b>
+    <span class="sm" style="line-height:1.45">Ghi một mốc <b>cả bãi = 0</b> cho hôm nay: coi như admin vừa kiểm kê và khai 0 cho mọi khu. Lịch sử và báo cáo theo kỳ cũ <b>vẫn xem được</b>; thống kê tính lại từ mốc này. Hôm nay thành <b>đã chốt</b>, từ mai đếm và nhập bình thường từ 0.<br>Bấm nhầm thì vào Duyệt → <i>Mở lại ngày hôm nay</i>: tồn và các báo cáo của hôm nay trở lại <b>đúng như trước</b>, vì hệ thống chụp lại trạng thái trước khi đặt lại.</span>
+    <button class="btn s full" style="border:2px solid var(--warn)" data-a="resetzero">ĐẶT TỒN VỀ 0</button>
+  </div>
+  <div class="card bad col gap8"><b style="font-size:17px">Xoá sạch dữ liệu thép</b>
+    <span class="sm" style="line-height:1.45">Xoá <b>mọi</b> số đếm, tồn chuẩn, phiếu nhập/chuyển, ngày đã chốt và bảng tổng hợp — bãi trở lại như mới dựng. <b>Báo cáo theo kỳ cũ mất theo và KHÔNG hoàn tác được.</b> Dùng khi chạy thử xong, bắt đầu dùng thật.</span>
+    <label class="sm">Gõ <b>XOA SACH</b> để mở nút<input class="inp s" style="width:100%" id="wipeword" placeholder="XOA SACH" data-model="wipeword" value="${esc(S.form.wipeword || '')}"></label>
+    <button class="btn s full ${go ? 'bad' : 'dis'}" data-a="resetwipe">XOÁ SẠCH DỮ LIỆU THÉP</button>
+  </div>`;
 }
 
 /* ===================== KHUNG CHÍNH ===================== */
@@ -1872,7 +1904,42 @@ const ACTIONS = {
   rquick(d) { [S.bc.from, S.bc.to] = repRange(d.v); S.form.rfrom = S.bc.from; S.form.rto = S.bc.to; loadRep(); },
   rload() { const a = val('rfrom'), z = val('rto'); if (!a || !z || a > z) return say('Chọn khoảng ngày hợp lệ.', true), render(); S.bc.from = a; S.bc.to = z; loadRep(); },
   rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
-  exportday() { const d = val('exday') || S.boot.today; download('/export?date=' + d, `kho-thep_${d}.csv`); },
+  exportday(d) { const day = d.d || val('exday') || S.boot.today; download('/export?date=' + day, `kho-thep_${day}.csv`); },
+  // bản sao cả kỳ: từ ngày chốt đầu tiên tới hôm nay, để trước khi xoá còn giữ được số cũ
+  dlall() { const z = S.boot.today, a = z.slice(0, 8) + '01'; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
+  async resetzero() {
+    const T = totals();
+    const msg = `Đặt tồn cả bãi về 0?\n\n`
+      + `• Đang có ${fmtT(T.kg)} tấn — sau khi đặt lại, mọi khu về 0 và thống kê tính lại từ hôm nay.\n`
+      + `• Lịch sử và báo cáo theo kỳ cũ VẪN xem được.\n`
+      + `• Hôm nay thành đã chốt; từ mai đếm và nhập bình thường từ 0.\n`
+      + `• Bấm nhầm thì Duyệt → Mở lại ngày hôm nay: mọi thứ trở lại đúng như trước.\n\n`
+      + `Nên tải bản sao trước nếu chưa tải.`;
+    if (!(await ask(msg, 'ĐẶT TỒN VỀ 0', true))) return render();
+    act(async () => {
+      const r = await api('POST', '/reset', { mode: 'zero' });
+      S.review = null; await loadBoot();
+      say(`Đã đặt tồn về 0 (trước đó ${r.tan} tấn). Hôm nay đã chốt, từ mai đếm lại từ 0.`);
+    });
+  },
+  /* Hai lớp xác nhận cho việc không hoàn tác được: gõ đúng câu để mở nút, rồi còn một hộp hỏi
+     nữa nói rõ mất những gì. Server vẫn kiểm lại câu xác nhận, không tin máy khách. */
+  async resetwipe() {
+    const word = (val('wipeword') || '').trim().toUpperCase();
+    if (word !== 'XOA SACH') return say('Gõ đúng XOA SACH vào ô trên để mở nút.', true), render();
+    const T = totals();
+    const msg = `XOÁ SẠCH dữ liệu thép?\n\n`
+      + `• Mất: mọi số đếm, tồn chuẩn, phiếu, ngày đã chốt, bảng tổng hợp và báo cáo theo kỳ.\n`
+      + `• Đang có ${fmtT(T.kg)} tấn trong sổ — sau khi xoá là 0.\n`
+      + `• KHÔNG HOÀN TÁC ĐƯỢC.\n`
+      + `• Còn giữ: tài khoản, khu, cấu hình phi, nhật ký và lịch sử đếm.`;
+    if (!(await ask(msg, 'XOÁ SẠCH', true))) return render();
+    act(async () => {
+      const r = await api('POST', '/reset', { mode: 'wipe', confirm: 'XOA SACH' });
+      S.form.wipeword = ''; S.review = null; await loadBoot();
+      say(`Đã xoá sạch dữ liệu thép (trước đó ${r.tan} tấn). Bãi như mới dựng.`);
+    });
+  },
   logf(d) { S.logFilter = d.v; render(); },
   sscope(d) { S.statScope = d.v; render(); },
   sdays(d) { S.usageDays = Number(d.v); go('stats'); },

@@ -1039,6 +1039,180 @@ async function main() {
     eq('và kèm tài khoản đã xoá để khôi phục', ls.users.filter((u) => u.deleted).map((u) => u.name), ['Nguyễn Văn An']);
   }
 
+  /* ================= 37. Đặt tồn về 0: kiểm kê lại, giữ nguyên lịch sử =================
+     Mốc kiểm kê đi qua đúng cơ chế chốt ngày, nên sau đó mọi thứ tự đúng. Bốn cái bẫy:
+     - Tồn phải về 0 NGAY HÔM NAY. Tồn đọc theo số đếm hiệu lực, còn tồn chuẩn chỉ có tác dụng từ
+       ngày mai: nếu chỉ ghi tồn chuẩn thì bấm nút xong màn Tồn bãi vẫn hiện số cũ nguyên vẹn.
+     - Lượng dùng của ngày đặt lại phải để TRỐNG. Ghi số thì chênh lệch giữa tồn cũ và 0 thành một
+       cú "đã dùng" khổng lồ, nó vào mức dùng trung bình và kéo cảnh báo "dùng nhiều bất thường"
+       sai suốt 28 ngày sau.
+     - Mở lại ngày phải HOÀN TÁC được, tức bỏ luôn các số 0 mà mốc kiểm kê đã ghi.
+     - Số đếm và phiếu của hôm nay không được để lại việc nào treo. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await nhap(S, { khu: 'B', lines: [{ phi: 'D10', qty: 440 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({ D10: 440 }) }, 'Binh');
+    await chot(S, { note: '' });
+    const ngayDau = day;
+    // năm ngày dùng đều 100 cây D16 để có mức dùng trung bình đáng tin
+    for (let i = 0; i < 5; i++) {
+      addDays(1); day = vnDay();
+      await bao(S, { khu: 'A', day, items: items({ D16: 1700 - i * 100 }) }, 'An');
+      await bao(S, { khu: 'B', day, items: items({ D10: 440 }) }, 'Binh');
+      await chot(S, { note: '' });
+    }
+    eq('tồn chuẩn trước khi đặt lại', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 1300);
+    const rateTruoc = S.one("SELECT per_day FROM phi_rate WHERE phi_id='D16'").per_day;
+    eq('và có mức dùng trung bình', rateTruoc, 100);
+
+    addDays(1); day = vnDay();
+    // hôm nay có một báo cáo đang chờ duyệt và một phiếu đang chờ duyệt
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1250 }) }, 'An');
+    const phieuCho = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+    const ton = async () => (await S.call('GET', '/review')).data.rows.filter((x) => x.cnt).map((x) => [x.phi, x.cnt]).sort();
+    eq('bãi đang có thép', await ton(), [['D10', 440], ['D16', 1300]]);
+
+    eq('người đếm không đặt lại được', (await S.call('POST', '/reset', { mode: 'zero' }, 'An')).status, 403);
+    eq('thủ kho cũng không', (await S.call('POST', '/reset', { mode: 'zero' }, 'Kho')).status, 403);
+    eq('kiểu không hợp lệ: từ chối', (await S.call('POST', '/reset', { mode: 'xx' })).status, 400);
+
+    const r = await S.call('POST', '/reset', { mode: 'zero' });
+    eq('admin đầu tiên đặt tồn về 0', r.status, 200);
+    ok('trả về số tấn đã có trước khi đặt lại', r.data.tan > 0, r.data.tan);
+
+    // --- tồn về 0 NGAY HÔM NAY, không phải chờ sang mai ---
+    eq('tổng bãi về 0 ngay trong ngày đặt lại', await ton(), []);
+    eq('số đếm của mọi ô được ghi 0 và đã duyệt',
+      S.sql('SELECT 1 FROM counts WHERE day = ? AND (duyet_v <> 0 OR duyet_v IS NULL)', day).length, 0);
+    ok('lần kiểm kê có dấu ở lịch sử đếm (bảng chỉ-ghi-thêm)',
+      S.sql('SELECT 1 FROM counts_log WHERE day = ? AND v = 0', day).length > 0);
+    eq('tồn chuẩn hôm nay = 0 ở mọi ô', S.sql('SELECT 1 FROM baseline WHERE day = ? AND v <> 0', day).length, 0);
+    ok('và đủ dòng cho mọi khu × phi', S.sql('SELECT 1 FROM baseline WHERE day = ?', day).length >= 39,
+      S.sql('SELECT 1 FROM baseline WHERE day = ?', day).length);
+    const rvNay = (await S.call('GET', '/review')).data;
+    eq('hôm nay thành đã chốt (đây là một mốc kiểm kê)', rvNay.closed, true);
+    /* Mọi khu phải mang dấu "đã báo, đã duyệt": lần đặt lại là một cuộc kiểm kê toàn bãi do admin
+       khai số cho từng khu. Thiếu dấu đó thì khu nào chưa báo hôm nay vẫn hiện "Chưa báo" ngay
+       sau khi kiểm kê xong, và màn Duyệt đòi họ báo lại đúng con số admin vừa khai. */
+    eq('mọi khu mang dấu đã báo', rvNay.khus.filter((k) => !k.rep).map((k) => k.khu), []);
+    eq('và không khu nào còn chờ duyệt', rvNay.khus.filter((k) => k.waiting).map((k) => k.khu), []);
+    eq('không còn khu nào bị đòi báo', rvNay.exceptions.filter((e) => e.type === 'khu_missing').length, 0);
+
+    // --- không sinh cú "đã dùng" giả, mức dùng trung bình không bị kéo lệch ---
+    eq('ngày đặt lại để trống lượng dùng', S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', day, 'D16').dung, null);
+    eq('mức dùng trung bình giữ nguyên', S.one("SELECT per_day FROM phi_rate WHERE phi_id='D16'").per_day, rateTruoc);
+
+    // --- nhật ký giữ lại con số TRƯỚC khi đặt lại, và nhật ký thì không xoá được ---
+    const nk = JSON.parse(S.one("SELECT detail FROM audit WHERE action='reset_zero' ORDER BY id LIMIT 1").detail);
+    eq('nhật ký ghi tổng thép trước khi đặt lại theo từng phi',
+      nk.truoc.map((x) => [x.phi, x.v]).sort(), [['D10', 440], ['D16', 1300]]);
+    ok('và tổng số tấn', nk.tan > 25, nk.tan);
+
+    /* --- HOÀN TÁC: mở lại ngày phải trả tồn về đúng như trước khi đặt lại ---
+       Mốc kiểm kê đã ghi số 0 vào số đếm của mọi ô, nên mở lại ngày mà chỉ bỏ mốc chốt thì tồn
+       vẫn bằng 0 — lần đặt lại coi như không hoàn tác được, trái điều đã hứa với người dùng. */
+    const ro = await S.call('POST', '/reopen', { note: 'bấm nhầm' });
+    eq('mở lại ngày được', ro.status, 200);
+    eq('và nói rõ đây là hoàn tác một mốc kiểm kê', ro.data.reset, true);
+    eq('tồn quay lại đúng như trước khi đặt lại', await ton(), [['D10', 440], ['D16', 1300]]);
+    eq('các số 0 của mốc kiểm kê đã bị bỏ',
+      S.sql('SELECT 1 FROM counts WHERE day = ? AND duyet_v = 0', day).length, 0);
+    /* Và DỰNG LẠI đúng lần báo đang chờ duyệt của khu A trước lúc đặt lại — kể cả trạng thái
+       "chưa duyệt". Không có ảnh chụp thì chỗ này chỉ còn cách lùi về tồn chuẩn cũ, mà ngày chưa
+       có lần chốt nào trước đó thì không có tồn chuẩn nào để lùi: số 1250 mất hẳn. */
+    eq('lần báo đang chờ duyệt của khu A được dựng lại nguyên trạng',
+      S.one('SELECT v, duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16'),
+      { v: 1250, duyet_v: null });
+    eq('và dấu "khu đã báo" của khu A cũng được dựng lại',
+      S.sql('SELECT khu_id FROM khu_report WHERE day = ?', day).map((x) => x.khu_id), ['A']);
+    const khusRo = (await S.call('GET', '/review')).data.khus;
+    eq('khu A vẫn đang chờ duyệt như trước', khusRo.find((k) => k.khu === 'A').waiting > 0, true);
+    eq('khu B, C vẫn chưa báo như trước', khusRo.filter((k) => k.rep).map((k) => k.khu), ['A']);
+    eq('phiếu chờ duyệt không bị hoàn tác xoá mất', S.one('SELECT voided FROM receipts WHERE id=?', phieuCho.data.id).voided, 0);
+
+    // đặt lại lần nữa để kiểm phần ngày sau
+    eq('đặt lại lần nữa được', (await S.call('POST', '/reset', { mode: 'zero' })).status, 200);
+
+    // --- sang ngày sau: mọi khu bắt đầu từ 0 ---
+    addDays(1);
+    const rvSau = (await S.call('GET', '/review')).data;
+    eq('dự kiến của mọi khu là 0',
+      rvSau.khus.flatMap((k) => k.items.map((i) => i.exp)).filter((x) => x !== 0), []);
+    eq('tổng bãi vẫn 0', rvSau.rows.filter((x) => x.cnt).map((x) => x.phi), []);
+    ok('không có cảnh báo "dùng nhiều bất thường"', !rvSau.rows.some((x) => x.high), JSON.stringify(rvSau.rows.filter((x) => x.high)));
+    eq('báo cáo chờ duyệt của ngày trước không treo lại', rvSau.khus.filter((k) => k.waiting).length, 0);
+    eq('nhưng phiếu chờ duyệt vẫn còn (nó là chứng từ thật)', rvSau.phieu.map((v) => v.id), [phieuCho.data.id]);
+
+    // --- lịch sử cũ vẫn xem được: đây là điểm khác hẳn xoá sạch ---
+    eq('ngày chốt đầu tiên vẫn còn', S.sql('SELECT 1 FROM day_close WHERE day = ?', ngayDau).length, 1);
+    const rep = (await S.call('GET', `/report?from=${ngayDau}&to=${ngayDau}`)).data;
+    ok('báo cáo theo kỳ cũ vẫn đọc được', rep.rows.some((x) => x.phi === 'D16'), JSON.stringify(rep.rows.map((x) => x.phi)));
+
+    /* --- mở lại một ngày chốt THƯỜNG thì không được xoá số đếm của khu ---
+       Cùng một nút "Mở lại ngày" nhưng hai loại ngày phải hoàn tác hai thứ khác nhau. */
+    day = vnDay();
+    /* Duyệt nốt phiếu 180 còn chờ và nhập thêm 300 nữa, rồi khu A đếm đúng 480. Phải có phiếu
+       cho đủ 480: sau khi tồn về 0, thép xuất hiện mà không có phiếu nào là "dùng âm" — hệ thống
+       bắt đúng, và đó chính là cái làm việc thống kê lại từ 0 có nghĩa. */
+    eq('duyệt phiếu 180 còn chờ', (await duyetP(S, phieuCho.data.id)).status, 200);
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 300 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 480 }) }, 'An');
+    await bao(S, { khu: 'B', day, items: items({}) }, 'Binh');
+    await bao(S, { khu: 'C', day, items: items({}) }, 'An');
+    const rvT = (await S.call('GET', '/review')).data;
+    eq('đếm khớp phiếu thì không còn việc gì', rvT.pending, 0, JSON.stringify(rvT.exceptions));
+    eq('chốt ngày thường được', (await S.call('POST', '/close', { note: '' })).status, 200);
+    const ro2 = await S.call('POST', '/reopen', { note: 'chốt nhầm' });
+    eq('mở lại ngày chốt thường: được', ro2.status, 200);
+    eq('và KHÔNG phải mốc kiểm kê', ro2.data.reset, false);
+    eq('số đếm của khu còn nguyên',
+      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16').duyet_v, 480);
+  }
+
+  /* ================= 38. Xoá sạch dữ liệu thép: như bãi mới dựng =================
+     Không hoàn tác được, nên phải gõ đúng câu xác nhận. Và dù xoá sạch, hai bảng chỉ-ghi-thêm
+     (nhật ký, lịch sử đếm) vẫn còn — con số cũ còn một chỗ đọc lại được mãi mãi. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+    addDays(1); day = vnDay();
+    await bao(S, { khu: 'A', day, items: items({ D16: 1700 }) }, 'An');
+
+    eq('người đếm không xoá sạch được', (await S.call('POST', '/reset', { mode: 'wipe', confirm: 'XOA SACH' }, 'An')).status, 403);
+    const thieu = await S.call('POST', '/reset', { mode: 'wipe' });
+    eq('không gõ câu xác nhận: từ chối', thieu.status, 409);
+    eq('mã lỗi nói rõ cần xác nhận', thieu.data.code, 'need_confirm');
+    eq('gõ sai câu xác nhận: từ chối', (await S.call('POST', '/reset', { mode: 'wipe', confirm: 'xoa' })).status, 409);
+    ok('gõ đúng nhưng chữ thường vẫn nhận', (await S.call('POST', '/reset', { mode: 'wipe', confirm: ' xoa sach ' })).status === 200);
+
+    for (const t of ['counts', 'khu_report', 'receipts', 'day_close', 'baseline', 'daily_summary', 'phi_rate']) {
+      eq('đã xoá sạch bảng ' + t, S.sql('SELECT 1 FROM ' + t).length, 0);
+    }
+    eq('chuỗi giữ nguyên về 0', S.sql('SELECT 1 FROM khu_phi WHERE keep_streak <> 0').length, 0);
+    // hai bảng chỉ-ghi-thêm KHÔNG bị xoá: trigger của database từ chối, và đó là chỗ đọc lại số cũ
+    ok('lịch sử đếm vẫn còn', S.sql('SELECT 1 FROM counts_log').length > 0);
+    const nk = S.one("SELECT detail FROM audit WHERE action='reset_wipe' ORDER BY id DESC LIMIT 1");
+    ok('nhật ký ghi lại tổng thép trước khi xoá', JSON.parse(nk.detail).truoc.some((x) => x.phi === 'D16'), nk.detail);
+
+    // --- bãi trở lại trạng thái mới dựng: dùng được ngay, lần chốt tới tạo tồn chuẩn đầu tiên ---
+    const rv = (await S.call('GET', '/review')).data;
+    eq('không còn tồn chuẩn nào', rv.last, null);
+    eq('tổng bãi về 0', rv.rows.filter((x) => x.cnt).length, 0);
+    eq('chưa có mốc so nên lượng dùng để trống', rv.rows.every((x) => x.used === null), true);
+    eq('không còn việc gì chờ', rv.pending, 0);
+    day = vnDay();
+    eq('đếm lại được bình thường', (await bao(S, { khu: 'A', day, items: items({ D16: 500 }) }, 'An')).status, 200);
+    eq('và chốt được', (await S.call('POST', '/close', { note: '' })).status, 200);
+    eq('lần chốt này tạo tồn chuẩn đầu tiên',
+      S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 500);
+  }
+
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
   {
     const S = await setup();
