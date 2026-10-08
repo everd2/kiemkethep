@@ -582,12 +582,24 @@ const EFF_SELECT = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c
                  WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id AND c2.day > ?1 AND c2.day <= ?2
                    AND c2.duyet_v IS NOT NULL)`;
 // như trên nhưng mốc là ngày có tồn chuẩn gần nhất tính đến ?1 (dùng cho xuất CSV một ngày bất kỳ)
-const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v FROM counts c
+const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_at ts FROM counts c
   WHERE c.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c.day <= ?1
     AND c.duyet_v IS NOT NULL
     AND c.day = (SELECT MAX(c2.day) FROM counts c2
                  WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id AND c2.duyet_v IS NOT NULL
                    AND c2.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c2.day <= ?1)`;
+
+/* Thép ĐÃ DUYỆT về SAU lần đếm, tính đến ngày ?1 — tức phần chưa nằm trong số đếm.
+   Tồn mà app hiện = số đếm + phần này (xem tonOf ở app.js). Chỗ nào đọc tồn mà bỏ phần này thì
+   nói ít hơn chính app, và lệch đúng bằng lượng thép vừa về mà khu chưa kịp đếm.
+   Ngày ĐÃ CHỐT thì mốc tồn chuẩn chính là ngày đó nên phiếu duyệt trong ngày không lọt vào đây,
+   và kết quả bằng đúng tồn chuẩn — hai cách đọc vẫn khớp. */
+const MV_CHUA_DEM = `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
+  LEFT JOIN (${EFF_BY_BASELINE}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
+  WHERE r.voided = 0 AND r.duyet_day IS NOT NULL
+    AND r.duyet_day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1)
+    AND r.duyet_day <= ?1 AND (e.ts IS NULL OR r.duyet_ts > e.ts)
+  GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`;
 /* Mọi (khu x phi) đang dùng. Thay cho khu_phi làm bảng liệt kê: từ bản 1.3 khu nào cũng có đủ phi,
    nên tồn chuẩn thành đặc (8 khu x 13 phi) và bỏ được trường hợp "khu hôm qua không có phi đó". */
 const KHU_X_PHI = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p WHERE k.active = 1 AND p.active = 1`;
@@ -1892,7 +1904,7 @@ async function dayView(env, url) {
   const day = url.searchParams.get('date') || '';
   if (!DAY_RE.test(day) || day > vnDay()) throw bad('Ngày không hợp lệ');
   const db = env.DB;
-  const [closeR, cntR, baseR, prevR, rcR, sumR, repR] = await db.batch([
+  const [closeR, cntR, baseR, prevR, rcR, sumR, mvR, repR] = await db.batch([
     db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
     /* Xem lại một ngày là xem số ĐÃ DUYỆT của ngày đó: đó mới là số liệu chính thức.
        Lần báo chưa duyệt (nếu còn) không phải số liệu của ngày, nên không lấy ra đây. */
@@ -1905,11 +1917,13 @@ async function dayView(env, url) {
                 FROM receipts r LEFT JOIN users u ON u.id = r.user_id
                 WHERE (r.duyet_day = ?1 OR (r.duyet_day IS NULL AND r.day = ?1)) ORDER BY r.id`).bind(day),
     db.prepare('SELECT phi_id, ton, nhap, dung, span FROM daily_summary WHERE day = ?').bind(day),
+    // ngày CHƯA chốt thì tồn còn phải cộng phần thép đã duyệt mà khu chưa kịp đếm, y như Tồn bãi
+    db.prepare(MV_CHUA_DEM).bind(day),
     db.prepare(`SELECT r.khu_id, r.ts, ${UNAME} FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
   ]);
   return json({
     day, close: closeR.results[0] || null, counts: cntR.results, baseline: baseR.results, prevBaseline: prevR.results,
-    receipts: rcR.results, summary: sumR.results, reports: repR.results,
+    receipts: rcR.results, summary: sumR.results, mvNew: mvR.results, reports: repR.results,
   });
 }
 
@@ -2127,17 +2141,21 @@ async function usage(env, url) {
 
 async function exportCsv(env, url) {
   const day = DAY_RE.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : vnDay();
-  const [phiR, khuR, cntR, baseR] = await env.DB.batch([
+  const [phiR, khuR, cntR, baseR, mvR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, active, bo_size, unit FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare(EFF_BY_BASELINE).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT MAX(day) FROM baseline WHERE day <= ?)').bind(day),
+    env.DB.prepare(MV_CHUA_DEM).bind(day),
   ]);
-  const c = {}, b = {};
+  const c = {}, b = {}, mv = {};
   cntR.results.forEach((r) => (c[r.khu_id + '|' + r.phi_id] = r.v));
   baseR.results.forEach((r) => (b[r.khu_id + '|' + r.phi_id] = r.v));
+  mvR.results.forEach((r) => (mv[r.khu_id + '|' + r.phi_id] = r.q));
   const hasData = new Set();
-  Object.keys(c).concat(Object.keys(b)).forEach((key) => { if ((c[key] || b[key] || 0) > 0) hasData.add(key.split('|')[1]); });
+  Object.keys(c).concat(Object.keys(b), Object.keys(mv)).forEach((key) => {
+    if (((c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0)) > 0) hasData.add(key.split('|')[1]);
+  });
   const phis = phiR.results.filter((p) => p.active !== 0 || hasData.has(p.id));
   const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
   // cột thép cuộn ghi số cuộn; "Tổng (cây)" chỉ cộng thép cây, không lẫn số phần của cuộn
@@ -2149,7 +2167,7 @@ async function exportCsv(env, url) {
     let sum = 0, kg = 0;
     const cells = phis.map((p, i) => {
       const key = k.id + '|' + p.id;
-      const v = c[key] !== undefined ? c[key] : (b[key] || 0);
+      const v = (c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0);
       if (!isCuon(p)) sum += v;
       kg += v * p.kg_per_cay; colV[i] += v;
       return csvQty(v, p);

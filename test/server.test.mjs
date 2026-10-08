@@ -1214,6 +1214,75 @@ async function main() {
       S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 500);
   }
 
+  /* ================= 39. Tệp xuất phải nói cùng con số với app =================
+     Tồn mà app hiện = số đếm đã duyệt + phiếu ĐÃ DUYỆT về sau lần đếm đó. Tệp xuất trước đây chỉ
+     lấy số đếm, nên ít hơn đúng phần thép vừa về mà khu chưa kịp đếm. Nguy ở chỗ đây lại là tệp
+     người dùng được bảo tải về làm BẢN SAO trước khi xoá sạch dữ liệu: bản sao thiếu thép còn tệ
+     hơn không có bản sao.
+     Ngày ĐÃ CHỐT thì không được cộng trùng: mốc tồn chuẩn chính là ngày đó nên phiếu duyệt trong
+     ngày đã nằm trong tồn chuẩn rồi. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    const cotD16 = (csv) => {
+      const d = csv.split(/\r?\n/);
+      const i = (d.find((l) => l.startsWith('"Khu"')) || '').split(';').findIndex((x) => x === '"D16"');
+      return Number((d.find((l) => l.startsWith('"Khu A"')) || '').split(';')[i]);
+    };
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+    eq('ngày đã chốt: tệp xuất bằng đúng tồn chuẩn',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1800);
+
+    addDays(1); day = vnDay();
+    // thép về, ĐÃ DUYỆT, nhưng chưa ai đếm lại
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
+    const rv = (await S.call('GET', '/review')).data;
+    const exp = rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp;
+    eq('màn Duyệt nói dự kiến của khu là 1980', exp, 1980);
+    eq('và tệp xuất nói đúng con số đó, không phải 1800',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1980);
+
+    // đếm lại rồi thì phiếu đã nằm trong số đếm: không được cộng thêm lần nữa
+    await bao(S, { khu: 'A', day, items: items({ D16: 1950 }) }, 'An');
+    eq('đếm rồi thì tệp xuất lấy đúng số đếm, không cộng trùng',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1950);
+
+    // chốt ngày xong, tệp xuất vẫn bằng tồn chuẩn
+    await chot(S, { note: 'kiểm thử' });
+    eq('chốt xong: tệp xuất bằng tồn chuẩn mới',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1950);
+    eq('và tồn chuẩn đúng là số đã duyệt',
+      S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 1950);
+
+    // phiếu CHƯA duyệt thì tuyệt đối không được vào tệp xuất
+    addDays(1); day = vnDay();
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 500 }] });
+    eq('phiếu chưa duyệt không vào tệp xuất',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1950);
+
+    /* Màn "Xem lại ngày cũ" là đường đọc tồn thứ ba, và nó chọn được CHÍNH HÔM NAY (ô ngày có
+       max = hôm nay). Ngày chưa chốt thì nó cũng phải cộng phần thép đã duyệt chưa ai đếm, không
+       thì ba màn hình của cùng một app nói ba con số khác nhau về cùng một ngày. */
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 300 }] });
+    const dv = (await S.call('GET', '/day?date=' + day)).data;
+    const mvA = (dv.mvNew || []).find((x) => x.khu_id === 'A' && x.phi_id === 'D16');
+    eq('màn Xem lại ngày nhận được phần thép chưa ai đếm', mvA && mvA.q, 300);
+    eq('và tệp xuất cùng ngày nói đúng con số đó',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 2250);
+    eq('màn Duyệt cũng vậy',
+      (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 2250);
+
+    // ngày ĐÃ CHỐT thì tồn chuẩn là số chính thức, không cộng thêm gì
+    await bao(S, { khu: 'A', day, items: items({ D16: 2250 }) }, 'An');
+    await chot(S, { note: '' });
+    const dv2 = (await S.call('GET', '/day?date=' + day)).data;
+    eq('ngày đã chốt: không còn phần nào chưa đếm', (dv2.mvNew || []).length, 0);
+    eq('và tệp xuất bằng đúng tồn chuẩn',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 2250);
+  }
+
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
   {
     const S = await setup();

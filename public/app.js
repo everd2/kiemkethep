@@ -1137,12 +1137,20 @@ function vLichSu() {
     <div class="row gap8 tbar" style="padding:4px 16px"><input class="inp s f1" type="date" id="hdate" max="${b.today}" value="${H.date}" data-change="hdate"><button class="btn s" data-a="hprev">‹ Trước</button><button class="btn s ${H.date >= b.today ? 'dis' : ''}" data-a="hnext" ${H.date >= b.today ? 'disabled' : ''}>Sau ›</button></div>`;
   if (!D) return `${top}${panelWait('lichsu')}`;
   const key = (r) => r.khu_id + '|' + r.phi_id;
-  const cm = {}, bm = {}, pm = {};
+  const cm = {}, bm = {}, pm = {}, mm = {};
   D.counts.forEach((r) => (cm[key(r)] = r.v));
   D.baseline.forEach((r) => (bm[key(r)] = r.v));
   D.prevBaseline.forEach((r) => (pm[key(r)] = r.v));
+  (D.mvNew || []).forEach((r) => (mm[key(r)] = r.q));
   const closed = !!D.close;
-  const val = (k, p) => { const x = k + '|' + p; return closed ? bm[x] || 0 : cm[x] !== undefined ? cm[x] : pm[x] || 0; };
+  /* Ngày ĐÃ CHỐT: tồn chuẩn là số chính thức, dùng thẳng.
+     Ngày CHƯA chốt (xem lại chính hôm nay): phải cộng thêm thép đã duyệt mà khu chưa kịp đếm,
+     đúng như Tồn bãi và Tổng quan đang tính — không thì hai màn hình của cùng một app nói hai
+     con số khác nhau về cùng một ngày. */
+  const val = (k, p) => {
+    const x = k + '|' + p;
+    return closed ? bm[x] || 0 : (cm[x] !== undefined ? cm[x] : pm[x] || 0) + (mm[x] || 0);
+  };
   const sum = Object.fromEntries(D.summary.map((r) => [r.phi_id, r]));
   let totKg = 0, totIn = 0, totUse = 0;
   const rows = b.phiAct.map((p) => {
