@@ -250,17 +250,17 @@ const run = async () => {
      Trước đây Tổng quan báo đỏ ngay khi lệch 1 cây còn Duyệt chỉ báo từ 100 kg, nên bấm thẻ đỏ
      sang Duyệt rồi không có việc gì để xử lý và người dùng mất tin vào cảnh báo. */
   r(`S.boot.limits = { negKg: 100, highKg: 500, rateDays: 5 };`);
-  // D10 nặng 0,617 kg/cây: lệch 5 cây = 3 kg, dưới ngưỡng -> không báo
-  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 305, kind: 'dem', user_id: 1, uname: 'A', ts: Date.now() },
-                      { khu_id: 'B', phi_id: 'D10', v: 100, kind: 'dem', user_id: 1, uname: 'A', ts: Date.now() }]; indexBoot(S.boot);`);
+  // tồn chuẩn D10: A 300 + B 100 + Z 70 = 470. D10 nặng 0,617 kg/cây.
+  // đếm được 475 -> "đã dùng" −5 cây = −3 kg: sai số đếm thường ngày, không được báo đỏ
+  r(`S.boot.eff = [{ khu_id: 'A', phi_id: 'D10', v: 305 }, { khu_id: 'B', phi_id: 'D10', v: 100 }]; indexBoot(S.boot);`);
   ok('lệch nhỏ (3 kg): Tổng quan không báo "đã dùng âm"', !/đã dùng âm/.test(r('vHome()')), r(`JSON.stringify(totals().used)`));
-  // lệch 200 cây = 123 kg, vượt ngưỡng -> phải báo
-  r(`S.boot.counts[0].v = 500; indexBoot(S.boot);`);
-  ok('lệch lớn (123 kg): Tổng quan báo "đã dùng âm"', /đã dùng âm/.test(r('vHome()')));
+  // đếm được 670 -> "đã dùng" −200 cây = −123 kg: vượt ngưỡng, phải báo
+  r(`S.boot.eff[0].v = 500; indexBoot(S.boot);`);
+  ok('lệch lớn (123 kg): Tổng quan báo "đã dùng âm"', /đã dùng âm/.test(r('vHome()')), r(`JSON.stringify(totals().used)`));
   // server gửi ngưỡng khác thì app phải đi theo, không dùng số chép cứng
   r(`S.boot.limits.negKg = 500;`);
   ok('đổi ngưỡng ở server thì app đi theo', !/đã dùng âm/.test(r('vHome()')));
-  r(`S.boot.limits.negKg = 100; S.boot.counts = []; indexBoot(S.boot);`);
+  r(`S.boot.limits.negKg = 100; S.boot.eff = []; indexBoot(S.boot);`);
   ok('ngưỡng số ngày dữ liệu cũng lấy từ server', r('S.boot.limits.rateDays = 9, minRateDays()') === 9);
   r(`delete S.boot.limits;`);
   ok('bản cache cũ không có limits: vẫn chạy bằng số dự phòng', r('LIM("negKg")') === 100 && r('minRateDays()') === 5);

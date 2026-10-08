@@ -728,7 +728,7 @@ async function main() {
     eq('số đếm vẫn hiện ở Tổng quan', boot.counts.map((c) => [c.phi_id, c.v]), [['D16', 1800]]);
     eq('phiếu nhập vẫn hiện', boot.receipts.length, 1);
     eq('khu vẫn được đánh dấu đã báo', boot.reports.map((r) => r.khu_id), ['A']);
-    ok('tên người đã xoá hiện rõ ràng', /đã xoá/.test(boot.counts[0].uname), boot.counts[0].uname);
+    ok('tên người đã xoá hiện rõ ràng', /đã xoá/.test((boot.counts[0] || {}).uname || ''), JSON.stringify(boot.counts[0]));
     const dv = (await S.call('GET', '/day?date=' + day)).data;
     eq('màn Xem lại ngày cũ cũng giữ đủ dòng', [dv.counts.length, dv.receipts.length, dv.reports.length], [1, 1, 1]);
     eq('màn Duyệt vẫn thấy khu đã báo', (await S.call('GET', '/review')).data.reports.map((r) => r.khu_id), ['A']);
