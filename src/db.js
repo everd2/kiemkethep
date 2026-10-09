@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 21;
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -213,6 +213,30 @@ export const MIGRATIONS = {
   19: [
     'ALTER TABLE daily_summary ADD COLUMN bt INTEGER NOT NULL DEFAULT 0',
     'DROP TABLE IF EXISTS bao_sau_chot',
+  ],
+  /* SỔ VAY MƯỢN ĐỦ CHỨNG TỪ:
+     - ngay: ngày GIAO NHẬN thật (ghi bù được), khác ts là lúc bấm ghi sổ.
+     - han: hạn trả (tuỳ chọn, chỉ lần vay / cho vay) — để biết khoản nào quá hạn.
+     - so_bb: số biên bản giao nhận, đầu mối tra ngược sang giấy tờ.
+     - nguoi, bien_so: người giao/nhận bên đối tác, biển số xe.
+     Dòng cũ lấy ngày giao nhận = ngày đã ghi sổ (giờ Việt Nam). */
+  20: [
+    'ALTER TABLE loans ADD COLUMN ngay TEXT',
+    'ALTER TABLE loans ADD COLUMN han TEXT',
+    'ALTER TABLE loans ADD COLUMN so_bb TEXT',
+    'ALTER TABLE loans ADD COLUMN nguoi TEXT',
+    'ALTER TABLE loans ADD COLUMN bien_so TEXT',
+    "UPDATE loans SET ngay = date(ts / 1000, 'unixepoch', '+7 hours') WHERE ngay IS NULL",
+  ],
+  /* CHẤM CÔNG BÁO CÁO: lúc sổ tự chốt, lưu kết quả báo cáo của từng khu trong ngày đó — ai đang phụ
+     trách, phải báo mấy buổi, ai báo buổi nào, buổi nào thiếu. Lưu NGAY LÚC CHỐT vì phân công
+     (khu_user) chỉ giữ hiện tại: tính lại về sau thì đổi phân công là đổ lỗi ngày cũ sang người mới. */
+  21: [
+    `CREATE TABLE IF NOT EXISTS bao_cao_ngay (
+       day TEXT NOT NULL, khu_id TEXT NOT NULL, phu_trach TEXT NOT NULL DEFAULT '[]',
+       khung TEXT NOT NULL DEFAULT '[]', phai INTEGER NOT NULL DEFAULT 0,
+       bao TEXT NOT NULL DEFAULT '[]', thieu TEXT NOT NULL DEFAULT '[]',
+       PRIMARY KEY (day, khu_id))`,
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

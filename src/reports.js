@@ -190,6 +190,59 @@ export async function usage(env, url) {
   return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used, kg: kgBy[r.day] || {}, xuat: xBy[r.day] || {} }; }) });
 }
 
+/* ========================= CHẤM CÔNG BÁO CÁO =========================
+   Ai báo, ai không báo, khu nào thiếu buổi nào — trên các ngày ĐÃ CHỐT (bảng bao_cao_ngay ghi lúc
+   sổ tự chốt; hôm nay chưa chốt nên chưa tính). Mỗi buổi khu phải báo mà không ai báo là một buổi
+   THIẾU, tính cho MỌI người phụ trách khu đó lúc chốt (cùng phụ trách thì cùng chịu, có ghi tên người
+   cùng phụ trách). Khu không có ai phụ trách thì chỉ hiện ở phần khu, không tính cho ai. */
+export async function chamCong(env, url) {
+  const today = vnDay();
+  const to = DAY_RE.test(url.searchParams.get('to') || '') ? url.searchParams.get('to') : today;
+  const from = DAY_RE.test(url.searchParams.get('from') || '') ? url.searchParams.get('from') : to;
+  if (from > to) throw bad('Khoảng ngày không hợp lệ');
+  const [ngR, userR, khuR] = await env.DB.batch([
+    env.DB.prepare('SELECT day, khu_id, phu_trach, khung, phai, bao, thieu FROM bao_cao_ngay WHERE day >= ? AND day <= ? ORDER BY day').bind(from, to),
+    env.DB.prepare('SELECT id, name, role, deleted FROM users'),
+    env.DB.prepare('SELECT id, name FROM khu ORDER BY sort, id'),
+  ]);
+  const P = (x) => { try { return JSON.parse(x || '[]'); } catch (e) { return []; } };
+  const uName = Object.fromEntries(userR.results.map((u) => [u.id, u.name + (u.deleted ? ' (đã xoá)' : '')]));
+  const ng = {}, kh = {};
+  const nguoi = (id) => (ng[id] = ng[id] || { id, name: uName[id] || '(đã xoá)', lan: 0, ngay: new Set(), phai: 0, tu: 0, thay: 0, thieu: [] });
+  for (const r of ngR.results) {
+    const pt = P(r.phu_trach), khung = P(r.khung), bao = P(r.bao), thieu = P(r.thieu);
+    // ai báo: mọi lần gửi, kể cả báo khu không phải của mình (báo thay)
+    bao.forEach((b) => { const n = nguoi(b.u); n.lan++; n.ngay.add(r.day); });
+    const k = (kh[r.khu_id] = kh[r.khu_id] || { khu: r.khu_id, phai: 0, thieu: [], khongPt: 0 });
+    k.phai += r.phai;
+    if (r.phai && !pt.length) k.khongPt++;
+    if (thieu.length) k.thieu.push({ day: r.day, buoi: thieu.map((i) => khung[i] || '?'), pt: pt.map((id) => uName[id] || '(đã xoá)') });
+    if (!r.phai) continue;
+    // ai không báo: tính trên khu người đó phụ trách
+    for (const id of pt) {
+      const n = nguoi(id);
+      n.phai += r.phai;
+      khung.forEach((_, i) => {
+        if (thieu.includes(i)) return;
+        if (bao.some((b) => b.i === i && b.u === id)) n.tu++;
+        else n.thay++;
+      });
+      if (thieu.length) {
+        n.thieu.push({ day: r.day, khu: r.khu_id, buoi: thieu.map((i) => khung[i] || '?'),
+          cung: pt.filter((x) => x !== id).map((x) => uName[x] || '(đã xoá)') });
+      }
+    }
+  }
+  const khuName = Object.fromEntries(khuR.results.map((k) => [k.id, k.name]));
+  return json({
+    from, to, today, ngay: new Set(ngR.results.map((r) => r.day)).size,
+    nguoi: Object.values(ng).map((n) => ({ ...n, ngay: n.ngay.size, soThieu: n.thieu.reduce((a, t) => a + t.buoi.length, 0) }))
+      .sort((a, b) => b.soThieu - a.soThieu || a.name.localeCompare(b.name)),
+    khu: Object.values(kh).map((k) => ({ ...k, name: khuName[k.khu] || k.khu, soThieu: k.thieu.reduce((a, t) => a + t.buoi.length, 0) }))
+      .sort((a, b) => b.soThieu - a.soThieu),
+  });
+}
+
 export async function exportCsv(env, url) {
   const day = DAY_RE.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : vnDay();
   const [phiR, khuR, cntR, baseR, mvR, kgR] = await env.DB.batch([

@@ -4,6 +4,7 @@ import { slotInfo } from './slots.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './helpers.js';
 import { EFF_SELECT } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
+import { LOAN_LOT_SQL, loanLots } from './loans.js';
 
 /* ========================= DỮ LIỆU CHUNG ========================= */
 
@@ -11,7 +12,7 @@ export async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -61,6 +62,8 @@ export async function bootstrap(env, user) {
     // đếm nhanh để nhắc ở Tổng quan; chi tiết nạp khi vào đúng màn Vay mượn, như /users
     // đếm theo LẦN GHI (grp) chứ không theo dòng: ghi một lần ba phi là MỘT việc admin phải duyệt
     env.DB.prepare('SELECT COUNT(DISTINCT COALESCE(grp, id)) n FROM loans WHERE voided = 0 AND duyet_ts IS NULL'),
+    // các dòng vay mượn đã duyệt: tính phần còn nợ theo từng lần vay để biết khoản nào QUÁ HẠN
+    env.DB.prepare(LOAN_LOT_SQL),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -94,5 +97,7 @@ export async function bootstrap(env, user) {
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
     doitacAct: doitacAct.results,
     loanPending: loanPending.results[0] ? loanPending.results[0].n : 0,
+    // số khoản (lần vay còn nợ) đã quá hạn trả, theo hai chiều: mình nợ đối tác / đối tác nợ mình
+    loanQuaHan: (() => { const l = loanLots(loanLotR.results, day).filter((x) => x.quaHan); return { no: l.filter((x) => x.chieu === 'no').length, co: l.filter((x) => x.chieu === 'co').length }; })(),
   };
 }

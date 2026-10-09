@@ -1,6 +1,6 @@
 // Màn Duyệt: tính tồn, lượng dùng, cảnh báo; duyệt khu, chốt và mở lại ngày; việc tự động 23:50.
 import { HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
-  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, json, vnDay } from './core.js';
+  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, json, vnDay, vnHour } from './core.js';
 import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { RATE_SQL } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, bump,
@@ -578,11 +578,44 @@ function carryStmts(env, day) {
   ];
 }
 
+/* Chấm công báo cáo của ngày (bảng bao_cao_ngay): với từng khu đang dùng, ai phụ trách LÚC NÀY, phải
+   báo mấy buổi, ai báo buổi nào, buổi nào không ai báo. "Phải báo" theo đúng luật của màn Duyệt: khu
+   trống trơn (không tồn, không phiếu, chưa từng báo gì) thì không bị đòi. Buổi tính theo LÚC ĐẾM máy
+   khai (at), như khung giờ ở màn Duyệt. Đếm 1 lần/ngày thì cả ngày là một buổi. */
+function chamCongStmt(env, rv, logs, asg) {
+  const defs = rv.slot.n > 1 ? rv.slot.defs : [{ i: 0, label: 'cả ngày', to: 24 }];
+  const buoi = (at) => {
+    if (defs.length === 1) return 0;
+    const d = defs.find((x) => vnHour(at) < x.to);
+    return d ? d.i : defs.length - 1;
+  };
+  const rows = rv.khus.map((k) => {
+    const can = k.items.length > 0;
+    const bao = logs.filter((l) => l.khu_id === k.khu).map((l) => ({ u: l.user_id, at: l.at, i: buoi(l.at) }));
+    const xong = new Set(bao.map((x) => x.i));
+    return {
+      khu: k.khu, pt: asg.filter((a) => a.khu_id === k.khu).map((a) => a.user_id),
+      khung: defs.map((d) => d.label), phai: can ? defs.length : 0, bao,
+      thieu: can ? defs.filter((d) => !xong.has(d.i)).map((d) => d.i) : [],
+    };
+  });
+  return env.DB.prepare(
+    `INSERT OR REPLACE INTO bao_cao_ngay (day, khu_id, phu_trach, khung, phai, bao, thieu)
+     SELECT ?1, ${J('khu')}, json_extract(j.value, '$.pt'), json_extract(j.value, '$.khung'), ${J('phai')},
+            json_extract(j.value, '$.bao'), json_extract(j.value, '$.thieu') FROM json_each(?2) j`
+  ).bind(rv.day, JSON.stringify(rows));
+}
+
 // Chốt sổ một ngày ĐÃ QUA. Trả false nếu ngày đó đã chốt. Bộ test gọi thẳng hàm này.
 export async function closeDayAuto(env, day) {
   const rv = await computeReview(env, day, { cuoiNgay: true });
   if (rv.closed) return false;
-  await doClose(env, SYSTEM, rv, autoNote(rv), 'auto_close', carryStmts(env, day));
+  const [logR, asgR] = await env.DB.batch([
+    env.DB.prepare('SELECT khu_id, user_id, at FROM khu_report_log WHERE day = ? ORDER BY at').bind(day),
+    env.DB.prepare('SELECT khu_id, user_id FROM khu_user'),
+  ]);
+  await doClose(env, SYSTEM, rv, autoNote(rv), 'auto_close',
+    [...carryStmts(env, day), chamCongStmt(env, rv, logR.results, asgR.results)]);
   return true;
 }
 

@@ -273,6 +273,19 @@ S.boot.closed = false; S.boot.closedReset = false; S.review.closed = false;
   S.subs = { B: [{ uname: 'Duy', ts: t('13:00'), vals: { D12: 18000 } }, { uname: 'Lý', ts: t('14:37'), vals: { D12: 18560 } }] }; render();
   out.push(['duyet+lan-bao-cung-khung', 0, $app.innerHTML.includes('data-a="spick"') ? 'ok' : 'BAD:cùng khung mà không cho chọn']);
   S.review.slot = giuSlot; S.subs = giuSubs; }
+// chấm công báo cáo: người thiếu buổi có viền đỏ, mở ra thấy ngày nào, khu nào
+S.cc = { days: 7, mo: { u2: true, kC: true }, data: { from: S.boot.today, to: S.boot.today, ngay: 1,
+  nguoi: [{ id: 2, name: 'An', lan: 1, ngay: 1, phai: 4, tu: 1, thay: 2, soThieu: 1, thieu: [{ day: S.boot.today, khu: 'A', buoi: ['buổi chiều (12h–18h)'], cung: ['Bình'] }] },
+          { id: 3, name: 'Bình', lan: 2, ngay: 1, phai: 2, tu: 2, thay: 0, soThieu: 0, thieu: [] }],
+  khu: [{ khu: 'C', name: 'Khu C', phai: 2, khongPt: 1, soThieu: 2, thieu: [{ day: S.boot.today, buoi: ['buổi sáng (6h–12h)', 'buổi chiều (12h–18h)'], pt: [] }] }] } };
+S.screen = 'chamcong'; render();
+{ const h = $app.innerHTML; const thieu = ['Thiếu 1 buổi', 'cùng phụ trách: Bình', 'không ai phụ trách', 'không người phụ trách', '>Đủ<'].filter((x) => !h.includes(x));
+  out.push(['chamcong', h.length, thieu.length ? 'BAD:thiếu ' + thieu.join(' | ') : 'ok']); }
+S.cc.data = { from: S.boot.today, to: S.boot.today, ngay: 0, nguoi: [], khu: [] }; render();
+out.push(['chamcong+trong', 0, $app.innerHTML.includes('Chưa có ngày nào đã chốt') ? 'ok' : 'BAD:chấm công trống']);
+S.screen = 'more'; render();
+out.push(['more+chamcong', 0, $app.innerHTML.includes('data-s="chamcong"') ? 'ok' : 'BAD:mục Thêm thiếu Chấm công']);
+S.screen = 'duyet';
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
 // các phần mới phải THẬT SỰ hiện ra, không chỉ "không lỗi"

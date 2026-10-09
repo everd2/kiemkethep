@@ -13,7 +13,7 @@ import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
   settingsUpdate, userAction } from './admin.js';
-import { auditList, dayView, exportCsv, report, usage } from './reports.js';
+import { auditList, chamCong, dayView, exportCsv, report, usage } from './reports.js';
 
 let schemaReady = null;
 function ensureSchema(env) {
@@ -122,6 +122,8 @@ async function handle(req, env, url) {
   if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') return conflictResolve(req, env, user);
   if (r0 === 'submissions' && method === 'GET') return submissionsView(env, url);
   if (r0 === 'audit' && method === 'GET') return auditList(env, url);
+  // chấm công báo cáo: ai báo, ai không báo, khu thiếu buổi nào (chỉ admin)
+  if (r0 === 'cham-cong' && method === 'GET') return chamCong(env, url);
   if (r0 === 'export' && method === 'GET') return exportCsv(env, url);
   if (r0 === 'users') {
     if (method === 'GET' && p.length === 1) return listUsers(env);

@@ -2293,7 +2293,7 @@ async function main() {
     eq('có trường nhưng chưa tick: từ chối', (await S.call('POST', '/loans', { bienban: false, zalo: false, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'An')).status, 400);
     eq('chỉ có biên bản, chưa gửi Zalo: từ chối', (await S.call('POST', '/loans', { bienban: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'An')).status, 400);
     const tonTruoc = (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]);
-    const g1 = await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D18', qty: 100 }], note: 'xe 29C' }, 'An');
+    const g1 = await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D18', qty: 100 }], note: 'xe 29C' }, 'An');
     eq('người đếm ghi sổ được', g1.status, 200);
     eq('một lần ghi hai phi', g1.data.ids.length, 2);
     eq('chờ duyệt đếm theo LẦN GHI, không theo dòng', (await S.call('GET', '/bootstrap')).data.loanPending, 1);
@@ -2306,9 +2306,9 @@ async function main() {
     eq('sổ vay KHÔNG đụng tới tồn bãi', (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]), tonTruoc);
 
     // trả bớt và cho vay chiều ngược lại: hai cặp tính riêng
-    const g2 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'tra_vay', lines: [{ phi: 'D16', qty: 80 }] })).data;
+    const g2 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'tra_vay', lines: [{ phi: 'D16', qty: 80 }] })).data;
     await S.call('POST', '/loans/' + g2.ids[0] + '/duyet', {});
-    const g3 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'cho_vay', lines: [{ phi: 'D16', qty: 50 }] })).data;
+    const g3 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'cho_vay', lines: [{ phi: 'D16', qty: 50 }] })).data;
     await S.call('POST', '/loans/' + g3.ids[0] + '/duyet', {});
     L = (await S.call('GET', '/loans')).data;
     const q = (kind, phi) => (L.agg.find((x) => x.kind === kind && x.phi_id === phi) || {}).q || 0;
@@ -2316,10 +2316,10 @@ async function main() {
     eq('họ nợ mình D16 tính riêng', q('cho_vay', 'D16') - q('tra_no', 'D16'), 50);
 
     // huỷ: người khác không huỷ được; người ghi rút lại khi chưa duyệt; quá 10 phút sau duyệt thì nhờ admin
-    const g4 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D20', qty: 10 }] }, 'An')).data;
+    const g4 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'vay', lines: [{ phi: 'D20', qty: 10 }] }, 'An')).data;
     eq('người khác không rút được', (await S.call('DELETE', '/loans/' + g4.ids[0], undefined, 'Binh')).status, 403);
     eq('người ghi rút lại khi chưa duyệt', (await S.call('DELETE', '/loans/' + g4.ids[0], undefined, 'An')).status, 200);
-    const g5 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D20', qty: 10 }] }, 'An')).data;
+    const g5 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'vay', lines: [{ phi: 'D20', qty: 10 }] }, 'An')).data;
     await S.call('POST', '/loans/' + g5.ids[0] + '/duyet', {});
     advance(11 * 60e3);
     eq('quá 10 phút sau duyệt: người ghi không huỷ được', (await S.call('DELETE', '/loans/' + g5.ids[0], undefined, 'An')).status, 403);
@@ -2329,7 +2329,7 @@ async function main() {
 
     // đối tác đã ẩn: không ghi thêm, nhưng dư nợ vẫn giữ
     await S.call('PATCH', '/doitac/' + dtA, { active: 0 });
-    eq('đối tác đã ẩn: không ghi thêm được', (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] })).status, 400);
+    eq('đối tác đã ẩn: không ghi thêm được', (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] })).status, 400);
     eq('nhưng dư nợ vẫn còn', (await S.call('GET', '/loans')).data.agg.length > 0, true);
     await S.call('PATCH', '/doitac/' + dtA, { active: 1 });
     ok('nhật ký ghi lại lần xác nhận biên bản', /"bienban":true,"zalo":true/.test((S.sql("SELECT detail FROM audit WHERE action='loan_vay' LIMIT 1")[0] || {}).detail || ''));
@@ -2367,16 +2367,16 @@ async function main() {
   {
     const S = await setup();
     const dt = (await S.call('POST', '/doitac', { name: 'Cty Bình Minh' })).data.id;
-    const g = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'cho_vay', lines: [{ phi: 'D16', qty: 90 }] }, 'An')).data;
+    const g = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', lines: [{ phi: 'D16', qty: 90 }] }, 'An')).data;
     await S.call('POST', '/loans/' + g.ids[0] + '/duyet', {});
     const d1 = JSON.parse(S.one("SELECT detail FROM audit WHERE action='loan_duyet' ORDER BY id DESC LIMIT 1").detail);
     eq('nhật ký duyệt sổ vay: có tên đối tác và dòng', [d1.doitac, d1.lines], ['Cty Bình Minh', [{ phi: 'D16', qty: 90 }]]);
-    const g2 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'vay', lines: [{ phi: 'D18', qty: 5 }] }, 'An')).data;
+    const g2 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'vay', lines: [{ phi: 'D18', qty: 5 }] }, 'An')).data;
     await S.call('DELETE', '/loans/' + g2.ids[0], undefined, 'An');
     eq('nhật ký rút lại: cũng có đối tác', JSON.parse(S.one("SELECT detail FROM audit WHERE action='loan_reject' ORDER BY id DESC LIMIT 1").detail).doitac, 'Cty Bình Minh');
 
     // một lần ghi chờ duyệt rồi 320 dòng đã duyệt mới hơn: lần ghi cũ vẫn phải hiện để duyệt
-    const cu = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'vay', lines: [{ phi: 'D20', qty: 7 }] }, 'An')).data.ids[0];
+    const cu = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'vay', lines: [{ phi: 'D20', qty: 7 }] }, 'An')).data.ids[0];
     const ins = S.raw.prepare("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, duyet_ts) VALUES (?, 'D16', 'vay', 1, 1, ?, ?)");
     for (let i = 0; i < 320; i++) ins.run(dt, Date.now(), Date.now());
     const L = (await S.call('GET', '/loans')).data;
@@ -2452,9 +2452,9 @@ async function main() {
     addDays(1); day = vnDay();
     const dt = (await S.call('POST', '/doitac', { name: 'Cty Đông Á' })).data.id;
 
-    eq('người đếm không lập phiếu kho kèm sổ vay', (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 300 }] }, 'An')).status, 403);
-    eq('cho vay quá số khu đang có: từ chối', (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 5000 }] }, 'Kho')).status, 400);
-    const g = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 300 }], note: 'xe 29C' }, 'Kho')).data;
+    eq('người đếm không lập phiếu kho kèm sổ vay', (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 300 }] }, 'An')).status, 403);
+    eq('cho vay quá số khu đang có: từ chối', (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 5000 }] }, 'Kho')).status, 400);
+    const g = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 300 }], note: 'xe 29C' }, 'Kho')).data;
     const ph = S.sql("SELECT kind, khu_id, qty, duyet_day FROM receipts WHERE grp = ?", g.grp);
     eq('lập kèm phiếu kho cùng nhóm, dòng âm, chờ duyệt', ph, [{ kind: 'vay', khu_id: 'A', qty: -300, duyet_day: null }]);
     let rv = (await S.call('GET', '/review')).data;
@@ -2473,7 +2473,7 @@ async function main() {
     eq('tách đúng phần vay mượn', r16.vay, -300);
 
     // đi vay về khu B, duyệt từ phía PHIẾU KHO: sổ cũng phải được duyệt
-    const g2 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'vay', khu: 'B', lines: [{ phi: 'D16', qty: 100 }] }, 'Kho')).data;
+    const g2 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'vay', khu: 'B', lines: [{ phi: 'D16', qty: 100 }] }, 'Kho')).data;
     const pid = S.one('SELECT id FROM receipts WHERE grp = ?', g2.grp).id;
     eq('duyệt phiếu kho', (await S.call('POST', '/receipts/' + pid + '/duyet', {})).status, 200);
     ok('duyệt phiếu là duyệt luôn sổ', !!S.one('SELECT duyet_ts t FROM loans WHERE grp = ?', g2.grp).t);
@@ -2488,12 +2488,12 @@ async function main() {
     eq('ngày duyệt phiếu kho đã chốt: không huỷ sổ được', (await S.call('DELETE', '/loans/' + g.ids[0])).status, 409);
     // huỷ từ phía phiếu kho (ngày chưa chốt): sổ cũng bị huỷ theo
     addDays(1); day = vnDay();
-    const g3 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'tra_no', khu: 'A', lines: [{ phi: 'D16', qty: 50 }] }, 'Kho')).data;
+    const g3 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'tra_no', khu: 'A', lines: [{ phi: 'D16', qty: 50 }] }, 'Kho')).data;
     const pid3 = S.one('SELECT id FROM receipts WHERE grp = ?', g3.grp).id;
     await S.call('DELETE', '/receipts/' + pid3);
     eq('huỷ phiếu kho là huỷ luôn sổ', S.one('SELECT voided v FROM loans WHERE grp = ?', g3.grp).v, 1);
     // chỉ ghi sổ (không khu): tồn không đổi, và hiện ở mục sổ vay chờ duyệt của màn Duyệt
-    const g4 = (await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'vay', lines: [{ phi: 'D18', qty: 10 }] }, 'An')).data;
+    const g4 = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'vay', lines: [{ phi: 'D18', qty: 10 }] }, 'An')).data;
     eq('chỉ ghi sổ: không có phiếu kho', S.sql('SELECT 1 FROM receipts WHERE grp = ?', g4.grp).length, 0);
     eq('chỉ ghi sổ: hiện ở mục sổ vay chờ duyệt', (await S.call('GET', '/review')).data.loans.map((x) => x.grp), [g4.grp]);
 
@@ -2690,6 +2690,85 @@ async function main() {
     const mk = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').mark;
     eq('chọn lại lần báo: được', (await S.call('POST', '/conflict/resolve', { khu: 'A', pick: subs[0].vals, mark: mk, from: subs[0].ts })).status, 200);
     eq('ô để trống vẫn là để trống', S.one("SELECT v, kind FROM counts WHERE day=? AND khu_id='A' AND phi_id='D12'", day), { v: 0, kind: 'zero' });
+  }
+
+  /* ================= 56. Sổ vay mượn đủ chứng từ: ngày giao nhận, hạn trả, số biên bản =================
+     Ngày giao nhận là ngày trên biên bản (ghi bù được), số biên bản bắt buộc, hạn trả tuỳ chọn và chỉ
+     cho lần vay/cho vay. Quá hạn tính trên PHẦN CÒN NỢ của từng lần vay: lần trả trừ vào lần vay cũ
+     nhất trước. */
+  {
+    const S = await setup();
+    const today = vnDay(), lui = (n) => new Date(Date.parse(today) - n * 864e5).toISOString().slice(0, 10);
+    const dt = (await S.call('POST', '/doitac', { name: 'Cty Nam Hà' })).data.id;
+    const ghi = (o, who) => S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty: 10 }], ...o }, who);
+
+    const cu = await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty: 10 }] });
+    eq('bản app chưa có ô số biên bản: báo app cũ', [cu.status, cu.data.code], [409, 'old_app']);
+    eq('số biên bản để trống: từ chối', (await ghi({ so_bb: '  ' })).status, 400);
+    eq('ngày giao nhận sau hôm nay: từ chối', (await ghi({ so_bb: 'B1', ngay: lui(-1) })).status, 400);
+    eq('ngày giao nhận hơn một năm trước: từ chối', (await ghi({ so_bb: 'B1', ngay: lui(400) })).status, 400);
+    eq('lần trả không có hạn trả', (await ghi({ so_bb: 'B1', kind: 'tra_vay', han: lui(-5) })).status, 400);
+    eq('hạn trả trước ngày giao nhận: từ chối', (await ghi({ so_bb: 'B1', ngay: lui(5), han: lui(6) })).status, 400);
+
+    const g0 = (await ghi({ so_bb: 'B0' })).data;
+    eq('không gửi ngày: lấy hôm nay', S.one('SELECT ngay FROM loans WHERE grp = ?', g0.grp).ngay, today);
+    // vay 100 hẹn đã qua, vay 50 hẹn chưa tới, trả 80: còn 20 của lần đầu (QUÁ HẠN) và 50 của lần sau
+    const g1 = (await ghi({ so_bb: 'BB-0123', ngay: lui(10), han: lui(3), nguoi: 'anh Hùng', bien_so: '29C-123', lines: [{ phi: 'D18', qty: 100 }] })).data;
+    const r1 = S.one('SELECT ngay, han, so_bb, nguoi, bien_so FROM loans WHERE grp = ?', g1.grp);
+    eq('lưu đủ chứng từ', r1, { ngay: lui(10), han: lui(3), so_bb: 'BB-0123', nguoi: 'anh Hùng', bien_so: '29C-123' });
+    const g2 = (await ghi({ so_bb: 'BB-0130', ngay: lui(5), han: lui(-20), lines: [{ phi: 'D18', qty: 50 }] })).data;
+    const g3 = (await ghi({ so_bb: 'BB-0140', kind: 'tra_vay', ngay: lui(1), lines: [{ phi: 'D18', qty: 80 }] })).data;
+    for (const g of [g0, g1, g2, g3]) await S.call('POST', '/loans/' + g.ids[0] + '/duyet', {});
+    const L = (await S.call('GET', '/loans')).data;
+    const lots = L.lots.filter((l) => l.phi_id === 'D18').map((l) => [l.so_bb, l.con, l.quaHan]);
+    eq('trả trừ vào lần vay cũ nhất trước: còn 20 (quá hạn) và 50 (chưa tới hạn)', lots, [['BB-0123', 20, true], ['BB-0130', 50, false]]);
+    eq('Tổng quan biết có 1 khoản mình nợ quá hạn', (await S.call('GET', '/bootstrap')).data.loanQuaHan, { no: 1, co: 0 });
+    const ct = (await S.call('GET', '/loans?doitac=' + dt)).data;
+    eq('chi tiết đối tác: lịch sử xếp theo ngày giao nhận, mới trước', ct.items.filter((x) => x.phi_id === 'D18').map((x) => x.so_bb), ['BB-0140', 'BB-0130', 'BB-0123']);
+    eq('chi tiết đối tác có phần còn nợ theo từng lần', ct.lots.filter((l) => l.phi_id === 'D18').length, 2);
+    ok('nhật ký ghi số biên bản và ngày giao nhận', /"so_bb":"BB-0123".*"ngay":"/.test((S.sql("SELECT detail FROM audit WHERE action='loan_vay' AND detail LIKE '%BB-0123%'")[0] || {}).detail || ''));
+    // trả nốt phần quá hạn: hết quá hạn
+    const g4 = (await ghi({ so_bb: 'BB-0150', kind: 'tra_vay', lines: [{ phi: 'D18', qty: 20 }] })).data;
+    await S.call('POST', '/loans/' + g4.ids[0] + '/duyet', {});
+    eq('trả nốt phần quá hạn: hết quá hạn', (await S.call('GET', '/bootstrap')).data.loanQuaHan, { no: 0, co: 0 });
+  }
+
+  /* ================= 61. Chấm công báo cáo: ai báo, ai không báo, khu thiếu buổi nào =================
+     Lưu lúc sổ tự chốt, nên đổi phân công sau đó không đổ lỗi ngày cũ sang người mới. */
+  {
+    const S = await setup();
+    const atHour = (h, m = 0) => { const t = Date.parse(vnDay() + 'T' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':00+07:00'); clock.offset += t - Date.now(); };
+    const uid = (n) => S.one('SELECT id FROM users WHERE name = ?', n).id;
+    const an = uid('An'), binh = uid('Binh');
+    await S.call('PUT', '/settings', { report_slots_per_day: 2 });
+    await S.call('PUT', '/khu/A/users', { users: [an] });
+    await S.call('PUT', '/khu/B/users', { users: [an, binh] });   // hai người cùng phụ trách
+    const day = vnDay();
+    await nhap(S, { khu: 'C', lines: [{ phi: 'D16', qty: 100 }] }); // khu C có thép, không ai phụ trách
+    atHour(9);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 50 }) }, 'An');      // A: chỉ buổi sáng
+    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D18: 40 }) }, 'Binh');    // B: Bình đủ hai buổi
+    atHour(14);
+    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D18: 40 }) }, 'Binh');
+    eq('chốt ngày', (await chotNgay(S)).status, 200);
+    // đổi phân công SAU khi chốt: ngày đã chốt vẫn tính cho người phụ trách lúc đó
+    await S.call('PUT', '/khu/A/users', { users: [binh] });
+
+    eq('người đếm không xem được', (await S.call('GET', '/cham-cong?from=' + day + '&to=' + day, undefined, 'An')).status, 403);
+    const d = (await S.call('GET', '/cham-cong?from=' + day + '&to=' + day)).data;
+    eq('đếm được số ngày đã chốt', d.ngay, 1);
+    const nA = d.nguoi.find((n) => n.name === 'An'), nB = d.nguoi.find((n) => n.name === 'Binh');
+    eq('An: báo 1 lần, phải 4 buổi (A + B), tự báo 1, người khác báo thay 2, thiếu 1',
+      [nA.lan, nA.phai, nA.tu, nA.thay, nA.soThieu], [1, 4, 1, 2, 1]);
+    eq('An thiếu: Khu A buổi chiều', nA.thieu.map((t) => [t.khu, t.buoi]), [['A', ['buổi chiều (12h–18h)']]]);
+    eq('Bình: báo 2 lần, phải 2 buổi, đủ', [nB.lan, nB.phai, nB.tu, nB.soThieu], [2, 2, 2, 0]);
+    eq('đổi phân công sau khi chốt không đổ lỗi sang Bình', nB.thieu.length, 0);
+    const kA = d.khu.find((k) => k.khu === 'A'), kC = d.khu.find((k) => k.khu === 'C');
+    eq('khu A thiếu buổi chiều, phụ trách An', kA.thieu.map((t) => [t.buoi, t.pt]), [[['buổi chiều (12h–18h)'], ['An']]]);
+    eq('khu C không ai phụ trách: thiếu cả hai buổi, không tính cho ai', [kC.soThieu, kC.khongPt, kC.thieu[0].pt], [2, 1, []]);
+    ok('không ai bị tính thiếu thay cho khu C', d.nguoi.every((n) => n.thieu.every((t) => t.khu !== 'C')));
+    eq('khu trống không bị đòi', d.khu.some((k) => !['A', 'B', 'C'].includes(k.khu) && k.phai), false);
+    eq('khoảng ngày ngược: từ chối', (await S.call('GET', '/cham-cong?from=' + day + '&to=2000-01-01')).status, 400);
   }
 
   /* ================= kết quả ================= */

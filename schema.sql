@@ -282,6 +282,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_doitac_name ON doitac(name COLLATE NOCASE)
 -- Dư nợ ĐỐI TÁC NỢ MÌNH (theo từng phi) = SUM(cho_vay) − SUM(tra_no) của các dòng ĐÃ DUYỆT.
 -- Giống receipts: dòng mới sinh ra ở trạng thái CHỜ DUYỆT (duyet_ts NULL), chưa tính vào dư nợ,
 -- để admin luôn nắm được số liệu trước khi nó thành chính thức.
+-- ngay: ngày GIAO NHẬN thật (ghi bù được; khác ts là lúc bấm ghi sổ). han: hạn trả (tuỳ chọn, chỉ
+--       vay / cho_vay). so_bb: số biên bản giao nhận (bắt buộc từ bản 20). nguoi, bien_so: người
+--       giao/nhận bên đối tác, biển số xe.
 -- grp: các dòng cùng MỘT lần ghi (vd cho A vay cả D16 và D18 một lượt), để huỷ/duyệt cùng lúc
 -- như một phiếu, giống receipts.grp.
 CREATE TABLE IF NOT EXISTS loans (
@@ -298,7 +301,12 @@ CREATE TABLE IF NOT EXISTS loans (
   voided_ts INTEGER,
   duyet_ts INTEGER,
   duyet_by INTEGER,
-  duyet_name TEXT
+  duyet_name TEXT,
+  ngay TEXT,
+  han TEXT,
+  so_bb TEXT,
+  nguoi TEXT,
+  bien_so TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_loans_doitac ON loans(doitac_id);
 CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp);
@@ -324,7 +332,22 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 19);
+-- Chấm công báo cáo: kết quả báo cáo của từng khu trong một ngày, lưu lúc sổ tự chốt.
+-- phu_trach: id người phụ trách LÚC CHỐT (JSON). khung: nhãn các buổi phải báo (JSON).
+-- phai: số buổi phải báo (0 = khu trống, không bị đòi). bao: các lần gửi [{u, at, i}] (i = buổi).
+-- thieu: chỉ số các buổi không ai báo (JSON).
+CREATE TABLE IF NOT EXISTS bao_cao_ngay (
+  day TEXT NOT NULL,
+  khu_id TEXT NOT NULL,
+  phu_trach TEXT NOT NULL DEFAULT '[]',
+  khung TEXT NOT NULL DEFAULT '[]',
+  phai INTEGER NOT NULL DEFAULT 0,
+  bao TEXT NOT NULL DEFAULT '[]',
+  thieu TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY (day, khu_id)
+);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 21);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

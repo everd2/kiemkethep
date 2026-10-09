@@ -95,6 +95,7 @@ ctx._mk = (id, v) => { EL[id] = mkEl(id); EL[id].value = String(v); return EL[id
 const T = [];
 const ok = (name, cond, extra) => T.push([cond ? 'PASS' : 'FAIL', name, extra === undefined ? '' : String(extra)]);
 
+const S_today = () => today;
 const run = async () => {
   const r = (src) => vm.runInContext(src, ctx, { filename: 't' });
   r(`S.me = ${JSON.stringify(boot.user)}; const B = ${JSON.stringify(boot)}; indexBoot(B); S.boot = B; S.screen = 'home';`);
@@ -795,12 +796,12 @@ const run = async () => {
   // ghi sổ: thép cuộn gõ theo cuộn, sổ lưu theo phần (bo_size phần = 1 cuộn)
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loan.doitac = 5; S.loan.kind = 'tra_vay'; S.loan.phi = 'D8'; S.loan.kho = false;`);
   // chưa tick hai ô xác nhận chứng từ: không cho ghi
-  ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C');
+  ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C'); ctx._mk('lsobb', 'BB-01');
   r(`S.ask = null; S.toast = ''; ACTIONS.lsave()`);
   ok('chưa tick biên bản + Zalo: không ghi, nhắc tick', !r('S.ask') && /biên bản giao nhận/.test(r('S.toast')), r('S.toast'));
   r(`ACTIONS.ltick({ v: 'bb' }); ACTIONS.ltick({ v: 'zl' });`);
   ok('tick đủ: nút ghi sổ sáng lên', /btn pri full" style="min-height:56px;font-size:18px" data-a="lsave"/.test(r('vVayMuon()')));
-  ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C');
+  ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C'); ctx._mk('lsobb', 'BB-01');
   calls.length = 0;
   r(`ACTIONS.lsave()`);
   ok('trả vượt số đang nợ: hộp xác nhận nhắc', /trả nhiều hơn số đang nợ/.test(r('S.ask ? S.ask.msg : ""')), r('S.ask ? S.ask.msg : ""'));
@@ -808,7 +809,8 @@ const run = async () => {
   await new Promise((res) => setImmediate(res));
   const post = calls.find((c) => c.url === '/api/loans' && c.method === 'POST');
   ok('gửi đúng đối tác, loại và đổi cuộn sang phần', post && post.body.doitac === 5 && post.body.kind === 'tra_vay' && JSON.stringify(post.body.lines) === JSON.stringify([{ phi: 'D8', qty: 22 }]) && post.body.note === 'xe 15C', JSON.stringify(post && post.body));
-  ok('gửi kèm hai xác nhận chứng từ', post && post.body.bienban === true && post.body.zalo === true);
+  ok('gửi kèm hai xác nhận chứng từ và số biên bản', post && post.body.bienban === true && post.body.zalo === true && post.body.so_bb === 'BB-01', JSON.stringify(post && post.body));
+  ok('ngày giao nhận mặc định hôm nay; lần trả thì không gửi hạn trả', post && post.body.ngay === S_today() && post.body.han === null, JSON.stringify(post && post.body));
   ok('ghi xong: hai ô xác nhận về chưa tick (lần sau tick lại cho biên bản mới)', !r('S.loan.bb') && !r('S.loan.zl'));
   ok('nhật ký: dòng vay mượn có chữ, không hiện mã', /vay của Cty Hoà Bình: D10/.test(r(`fmtAudit({ action: 'loan_vay', detail: JSON.stringify({ doitac: 'Cty Hoà Bình', lines: [{ phi: 'D10', qty: 30 }] }) }).text`)));
   ok('nhật ký: có chip lọc Vay mượn', /data-v="vay">Vay mượn/.test(r('vNhatKy()')));
@@ -915,7 +917,7 @@ const run = async () => {
   const VK = r('vVayMuon()');
   ok('thủ kho: có lựa chọn thép qua bãi và chọn khu', /data-a="lkho"/.test(VK) && /data-a="lkhu" data-v="A"/.test(VK));
   ok('cho vay qua bãi: nói còn lấy được bao nhiêu', /còn lấy được 300 cây D10/.test(VK), (VK.match(/còn lấy được.{0,30}/) || [''])[0]);
-  ctx._mk('lqty', '30'); ctx._mk('lnote', '');
+  ctx._mk('lqty', '30'); ctx._mk('lnote', ''); ctx._mk('lsobb', 'BB-02');
   calls.length = 0;
   r(`ACTIONS.lsave()`);
   ok('hộp xác nhận nói kèm phiếu kho', /Kèm phiếu kho: thép rời Khu A/.test(r('S.ask ? S.ask.msg : ""')));
@@ -933,7 +935,7 @@ const run = async () => {
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loans.items = [{ id: 3, doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 5, grp: 'g9', user_id: 2, uname: 'An', ts: Date.now() - 9 * 864e5, duyet_ts: Date.now() - 8 * 864e5, kho: 'A' }];`);
   const V7 = r('vVayMuon()');
   ok('quá 7 ngày: không còn nút huỷ', !/data-a="lvoid" data-id="3"/.test(V7) && /quá 7 ngày/.test(V7));
-  ok('thẻ lần ghi nói kèm phiếu kho', /kèm phiếu kho Khu A/.test(V7));
+  ok('thẻ lần ghi nói kèm phiếu kho', /phiếu kho Khu A/.test(V7));
   r(`S.loans = null; S.screen = 'home'; S.loan = { doitac: null, kind: 'vay', phi: null, qty: 0, done: null };`);
 
   // màn Nhập có lối tắt sang sổ vay
@@ -1170,6 +1172,28 @@ const run = async () => {
   ok('không còn câu "Lần đếm hôm nay"', !/Lần đếm hôm nay/.test(SB2));
   ok('đếm 1 lần/ngày: không bày bảng khung', r(`slotBang([{ i: 0, from: 6, to: 18, label: 'x' }], [], [], {})`) === '');
   r(`S.boot = _boot(); indexBoot(S.boot);`);
+
+  // ---- 1d13. Sổ vay mượn: ngày giao nhận, hạn trả, số biên bản ----
+  const td = r('S.boot.today'), cn = (n) => r(`congNgay(S.boot.today, ${n})`);
+  ok('hạn đã qua mà còn nợ: quá hạn N ngày', /quá hạn 3 ngày/.test(r(`hanTxt('${cn(-3)}', true)`)), r(`hanTxt('${cn(-3)}', true)`));
+  ok('hạn hôm nay: đến hạn hôm nay', /đến hạn hôm nay/.test(r(`hanTxt('${td}', true)`)));
+  ok('hạn còn 2 ngày: nhắc còn 2 ngày', /còn 2 ngày/.test(r(`hanTxt('${cn(2)}', true)`)));
+  ok('đã trả hết: chỉ ghi hẹn trả, không báo quá hạn', !/quá hạn/.test(r(`hanTxt('${cn(-3)}', false)`)) && /hẹn trả/.test(r(`hanTxt('${cn(-3)}', false)`)));
+  ok('không có hạn: không ghi gì', r(`hanTxt(null, true)`) === '');
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'vaymuon'; S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [], lots: [] }; S.loan.doitac = 5; S.loan.kind = 'vay'; S.loan.phi = 'D10'; S.loan.kho = false; S.form = {};`);
+  const VF = r('vVayMuon()');
+  ok('form có ô ngày giao nhận, hạn trả, số biên bản', /id="lngay"/.test(VF) && /id="lhan"/.test(VF) && /id="lsobb"/.test(VF), '');
+  ctx._mk('lngay', td);
+  r(`ACTIONS.lhanq({ v: '15' })`);
+  ok('bấm +15: hạn trả = ngày giao nhận + 15', r('S.form.lhan') === cn(15), r('S.form.lhan'));
+  r(`ACTIONS.lhanq({ v: '' })`);
+  ok('bấm Bỏ: xoá hạn trả', r('S.form.lhan') === '');
+  r(`S.loan.kind = 'tra_vay'`);
+  ok('lần trả: không có ô hạn trả', !/id="lhan"/.test(r('vVayMuon()')));
+  ctx._mk('lqty', '2'); ctx._mk('lnote', ''); ctx._mk('lsobb', ' ');
+  r(`S.ask = null; S.toast = ''; ACTIONS.ltick({ v: 'bb' }); ACTIONS.ltick({ v: 'zl' }); ACTIONS.lsave()`);
+  ok('thiếu số biên bản: không ghi, nhắc ghi số', !r('S.ask') && /số biên bản/i.test(r('S.toast')), r('S.toast'));
+  r(`S.form = {}; S.loans = null; S.loan.kind = 'vay'; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
