@@ -967,6 +967,66 @@ const run = async () => {
   ok('thống kê: tách phần có phiếu xuất', /trong đó 40 cây có phiếu xuất/.test(ST));
   r(`S.usage = null; S.screen = 'home';`);
 
+  // ---- 1d7. Nhiều người dùng chung một điện thoại ----
+  /* Hàng chờ gửi lại và nháp đếm dở là của NGƯỜI ĐÃ ĐẾM, không phải của máy. App chỉ tự gửi báo cáo
+     của người đang đăng nhập; báo cáo của người khác nằm chờ chính người đó, không gửi dưới tên
+     người khác, và người khác cũng không xoá được. */
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home';
+    writePending([
+      { khu: 'A', day: S.boot.today, items: [], ts: 501, uid: 2, uname: 'An' },
+      { khu: 'B', day: S.boot.today, items: [], ts: 502, uid: 1, uname: 'A' },
+    ]);`);
+  calls.length = 0;
+  await r('flushPending()');
+  r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
+  const gui = calls.filter((c) => c.url === '/api/counts');
+  ok('chỉ tự gửi báo cáo của người đang đăng nhập', gui.length === 1 && gui[0].body.khu === 'B', JSON.stringify(gui.map((c) => c.body.khu)));
+  ok('báo cáo của người khác vẫn nằm trong hàng chờ', r('readPending().length') === 1 && r('readPending()[0].uid') === 2);
+  const PH = r('pendingHtml()');
+  ok('báo cáo của người khác: nói đang chờ chính người đó', /Báo cáo Khu A của An/.test(PH) && /Chờ An đăng nhập lại/.test(PH), PH.slice(0, 200));
+  ok('và không có nút gửi hay bỏ cho người đang đăng nhập', !/data-a="pendsend"/.test(PH) && !/data-a="pendrm"/.test(PH));
+  r(`S.ask = null; ACTIONS.pendrm({ j: 'A|${today}|501' });`);
+  ok('không bỏ được báo cáo người khác bằng khoá của nó', !r('S.ask') && r('readPending().length') === 1);
+  // An đăng nhập lại: báo cáo của An tự gửi
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  calls.length = 0;
+  await r('flushPending()');
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('đúng người đăng nhập lại thì tự gửi', calls.some((c) => c.url === '/api/counts' && c.body.khu === 'A') && r('readPending().length') === 0);
+  // báo cáo lưu từ bản cũ (chưa có uid): giữ cách cũ, coi là của người đang đăng nhập
+  r(`writePending([{ khu: 'A', day: S.boot.today, items: [], ts: 503 }]);`);
+  ok('báo cáo bản cũ chưa có người đếm: vẫn gửi được như trước', r('readPending().filter(ofMe).length') === 1);
+  r(`writePending([]);`);
+
+  // nháp đếm dở tách theo người
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' }; S.khu = 'A'; S.draft = { cells: { D10: { v: 77, kind: 'dem', bo: 7, le: 7 } }, baseTs: 0 }; saveDraft();`);
+  r(`S.me = { id: 3, name: 'Bình', role: 'nguoidem' }; S.khu = 'A'; loadDraft();`);
+  ok('người sau mở cùng khu: không thấy nháp của người trước', r("S.draft.cells.D10 === undefined"), r('JSON.stringify(S.draft.cells)'));
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' }; loadDraft();`);
+  ok('đúng người mở lại: nháp còn nguyên', r("S.draft.cells.D10 && S.draft.cells.D10.v") === 77);
+  ok('khu mở lần trước cũng nhớ theo người', r('lastKhuKey()') === 'kt:lastKhu:2');
+
+  // thẻ "chưa báo": người đếm chỉ thấy khu mình đếm được; admin thấy cả bãi
+  r(`var SK = _boot(); SK.khuUser = [{ khu_id: 'B', user_id: 99 }]; indexBoot(SK); S.boot = SK; S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  const HK = r('vHome()');
+  ok('người đếm: thẻ chưa báo chỉ có khu mình', /Khu A chưa báo/.test(HK) && !/Khu B/.test((HK.match(/chưa báo<\/b><span class="sm">[^<]*/) || [''])[0]), (HK.match(/<b[^>]*>[^<]*chưa báo<\/b><span class="sm">[^<]*/) || [''])[0]);
+  r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('admin: thẻ chưa báo có cả bãi', /2 khu chưa báo/.test(r('vHome()')));
+
+  // admin không đi đếm: không nhận lời nhắc "chưa đếm khung đang diễn ra", trừ khu chính họ được gán
+  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00");')} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('admin: không bị nhắc đếm khu không gán cho mình', !/chưa đếm buổi chiều/.test(r('vHome()')));
+  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00"); SB.khuUser = [{ khu_id: "A", user_id: 1 }];')} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('admin được gán khu A: có nhắc', /Khu A chưa đếm buổi chiều/.test(r('vHome()')));
+
+  // bảng gán người phụ trách không bày tài khoản đang khoá
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };
+    S.users = [{ id: 2, name: 'An', role: 'nguoidem', locked: 0, deleted: 0 }, { id: 4, name: 'Đã Khoá', role: 'nguoidem', locked: 1, deleted: 0 }];
+    S.kuEdit = 'A'; S.kuPick = [];`);
+  const KP = r('vSettings()');
+  ok('gán khu: không có tài khoản đang khoá', /data-a="kupick" data-v="2"/.test(KP) && !/data-a="kupick" data-v="4"/.test(KP));
+  r(`S.kuEdit = null; S.users = null; S.screen = 'home';`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

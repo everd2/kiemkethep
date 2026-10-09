@@ -1023,6 +1023,14 @@ async function main() {
     // tài khoản đã xoá thì chỉ còn khôi phục, không đặt lại PIN / đổi vai trò nửa vời
     eq('không đặt lại PIN cho tài khoản đã xoá', (await S.call('POST', `/users/${anId}/reset-pin`, {})).status, 400);
     eq('không gán khu cho tài khoản đã xoá', (await S.call('PUT', `/khu/A/users`, { users: [anId] })).status, 400);
+    // tài khoản đang khoá cũng không gán được: khu gán cho người không đăng nhập được thì chỉ admin còn đếm được
+    const binh = S.one("SELECT id FROM users WHERE name = 'Binh'").id;
+    await S.call('POST', `/users/${binh}/lock`, { locked: true });
+    const kq = await S.call('PUT', `/khu/B/users`, { users: [binh] });
+    eq('không gán khu cho tài khoản đang khoá', kq.status, 400);
+    ok('và nói rõ phải mở khoá trước', /khoá/.test(JSON.stringify(kq.data)), JSON.stringify(kq.data));
+    await S.call('POST', `/users/${binh}/lock`, { locked: false });
+    eq('mở khoá rồi thì gán được', (await S.call('PUT', `/khu/B/users`, { users: [binh] })).status, 200);
     // số điện thoại vẫn bị giữ: nói rõ đường đi thay vì "đã có tài khoản"
     const dup = await S.call('POST', '/users', { name: 'Người mới', phone: '0900000002', role: 'nguoidem' });
     ok('tạo trùng số của tài khoản đã xoá: chỉ dẫn khôi phục', /khôi phục/i.test(JSON.stringify(dup.data)), JSON.stringify(dup.data));

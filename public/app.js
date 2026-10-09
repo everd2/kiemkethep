@@ -442,7 +442,12 @@ function khuStatus(k) {
 const reportedCount = () => S.boot.khuAct.filter((k) => S.boot.rm[k.id]).length;
 
 /* ===================== NHÁP & GỬI BÁO CÁO ===================== */
-const draftKey = () => 'kt:' + S.boot.today + ':' + S.khu;
+/* Nháp tách theo NGƯỜI ĐĂNG NHẬP, không chỉ theo ngày + khu. Nhiều người dùng chung một điện thoại
+   là chuyện thường ngoài bãi: không tách thì người sau mở cùng khu thấy sẵn số người trước gõ dở,
+   bấm gửi là số của người kia mang tên mình — và nhật ký thì không sửa lại được. */
+const draftKey = () => 'kt:' + S.boot.today + ':' + S.me.id + ':' + S.khu;
+// khu mở lần trước cũng nhớ theo từng người: người khác dùng máy thì không mở nhầm khu của người trước
+const lastKhuKey = () => 'kt:lastKhu:' + (S.me ? S.me.id : '');
 function saveDraft() { try { localStorage.setItem(draftKey(), JSON.stringify(S.draft)); } catch (e) { /* đầy bộ nhớ */ } }
 function loadDraft(fresh) {
   let d = null;
@@ -462,7 +467,7 @@ function loadDraft(fresh) {
 function openDem(k) {
   S.khu = k; S.sel = null; S.bo = ''; S.le = ''; S.zoomK = null;
   if (!S.legendSeen) S.legend = true;
-  try { localStorage.setItem('kt:lastKhu', k); } catch (e) { /* bỏ qua */ }
+  try { localStorage.setItem(lastKhuKey(), k); } catch (e) { /* bỏ qua */ }
   loadDraft();
   S.screen = 'dem';
 }
@@ -484,22 +489,29 @@ function readPending() {
 }
 function writePending(q) { try { localStorage.setItem(PKEY, JSON.stringify(q)); } catch (e) { /* đầy bộ nhớ */ } }
 const sameJob = (a, b) => a.khu === b.khu && a.day === b.day && a.ts === b.ts;
+/* Báo cáo trong hàng chờ là của NGƯỜI ĐÃ ĐẾM (j.uid), không phải của máy. App chỉ tự gửi báo cáo
+   của người đang đăng nhập: gửi bằng phiên của người khác thì server ghi số đếm, nhật ký, dấu khung
+   giờ dưới tên người đó — hoặc từ chối vì họ không phụ trách khu, rồi báo cáo bị bỏ oan.
+   Báo cáo lưu từ bản cũ chưa có uid thì vẫn coi là của người đang đăng nhập, như trước. */
+const ofMe = (j) => j.uid == null || (S.me && j.uid === S.me.id);
 // khoá nhận dạng một báo cáo trong hàng chờ: vị trí trong mảng đổi sau mỗi lần tự gửi, không dùng được
 const pendKey = (j) => j.khu + '|' + (j.day || '') + '|' + j.ts;
 function queuePending(job) {
-  writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day)).concat([job]));
+  // chỉ thay báo cáo cũ của CHÍNH người này cho cùng khu + ngày; báo cáo của người khác giữ nguyên
+  writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day && x.uid === job.uid)).concat([job]));
 }
 let flushing = false;
 async function flushPending() {
   if (flushing || !S.me || S.me.must_change) return;
   const q = readPending();
-  if (!q.some((j) => !j.err)) return;
+  if (!q.some((j) => !j.err && ofMe(j))) return;
   flushing = true;
   const rest = [];
   let sent = 0, failed = 0;
   try {
     for (const job of q) {
-      if (job.err) { rest.push(job); continue; }
+      // báo cáo của người khác: để nguyên, chờ chính người đó đăng nhập lại trên máy này
+      if (job.err || !ofMe(job)) { rest.push(job); continue; }
       if (!job.day) { rest.push({ ...job, err: 'Báo cáo lưu từ bản cũ, không rõ ngày đếm' }); failed++; continue; }
       /* tuoi = đã trôi bao lâu từ lúc bấm gửi lần đầu, để khung giờ tính theo buổi khu ra bãi đếm chứ
          không theo lúc có mạng lại. Gửi THỜI GIAN ĐÃ TRÔI chứ không gửi giờ máy: máy để sai giờ thì
@@ -538,7 +550,7 @@ async function sendCountsInner() {
     return c ? { phi: p.id, v: c.v, kind: c.kind, bo: c.bo, le: c.le } : { phi: p.id, v: 0, kind: 'zero', bo: 0, le: 0 };
   });
   const khuName = S.boot.khuBy[S.khu].name;
-  const job = { khu: S.khu, day: S.boot.today, items, ts: Date.now() };
+  const job = { khu: S.khu, day: S.boot.today, items, ts: Date.now(), uid: S.me.id, uname: S.me.name };
   try {
     const r = await api('PUT', '/counts', { khu: job.khu, day: job.day, items, tuoi: Math.max(0, Date.now() - job.ts) });
     try { localStorage.removeItem(draftKey()); } catch (e) { /* bỏ qua */ }
@@ -556,14 +568,19 @@ async function sendCountsInner() {
   }
 }
 function pendingHtml() {
-  const q = readPending();
-  if (!q.length) return '';
+  const all = readPending();
+  if (!all.length) return '';
   const kn = (id) => (S.boot && S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
+  /* Báo cáo của người khác trên cùng máy: chỉ báo cho biết, không có nút gửi hay bỏ — người đang
+     đăng nhập không được gửi số người khác đếm dưới tên mình, cũng không được xoá công đếm của họ. */
+  const khac = all.filter((j) => !ofMe(j));
+  const khacHtml = khac.map((j) => `<div class="card sm" style="line-height:1.4"><b>Báo cáo ${esc(kn(j.khu))} của ${esc(j.uname || 'người khác')}${j.day ? ' (đếm ngày ' + esc(fmtDay(j.day)) + ')' : ''}</b> chưa gửi được. Chờ ${esc(j.uname || 'người đó')} đăng nhập lại trên máy này để gửi.</div>`).join('');
+  const q = all.filter(ofMe);
   const waiting = q.filter((j) => !j.err).length;
   return (waiting ? `<div class="card warn sm b">${waiting} báo cáo đang chờ gửi (mất mạng), sẽ tự gửi khi có mạng.</div>` : '') +
     q.map((j) => (j.err ? `<div class="card bad col gap8"><b style="font-size:17px">Báo cáo ${esc(kn(j.khu))}${j.day ? ' đếm ngày ' + esc(fmtDay(j.day)) : ''} chưa gửi được</b>
       <span class="sm">${esc(j.err)}</span>
-      <div class="row gap6"><button class="btn s f1" data-a="pendsend" data-j="${esc(pendKey(j))}">Gửi làm số hôm nay</button><button class="btn s bad f1" data-a="pendrm" data-j="${esc(pendKey(j))}">Bỏ báo cáo</button></div></div>` : '')).join('');
+      <div class="row gap6"><button class="btn s f1" data-a="pendsend" data-j="${esc(pendKey(j))}">Gửi làm số hôm nay</button><button class="btn s bad f1" data-a="pendrm" data-j="${esc(pendKey(j))}">Bỏ báo cáo</button></div></div>` : '')).join('') + khacHtml;
 }
 
 
@@ -603,8 +620,12 @@ function vForcePin() {
 function vHome() {
   const b = S.boot, T = totals();
   const alerts = [];
+  /* Khu chưa báo: admin theo dõi cả bãi nên thấy mọi khu; người đếm và thủ kho chỉ thấy khu mình
+     đếm được — khu người khác phụ trách thì họ không làm gì được, nhắc chỉ thành nhiễu.
+     Dòng "Tạm tính: N khu chưa báo" ở đầu trang vẫn tính cả bãi, vì đó là nói về con số tồn. */
   const miss = b.khuAct.filter((k) => !b.rm[k.id]);
-  if (miss.length) alerts.push({ bad: false, t: (miss.length === 1 ? miss[0].name : miss.length + ' khu') + ' chưa báo', s: miss.map((k) => k.name).join(', '), to: 'dem' });
+  const missMine = isAdmin() ? miss : miss.filter((k) => canCount(k.id));
+  if (missMine.length) alerts.push({ bad: false, t: (missMine.length === 1 ? missMine[0].name : missMine.length + ' khu') + ' chưa báo', s: missMine.map((k) => k.name).join(', '), to: 'dem' });
   b.reports.forEach((r) => {
     const k = b.khuBy[r.khu_id];
     if (!k || !k.active) return;
@@ -636,7 +657,10 @@ function vHome() {
      hôm nay (khu chưa báo gì thì thẻ "chưa báo" ở trên đã nói) và khu người này được đếm. */
   const curS = slotNow(), hNow = curS ? vnHourNow() : 0;
   if (curS && !b.closed && hNow >= curS.from && hNow < curS.to) {
-    const chua = myKhu().filter((k) => b.rm[k.id] && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
+    /* Admin đếm được mọi khu nhưng thường không đi đếm: chỉ nhắc admin những khu CHÍNH họ được gán.
+       Ai khác thì nhắc mọi khu họ đếm được. */
+    const cuaToi = isAdmin() ? b.khuAct.filter((k) => (b.ku[k.id] || []).includes(S.me.id)) : myKhu();
+    const chua = cuaToi.filter((k) => b.rm[k.id] && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
     const con = 'Còn tới ' + fmtGio(curS.to);
     if (chua.length > 2) alerts.push({ bad: false, t: chua.length + ' khu chưa đếm ' + curS.label, s: chua.map((k) => k.name).join(', ') + ' · ' + con, to: 'dem' });
     else chua.forEach((k) => alerts.push({ bad: false, t: k.name + ' chưa đếm ' + curS.label, s: con + ' · bấm để đếm', to: 'dem', k: k.id }));
@@ -907,7 +931,7 @@ function demView() {
       <div class="acts"><button class="btn ${streakOk ? '' : 'dis'}" data-a="keep">Giữ nguyên</button><button class="btn bad" data-a="zero">Hết (0)</button><button class="btn pri" data-a="next">TIẾP</button></div>
     </div>`;
   }
-  const pendingNote = readPending().length;
+  const pendingNote = readPending().filter(ofMe).length;
 
   return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Đếm ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
@@ -2022,7 +2046,7 @@ function vSettings() {
        còn server thì từ chối gán khu cho người đã xoá — bày tên họ ra đây chỉ dẫn tới mất cả lượt
        lưu phân công vì một lỗi 400, mà người bấm không hiểu vì sao. */
     const picker = open ? `<div class="col gap6" style="border-top:1px solid var(--line);padding-top:8px">
-      ${(S.users || []).filter((u) => u.role !== 'admin' && !u.deleted).map((u) => `<button class="chip ${S.kuPick.includes(u.id) ? 'on' : ''}" style="justify-content:flex-start;font-size:16px" data-a="kupick" data-v="${u.id}">${esc(u.name)} · ${ROLE[u.role] || u.role}</button>`).join('') || '<span class="sm muted">Chưa có tài khoản nào ngoài admin.</span>'}
+      ${(S.users || []).filter((u) => u.role !== 'admin' && !u.deleted && !u.locked).map((u) => `<button class="chip ${S.kuPick.includes(u.id) ? 'on' : ''}" style="justify-content:flex-start;font-size:16px" data-a="kupick" data-v="${u.id}">${esc(u.name)} · ${ROLE[u.role] || u.role}</button>`).join('') || '<span class="sm muted">Chưa có tài khoản nào ngoài admin.</span>'}
       <span class="sm muted" style="line-height:1.4">${S.kuPick.length ? 'Chỉ ' + S.kuPick.length + ' người được chọn (và admin) đếm được khu này.' : 'Không chọn ai = mọi người đều đếm được khu này.'}</span>
       <div class="row gap6"><button class="btn s pri f1" data-a="kusave" data-k="${esc(k.id)}">Lưu phân công</button><button class="btn s f1" data-a="kucancel">Hủy</button></div></div>` : '';
     return `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" data-model="kn-${esc(k.id)}" value="${esc(fv('kn-' + k.id, k.name))}"></div>
@@ -2181,7 +2205,7 @@ async function go(screen, noPush) {
     if (!mine.length) S.screen = 'khu'; // chưa được giao khu nào: về màn chọn khu để thấy lời nhắc
     else {
       let last = null;
-      try { last = localStorage.getItem('kt:lastKhu'); } catch (e) { /* bỏ qua */ }
+      try { last = localStorage.getItem(lastKhuKey()); } catch (e) { /* bỏ qua */ }
       openDem(ok(S.khu) ? S.khu : ok(last) ? last : mine[0].id);
     }
   } else S.screen = screen;
@@ -2408,18 +2432,19 @@ const ACTIONS = {
   draftkeep() { const r = S.boot.rm[S.khu]; S.draft.baseTs = r ? r.ts : Date.now(); S.draftWarn = null; saveDraft(); render(); },
   async pendsend(d) {
     const gone = () => (say('Báo cáo này không còn trong hàng chờ.', true), render());
-    const j = readPending().find((x) => pendKey(x) === d.j);
+    const j = readPending().find((x) => pendKey(x) === d.j && ofMe(x));
     if (!j) return gone();
     if (!(await ask('Gửi báo cáo này làm số đếm của HÔM NAY?\nChỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.', 'GỬI LÀM SỐ HÔM NAY'))) return;
-    const q = readPending(), i = q.findIndex((x) => pendKey(x) === d.j);
+    const q = readPending(), i = q.findIndex((x) => pendKey(x) === d.j && ofMe(x));
     if (i < 0) return gone();
-    q[i] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now() };
+    q[i] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now(), uid: S.me.id, uname: S.me.name };
     writePending(q); flushPending(); render();
   },
   async pendrm(d) {
-    if (readPending().every((x) => pendKey(x) !== d.j)) return say('Báo cáo này không còn trong hàng chờ.', true), render();
+    if (!readPending().some((x) => pendKey(x) === d.j && ofMe(x))) return say('Báo cáo này không còn trong hàng chờ.', true), render();
     if (!(await ask('Bỏ báo cáo này?\nSố liệu trong báo cáo sẽ mất.', 'BỎ BÁO CÁO', true))) return;
-    writePending(readPending().filter((x) => pendKey(x) !== d.j)); render();
+    // chỉ bỏ đúng báo cáo của mình, không đụng tới báo cáo người khác trùng khoá
+    writePending(readPending().filter((x) => !(pendKey(x) === d.j && ofMe(x)))); render();
   },
 
   /* Đổi chế độ thì XOÁ các dòng đã thêm: ba chế độ dùng chung N.lines, mà một dòng gõ cho phiếu
@@ -3050,7 +3075,7 @@ async function refresh() {
     // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ
     const r = await api('GET', '/rev');
     const healed = S.netBad; S.netBad = false; S.netOk = Date.now();
-    if (readPending().some((j) => !j.err)) flushPending();
+    if (readPending().some((j) => !j.err && ofMe(j))) flushPending();
     if (S.boot && r.today !== S.boot.today && S.screen === 'dem') {
       // nháp đang đếm thuộc ngày cũ: không để lẫn sang ngày mới
       S.screen = 'home'; S.sel = null;

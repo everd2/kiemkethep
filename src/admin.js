@@ -224,10 +224,13 @@ export async function khuUsers(req, env, admin, id) {
   if (raw.length > 50) throw bad('Quá nhiều người trong một khu');
   const ids = [...new Set(raw.map((x) => intIn(x, 1, 1e9, 'Mã tài khoản')))];
   if (ids.length) {
-    // tài khoản đã xoá không gán được: khu gán cho người đã rời bãi thì không ai đếm được nữa
-    const have = await env.DB.prepare('SELECT id FROM users WHERE deleted = 0 AND id IN (SELECT value FROM json_each(?))')
+    /* Tài khoản đã xoá hoặc ĐANG KHOÁ thì không gán được: khu gán cho người không đăng nhập được thì
+       chỉ còn admin đếm được, mà nhìn danh sách phân công không ai hiểu vì sao. Người đã gán rồi mới
+       bị khoá thì vẫn giữ phân công (mở khoá là đếm tiếp được). */
+    const have = await env.DB.prepare('SELECT id, deleted, locked FROM users WHERE id IN (SELECT value FROM json_each(?))')
       .bind(JSON.stringify(ids)).all();
-    if (have.results.length !== ids.length) throw bad('Có tài khoản không tồn tại hoặc đã bị xoá');
+    if (have.results.length !== ids.length || have.results.some((u) => u.deleted)) throw bad('Có tài khoản không tồn tại hoặc đã bị xoá');
+    if (have.results.some((u) => u.locked)) throw bad('Có tài khoản đang bị khoá. Mở khoá trước khi giao khu cho người đó');
   }
   const stmts = [env.DB.prepare('DELETE FROM khu_user WHERE khu_id = ?').bind(id)];
   if (ids.length) {
