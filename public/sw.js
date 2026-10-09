@@ -3,7 +3,7 @@
 // nên KHÔNG cần đổi số phiên bản mỗi lần sửa giao diện. Chỉ đổi khi muốn xoá sạch cache cũ.
 /* v6: bản 1.3 đổi giao thức báo cáo (gửi đủ mọi phi, ô để trống là 0). Bản app cũ còn trong cache
    sẽ gửi thiếu phi và bị server từ chối (need_all), nên phải xoá sạch cache cũ ở lần cài này. */
-const CACHE = 'kho-thep-v6';
+const CACHE = 'kho-thep-v7';
 const SHELL = ['/', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

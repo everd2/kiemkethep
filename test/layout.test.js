@@ -52,7 +52,7 @@ const B = {
   baseline: phi.flatMap((p) => khu.map((k) => ({ khu_id: k.id, phi_id: p.id, v: 3 * p.bo_size }))),
   reports: [], receipts: [], innKhu: [],
   rates: [{ phi_id: 'D20', per_day: 120, days: 28 }],
-  settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 },
+  settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1, report_slots_per_day: 1 },
   phiStd: phi.map((p) => ({ id: p.id, kg_per_cay: p.kg_per_cay, bo_size: p.bo_size, min_stock: p.min_stock, unit: p.unit })),
 };
 vm.runInContext(`
@@ -92,7 +92,8 @@ const hasFlexNone = (cls) => {
   return !!m && /flex\s*:\s*none/.test(m[4]);
 };
 
-const SCREENS = ['home', 'khu', 'dem', 'nhap', 'ton', 'duyet', 'nhatky', 'lichsu', 'baocao', 'stats', 'more', 'pin', 'users', 'settings'];
+vm.runInContext("S.loans = { doitac: [{ id: 1, name: 'Cty A', active: 1 }], items: [], agg: [] };", ctx);
+const SCREENS = ['home', 'khu', 'dem', 'nhap', 'ton', 'duyet', 'nhatky', 'lichsu', 'baocao', 'stats', 'more', 'pin', 'users', 'settings', 'vaymuon'];
 for (const sc of SCREENS) {
   vm.runInContext(`S.screen = '${sc}'; S.sel = null;`, ctx);
   const kids = topLevel(vm.runInContext('vMain()', ctx));

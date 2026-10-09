@@ -141,6 +141,19 @@ CREATE TABLE IF NOT EXISTS khu_report (
   PRIMARY KEY (day, khu_id)
 );
 
+-- Một dòng cho MỖI lần khu gửi báo cáo (khu_report chỉ giữ lần mới nhất). Dùng để biết khu đã
+-- đếm khung giờ nào khi settings.report_slots_per_day > 1.
+-- at: lúc ĐẾM máy khai; khác ts (lúc tới máy chủ) khi báo cáo lưu lúc mất mạng rồi gửi lại.
+CREATE TABLE IF NOT EXISTS khu_report_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  khu_id TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  at INTEGER NOT NULL,
+  user_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_khu_report_log_dk ON khu_report_log(day, khu_id);
+
 -- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến),
 --            'dc' điều chỉnh tồn do admin khai — MỘT dòng có dấu, KHÔNG có dòng đối ứng.
 --            Vì không đối ứng nên 'dc' là loại phiếu duy nhất có thể chỉ gồm dòng âm: mọi chỗ
@@ -238,6 +251,50 @@ CREATE TABLE IF NOT EXISTS baseline (
   PRIMARY KEY (day, khu_id, phi_id)
 );
 
+-- Đối tác bên ngoài để vay/cho vay thép — KHÔNG phải tài khoản đăng nhập, chỉ là một cái tên
+-- để chọn khi ghi sổ vay mượn (xem bảng loans). Trùng tên (không phân hoa/thường) bị chặn ở
+-- index dưới, để "Cty A" và "cty a" không tách thành hai đối tác khác nhau trong báo cáo.
+CREATE TABLE IF NOT EXISTS doitac (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_doitac_name ON doitac(name COLLATE NOCASE);
+
+-- Sổ vay/mượn thép với đối tác NGOÀI bãi. KHÔNG đụng tới tồn kho/số đếm của bãi (xem counts,
+-- receipts): đây chỉ là sổ ghi nhớ công nợ thép với bên ngoài, để nhiều người cùng ghi lại dần mà
+-- không thất lạc, KHÔNG phải một đường nhập/xuất thứ hai. Thép có di chuyển qua cổng thật thì vẫn
+-- phải lập phiếu Nhập/Xuất (receipts) như thường để tồn đúng; sổ này chỉ trả lời "ai đang giữ thép
+-- của ai, bao nhiêu, loại nào", không trả lời "bãi còn bao nhiêu thép".
+-- kind: 'vay'      bãi mình vay THÊM của đối tác (đối tác đưa thép, mình đang NỢ đối tác)
+--       'tra_vay'  mình TRẢ LẠI đối tác phần đã vay (GIẢM nợ mình nợ đối tác)
+--       'cho_vay'  mình CHO đối tác vay (mình đưa thép, đối tác đang NỢ mình)
+--       'tra_no'   đối tác TRẢ LẠI mình (GIẢM nợ đối tác nợ mình)
+-- Dư nợ MÌNH NỢ đối tác (theo từng phi) = SUM(vay) − SUM(tra_vay) của các dòng ĐÃ DUYỆT.
+-- Dư nợ ĐỐI TÁC NỢ MÌNH (theo từng phi) = SUM(cho_vay) − SUM(tra_no) của các dòng ĐÃ DUYỆT.
+-- Giống receipts: dòng mới sinh ra ở trạng thái CHỜ DUYỆT (duyet_ts NULL), chưa tính vào dư nợ,
+-- để admin luôn nắm được số liệu trước khi nó thành chính thức.
+-- grp: các dòng cùng MỘT lần ghi (vd cho A vay cả D16 và D18 một lượt), để huỷ/duyệt cùng lúc
+-- như một phiếu, giống receipts.grp.
+CREATE TABLE IF NOT EXISTS loans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doitac_id INTEGER NOT NULL,
+  phi_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('vay','tra_vay','cho_vay','tra_no')),
+  qty INTEGER NOT NULL,
+  note TEXT,
+  grp TEXT,
+  user_id INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  voided INTEGER NOT NULL DEFAULT 0,
+  voided_ts INTEGER,
+  duyet_ts INTEGER,
+  duyet_by INTEGER,
+  duyet_name TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_loans_doitac ON loans(doitac_id);
+CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp);
+
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -259,7 +316,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 14);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 16);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
@@ -285,7 +342,10 @@ INSERT OR IGNORE INTO khu (id, name, sort, active) VALUES
 
 INSERT OR IGNORE INTO settings (key, value) VALUES
  ('max_keep_streak','3'),
- ('auto_close','0');
+ ('auto_close','0'),
+ ('report_slots_per_day','1'),
+ ('work_from','6'),
+ ('work_to','18');
 
 -- Nhật ký và lịch sử đếm chỉ được ghi thêm: database từ chối mọi lệnh sửa hoặc xóa
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'Nhat ky chi duoc ghi them'); END;

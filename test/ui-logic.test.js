@@ -86,7 +86,7 @@ const boot = {
   eff: [], // chưa khu nào đếm trong kỳ: mốc là tồn chuẩn
   mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 33 }], // chưa đếm nên toàn bộ lượng nhập là "chưa được đếm"
   rates: [{ phi_id: 'D8', per_day: 33, days: 28 }],
-  settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 },
+  settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1, report_slots_per_day: 1 },
 };
 ctx._boot = () => JSON.parse(JSON.stringify(boot));
 // dựng một ô nhập có sẵn nội dung, như lúc màn hình vừa vẽ xong
@@ -738,6 +738,93 @@ const run = async () => {
   r(`S.uFirst = 7; var BC = _boot(); delete BC.uFirst; indexBoot(BC);`);
   ok('bootstrap không gửi thì không xoá trắng giá trị đang có', r('S.uFirst') === 7, r('S.uFirst'));
   r(`S.hist = { date: '${yday}', data: null }; S.uFirst = 1; S.boot = _boot(); indexBoot(S.boot);`);
+
+  // ---- 1d2. Đếm nhiều lần/ngày là BẮT BUỘC ----
+  /* "Bây giờ là mấy giờ" lấy theo đồng hồ server (slot.now) chứ không theo máy: đặt now = 19h giờ
+     Việt Nam rồi xem máy có nói thiếu buổi chiều không, bất kể đồng hồ của máy chạy test. */
+  const slotBoot = (done, extra) => `var SB = _boot(); SB.slot = { n: 2, done: ${JSON.stringify(done)},
+    now: Date.parse(SB.today + 'T19:00:00+07:00'),
+    defs: [{ i: 0, from: 6, to: 12, label: 'buổi sáng (6h–12h)' }, { i: 1, from: 12, to: 18, label: 'buổi chiều (12h–18h)' }] };
+    SB.settings.report_slots_per_day = 2;
+    SB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];
+    ${extra || ''}
+    indexBoot(SB); S.boot = SB; S.me = { id: 1, name: 'A', role: 'admin' };`;
+  r(`${slotBoot({ A: [0] })} var H1 = vHome();`);
+  ok('Tổng quan: khu thiếu buổi chiều có thẻ đỏ', /Khu A thiếu lần đếm buổi chiều \(12h–18h\)/.test(r('H1')), r('H1').slice(0, 0));
+  ok('thẻ nói lần đếm sau không bù được', /không bù được/.test(r('H1')));
+  ok('khu chưa báo hôm nay không bị nhắc trùng với thẻ "chưa báo"', !/Khu B thiếu lần đếm/.test(r('H1')));
+  ok('nhãn khu đổi thành Thiếu lần đếm, không mang nhãn xanh', r('khuStatus(S.boot.khuBy.A).label') === 'Thiếu lần đếm', r('khuStatus(S.boot.khuBy.A).label'));
+  r(`${slotBoot({ A: [0, 1] })} var H2 = vHome();`);
+  ok('đủ hai khung: không nhắc', !/thiếu lần đếm/.test(r('H2')));
+  r(`${slotBoot({ A: [0] }, 'SB.closed = true;')} var H3 = vHome();`);
+  ok('ngày đã chốt: không nhắc nữa (không còn gửi số được)', !/thiếu lần đếm/.test(r('H3')));
+  r(`${slotBoot({ A: [0] }, "SB.baseline = SB.baseline.filter((x) => x.khu_id !== 'A'); SB.innKhu = []; SB.mvNew = [];")} var H4 = vHome();`);
+  ok('khu trống không bị đòi đếm', !/Khu A thiếu lần đếm/.test(r('H4')));
+  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T14:00:00+07:00");')} var H5 = vHome();`);
+  ok('14h: buổi chiều chưa hết giờ nên chưa thiếu', !/thiếu lần đếm/.test(r('H5')));
+  ok('màn chọn khu nói đang ở khung nào', /Đang buổi chiều \(12h–18h\): đã đếm 0\/2/.test(r('vKhu()')), r('vKhu()').slice(0, 300));
+  r(`${slotBoot({ A: [0] })}`);
+  ok('cài đặt nói rõ là bắt buộc', /bắt buộc/.test(r('vSettings()')));
+  ok('cài đặt có chọn giờ làm', /id="s-from"/.test(r('vSettings()')) && /id="s-to"/.test(r('vSettings()')));
+  ok('xem trước khung theo giờ đã lưu', /buổi sáng \(6h–12h\) · buổi chiều \(12h–18h\)/.test(r('slotPrevTxt()')), r('slotPrevTxt()'));
+  // đang chọn (chưa lưu): xem trước đổi theo ngay
+  r(`S.form.sfrom = '7'; S.form.sto = '17'; S.form.sslots = '3';`);
+  ok('xem trước theo giờ đang chọn, chưa lưu', r('slotPrevTxt()').includes('lần 2 (10h20–13h40)'), r('slotPrevTxt()'));
+  r(`S.form.sto = '9';`);
+  ok('giờ làm không đủ: báo trước khi lưu', /không đủ cho 3 lần/.test(r('slotPrevTxt()')) && r('slotBad()') === true);
+  calls.length = 0; r(`ACTIONS.ssave()`);
+  ok('và không gửi lên server', !calls.some((c) => /\/api\/settings/.test(c.url)));
+  r(`S.form.sto = '6';`);
+  ok('giờ kết thúc trước giờ bắt đầu: báo lỗi', /phải sau giờ bắt đầu/.test(r('slotPrevTxt()')));
+  r(`delete S.form.sfrom; delete S.form.sto; delete S.form.sslots;`);
+  /* Bản chép công thức ở máy phải ra ĐÚNG nhãn server dựng: server là nơi tính khu thiếu khung
+     nào, máy chỉ xem trước. Nhãn mẫu dưới đây chép từ kết quả server (mục 48 bộ test server). */
+  ok('xem trước khớp công thức server: 7h–17h chia 3',
+    JSON.stringify(r('slotPreview(3, 7, 17)')) === JSON.stringify(['lần 1 (7h–10h20)', 'lần 2 (10h20–13h40)', 'lần 3 (13h40–17h)']), JSON.stringify(r('slotPreview(3, 7, 17)')));
+  ok('xem trước khớp công thức server: 6h–18h chia 2',
+    JSON.stringify(r('slotPreview(2, 6, 18)')) === JSON.stringify(['buổi sáng (6h–12h)', 'buổi chiều (12h–18h)']));
+  // bản cache cũ không có slot: coi như 1 lần/ngày, không nhắc gì và không vỡ
+  r(`var SO = _boot(); delete SO.slot; indexBoot(SO); S.boot = SO;`);
+  ok('bản cache cũ: không có khung nào', r('S.boot.nSlot') === 1 && r('slotNow()') === null);
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)};`);
+
+  // ---- 1d3. Sổ vay mượn ngoài bãi ----
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };
+    S.loan = { doitac: null, kind: 'vay', phi: null, qty: 0, done: null, lines: [] };
+    S.loans = {
+      doitac: [{ id: 5, name: 'Cty Hoà Bình', active: 1 }, { id: 6, name: 'Cty Cũ', active: 0 }],
+      items: [
+        { id: 11, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 30, grp: 'g1', user_id: 2, uname: 'An', ts: Date.now(), duyet_ts: null },
+        { id: 12, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D12', kind: 'vay', qty: 8, grp: 'g1', user_id: 2, uname: 'An', ts: Date.now(), duyet_ts: null },
+        { id: 9, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'cho_vay', qty: 20, grp: 'g0', user_id: 1, uname: 'A', ts: Date.now() - 864e5, duyet_ts: Date.now() - 864e5, duyet_uname: 'A' },
+      ],
+      agg: [{ doitac_id: 5, phi_id: 'D10', kind: 'vay', q: 100 }, { doitac_id: 5, phi_id: 'D10', kind: 'tra_vay', q: 40 }, { doitac_id: 5, phi_id: 'D10', kind: 'cho_vay', q: 20 }],
+    }; S.screen = 'vaymuon';`);
+  const VM = r('vVayMuon()');
+  ok('vay mượn: dư nợ tính theo cặp (100 − 40 = 60 cây mình nợ)', /mình nợ họ<\/span><b[^>]*>60 cây/.test(VM), VM.slice(0, 0));
+  ok('vay mượn: họ nợ mình tính riêng', /họ nợ mình<\/span><b[^>]*>20 cây/.test(VM));
+  ok('vay mượn: một lần ghi hai phi gom thành MỘT dòng chờ duyệt', /Chờ duyệt \(1\)/.test(VM));
+  ok('admin thấy nút duyệt', /data-a="lduyet"/.test(VM));
+  ok('đối tác đã ẩn không có trong ô chọn để ghi', !/data-a="ldt" data-v="6"/.test(VM) && /data-a="ldt" data-v="5"/.test(VM));
+  ok('nói rõ không tính vào tồn', /không<\/b> cộng trừ vào tồn bãi/.test(VM));
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  const VM2 = r('vVayMuon()');
+  ok('người đếm: không có nút duyệt', !/data-a="lduyet"/.test(VM2));
+  ok('người đếm: rút lại được lần ghi của mình', /data-a="lvoid" data-id="11">Rút lại/.test(VM2));
+  ok('người đếm: không thấy danh bạ sửa/ẩn đối tác', !/data-a="ldthide"/.test(VM2));
+  // ghi sổ: thép cuộn gõ theo cuộn, sổ lưu theo phần (bo_size phần = 1 cuộn)
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loan.doitac = 5; S.loan.kind = 'tra_vay'; S.loan.phi = 'D8';`);
+  ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C');
+  calls.length = 0;
+  r(`ACTIONS.lsave()`);
+  ok('trả vượt số đang nợ: hộp xác nhận nhắc', /trả nhiều hơn số đang nợ/.test(r('S.ask ? S.ask.msg : ""')), r('S.ask ? S.ask.msg : ""'));
+  r(`ACTIONS.askyes()`);
+  await new Promise((res) => setImmediate(res));
+  const post = calls.find((c) => c.url === '/api/loans' && c.method === 'POST');
+  ok('gửi đúng đối tác, loại và đổi cuộn sang phần', post && post.body.doitac === 5 && post.body.kind === 'tra_vay' && JSON.stringify(post.body.lines) === JSON.stringify([{ phi: 'D8', qty: 22 }]) && post.body.note === 'xe 15C', JSON.stringify(post && post.body));
+  ok('nhật ký: dòng vay mượn có chữ, không hiện mã', /vay của Cty Hoà Bình: D10/.test(r(`fmtAudit({ action: 'loan_vay', detail: JSON.stringify({ doitac: 'Cty Hoà Bình', lines: [{ phi: 'D10', qty: 30 }] }) }).text`)));
+  ok('nhật ký: có chip lọc Vay mượn', /data-v="vay">Vay mượn/.test(r('vNhatKy()')));
+  r(`S.loans = null; S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

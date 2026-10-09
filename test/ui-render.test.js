@@ -95,7 +95,7 @@ const boot = {
   eff: [{ khu_id: 'B', phi_id: 'D10', v: 240, kind: 'dem', ts: Date.now() - 36e5, day: today }],
   mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }],
   rates: [{ phi_id: 'D8', per_day: 33, days: 28 }, { phi_id: 'D10', per_day: 120, days: 2 }],
-  settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1 },
+  settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1, report_slots_per_day: 1 },
 };
 const review = {
   day: today, last: yday, span: 2, closed: false,
@@ -113,6 +113,7 @@ const review = {
     { type: 'conflict', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
     { type: 'recheck', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
     { type: 'recount', khu: 'C', name: 'Khu C' },
+    { type: 'slot_missing', khu: 'C', name: 'Khu C', missing: ['buổi sáng (6h–12h)'] },
     { type: 'receipt_pending', key: 'g1', id: 71, kind: 'nhap', day: today },
     { type: 'receipt_pending', key: 'g3', id: 73, kind: 'dc', day: today },
     { type: 'phi', phi: 'D10', reason: 'neg' },
@@ -132,8 +133,11 @@ const review = {
       recheck: true, phieu: ['g1'], duyet: null },
     { khu: 'C', name: 'Khu C', items: [{ phi: 'D10', ref: 100, mv: 0, exp: 100, cnt: 100, d: 0, kind: 'dem', big: false, blank: false, duyet: true }],
       waiting: 0, blank: 0, rep: { uname: 'Trần Thị C', ts, day: yday, conflict: 0, resolved: 0, recount: 1 },
-      recheck: false, phieu: [], duyet: { by: 'Admin', ts } },
+      recheck: false, phieu: [], duyet: { by: 'Admin', ts },
+      // đếm nhiều lần/ngày: thiếu buổi sáng, và lần chiều gửi muộn sau mất mạng
+      slots: { done: [1], missing: [0], late: [{ at: ts - 3600e3, ts }] } },
   ],
+  slot: { n: 2, defs: [{ i: 0, from: 6, to: 12, label: 'buổi sáng (6h–12h)' }, { i: 1, from: 12, to: 18, label: 'buổi chiều (12h–18h)' }] },
   phieu: [
     { key: 'g1', grp: 'g1', id: 71, day: today, ts, uname: 'Thủ kho', kind: 'nhap', note: 'xe 12A',
       lines: [{ phi: 'D8', khu: 'B', qty: 110 }] },
@@ -143,7 +147,7 @@ const review = {
     { key: 'g3', grp: 'g3', id: 73, day: today, ts, uname: 'Thủ kho', kind: 'dc', note: 'Đếm sai kỳ trước',
       lines: [{ phi: 'D12', khu: 'C', qty: -30 }] },
   ],
-  pending: 6,
+  pending: 7,
   reports: boot.reports, khu,
 };
 const dayData = {
@@ -173,6 +177,9 @@ S.audit = [
   { ts: Date.now(), user_name: 'Trần B', action: 'count', detail: JSON.stringify({ khu: 'B', changes: [{ phi: 'D10', from: 260, to: 240 }], conflict: 1 }) },
   { ts: Date.now(), user_name: null, action: 'auto_close_skip', detail: JSON.stringify({ day: '${today}', reason: '1 khu chưa báo' }) },
   { ts: Date.now(), user_name: 'Nguyễn Văn A', action: 'login_locked', detail: JSON.stringify({ mins: 60 }) },
+  { ts: Date.now(), user_name: 'An', action: 'loan_cho_vay', detail: JSON.stringify({ doitac: 'Cty Hoà Bình', lines: [{ phi: 'D8', qty: 220 }], note: 'hẹn trả T6' }) },
+  { ts: Date.now(), user_name: 'A', action: 'loan_duyet', detail: JSON.stringify({ id: 11, kind: 'vay' }) },
+  { ts: Date.now(), user_name: 'A', action: 'restore', detail: JSON.stringify({ ngay: '${yday}', boi: 'A', dong: { phi: 13 }, giu: ['doitac', 'loans'] }) },
 ];
 /* Đủ các trạng thái màn Người dùng phải vẽ: admin đầu tiên (không khoá/hạ quyền/xoá được),
    người bị khoá, admin thường, và một tài khoản ĐÃ XOÁ để thử mục khôi phục. */
@@ -192,8 +199,18 @@ S.subs = { B: [
 ] };
 S.khu = 'A';
 loadDraft(true);
+// sổ vay mượn: đủ trạng thái — chờ duyệt (một lần ghi hai phi), đã duyệt, đối tác đã ẩn, dư nợ hai chiều
+S.loans = { doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }, { id: 6, name: 'Cty Cũ', active: 0 }],
+  items: [
+    { id: 11, doitac_id: 5, doitac_name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', phi_id: 'D8', kind: 'vay', qty: 220, grp: 'g1', user_id: 2, uname: 'An', ts: Date.now(), duyet_ts: null, note: 'xe 29C' },
+    { id: 12, doitac_id: 5, doitac_name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', phi_id: 'D10', kind: 'vay', qty: 40, grp: 'g1', user_id: 2, uname: 'An', ts: Date.now(), duyet_ts: null },
+    { id: 9, doitac_id: 6, doitac_name: 'Cty Cũ', phi_id: 'D10', kind: 'cho_vay', qty: 20, grp: 'g0', user_id: 1, uname: 'A', ts: Date.now() - 864e5, duyet_ts: Date.now() - 864e5, duyet_uname: 'A' },
+  ],
+  agg: [{ doitac_id: 5, phi_id: 'D8', kind: 'vay', q: 330 }, { doitac_id: 6, phi_id: 'D10', kind: 'cho_vay', q: 20 }] };
+S.loan.doitac = 5; S.loan.lines = [{ phi: 'D10', qty: 30 }];
+S.boot.loanPending = 1;
 
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings'];
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon'];
 const out = [];
 function one(label) {
   render();
@@ -221,9 +238,14 @@ S.boot.closed = true; S.screen = 'duyet'; S.review.closed = true; one('duyet+da-
 S.boot.closed = false; S.review.closed = false;
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
+// khu thiếu khung đếm: thẻ khu phải nói khung nào thiếu, khung nào đã đếm, và lần gửi muộn
+S.screen = 'duyet'; render();
+{ const h = $app.innerHTML; out.push(['duyet+thieu-khung', h.length,
+  ['Thiếu lần đếm buổi sáng (6h–12h)', '✗ buổi sáng', '✓ buổi chiều', 'gửi muộn', 'mỗi khu đếm 2 lần/ngày'].every((x) => h.includes(x))
+    ? 'ok' : 'BAD:thiếu dòng khung giờ']); }
 
 // trạng thái đang tải và tải lỗi
-for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage']]) {
+for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans']]) {
   S.screen = sc; const bak = S[k]; S[k] = null;
   one(sc + '+dang-tai');
   S.loadErr[sc] = 'Không có kết nối mạng'; one(sc + '+loi-tai'); delete S.loadErr[sc];

@@ -1,5 +1,5 @@
 /* Test logic nghiệp vụ trên worker thật + SQLite thật. node srv.test.mjs <đường-dẫn-repo> */
-import { boot, addDays, advance, vnDay } from './harness.mjs';
+import { boot, addDays, advance, vnDay, clock } from './harness.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -1322,8 +1322,9 @@ async function main() {
     eq('mã lỗi nói rõ cần xác nhận', k1.data.code, 'need_confirm');
     eq('tệp lạ: từ chối', (await S.call('POST', '/restore', { file: { app: 'khac' }, confirm: 'NAP LAI' })).status, 400);
     /* Khác phiên bản cấu trúc thì phải từ chối: ghi dữ liệu cũ vào bảng đã đổi cột là hỏng kiểu
-       không sửa được, thà không nạp còn hơn nạp hỏng. */
-    const sai = await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 1 }, confirm: 'NAP LAI' });
+       không sửa được, thà không nạp còn hơn nạp hỏng. Lùi HAI bản: bản ngay trước (14) được
+       BK_COMPAT cho nạp vì bản 15 chỉ thêm bảng — xem mục 48. */
+    const sai = await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 2 }, confirm: 'NAP LAI' });
     eq('bản sao khác phiên bản cấu trúc: từ chối', sai.status, 400);
     ok('và nói rõ hai phiên bản', /cấu trúc/.test(JSON.stringify(sai.data)), sai.data);
 
@@ -2162,6 +2163,241 @@ async function main() {
     eq('lịch sử ngày cũ: có phần điều chỉnh riêng', sm.dc, 60);
     ok('và phiếu điều chỉnh của ngày đó vẫn liệt kê được',
       dv.receipts.some((x) => x.kind === 'dc' && x.qty === 60), JSON.stringify(dv.receipts.map((x) => [x.kind, x.qty])));
+  }
+
+  /* ================= 48. ĐẾM NHIỀU LẦN/NGÀY là BẮT BUỘC =================
+     Admin đặt mỗi khu đếm N lần/ngày. Khung chia đều GIỜ LÀM VIỆC 6h–18h (không chia 24 giờ:
+     khung đầu sẽ rơi vào nửa đêm). Khung ĐÃ KẾT THÚC mà khu chưa đếm thành việc chưa xử lý: chốt
+     phải ghi lý do, đêm đó không tự chốt. Lần đếm khung sau không bù cho khung trước. */
+  {
+    const S = await setup();
+    // đặt đồng hồ tới đúng giờ:phút (giờ Việt Nam) của ngày đang chạy
+    const atHour = (h, m = 0) => {
+      const t = Date.parse(`${vnDay()}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`);
+      clock.offset += t - Date.now();
+    };
+    // chạy việc 23:50 và CHỜ nó xong (S.cron không chờ waitUntil)
+    const cron = async () => { let pr; await S.worker.scheduled({}, S.env, { waitUntil: (p) => (pr = p) }); await pr; };
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+
+    eq('ngoài khoảng 1..4: từ chối', (await S.call('PUT', '/settings', { report_slots_per_day: 5 })).status, 400);
+    eq('lưu 2 lần/ngày', (await S.call('PUT', '/settings', { report_slots_per_day: 2 })).status, 200);
+    const bt = (await S.call('GET', '/bootstrap')).data;
+    eq('bootstrap gửi số lần', bt.slot.n, 2);
+    eq('nhãn khung theo giờ làm việc', bt.slot.defs.map((d) => d.label), ['buổi sáng (6h–12h)', 'buổi chiều (12h–18h)']);
+    eq('mặc định giờ làm 6h–18h', [bt.settings.work_from, bt.settings.work_to], [6, 18]);
+
+    // --- ngày 1: đếm sáng, quên chiều ---
+    addDays(1); let day = vnDay();
+    atHour(8);
+    await bao(S, { khu: 'A', day, items: items({ D16: 1700 }) }, 'An');
+    eq('lần 8h tính vào buổi sáng', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0]);
+    atHour(13);
+    let rv = (await S.call('GET', '/review')).data;
+    eq('13h: buổi chiều chưa hết giờ nên chưa thiếu', rv.exceptions.filter((e) => e.type === 'slot_missing').length, 0);
+    eq('khu trống không bị đòi đếm', rv.exceptions.some((e) => e.type === 'slot_missing' && e.khu === 'C'), false);
+    atHour(18, 30);
+    rv = (await S.call('GET', '/review')).data;
+    eq('18h30: thiếu buổi chiều', rv.exceptions.filter((e) => e.type === 'slot_missing').map((e) => [e.khu, e.missing]), [['A', ['buổi chiều (12h–18h)']]]);
+    eq('màn Duyệt nói khung nào đã đếm', rv.khus.find((k) => k.khu === 'A').slots, { done: [0], missing: [1], late: [] });
+    ok('thiếu khung là việc chưa xử lý', rv.pending >= 1, rv.pending);
+    eq('chốt không ghi lý do: từ chối', (await S.call('POST', '/close', { note: '' })).status, 400);
+    await S.call('PUT', '/settings', { auto_close: 1 });
+    await cron();
+    eq('tự chốt bỏ qua', S.one('SELECT 1 x FROM day_close WHERE day=?', day), undefined);
+    ok('nhật ký nói khu nào thiếu khung nào',
+      /thiếu lần đếm: Khu A buổi chiều/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
+    eq('ghi lý do thì chốt được', (await S.call('POST', '/close', { note: 'An nghỉ chiều' })).status, 200);
+
+    // --- ngày 2: đếm sau 18h tính vào khung cuối ---
+    addDays(1); day = vnDay();
+    atHour(9); await bao(S, { khu: 'A', day, items: items({ D16: 1600 }) }, 'An');
+    atHour(19); await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
+    rv = (await S.call('GET', '/review')).data;
+    eq('đếm 19h tính vào buổi chiều, đủ khung', rv.exceptions.filter((e) => e.type === 'slot_missing').length, 0);
+    await cron();
+    eq('ngày đủ khung thì tự chốt', !!S.one('SELECT 1 x FROM day_close WHERE day=?', day), true);
+
+    // --- ngày 3: đếm chiều KHÔNG bù cho sáng ---
+    addDays(1); day = vnDay();
+    atHour(14); await bao(S, { khu: 'A', day, items: items({ D16: 1400 }) }, 'An');
+    atHour(18, 5);
+    rv = (await S.call('GET', '/review')).data;
+    eq('đếm chiều không bù buổi sáng', rv.khus.find((k) => k.khu === 'A').slots.missing, [0]);
+
+    /* --- báo cáo gửi muộn (mất mạng): khung tính theo lúc ĐẾM máy khai, và màn Duyệt thấy cả hai giờ.
+       Mốc khai ở ngày khác thì bỏ, lấy giờ tới máy chủ. */
+    addDays(1); day = vnDay();
+    atHour(11, 30); const luc = Date.now();
+    atHour(13);
+    eq('gửi lại sau mất mạng', (await bao(S, { khu: 'A', day, items: items({ D16: 1300 }), at: luc }, 'An')).status, 200);
+    const sl = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').slots;
+    eq('tính vào buổi sáng theo lúc đếm', sl.done, [0]);
+    eq('và bị đánh dấu gửi muộn', sl.late.map((x) => x.at), [luc]);
+    await bao(S, { khu: 'A', day, items: items({ D16: 1300 }), at: luc - 86400e3 }, 'An');
+    eq('mốc khai ở ngày khác: bỏ, tính theo giờ tới', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0, 1]);
+
+    /* --- lần admin chọn số khi hai người báo khác nhau KHÔNG phải một lần đếm --- */
+    addDays(1); day = vnDay();
+    atHour(8);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1200 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 1250 }) }, 'Binh');
+    atHour(13);
+    await S.call('POST', '/conflict/resolve', { khu: 'A', pick: { D16: 1200 } });
+    eq('chọn số lúc 13h không tính là đã đếm buổi chiều', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0]);
+
+    // bản sao bản 14 (chưa có khu_report_log) vẫn nạp được vào bản 15
+    const f = (await S.call('GET', '/backup')).data;
+    const bang = { ...f.bang }; delete bang.khu_report_log;
+    eq('bản sao cấu trúc 14 nạp được', (await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 1, bang }, confirm: 'NAP LAI' })).status, 200);
+
+    /* --- giờ làm do admin đặt, không cố định 6h–18h --- */
+    eq('giờ kết thúc trước giờ bắt đầu: từ chối', (await S.call('PUT', '/settings', { work_from: 17, work_to: 7 })).status, 400);
+    eq('giờ làm 3 tiếng mà đếm 4 lần: từ chối', (await S.call('PUT', '/settings', { report_slots_per_day: 4, work_from: 7, work_to: 10 })).status, 400);
+    eq('từ chối thì không lưu gì', (await S.call('GET', '/bootstrap')).data.settings.work_from, 6);
+    eq('người đếm không sửa được giờ làm', (await S.call('PUT', '/settings', { work_from: 7 }, 'An')).status, 403);
+    eq('đặt giờ làm 7h–17h', (await S.call('PUT', '/settings', { work_from: 7, work_to: 17 })).status, 200);
+    eq('khung chia theo giờ làm mới', (await S.call('GET', '/bootstrap')).data.slot.defs.map((d) => d.label), ['buổi sáng (7h–12h)', 'buổi chiều (12h–17h)']);
+    await S.call('PUT', '/settings', { report_slots_per_day: 3 });
+    eq('chia không chẵn thì mốc có phút', (await S.call('GET', '/bootstrap')).data.slot.defs.map((d) => d.label),
+      ['lần 1 (7h–10h20)', 'lần 2 (10h20–13h40)', 'lần 3 (13h40–17h)']);
+    addDays(1); day = vnDay();
+    atHour(13, 30); await bao(S, { khu: 'A', day, items: items({ D16: 1100 }) }, 'An');
+    eq('13h30 thuộc lần 2 (10h20–13h40)', (await S.call('GET', '/bootstrap')).data.slot.done.A, [1]);
+    atHour(17, 1);
+    eq('17h01: khung cuối đã hết, thiếu lần 1 và lần 3',
+      (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').slots.missing, [0, 2]);
+    // đổi giờ làm giữa ngày: lần đếm cũ được xếp lại theo khung mới, không mất
+    await S.call('PUT', '/settings', { report_slots_per_day: 2, work_from: 6, work_to: 18 });
+    eq('đổi giờ làm: lần 13h30 xếp lại vào buổi chiều', (await S.call('GET', '/bootstrap')).data.slot.done.A, [1]);
+
+    // về 1 lần/ngày thì không còn đòi khung nào
+    await S.call('PUT', '/settings', { report_slots_per_day: 1 });
+    eq('1 lần/ngày: không có việc thiếu khung', (await S.call('GET', '/review')).data.exceptions.filter((e) => e.type === 'slot_missing').length, 0);
+  }
+
+  /* ================= 49. Khung giờ: các chỗ dễ sai =================
+     - lúc đếm tính từ THỜI GIAN ĐÃ TRÔI máy đo, không từ giờ máy (máy để sai giờ vẫn đúng khung)
+     - giờ làm kết thúc 24h: việc 23:50 vẫn phải đòi khung cuối
+     - yêu cầu đếm lại sau khi chốt bỏ luôn dấu "đã đếm khung" của khu */
+  {
+    const S = await setup();
+    const atHour = (h, m = 0) => {
+      const t = Date.parse(`${vnDay()}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`);
+      clock.offset += t - Date.now();
+    };
+    const cron = async () => { let pr; await S.worker.scheduled({}, S.env, { waitUntil: (p) => (pr = p) }); await pr; };
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
+    await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 1800 }) }, 'An');
+    await chot(S, { note: '' });
+    await S.call('PUT', '/settings', { report_slots_per_day: 2, work_from: 6, work_to: 18 });
+
+    addDays(1); let day = vnDay();
+    atHour(13);
+    // đếm lúc 11h (2 tiếng trước), máy gửi "đã trôi 2 tiếng" — dù đồng hồ máy chạy sai bao nhiêu
+    await bao(S, { khu: 'A', day, items: items({ D16: 1700 }), tuoi: 2 * 3600e3 }, 'An');
+    let sl = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').slots;
+    eq('tuoi 2 tiếng lúc 13h: tính vào buổi sáng', sl.done, [0]);
+    eq('và bị đánh dấu gửi muộn', sl.late.length, 1);
+    // tuoi đưa lùi sang ngày hôm trước: bỏ, tính theo giờ tới
+    await bao(S, { khu: 'A', day, items: items({ D16: 1700 }), tuoi: 20 * 3600e3 }, 'An');
+    eq('tuoi lùi sang ngày khác: tính theo giờ tới', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0, 1]);
+    await chot(S, { note: '' });
+
+    // --- giờ làm tới 24h: khung cuối kết thúc sau lúc tự chốt, mà vẫn phải bị đòi ---
+    await S.call('PUT', '/settings', { work_from: 12, work_to: 24, auto_close: 1 });
+    addDays(1); day = vnDay();
+    atHour(13); await bao(S, { khu: 'A', day, items: items({ D16: 1600 }) }, 'An');
+    atHour(23, 50);
+    eq('23h50 xem tay: khung 18h–24h chưa hết nên chưa thiếu',
+      (await S.call('GET', '/review')).data.exceptions.filter((e) => e.type === 'slot_missing').length, 0);
+    await cron();
+    eq('tự chốt 23h50 vẫn đòi khung cuối: không chốt', S.one('SELECT 1 x FROM day_close WHERE day=?', day), undefined);
+    ok('nhật ký nói thiếu buổi chiều (18h–24h)',
+      /buổi chiều \(18h–24h\)/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
+    await S.call('POST', '/close', { note: 'thử' });
+
+    // --- yêu cầu đếm lại sau khi chốt: số bị bỏ thì dấu khung cũng bỏ ---
+    await S.call('PUT', '/settings', { work_from: 6, work_to: 18, auto_close: 0 });
+    addDays(1); day = vnDay();
+    atHour(9); await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
+    atHour(14); await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
+    await chot(S, { note: '' });
+    eq('mở lại & đếm lại được', (await S.call('POST', '/recount-after-close', { khu: 'A' })).status, 200);
+    eq('dấu khung của khu bị bỏ cùng số đếm', (await S.call('GET', '/bootstrap')).data.slot.done.A, undefined);
+  }
+
+  /* ================= 50. Sổ vay mượn ngoài bãi =================
+     Sổ công nợ thép với đối tác NGOÀI bãi, không đụng tới tồn. Ai cũng ghi, admin duyệt; dư nợ chỉ
+     tính dòng đã duyệt; hai cặp vay/tra_vay và cho_vay/tra_no tính riêng. */
+  {
+    const S = await setup();
+    const dtA = (await S.call('POST', '/doitac', { name: 'Cty Hoà Bình' }, 'An')).data.id;
+    ok('người đếm thêm được đối tác', dtA > 0, dtA);
+    eq('trùng tên (khác hoa thường): từ chối', (await S.call('POST', '/doitac', { name: 'cty hoà bình' })).status, 400);
+    eq('người đếm không sửa/ẩn được đối tác', (await S.call('PATCH', '/doitac/' + dtA, { active: 0 }, 'An')).status, 403);
+
+    const tonTruoc = (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]);
+    const g1 = await S.call('POST', '/loans', { doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D18', qty: 100 }], note: 'xe 29C' }, 'An');
+    eq('người đếm ghi sổ được', g1.status, 200);
+    eq('một lần ghi hai phi', g1.data.ids.length, 2);
+    eq('chờ duyệt đếm theo LẦN GHI, không theo dòng', (await S.call('GET', '/bootstrap')).data.loanPending, 1);
+    let L = (await S.call('GET', '/loans')).data;
+    eq('chưa duyệt thì chưa vào dư nợ', L.agg.length, 0);
+    eq('người đếm không duyệt được', (await S.call('POST', '/loans/' + g1.data.ids[0] + '/duyet', {}, 'An')).status, 403);
+    eq('admin duyệt cả lần ghi', (await S.call('POST', '/loans/' + g1.data.ids[0] + '/duyet', {})).status, 200);
+    L = (await S.call('GET', '/loans')).data;
+    eq('duyệt một dòng là duyệt cả nhóm', L.items.filter((x) => x.duyet_ts).length, 2);
+    eq('sổ vay KHÔNG đụng tới tồn bãi', (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]), tonTruoc);
+
+    // trả bớt và cho vay chiều ngược lại: hai cặp tính riêng
+    const g2 = (await S.call('POST', '/loans', { doitac: dtA, kind: 'tra_vay', lines: [{ phi: 'D16', qty: 80 }] })).data;
+    await S.call('POST', '/loans/' + g2.ids[0] + '/duyet', {});
+    const g3 = (await S.call('POST', '/loans', { doitac: dtA, kind: 'cho_vay', lines: [{ phi: 'D16', qty: 50 }] })).data;
+    await S.call('POST', '/loans/' + g3.ids[0] + '/duyet', {});
+    L = (await S.call('GET', '/loans')).data;
+    const q = (kind, phi) => (L.agg.find((x) => x.kind === kind && x.phi_id === phi) || {}).q || 0;
+    eq('mình nợ D16 = vay − trả', q('vay', 'D16') - q('tra_vay', 'D16'), 100);
+    eq('họ nợ mình D16 tính riêng', q('cho_vay', 'D16') - q('tra_no', 'D16'), 50);
+
+    // huỷ: người khác không huỷ được; người ghi rút lại khi chưa duyệt; quá 10 phút sau duyệt thì nhờ admin
+    const g4 = (await S.call('POST', '/loans', { doitac: dtA, kind: 'vay', lines: [{ phi: 'D20', qty: 10 }] }, 'An')).data;
+    eq('người khác không rút được', (await S.call('DELETE', '/loans/' + g4.ids[0], undefined, 'Binh')).status, 403);
+    eq('người ghi rút lại khi chưa duyệt', (await S.call('DELETE', '/loans/' + g4.ids[0], undefined, 'An')).status, 200);
+    const g5 = (await S.call('POST', '/loans', { doitac: dtA, kind: 'vay', lines: [{ phi: 'D20', qty: 10 }] }, 'An')).data;
+    await S.call('POST', '/loans/' + g5.ids[0] + '/duyet', {});
+    advance(11 * 60e3);
+    eq('quá 10 phút sau duyệt: người ghi không huỷ được', (await S.call('DELETE', '/loans/' + g5.ids[0], undefined, 'An')).status, 403);
+    eq('admin vẫn huỷ được', (await S.call('DELETE', '/loans/' + g5.ids[0])).status, 200);
+    L = (await S.call('GET', '/loans')).data;
+    eq('dòng huỷ không còn trong dư nợ', q('vay', 'D20'), 0);
+
+    // đối tác đã ẩn: không ghi thêm, nhưng dư nợ vẫn giữ
+    await S.call('PATCH', '/doitac/' + dtA, { active: 0 });
+    eq('đối tác đã ẩn: không ghi thêm được', (await S.call('POST', '/loans', { doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] })).status, 400);
+    eq('nhưng dư nợ vẫn còn', (await S.call('GET', '/loans')).data.agg.length > 0, true);
+    await S.call('PATCH', '/doitac/' + dtA, { active: 1 });
+    eq('nhật ký ghi lần vay, kèm tên đối tác', /Cty Hoà Bình/.test((S.sql("SELECT detail FROM audit WHERE action='loan_vay' LIMIT 1")[0] || {}).detail || ''), true);
+
+    /* Sổ vay là công nợ với bên ngoài, không phải số liệu của bãi:
+       - xoá sạch dữ liệu thép KHÔNG xoá nó
+       - nạp bản sao cũ chưa có sổ vay thì GIỮ NGUYÊN sổ đang có (tệp thiếu bảng = không biết, không phải rỗng) */
+    const soDong = () => S.one('SELECT COUNT(*) n FROM loans').n;
+    const truoc = soDong();
+    const f = (await S.call('GET', '/backup')).data;
+    await S.call('POST', '/reset', { mode: 'wipe', confirm: 'XOA SACH' });
+    eq('xoá sạch dữ liệu thép: sổ vay còn nguyên', soDong(), truoc);
+    const bang = { ...f.bang }; delete bang.doitac; delete bang.loans; delete bang.khu_report_log;
+    const kq = await S.call('POST', '/restore', { file: { ...f, schema: 15, bang }, confirm: 'NAP LAI' });
+    eq('nạp bản sao bản 15 được', kq.status, 200);
+    eq('bản sao chưa có sổ vay: sổ vay giữ nguyên', soDong(), truoc);
+    eq('và nói rõ đã giữ những bảng nào', kq.data.giu, ['doitac', 'loans']);
+    ok('số dòng nạp vẫn là số (không lẫn chữ)', Object.values(kq.data.dong).every((x) => typeof x === 'number'), JSON.stringify(kq.data.dong));
+    // bản sao CÓ sổ vay thì sổ vay theo tệp
+    const kq2 = await S.call('POST', '/restore', { file: f, confirm: 'NAP LAI' });
+    eq('bản sao có sổ vay: không giữ bảng nào', kq2.data.giu, []);
   }
 
   /* ================= kết quả ================= */

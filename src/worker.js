@@ -33,6 +33,53 @@ const json = (data, status = 200, headers = {}) =>
   });
 
 const vnDay = (ms = Date.now()) => new Date(ms + 7 * 3600e3).toISOString().slice(0, 10); // giờ Việt Nam
+const vnHour = (ms = Date.now()) => ((ms + 7 * 3600e3) % 86400e3) / 3600e3; // giờ Việt Nam, có phần lẻ
+
+/* KHUNG GIỜ ĐẾM, khi admin bắt mỗi khu đếm nhiều lần/ngày (settings.report_slots_per_day > 1).
+   Chia đều GIỜ LÀM VIỆC của bãi (settings.work_from → work_to, admin đặt ở Cài đặt) chứ không chia
+   24 giờ: chia cả ngày thì với 3–4 lần, khung đầu rơi vào nửa đêm (0h–8h, 0h–6h) — không ai ra bãi
+   đếm giờ đó, và khu nào cũng bị báo thiếu cả ngày.
+   Nhãn khung dựng ở ĐÂY rồi gửi xuống máy khách, để Tổng quan và Duyệt nói cùng một câu. Màn Cài
+   đặt có bản chép công thức để xem trước lúc đang chọn giờ (slotPreview trong app.js); bộ test
+   so hai bản với nhau. */
+const SLOT_MAX = 4;
+// "7h", "10h20": giờ làm chia không chẵn (7h–17h chia 3) thì mốc khung có phút
+const fmtGio = (x) => {
+  const h = Math.floor(x + 1e-9), m = Math.round((x - h) * 60);
+  return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+};
+function slotDefs(st, n = st.report_slots_per_day) {
+  const m = Math.max(1, Math.min(SLOT_MAX, Math.round(Number(n)) || 1));
+  // số lưu hỏng (bắt đầu không trước kết thúc) thì về giờ mặc định, không chia ra khung âm
+  const ok = st.work_from >= 0 && st.work_to <= 24 && st.work_from < st.work_to;
+  const a = ok ? st.work_from : WORK_DEFAULT[0], b = ok ? st.work_to : WORK_DEFAULT[1];
+  const len = (b - a) / m;
+  return Array.from({ length: m }, (_, i) => {
+    const from = a + i * len, to = i === m - 1 ? b : from + len;
+    const ten = m === 2 ? (i === 0 ? 'buổi sáng' : 'buổi chiều') : `lần ${i + 1}`;
+    return { i, from, to, label: `${ten} (${fmtGio(from)}–${fmtGio(to)})` };
+  });
+}
+// lần đếm lúc `ms` thuộc khung nào: trước giờ làm tính vào khung đầu, sau giờ làm tính vào khung cuối
+function slotOf(ms, st) {
+  const defs = slotDefs(st), h = vnHour(ms);
+  const d = defs.find((x) => h < x.to);
+  return d ? d.i : defs.length - 1;
+}
+/* Khung nào ĐÃ KẾT THÚC tính tới lúc `now`, tức khung mà khu phải đếm rồi. Khung đang diễn ra
+   chưa tính là thiếu: còn thời gian đếm. Ngày đã qua thì mọi khung đều đã kết thúc.
+   cuoiNgay: việc tự chốt 23:50 xét như ngày đã hết. Không có cờ này thì giờ làm kết thúc 24h
+   có khung cuối kết thúc SAU lúc tự chốt, tức khung đó không bao giờ bị đòi. */
+function slotsDue(day, st, now = Date.now(), cuoiNgay = false) {
+  const today = vnDay(now);
+  if (day < today || (cuoiNgay && day === today)) return slotDefs(st);
+  if (day > today) return [];
+  const h = vnHour(now);
+  return slotDefs(st).filter((d) => d.to <= h);
+}
+/* Báo cáo gửi lên muộn hơn lúc đếm quá ngần này (mất mạng rồi tự gửi lại) thì nói ra ở màn Duyệt.
+   Khung tính theo LÚC ĐẾM mà máy khai, nên người duyệt phải thấy được chỗ máy khai giờ khác giờ tới. */
+const SLOT_LATE_MS = 15 * 60e3;
 const fmtDay = (d) => String(d).split('-').reverse().join('/');
 const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400e3);
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -91,7 +138,7 @@ function seedPhi(env) {
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 16;
 const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -244,8 +291,36 @@ const MIGRATIONS = {
   14: [
     'ALTER TABLE daily_summary ADD COLUMN xuat INTEGER NOT NULL DEFAULT 0',
   ],
+  /* ĐẾM NHIỀU LẦN/NGÀY: mỗi lần khu GỬI báo cáo ghi một dòng, để biết khu đã đếm khung giờ nào.
+     khu_report không dùng được vì nó chỉ giữ lần mới nhất. counts_log cũng không: lần admin chọn
+     số khi hai người báo khác nhau và mốc "đặt tồn về 0" cũng ghi vào đó, tức khu sẽ được tính là
+     đã đếm một khung mà không ai ra bãi. `at` là lúc ĐẾM máy khai (khác ts khi gửi lại sau mất mạng).
+     Điền lại hai ngày gần nhất từ counts_log để ngày nâng cấp không báo oan khu đã đếm sáng nay. */
+  15: [
+    `CREATE TABLE IF NOT EXISTS khu_report_log (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, khu_id TEXT NOT NULL,
+       ts INTEGER NOT NULL, at INTEGER NOT NULL, user_id INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS idx_khu_report_log_dk ON khu_report_log(day, khu_id)',
+    `INSERT INTO khu_report_log (day, khu_id, ts, at, user_id)
+     SELECT day, khu_id, ts, ts, MIN(user_id) FROM counts_log
+     WHERE day >= date('now', '+7 hours', '-1 day') GROUP BY day, khu_id, ts`,
+  ],
   13: [
     'ALTER TABLE daily_summary ADD COLUMN dc INTEGER NOT NULL DEFAULT 0',
+  ],
+  /* VAY MƯỢN NGOÀI BÃI: sổ công nợ thép với đối tác ngoài, tách hẳn khỏi tồn kho (xem đầu bảng
+     loans trong schema.sql). Hai bảng mới, không đổi bảng cũ nào nên không cần backfill gì. */
+  16: [
+    `CREATE TABLE IF NOT EXISTS doitac (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_doitac_name ON doitac(name COLLATE NOCASE)',
+    `CREATE TABLE IF NOT EXISTS loans (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, doitac_id INTEGER NOT NULL, phi_id TEXT NOT NULL,
+       kind TEXT NOT NULL CHECK (kind IN ('vay','tra_vay','cho_vay','tra_no')), qty INTEGER NOT NULL,
+       note TEXT, grp TEXT, user_id INTEGER NOT NULL, ts INTEGER NOT NULL, voided INTEGER NOT NULL DEFAULT 0,
+       voided_ts INTEGER, duyet_ts INTEGER, duyet_by INTEGER, duyet_name TEXT)`,
+    'CREATE INDEX IF NOT EXISTS idx_loans_doitac ON loans(doitac_id)',
+    'CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp)',
   ],
 };
 const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
@@ -373,10 +448,17 @@ const UNAME = "COALESCE(u.name, '(đã xoá)') uname";
    đường rơi về nếu dòng users biến mất (dữ liệu cũ bị xoá tay trong database). */
 const DUYET_NAME = "COALESCE(ud.name, c.duyet_name) duyet_uname";
 const DUYET_JOIN = 'LEFT JOIN users ud ON ud.id = c.duyet_by';
+// Như DUYET_NAME/DUYET_JOIN nhưng cho bảng loans (alias l), dùng ở màn Vay mượn
+const DUYET_NAME_LOAN = "COALESCE(ud.name, l.duyet_name) duyet_uname";
+const DUYET_JOIN_LOAN = 'LEFT JOIN users ud ON ud.id = l.duyet_by';
 const SETTINGS_SQL = 'SELECT key, value FROM settings';
-const SETTING_RANGE = { max_keep_streak: [1, 30], auto_close: [0, 1] };
+/* work_from / work_to: giờ làm việc của bãi (giờ Việt Nam, giờ chẵn), dùng để chia khung đếm.
+   Mỗi số chỉ kiểm được phạm vi riêng ở đây; điều kiện giữa hai số (bắt đầu trước kết thúc, đủ
+   chỗ cho số lần đếm) kiểm trong settingsUpdate vì phải xét cả số đang lưu. */
+const WORK_DEFAULT = [6, 18];
+const SETTING_RANGE = { max_keep_streak: [1, 30], auto_close: [0, 1], report_slots_per_day: [1, 4], work_from: [0, 23], work_to: [1, 24] };
 function parseSettings(rows) {
-  const o = { max_keep_streak: 3, auto_close: 0 };
+  const o = { max_keep_streak: 3, auto_close: 0, report_slots_per_day: 1, work_from: WORK_DEFAULT[0], work_to: WORK_DEFAULT[1] };
   for (const r of rows) o[r.key] = Number(r.value);
   return o;
 }
@@ -511,7 +593,7 @@ async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -520,6 +602,9 @@ async function bootstrap(env, user) {
                     FROM counts c LEFT JOIN users u ON u.id = c.user_id ${DUYET_JOIN} WHERE c.day = ?`).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
     env.DB.prepare(`SELECT r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
+    /* Mọi lần khu GỬI báo cáo hôm nay (khu_report chỉ giữ lần mới nhất), để biết khu đã đếm
+       khung giờ nào khi admin bắt đếm nhiều lần/ngày. Xem khu_report_log ở migration 15. */
+    env.DB.prepare('SELECT khu_id, at FROM khu_report_log WHERE day = ?').bind(day),
     /* Phiếu để hiện danh sách: của hôm nay, CỘNG mọi phiếu còn chờ duyệt của ngày trước.
        Phiếu lập hôm qua chưa ai duyệt vẫn phải nhìn thấy được, không thì nó biến mất khỏi
        màn Nhập kho mà vẫn chưa vào tồn — không ai biết nó còn tồn tại. */
@@ -552,6 +637,11 @@ async function bootstrap(env, user) {
        việc dành riêng cho chủ hệ thống nằm rải ở nhiều màn (đặt lại số liệu, mở lại ngày đã qua),
        mà /users chỉ nạp khi vào đúng màn Người dùng — thiếu nó thì nút biến mất đúng lúc cần. */
     env.DB.prepare("SELECT MIN(id) id FROM users WHERE role = 'admin' AND deleted = 0"),
+    // danh sách đối tác đang hiện, cho ô chọn khi ghi vay/mượn (xem màn Vay mượn, nạp đầy đủ riêng ở /loans)
+    env.DB.prepare('SELECT id, name FROM doitac WHERE active = 1 ORDER BY name'),
+    // đếm nhanh để nhắc ở Tổng quan; chi tiết nạp khi vào đúng màn Vay mượn, như /users
+    // đếm theo LẦN GHI (grp) chứ không theo dòng: ghi một lần ba phi là MỘT việc admin phải duyệt
+    env.DB.prepare('SELECT COUNT(DISTINCT COALESCE(grp, id)) n FROM loans WHERE voided = 0 AND duyet_ts IS NULL'),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -566,6 +656,7 @@ async function bootstrap(env, user) {
     counts: counts.results,
     baseline: baseline.results,
     reports: reports.results,
+    slot: slotInfo(settings.results, reportTimes.results),
     receipts: receipts.results,
     innKhu: innKhu.results,
     eff: eff.results,
@@ -580,7 +671,24 @@ async function bootstrap(env, user) {
     // nhãn lý do điều chỉnh: gửi xuống thay vì chép sang app.js, để hai bên không bao giờ lệch mã lý do
     dcReasons: Object.entries(DC_REASONS).map(([id, name]) => ({ id, name })),
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
+    doitacAct: doitacAct.results,
+    loanPending: loanPending.results[0] ? loanPending.results[0].n : 0,
   };
+}
+
+/* Khung giờ đếm cho máy khách. Khung nào khu ĐÃ đếm thì server tính (theo giờ Việt Nam); còn
+   "bây giờ là khung nào" thì máy tự tính theo `now` của server cộng thời gian đã trôi, chứ không
+   theo đồng hồ máy: máy để sai giờ thì mỗi máy sẽ nhắc một kiểu. */
+function slotInfo(settingRows, logRows) {
+  const st = parseSettings(settingRows), n = st.report_slots_per_day;
+  const done = {};
+  if (n > 1) {
+    logRows.forEach((r) => {
+      const i = slotOf(r.at, st);
+      if (!(done[r.khu_id] = done[r.khu_id] || []).includes(i)) done[r.khu_id].push(i);
+    });
+  }
+  return { n, defs: slotDefs(st), done, now: Date.now() };
 }
 
 /* ========================= BÁO CÁO ĐẾM ========================= */
@@ -731,6 +839,15 @@ async function putCounts(req, env, user) {
      không thể, nhưng hậu quả đủ nặng để không dựa vào xác suất. */
   const prevTs = prevR.results.reduce((m, r) => Math.max(m, r.ts || 0, r.duyet_at || 0), 0);
   const ts = Math.max(Date.now(), prevTs + 1);
+  /* Lúc ĐẾM: báo cáo lưu khi mất mạng có thể tới máy chủ sau cả tiếng, mà khung giờ phải tính
+     theo lúc khu ra bãi đếm chứ không phải lúc có mạng lại. Máy gửi b.tuoi = số mili-giây ĐÃ TRÔI
+     từ lúc bấm gửi lần đầu, server lấy giờ của chính nó trừ đi. Hiệu hai mốc trên cùng một máy
+     vẫn đúng dù đồng hồ máy chạy sai giờ — gửi thẳng giờ máy (b.at, bản app cũ) thì máy chậm một
+     tiếng là lần đếm rơi sang khung trước. Chỉ nhận mốc trong đúng ngày đếm và không ở tương lai;
+     lệch giờ tới quá SLOT_LATE_MS thì màn Duyệt nói ra. */
+  const tuoi = Number(b.tuoi);
+  const atIn = Number.isFinite(tuoi) && tuoi >= 0 ? ts - tuoi : Number(b.at);
+  const at = Number.isFinite(atIn) && atIn <= ts && vnDay(atIn) === day ? Math.round(atIn) : ts;
   const changes = [];
   let conflict = 0;
   const rows = clean.map((it) => {
@@ -783,6 +900,8 @@ async function putCounts(req, env, user) {
       `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
        SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
     ).bind(day, khuId, user.id, ts, data),
+    // một dòng cho mỗi lần GỬI: dùng để biết khu đã đếm khung giờ nào (xem migration 15)
+    env.DB.prepare('INSERT INTO khu_report_log (day, khu_id, ts, at, user_id) VALUES (?,?,?,?,?)').bind(day, khuId, ts, at, user.id),
     env.DB.prepare(
       `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
        SELECT ?1, ${J('phi')}, 1, 0, ${J('keep')} FROM json_each(?2) j WHERE 1
@@ -991,6 +1110,156 @@ async function postTransfer(req, env, user) {
   return writeReceipt(env, user, ctx, rows, 'chuyen', note, { from, to, lines });
 }
 
+/* ========================= VAY MƯỢN NGOÀI BÃI =========================
+   Sổ công nợ thép với đối tác NGOÀI bãi — KHÔNG đụng tới tồn kho (counts/receipts), xem chú thích
+   đầu bảng loans trong schema.sql: thép di chuyển qua cổng thật thì vẫn phải lập phiếu Nhập/Xuất
+   như thường, sổ này chỉ nhớ "ai đang giữ thép của ai". Ai cũng GHI được (kể cả người đếm), vì
+   mục đích là nhiều người cùng chép lại ngay lúc phát sinh, tránh quên — nhưng admin vẫn phải
+   DUYỆT từng lần ghi, như mọi phiếu khác, để số liệu chính thức luôn qua tay admin.
+   kind: 'vay' + 'tra_vay' là một cặp (mình nợ đối tác), 'cho_vay' + 'tra_no' là cặp còn lại (đối
+   tác nợ mình) — hai cặp tính riêng, vì cùng một đối tác có thể vừa đang vay mình D16 vừa đang
+   được mình cho vay D18 cùng lúc. */
+const LOAN_KINDS = ['vay', 'tra_vay', 'cho_vay', 'tra_no'];
+const LOAN_ACTION = { vay: 'loan_vay', tra_vay: 'loan_tra_vay', cho_vay: 'loan_cho_vay', tra_no: 'loan_tra_no' };
+
+async function doitacCreate(req, env, user) {
+  const b = await readJson(req);
+  const name = String(b.name || '').trim().slice(0, 60);
+  if (!name) throw bad('Cần nhập tên đối tác');
+  const dup = await env.DB.prepare('SELECT id FROM doitac WHERE name = ? COLLATE NOCASE').bind(name).first();
+  if (dup) throw bad('Đối tác này đã có trong danh sách');
+  const res = await env.DB.batch([
+    env.DB.prepare('INSERT INTO doitac (name, active) VALUES (?, 1)').bind(name),
+    auditStmt(env, user, 'doitac_create', { name }),
+    bump(env),
+  ]);
+  return json({ ok: true, id: res[0].meta.last_row_id });
+}
+
+async function doitacUpdate(req, env, user, id) {
+  const d = await env.DB.prepare('SELECT * FROM doitac WHERE id = ?').bind(Number(id)).first();
+  if (!d) throw new HttpError(404, 'Không tìm thấy đối tác');
+  const b = await readJson(req);
+  const name = b.name !== undefined ? String(b.name).trim().slice(0, 60) || d.name : d.name;
+  if (name.toLowerCase() !== d.name.toLowerCase()) {
+    const dup = await env.DB.prepare('SELECT id FROM doitac WHERE name = ? COLLATE NOCASE AND id <> ?').bind(name, d.id).first();
+    if (dup) throw bad('Tên này đã dùng cho một đối tác khác');
+  }
+  const active = b.active !== undefined ? (b.active ? 1 : 0) : d.active;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE doitac SET name = ?, active = ? WHERE id = ?').bind(name, active, d.id),
+    auditStmt(env, user, 'doitac_update', { id: d.id, name, active }),
+    bump(env),
+  ]);
+  return json({ ok: true });
+}
+
+// Đọc danh sách dòng { phi, qty } của một lần ghi — giống parseLines của receipts nhưng không cần ctx.khu
+function parseLoanLines(b, phiBy) {
+  const raw = Array.isArray(b.lines) ? b.lines : b.phi !== undefined ? [{ phi: b.phi, qty: b.qty }] : [];
+  if (!raw.length) throw bad('Chưa có dòng nào');
+  if (raw.length > 30) throw bad('Một lần ghi tối đa 30 dòng');
+  const sum = {};
+  for (const it of raw) {
+    const phi = String((it && it.phi) || '');
+    if (!phiBy[phi]) throw bad('Phi không hợp lệ: ' + phi);
+    sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số ' + unitWord(phiBy[phi]) + ' của ' + phi);
+  }
+  return Object.entries(sum).map(([phi, qty]) => ({ phi, qty }));
+}
+
+async function postLoan(req, env, user) {
+  const b = await readJson(req);
+  const kind = String(b.kind || '');
+  if (!LOAN_KINDS.includes(kind)) throw bad('Chưa chọn loại vay/mượn hợp lệ');
+  const doitacId = intIn(b.doitac, 1, 1e9, 'Đối tác');
+  const [dR, phiR] = await env.DB.batch([
+    env.DB.prepare('SELECT id, name, active FROM doitac WHERE id = ?').bind(doitacId),
+    env.DB.prepare('SELECT id, bo_size, unit FROM phi WHERE active = 1'),
+  ]);
+  const d = dR.results[0];
+  if (!d) throw bad('Đối tác không hợp lệ');
+  if (!d.active) throw bad('Đối tác này đã ẩn, không ghi thêm được. Hãy hiện lại ở màn Vay mượn trước');
+  const phiBy = Object.fromEntries(phiR.results.map((r) => [r.id, r]));
+  const lines = parseLoanLines(b, phiBy);
+  const note = String(b.note || '').trim().slice(0, 200);
+  const grp = rand(8);
+  const ts = Date.now();
+  const data = JSON.stringify(lines);
+  const res = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO loans (doitac_id, phi_id, kind, qty, note, grp, user_id, ts)
+       SELECT ?1, ${J('phi')}, ?2, ${J('qty')}, ?3, ?4, ?5, ?6 FROM json_each(?7) j`
+    ).bind(doitacId, kind, note, grp, user.id, ts, data),
+    auditStmt(env, user, LOAN_ACTION[kind], { doitac: d.name, lines, note, grp }),
+    bump(env),
+    env.DB.prepare('SELECT id FROM loans WHERE grp = ?').bind(grp),
+  ]);
+  const ids = res[3].results.map((r) => r.id);
+  return json({ ok: true, grp, ids });
+}
+
+async function duyetLoan(env, user, id) {
+  const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ?').bind(id).first();
+  if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
+  if (r.voided) throw bad('Dòng này đã bị hủy, không duyệt được');
+  if (r.duyet_ts) throw bad('Dòng này đã được duyệt');
+  const ts = Date.now();
+  await env.DB.batch([
+    r.grp
+      ? env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_ts IS NULL')
+        .bind(ts, user.id, user.name, r.grp)
+      : env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE id = ?')
+        .bind(ts, user.id, user.name, id),
+    auditStmt(env, user, 'loan_duyet', { id, grp: r.grp, kind: r.kind, doitac_id: r.doitac_id }),
+    bump(env),
+  ]);
+  return json({ ok: true });
+}
+
+// Hủy theo nhóm (grp), giống voidReceipt: chờ duyệt thì người ghi rút lại bất cứ lúc nào, đã
+// duyệt thì chỉ trong 10 phút kể từ lúc duyệt, sau đó nhờ admin. Không có khái niệm "ngày chốt"
+// ở đây nên không cần chốt chặn theo ngày như receipts.
+async function voidLoan(env, user, id) {
+  const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ? AND voided = 0').bind(id).first();
+  if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
+  const pending = !r.duyet_ts;
+  if (user.role !== 'admin') {
+    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc admin mới hủy được');
+    if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) {
+      throw new HttpError(403, 'Dòng đã duyệt quá 10 phút, nhờ admin hủy');
+    }
+  }
+  await env.DB.batch([
+    r.grp
+      ? env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)
+      : env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE id = ?').bind(Date.now(), id),
+    auditStmt(env, user, pending ? 'loan_reject' : 'loan_void', { id, kind: r.kind, doitac_id: r.doitac_id, grp: r.grp }),
+    bump(env),
+  ]);
+  return json({ ok: true, pending });
+}
+
+/* Màn Vay mượn: danh sách MỌI đối tác (cả đã ẩn, để admin quản lý), lịch sử gần đây (đủ cho màn
+   hình, không tải hết — giống /users không tải hết nhật ký) và số dư nợ từng (đối tác × phi),
+   tính trên MỌI dòng ĐÃ DUYỆT từ trước tới nay bằng SUM ở database, không phụ thuộc `items` có
+   tải đủ hay không. agg trả về thô theo kind; cộng/trừ đúng cặp (vay/tra_vay, cho_vay/tra_no)
+   làm ở app.js, để server khỏi phải biết màn hình trình bày thế nào. */
+async function loansView(env) {
+  const [dR, itemR, aggR] = await env.DB.batch([
+    env.DB.prepare('SELECT id, name, active FROM doitac ORDER BY name'),
+    env.DB.prepare(
+      `SELECT l.id, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.grp,
+         l.user_id, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN}
+       FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
+         ${DUYET_JOIN_LOAN}
+       WHERE l.voided = 0 ORDER BY l.id DESC LIMIT 300`
+    ),
+    env.DB.prepare('SELECT doitac_id, phi_id, kind, SUM(qty) q FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL GROUP BY doitac_id, phi_id, kind'),
+  ]);
+  return json({ doitac: dR.results, items: itemR.results, agg: aggR.results });
+}
+
 /* ========================= ĐIỀU CHỈNH TỒN =========================
    Sửa tồn MỘT ô (khu × phi) khi SỔ SAI, không phải khi thép thật đi hay về. Ba đường cũ đều
    không làm được việc này: phiếu nhập chỉ cộng và nói sai bản chất ("thép về"), chuyển khu giữ
@@ -1154,11 +1423,11 @@ function lastDuyetBy(subRows, khuId) {
   return best ? best.duyet_uname : null;
 }
 
-async function computeReview(env, day) {
+async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -1207,7 +1476,24 @@ async function computeReview(env, day) {
     db.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
     db.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     db.prepare("SELECT value FROM meta WHERE key = 'rev'"),
+    db.prepare(SETTINGS_SQL),
+    // các lần khu gửi báo cáo trong ngày đang duyệt: khung giờ nào đã đếm (xem migration 15)
+    db.prepare('SELECT khu_id, ts, at FROM khu_report_log WHERE day = ? ORDER BY id').bind(day),
   ]);
+
+  /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
+     được nữa). Khung ĐÃ KẾT THÚC mà khu chưa đếm thành việc cần xử lý; lần đếm khung sau KHÔNG bù
+     cho khung trước, vì đòi đếm nhiều lần/ngày là để có số ở từng buổi — nên cách gỡ duy nhất là
+     admin ghi lý do lúc chốt, giống khu không báo. */
+  const slotSt = parseSettings(setR.results), nSlot = slotSt.report_slots_per_day;
+  const slotDone = {}, slotLate = {};
+  if (nSlot > 1) {
+    slotR.results.forEach((r) => {
+      (slotDone[r.khu_id] = slotDone[r.khu_id] || new Set()).add(slotOf(r.at, slotSt));
+      if (r.ts - r.at > SLOT_LATE_MS) (slotLate[r.khu_id] = slotLate[r.khu_id] || []).push({ at: r.at, ts: r.ts });
+    });
+  }
+  const due = nSlot > 1 ? slotsDue(day, slotSt, Date.now(), !!opt.cuoiNgay) : [];
 
   const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, rcTs = {};
   effR.results.forEach((r) => (eff[r.khu_id + '|' + r.phi_id] = r.v));
@@ -1363,6 +1649,11 @@ async function computeReview(env, day) {
       recheck: !!(lastDuyet && rcTs[k.id] && rcTs[k.id] > lastDuyet),
       phieu: pendKhu[k.id] || [],
       duyet: r && !waiting && lastDuyet ? { by: lastDuyetBy(subR.results, k.id), ts: lastDuyet } : null,
+      slots: nSlot > 1 ? {
+        done: [...(slotDone[k.id] || [])].sort(),
+        missing: due.filter((d) => !(slotDone[k.id] && slotDone[k.id].has(d.i))).map((d) => d.i),
+        late: slotLate[k.id] || [],
+      } : null,
     };
   });
 
@@ -1380,6 +1671,12 @@ async function computeReview(env, day) {
     if (k.rep.conflict && !k.rep.resolved) exceptions.push({ type: 'conflict', khu: k.khu, name: k.name });
     if (k.rep.recount) exceptions.push({ type: 'recount', khu: k.khu, name: k.name });
     if (k.recheck) exceptions.push({ type: 'recheck', khu: k.khu, name: k.name });
+    /* Thiếu khung đếm. Khu chưa báo lần nào đã nằm ở khu_missing phía trên (nhánh continue), nên
+       không bị tính hai việc. Khu trống trơn (items rỗng) không bị đòi, như với khu_missing. */
+    if (k.slots && k.slots.missing.length && k.items.length) {
+      const defs = slotDefs(slotSt);
+      exceptions.push({ type: 'slot_missing', khu: k.khu, name: k.name, missing: k.slots.missing.map((i) => defs[i].label) });
+    }
   }
   phieu.forEach((v) => exceptions.push({ type: 'receipt_pending', key: v.key, id: v.id, kind: v.kind, day: v.day }));
   rows.forEach((r) => {
@@ -1401,7 +1698,7 @@ async function computeReview(env, day) {
   })).size;
   return {
     day, last: last || null, span, rev, closed: closedR.results.length > 0,
-    rows, khus, phieu, exceptions, pending,
+    rows, khus, phieu, exceptions, pending, slot: { n: nSlot, defs: slotDefs(slotSt) },
     reports: repR.results.filter((r) => r.day === day), khu: khuR.results,
   };
 }
@@ -1652,6 +1949,7 @@ async function resetData(req, env, user) {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM counts'),
       env.DB.prepare('DELETE FROM khu_report'),
+      env.DB.prepare('DELETE FROM khu_report_log'),
       env.DB.prepare('DELETE FROM receipts'),
       env.DB.prepare('DELETE FROM day_close'),
       env.DB.prepare('DELETE FROM baseline'),
@@ -1754,8 +2052,16 @@ async function resetData(req, env, user) {
    ký nói rõ vừa nạp lại từ bản sao. */
 
 // Bảng dựng nên TRẠNG THÁI của bãi: nạp lại là thay sạch những bảng này.
-const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts', 'khu_report',
-  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings'];
+const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts', 'khu_report', 'khu_report_log',
+  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans'];
+/* Bản sao của cấu trúc cũ vẫn nạp được khi cấu trúc mới CHỈ THÊM BẢNG: nạp lại đã chỉ lấy cột
+   bảng hiện tại có, và bảng tệp không có thì để trống. Chỉ lùi ĐÚNG MỘT bản (ngay trước), không
+   lùi xa hơn: mỗi bản chỉ được kiểm "chỉ thêm bảng" so với bản liền trước nó lúc viết, lùi hai
+   bản là cộng dồn hai lần đổi mà không ai soát lại cả hai cùng lúc. Bản 15 chỉ thêm khu_report_log
+   (dấu khung giờ đã đếm); bản 16 chỉ thêm doitac/loans (sổ vay mượn, tách khỏi tồn kho).
+   Đổi cột hay đổi nghĩa bảng cũ thì KHÔNG được thêm vào đây. */
+const BK_GIU_NEU_THIEU = ['doitac', 'loans'];
+const BK_COMPAT = { 15: [14], 16: [15] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
@@ -1826,15 +2132,19 @@ async function restoreData(req, env, user) {
   if (!f || f.app !== 'kho-thep' || !f.bang) throw bad('Tệp không phải bản sao của ứng dụng này');
   const sc = await env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
   const now = sc ? sc.value : 0;
-  if (Number(f.schema) !== now) {
+  if (Number(f.schema) !== now && !(BK_COMPAT[now] || []).includes(Number(f.schema))) {
     throw bad(`Bản sao thuộc cấu trúc ${f.schema}, hệ thống đang ở ${now}. Không nạp được bản sao khác phiên bản cấu trúc.`);
   }
   /* Tài khoản nằm trong bản sao kèm PIN đã băm. Băm đó vô dụng nếu không có PEPPER, mà PEPPER
      chỉ nằm trên máy chủ chứ không nằm trong tệp — nên tệp rơi ra ngoài cũng không mở được tài
      khoản nào. Nhưng đổi PEPPER rồi nạp lại bản sao cũ thì mọi PIN cũ thành sai: phải đặt lại. */
   const stmts = [];
-  const dem = {};
+  const dem = {}, giu = [];
   for (const t of BK_STATE) {
+    /* Sổ vay mượn là công nợ với bên NGOÀI, không phải trạng thái của bãi: bản sao cũ chưa có bảng
+       đó (bản 14, 15) thì GIỮ NGUYÊN sổ đang có. Không giữ thì nạp một bản sao cũ là xoá sạch công
+       nợ đang theo dõi mà không ai hay — tệp không có bảng nghĩa là "không biết", không phải "rỗng". */
+    if (BK_GIU_NEU_THIEU.includes(t) && !Array.isArray(f.bang[t])) { giu.push(t); continue; }
     const rows = Array.isArray(f.bang[t]) ? f.bang[t] : [];
     dem[t] = rows.length;
     stmts.push(env.DB.prepare(`DELETE FROM ${t}`));
@@ -1849,11 +2159,11 @@ async function restoreData(req, env, user) {
     ).bind(JSON.stringify(rows)));
   }
   stmts.push(
-    auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem }),
+    auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),
     bump(env)
   );
   await env.DB.batch(stmts);
-  return json({ ok: true, dong: dem });
+  return json({ ok: true, dong: dem, giu });
 }
 
 /* ========================= VIỆC TỰ ĐỘNG (CRON) =========================
@@ -1862,12 +2172,15 @@ async function nightly(env) {
   const day = vnDay();
   const [setR] = await env.DB.batch([env.DB.prepare(SETTINGS_SQL)]);
   if (parseSettings(setR.results).auto_close) {
-    const rv = await computeReview(env, day);
+    const rv = await computeReview(env, day, { cuoiNgay: true });
     if (!rv.closed) {
       const reasons = [];
       if (!rv.reports.length) reasons.push('chưa khu nào báo');
       // việc admin đã duyệt (cảnh báo lệch khu) không chặn tự chốt
       if (rv.pending) reasons.push(rv.pending + ' việc chưa duyệt');
+      // nói rõ khu nào thiếu khung nào: "3 việc chưa duyệt" không cho admin biết sáng mai hỏi ai
+      const thieu = rv.exceptions.filter((e) => e.type === 'slot_missing');
+      if (thieu.length) reasons.push('thiếu lần đếm: ' + thieu.map((e) => e.name + ' ' + e.missing.join(', ')).join('; '));
       if (reasons.length) await auditStmt(env, SYSTEM, 'auto_close_skip', { day, reason: reasons.join(', ') }).run();
       else {
         const note = 'Tự chốt: mọi khu đã duyệt, không còn việc chờ';
@@ -2205,12 +2518,24 @@ async function phiBulk(req, env, admin) {
   return json({ ok: true, n: log.length });
 }
 
+const SETTING_NAME = { work_from: 'Giờ bắt đầu làm việc', work_to: 'Giờ kết thúc làm việc', report_slots_per_day: 'Số lần đếm mỗi ngày' };
 async function settingsUpdate(req, env, admin) {
   const b = await readJson(req);
   const stmts = [];
+  // số sau khi lưu = số đang lưu, đè bằng những gì vừa gửi: để kiểm điều kiện giữa các số
+  const sau = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
+  for (const key of Object.keys(SETTING_RANGE)) {
+    if (b[key] !== undefined) sau[key] = intIn(b[key], SETTING_RANGE[key][0], SETTING_RANGE[key][1], SETTING_NAME[key] || key);
+  }
+  if (sau.work_from >= sau.work_to) throw bad('Giờ kết thúc làm việc phải sau giờ bắt đầu');
+  /* Mỗi khung đếm ít nhất 1 tiếng. Giờ làm 3 tiếng mà đòi đếm 4 lần thì khung chỉ 45 phút: vừa
+     đếm xong khu này đã sang khung sau, khu nào cũng thành thiếu. */
+  if (sau.work_to - sau.work_from < sau.report_slots_per_day) {
+    throw bad(`Giờ làm ${sau.work_to - sau.work_from} tiếng không đủ cho ${sau.report_slots_per_day} lần đếm (mỗi lần cần ít nhất 1 tiếng)`);
+  }
   for (const key of Object.keys(SETTING_RANGE)) {
     if (b[key] !== undefined) {
-      const v = intIn(b[key], SETTING_RANGE[key][0], SETTING_RANGE[key][1], key);
+      const v = sau[key];
       stmts.push(env.DB.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, String(v)));
     }
   }
@@ -2457,6 +2782,8 @@ async function recountAfterClose(req, env, user) {
        WHERE khu_id = ?2 AND EXISTS (SELECT 1 FROM counts c WHERE c.day = ?1 AND c.khu_id = ?2 AND c.phi_id = khu_phi.phi_id)`
     ).bind(day, khu),
     env.DB.prepare('DELETE FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
+    // số đếm bị bỏ thì dấu "đã đếm khung" của khu cũng bỏ: không thì khu bị bắt đếm lại vẫn hiện ✓
+    env.DB.prepare('DELETE FROM khu_report_log WHERE day = ? AND khu_id = ?').bind(day, khu),
     env.DB.prepare('UPDATE khu_report SET recount = 1, resolved = 0 WHERE day = ? AND khu_id = ?').bind(day, khu),
     auditStmt(env, user, 'recount_after_close', { day, khu }),
     bump(env),
@@ -2579,6 +2906,22 @@ async function handle(req, env, url) {
   if (r0 === 'adjust' && method === 'POST') { need(['admin', 'thukho']); return postAdjust(req, env, user); }
   if (r0 === 'xuat' && method === 'POST') { need(['admin', 'thukho']); return postXuat(req, env, user); }
   if (r0 === 'report' && method === 'GET') { need(['admin', 'thukho']); return report(env, url); }
+  /* Vay mượn ngoài bãi: GHI và XEM mở cho mọi vai trò (kể cả người đếm), vì mục đích là nhiều
+     người cùng chép lại ngay lúc phát sinh. DUYỆT chỉ admin, như mọi phiếu khác. Hủy/rút lại thì
+     tự voidLoan kiểm quyền bên trong (người ghi hoặc admin), giống voidReceipt. */
+  if (r0 === 'loans') {
+    need(ALL);
+    if (method === 'GET' && p.length === 1) return loansView(env);
+    if (method === 'POST' && p.length === 1) return postLoan(req, env, user);
+    if (method === 'DELETE' && p.length === 2) return voidLoan(env, user, Number(p[1]));
+    if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { need(['admin']); return duyetLoan(env, user, Number(p[1])); }
+  }
+  // Danh bạ đối tác: tạo mở cho mọi vai trò (thêm tên mới khi cần), sửa tên/ẩn chỉ admin + thủ kho
+  if (r0 === 'doitac') {
+    need(ALL);
+    if (method === 'POST' && p.length === 1) return doitacCreate(req, env, user);
+    if (method === 'PATCH' && p.length === 2) { need(['admin', 'thukho']); return doitacUpdate(req, env, user, p[1]); }
+  }
 
   // --- chỉ admin ---
   need(['admin']);
