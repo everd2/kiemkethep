@@ -1195,6 +1195,41 @@ const run = async () => {
   ok('thiếu số biên bản: không ghi, nhắc ghi số', !r('S.ask') && /số biên bản/i.test(r('S.toast')), r('S.toast'));
   r(`S.form = {}; S.loans = null; S.loan.kind = 'vay'; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
+  /* ---- 1f. Nhập số đếm: mở lại ô không gõ gì thì giữ nguyên LOẠI ô; nháp không điền số cũ ----
+     Trước đây: chạm qua ô "giữ nguyên" là thành "đếm thật" (chuỗi giữ nguyên về 0), chạm qua ô "để
+     trống" là thành "đã đếm, hết (0)" không qua hộp hỏi, và báo cáo hôm qua chưa duyệt được điền sẵn
+     thành ô "đã đếm" — bấm GỬI là số cũ thành lần đếm mới, nuốt mất thép duyệt vào sau đó. */
+  // "hôm nay" theo giờ Việt Nam như server, để test không lệch khi chạy sau 17h giờ UTC
+  r(`S.ask = null; S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.khu = 'A'; S.boot.counts = []; loadDraft(true); S.sel = 'D10'; settle('keep');`);
+  r(`ACTIONS.cell({ p: 'D10' }); ACTIONS.next();`);
+  ok('ô giữ nguyên, chạm lại rồi TIẾP: vẫn là giữ nguyên', r("S.draft.cells['D10'].kind") === 'giu', r("JSON.stringify(S.draft.cells['D10'])"));
+  r(`ACTIONS.cell({ p: 'D10' }); ACTIONS.closesel();`);
+  ok('ô giữ nguyên, chạm lại rồi Đóng: vẫn là giữ nguyên', r("S.draft.cells['D10'].kind") === 'giu', r("JSON.stringify(S.draft.cells['D10'])"));
+  r(`ACTIONS.cell({ p: 'D10' }); ACTIONS.key({ d: 0 }); ACTIONS.next();`);
+  ok('ô giữ nguyên, gõ số mới (1 bó): thành đếm thật', r("S.draft.cells['D10'].kind") === 'dem' && r("S.draft.cells['D10'].v") === 10, r("JSON.stringify(S.draft.cells['D10'])"));
+
+  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D12', v: 0, kind: 'zero', bo: 0, le: 0, ts: Date.now() }]; loadDraft(true);`);
+  ok('ô để trống của lần báo vừa rồi: nháp điền sẵn', r("S.draft.cells['D12'] && S.draft.cells['D12'].kind") === 'zero');
+  ok('lúc gửi vẫn hỏi lại ô để trống đang có thép', r("blankWithStock().map((p) => p.id).includes('D12')"), r("JSON.stringify(blankWithStock().map((p) => p.id))"));
+  r(`ACTIONS.cell({ p: 'D12' }); ACTIONS.next();`);
+  ok('ô để trống, chạm rồi TIẾP: vẫn là để trống, không thành "Hết (0)"', r("S.draft.cells['D12'].kind") === 'zero', r("JSON.stringify(S.draft.cells['D12'])"));
+
+  const yts = Date.now() - 864e5;
+  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: ${yts} }, { khu_id: 'A', phi_id: 'D12', v: 40, kind: 'dem', bo: 5, le: 0, ts: ${yts} }];
+     S.boot.reports = [{ khu_id: 'A', user_id: 1, uname: 'A', ts: ${yts} }]; indexBoot(S.boot); loadDraft(true); S.sel = null;`);
+  ok('báo cáo hôm qua chưa duyệt: không điền sẵn vào nháp', r('Object.keys(S.draft.cells).length') === 0, r('JSON.stringify(S.draft.cells)'));
+  const DV = r('demView()');
+  ok('thông báo ghi rõ ngày của báo cáo đang chờ', DV.includes('ngày ' + r(`fmtDay(vnDayOf(${yts}))`)), (DV.match(/Báo cáo Khu A[^<]*/) || [''])[0]);
+  ok('thông báo nói số đó không điền sẵn, phải đếm thực tế', /không điền sẵn vào bảng/.test(DV));
+  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: Date.now() }]; S.boot.reports = []; indexBoot(S.boot); loadDraft(true);`);
+  ok('lần báo hôm nay (1 lần/ngày): vẫn điền sẵn để sửa lại', r("S.draft.cells['D10'] && S.draft.cells['D10'].v") === 290);
+  // đếm 2 lần/ngày: số buổi sáng không điền sẵn cho buổi chiều
+  // lần đếm lúc 0h00 (khung 1 kết thúc 0h01), bây giờ đang khung 2
+  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: Date.parse(S.boot.today + 'T00:00:10+07:00') }];
+     S.boot.nSlot = 2; S.boot.slotDefs = [{ i: 0, from: 0, to: 0.0167 }, { i: 1, from: 0.0167, to: 24 }]; loadDraft(true);`);
+  ok('đếm 2 lần/ngày: số của khung trước không điền sẵn', r('Object.keys(S.draft.cells).length') === 0, r('JSON.stringify(S.draft.cells)'));
+  r(`S.form = {}; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

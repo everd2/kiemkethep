@@ -436,6 +436,12 @@ const slotNow = () => {
   const h = vnHourNow();
   return b.slotDefs.find((d) => h < d.to) || b.slotDefs[b.slotDefs.length - 1];
 };
+// khung của một mốc giờ (ms) trong ngày, cùng cách chia với slotNow
+const slotIdxOf = (ts) => {
+  const defs = S.boot.slotDefs, h = ((ts + 7 * 3600e3) % 864e5) / 3600e3;
+  const d = defs.find((x) => h < x.to);
+  return d ? d.i : defs.length - 1;
+};
 /* Khu có bị đòi đếm không: giống server, khu chưa báo lần nào kể từ lần chốt trước thì thẻ
    "chưa báo" đã nói, còn khu trống trơn (không tồn, không phiếu, không đếm ra gì) thì không bị đòi. */
 /* Khu có gì để đếm không: còn tồn chuẩn, có phiếu đã duyệt, hoặc đã đếm ra số khác 0 — cùng điều
@@ -514,6 +520,16 @@ const reportedCount = () => S.boot.khuAct.filter((k) => daBaoHomNay(k.id)).lengt
 const draftKey = () => 'kt:' + S.boot.today + ':' + S.me.id + ':' + S.khu;
 // khu mở lần trước cũng nhớ theo từng người: người khác dùng máy thì không mở nhầm khu của người trước
 const lastKhuKey = () => 'kt:lastKhu:' + (S.me ? S.me.id : '');
+/* Nháp chỉ điền sẵn số đã gửi của HÔM NAY, ĐÚNG KHUNG GIỜ đang diễn ra — tức là để sửa lại lần báo
+   vừa rồi. Báo cáo hôm qua chưa duyệt (được chuyển sang hôm nay) và số của khung trước thì KHÔNG:
+   điền sẵn chúng thành ô "đã đếm" là chỉ cần bấm GỬI, số cũ thành lần đếm mới với giờ mới, và thép
+   duyệt vào sau lần đếm cũ bị nuốt mất (hệ thống tin số cũ "đã gồm" lô thép đó). Ô vẫn để chưa
+   đếm, nên phi có thép mới về vẫn bị bắt đếm thực tế như mọi ngày. */
+function dienSan(ts) {
+  if (!ts || vnDayOf(ts) !== S.boot.today) return false;
+  const cur = slotNow();
+  return !cur || slotIdxOf(ts) === cur.i;
+}
 function saveDraft() { try { localStorage.setItem(draftKey(), JSON.stringify(S.draft)); } catch (e) { /* đầy bộ nhớ */ } }
 function loadDraft(fresh) {
   let d = null;
@@ -525,7 +541,7 @@ function loadDraft(fresh) {
   if (!d || !d.cells) {
     d = { cells: {}, baseTs: rep ? rep.ts : 0 };
     for (const c of S.boot.counts) {
-      if (c.khu_id === S.khu) d.cells[c.phi_id] = { v: c.v, kind: c.kind, bo: c.bo == null ? undefined : c.bo, le: c.le == null ? undefined : c.le };
+      if (c.khu_id === S.khu && dienSan(c.ts)) d.cells[c.phi_id] = { v: c.v, kind: c.kind, bo: c.bo == null ? undefined : c.bo, le: c.le == null ? undefined : c.le };
     }
   }
   S.draft = d;
@@ -545,7 +561,11 @@ function pendingList() { return myPhiList().filter((p) => !S.draft.cells[p.id]);
    thép, chứ không đẩy hết sang cho người duyệt. Phi dự kiến đang 0 mà để trống thì im lặng cho
    qua — đó mới là chỗ quy tắc này có ích: 9 ô trống gửi thẳng, không hỏi gì. */
 // mốc là số DỰ KIẾN (expOf) — đúng con số ô đang hiện, nên câu hỏi khớp với cái người đếm thấy
-function blankWithStock() { return pendingList().filter((p) => (expOf(S.khu, p.id) || 0) > 0); }
+/* Ô "để trống" có sẵn từ lần báo trước (kind 'zero') cũng là để trống: không tính nó thì người báo
+   lại — có khi là người khác — gửi đi 0 cho phi đang có thép mà không được hỏi câu nào. */
+function blankWithStock() {
+  return myPhiList().filter((p) => { const c = S.draft.cells[p.id]; return (!c || c.kind === 'zero') && (expOf(S.khu, p.id) || 0) > 0; });
+}
 
 /* Hàng chờ báo cáo: mỗi báo cáo ghi kèm NGÀY ĐẾM. Server từ chối nếu đã sang ngày khác,
    khi đó báo cáo nằm lại kèm lý do để người dùng tự chọn "gửi làm số hôm nay" hoặc "bỏ". */
@@ -1026,7 +1046,9 @@ function demView() {
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
     ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}
     ${b.closed ? `<div class="toast err">${b.closedReset ? 'Hôm nay vừa đặt lại số liệu, ngày đã khoá. Ngày mai hãy báo số như thường.' : 'Sổ hôm nay đã chốt. Ngày mai hãy báo số như thường.'}</div>` : ''}
-    ${S.sel ? '' : `<div class="col gap6 tbar" style="padding:6px 12px 2px">${already ? `<div class="card sm" style="line-height:1.4"><b>${esc(already.uname)} đã báo ${esc(kname)} lúc ${hhmm(already.ts)}.</b> Bạn đang đếm lại: chỉ gửi khi vừa đếm thực tế, số khác với người trước sẽ chuyển admin xem.</div>` : ''}${rep0 && khuWaiting(k) && !b.closed ? `<div class="card warn sm" style="line-height:1.4"><b>Báo cáo ${esc(kname)} lúc ${hhmm(rep0.ts)} đang chờ admin duyệt.</b> Số dưới đây là số đã gửi; nó chỉ vào tồn bãi sau khi được duyệt. Gửi lại sẽ thay số đang chờ.</div>` : ''}<button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
+    ${S.sel ? '' : `<div class="col gap6 tbar" style="padding:6px 12px 2px">${already ? `<div class="card sm" style="line-height:1.4"><b>${esc(already.uname)} đã báo ${esc(kname)} lúc ${hhmm(already.ts)}.</b> Bạn đang đếm lại: chỉ gửi khi vừa đếm thực tế, số khác với người trước sẽ chuyển admin xem.</div>` : ''}${rep0 && khuWaiting(k) && !b.closed ? `<div class="card warn sm" style="line-height:1.4"><b>Báo cáo ${esc(kname)} ${tuHomQua(rep0) ? 'ngày ' + esc(fmtDay(vnDayOf(rep0.ts))) + ' ' : ''}lúc ${hhmm(rep0.ts)} đang chờ admin duyệt.</b> ${dienSan(rep0.ts)
+      ? 'Số dưới đây là số đã gửi; nó chỉ vào tồn bãi sau khi được duyệt. Gửi lại sẽ thay số đang chờ.'
+      : `Số đó ${tuHomQua(rep0) ? 'của ngày trước' : 'của lần đếm trước'} nên không điền sẵn vào bảng: hãy đếm thực tế rồi gửi, số mới sẽ thay số đang chờ.`}</div>` : ''}<button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
       ${S.draftWarn ? `<div class="card warn col gap6"><b>${esc(S.draftWarn.uname)} đã gửi báo cáo khu này lúc ${hhmm(S.draftWarn.ts)}, sau khi bạn bắt đầu nháp.</b><div class="row gap6"><button class="btn s f1" data-a="draftnew">Dùng số mới</button><button class="btn s f1" data-a="draftkeep">Giữ nháp của tôi</button></div></div>` : ''}
       <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="legend">${S.legend ? 'Ẩn chú thích' : 'ⓘ Chú thích màu'}</button>
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Dấu — : để trống, gửi đi sẽ ghi 0 · Viền cam đậm: lệch lớn so với dự kiến, hoặc để trống phi đang có thép. Phi khu không có thì cứ để trống. Chạm chữ cái khu để phóng to.</div>' : ''}
@@ -1617,7 +1639,7 @@ function vBaoCao() {
   /* Ô "—" là KHÔNG BIẾT, không phải 0. Cộng nó thành 0 rồi in ra một dòng "Tấn" trông như tổng
      đầy đủ thì bảng tự nói dối: phi không có tồn đầu kỳ vẫn được tính là 0 tấn. Vẫn cộng các phi
      biết số (bỏ hẳn thì mất luôn thông tin), nhưng đếm số phi thiếu và nói rõ ở chân bảng. */
-  const t = { dau: 0, nhap: 0, dc: 0, vay: 0, xuat: 0, dung: 0, cuoi: 0 };
+  const t = { dau: 0, nhap: 0, dc: 0, vay: 0, kk: 0, xuat: 0, dung: 0, cuoi: 0 };
   /* Cột Điều chỉnh chỉ hiện khi kỳ này THẬT CÓ điều chỉnh (server trả hasDc). Màn hình điện thoại
      đã chật, thêm một cột toàn số 0 vào mọi kỳ là lấy chỗ của số người ta cần đọc. Tệp CSV thì
      luôn có cột đó, vì tệp mang đi đối chiếu phải cùng một bộ cột ở mọi kỳ. */
@@ -1628,6 +1650,9 @@ function vBaoCao() {
   const hasXuat = !!D.hasXuat;
   // cột "Vay mượn": thép ra/vào theo sổ vay mượn, đứng riêng như Điều chỉnh (không phải nhập, không phải dùng)
   const hasVay = !!D.hasVay;
+  /* cột "Đặt về 0": ngày đặt tồn về 0 ghi tồn = 0 mà không ghi Dùng, nên phần bị đặt về 0 phải có cột
+     riêng, không thì Tồn đầu + Nhập − Dùng lệch khỏi Tồn cuối mà bảng không nói vì sao */
+  const hasKk = !!D.hasKk;
   const miss = { dau: 0, cuoi: 0 };
   const rows = D.rows.map((r) => {
     const kg = kgOf(r.phi), rp = b.phiBy[r.phi];
@@ -1636,20 +1661,21 @@ function vBaoCao() {
     const K = (f, x) => (r[f + '_kg'] != null ? r[f + '_kg'] : (x || 0) * kg);
     if (r.dau == null) miss.dau++; else t.dau += K('dau', r.dau);
     if (r.cuoi == null) miss.cuoi++; else t.cuoi += K('cuoi', r.cuoi);
-    t.nhap += K('nhap', r.nhap); t.dc += K('dc', r.dc); t.vay += K('vay', r.vay); t.xuat += K('xuat', r.xuat); t.dung += K('dung', r.dung);
+    t.nhap += K('nhap', r.nhap); t.dc += K('dc', r.dc); t.vay += K('vay', r.vay); t.kk += K('kk', r.kk); t.xuat += K('xuat', r.xuat); t.dung += K('dung', r.dung);
     const u = (x) => (isCuon(rp) ? fmtDec(x / rp.bo_size) : fmtInt(x));
     const dash = (x) => (x == null ? '—' : u(x));
     // điều chỉnh phải hiện CẢ DẤU: "−300" và "300" là hai việc trái ngược nhau
     const sg = (x) => (x > 0 ? '+' : x < 0 ? '−' : '') + u(Math.abs(x));
-    return `<tr><th>${r.phi}${isCuon(rp) ? '<small class="muted"> (cuộn)</small>' : ''}</th><td>${dash(r.dau)}</td><td>${u(r.nhap)}</td>${hasDc ? `<td>${sg(r.dc || 0)}</td>` : ''}${hasVay ? `<td>${sg(r.vay || 0)}</td>` : ''}<td>${u(r.dung)}</td>${hasXuat ? `<td>${u(r.xuat || 0)}</td>` : ''}<td><b>${dash(r.cuoi)}</b></td></tr>`;
+    return `<tr><th>${r.phi}${isCuon(rp) ? '<small class="muted"> (cuộn)</small>' : ''}</th><td>${dash(r.dau)}</td><td>${u(r.nhap)}</td>${hasDc ? `<td>${sg(r.dc || 0)}</td>` : ''}${hasVay ? `<td>${sg(r.vay || 0)}</td>` : ''}${hasKk ? `<td>${sg(r.kk || 0)}</td>` : ''}<td>${u(r.dung)}</td>${hasXuat ? `<td>${u(r.xuat || 0)}</td>` : ''}<td><b>${dash(r.cuoi)}</b></td></tr>`;
   }).join('');
   const days = D.days.slice().reverse().map((d) => `<div class="li"><span>${fmtDay(d.day)}${d.span > 1 ? ` <span class="sm muted">(gộp ${d.span} ngày)</span>` : ''}</span><span class="sm">nhập ${fmtT(d.nhap_kg)} · dùng ${fmtT(d.dung_kg)} · tồn <b>${fmtT(d.ton_kg)}</b> tấn</span></div>`).join('');
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${D.closedDays || D.openDay ? '' : '<div class="card warn">Không có ngày nào được chốt trong khoảng này.</div>'}
     ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt nào nên chưa có số tồn đầu kỳ.</div>'}
     ${D.openStock ? `<div class="card sm" style="line-height:1.4">Kỳ này gồm cả lần chốt đầu tiên (${esc(fmtDay(D.openDay))}) — đó là buổi kiểm kê mở sổ, nên lấy luôn làm tồn đầu kỳ. Lượng nhập/dùng trước buổi đó không ai ghi nên không tính vào kỳ.</div>` : ''}
-    <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>ɸ</th><th>Tồn đầu</th><th>Nhập</th>${hasDc ? '<th>Điều chỉnh</th>' : ''}${hasVay ? '<th>Vay mượn</th>' : ''}<th>Dùng</th>${hasXuat ? '<th>Có phiếu</th>' : ''}<th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
-      <tfoot><tr><th>Tấn</th><td>${fmtT(t.dau)}${miss.dau ? '*' : ''}</td><td>${fmtT(t.nhap)}</td>${hasDc ? `<td>${fmtT(t.dc)}</td>` : ''}${hasVay ? `<td>${fmtT(t.vay)}</td>` : ''}<td>${fmtT(t.dung)}</td>${hasXuat ? `<td>${fmtT(t.xuat)}</td>` : ''}<td><b>${fmtT(t.cuoi)}${miss.cuoi ? '*' : ''}</b></td></tr></tfoot></table></div>
+    ${(D.resetDays || []).length ? `<div class="card warn sm" style="line-height:1.4">Kỳ này có ngày <b>đặt tồn về 0</b> (${D.resetDays.map((d) => esc(fmtDay(d))).join(', ')}). Ngày đó không tính lượng dùng; ${hasKk ? 'phần tồn bị đặt về 0 nằm ở cột <b>Đặt về 0</b>, nên Tồn đầu + Nhập − Dùng vẫn khớp Tồn cuối.' : 'lúc đặt lại bãi không còn thép nên không có gì bị đặt về 0.'}</div>` : ''}
+    <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>ɸ</th><th>Tồn đầu</th><th>Nhập</th>${hasDc ? '<th>Điều chỉnh</th>' : ''}${hasVay ? '<th>Vay mượn</th>' : ''}${hasKk ? '<th>Đặt về 0</th>' : ''}<th>Dùng</th>${hasXuat ? '<th>Có phiếu</th>' : ''}<th>Tồn cuối</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><th>Tấn</th><td>${fmtT(t.dau)}${miss.dau ? '*' : ''}</td><td>${fmtT(t.nhap)}</td>${hasDc ? `<td>${fmtT(t.dc)}</td>` : ''}${hasVay ? `<td>${fmtT(t.vay)}</td>` : ''}${hasKk ? `<td>${fmtT(t.kk)}</td>` : ''}<td>${fmtT(t.dung)}</td>${hasXuat ? `<td>${fmtT(t.xuat)}</td>` : ''}<td><b>${fmtT(t.cuoi)}${miss.cuoi ? '*' : ''}</b></td></tr></tfoot></table></div>
     ${miss.dau || miss.cuoi ? `<div class="card warn sm" style="line-height:1.4">* Tổng tấn chưa gồm ${[miss.dau ? miss.dau + ' phi không có tồn đầu kỳ' : '', miss.cuoi ? miss.cuoi + ' phi không có tồn cuối kỳ' : ''].filter(Boolean).join(' và ')} (ô ghi "—"). Những phi đó chưa có lần chốt nào trong khoảng này.</div>` : ''}
     <div class="sm muted">Đơn vị: cây (D10–D36) hoặc cuộn (D6, D8), dòng cuối: tấn. ${D.openDay ? (D.openStock ? 'Tồn đầu lấy buổi kiểm kê mở sổ ' : 'Tồn đầu lấy ngày chốt ') + fmtDay(D.openDay) + '. ' : ''}${D.closeDay ? 'Tồn cuối lấy ngày chốt ' + fmtDay(D.closeDay) + '. ' : ''}Chuyển khu không tính vào nhập.${hasDc ? ' Cột Điều chỉnh là những lần sửa sổ (không có thép ra vào bãi): nó không nằm trong cột Nhập và không tính vào Dùng.' : ''}${hasXuat ? ' Cột Có phiếu là phần lượng dùng đã có phiếu xuất giải thích — nó nằm TRONG cột Dùng, phần còn lại là chưa rõ đi đâu.' : ''}${hasVay ? ' Cột Vay mượn là thép cho đối tác mượn (−) hoặc đi vay về (+) qua bãi: đổi tồn nhưng không phải nhập, cũng không phải dùng.' : ''} Số tấn tính theo kg/cây lúc chốt từng ngày.</div>
     ${days ? `<h2 class="sec">Theo ngày (${D.closedDays} ngày đã chốt)</h2><div class="card" style="padding:0;overflow:hidden">${days}</div>` : ''}
@@ -2575,7 +2601,7 @@ const V_MAX = 99999; // trần server cho số đếm một phi (intIn trong put
 function pressKey(i) {
   const f = S.field;
   if (i === 11) { S.field = f === 'bo' ? 'le' : 'bo'; }
-  else if (i === 9) { S.rep[f] = false; S[f] = S[f].slice(0, -1); }
+  else if (i === 9) { S.rep[f] = false; S[f] = S[f].slice(0, -1); S.typed = true; }
   else {
     const d = String(i === 10 ? 0 : i + 1);
     const cur = S.rep[f] ? '' : S[f]; // ô đang hiện số cũ: gõ số mới sẽ thay thế
@@ -2593,6 +2619,7 @@ function pressKey(i) {
     }
     S.rep[f] = false;
     S[f] = next;
+    S.typed = true;
   }
 }
 function nextPhi(p) {
@@ -2609,6 +2636,7 @@ function fillSel(p) {
   }
   else { S.bo = ''; S.le = ''; }
   S.rep = { bo: S.bo !== '', le: S.le !== '' };
+  S.typed = false;
   S.field = 'bo';
 }
 function settle(kind) {
@@ -2624,6 +2652,11 @@ function settle(kind) {
      Phân biệt hai cái này là lý do màn Duyệt nói được "khu để trống D25 trong khi dự kiến 72 cây",
      rất khác "khu đã đếm, D25 hết thật". Trước bản 1.3 'zero' mang nghĩa ngược lại (xem migration 10). */
   } else if (kind === 'zero') S.draft.cells[p] = { v: 0, kind: 'dem', bo: 0, le: 0 };
+  /* Mở lại một ô đã có số mà KHÔNG gõ gì thì ô giữ nguyên như cũ, kể cả LOẠI của nó. Trước đây số
+     cũ được tách ra bó/lẻ rồi lưu lại như vừa gõ, nên chạm qua ô "giữ nguyên" là nó thành "đếm thật"
+     (chuỗi giữ nguyên về 0, lách được giới hạn N ngày), và chạm qua ô "để trống" là nó thành "đã đếm,
+     hết (0)" mà không qua hộp hỏi của nút Hết (0). */
+  else if (!S.typed && S.draft.cells[p]) { /* không đổi gì */ }
   else if (S.bo !== '' || S.le !== '') S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN };
   // chưa gõ gì mà bấm TIẾP: đứng lại, không lặng lẽ nhảy qua phi chưa đếm
   else return say((isCuon(p) ? 'Gõ số cuộn nguyên / % cuộn dở' : 'Gõ số bó / cây lẻ') + ', hoặc bấm "Hết (0)" nếu khu không còn phi này.', true);
@@ -2688,7 +2721,8 @@ const ACTIONS = {
   },
   closesel() {
     const p = S.sel;
-    if (p && (S.bo !== '' || S.le !== '')) {
+    // chỉ lưu khi có gõ: đóng một ô vừa mở xem thì ô đó giữ nguyên loại cũ (xem settle)
+    if (p && S.typed && (S.bo !== '' || S.le !== '')) {
       const size = S.boot.phiBy[p].bo_size, boN = parseInt(S.bo || '0', 10), leN = parseInt(S.le || '0', 10);
       S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN }; saveDraft();
     }

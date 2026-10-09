@@ -1724,13 +1724,13 @@ async function main() {
     const hdr = rows.find((l) => l.startsWith('"Phi"')).split(';');
     const tot = rows.find((l) => l.startsWith('"TỔNG')).split(';');
     eq('dòng TỔNG có đúng số ô như tiêu đề', tot.length, hdr.length);
-    eq('số tấn nằm đúng dưới 7 cột tấn', hdr.slice(-7),
-      ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Điều chỉnh (tấn)"', '"Vay mượn (tấn)"', '"Dùng (tấn)"', '"Có phiếu xuất (tấn)"', '"Tồn cuối (tấn)"']);
+    eq('số tấn nằm đúng dưới 8 cột tấn', hdr.slice(-8),
+      ['"Tồn đầu (tấn)"', '"Nhập (tấn)"', '"Điều chỉnh (tấn)"', '"Vay mượn (tấn)"', '"Đặt về 0 (tấn)"', '"Dùng (tấn)"', '"Có phiếu xuất (tấn)"', '"Tồn cuối (tấn)"']);
     // 1800 cây D16 × 18,48 kg = 33,264 tấn; dùng 300 cây = 5,544 tấn; còn 1500 cây = 27,720 tấn
-    eq('tồn đầu / nhập / điều chỉnh / vay mượn / dùng / có phiếu / tồn cuối theo tấn', tot.slice(-7),
-      ['33,264', '0,000', '0,000', '0,000', '5,544', '0,000', '27,720']);
-    eq('cột số lượng có Điều chỉnh và Vay mượn, đứng giữa Nhập và Dùng', hdr.slice(0, 9),
-      ['"Phi"', '"Đơn vị"', '"Tồn đầu"', '"Nhập"', '"Điều chỉnh"', '"Vay mượn"', '"Dùng"', '"Có phiếu xuất"', '"Tồn cuối"']);
+    eq('tồn đầu / nhập / điều chỉnh / vay mượn / đặt về 0 / dùng / có phiếu / tồn cuối theo tấn', tot.slice(-8),
+      ['33,264', '0,000', '0,000', '0,000', '0,000', '5,544', '0,000', '27,720']);
+    eq('cột số lượng có Điều chỉnh, Vay mượn và Đặt về 0, đứng giữa Nhập và Dùng', hdr.slice(0, 10),
+      ['"Phi"', '"Đơn vị"', '"Tồn đầu"', '"Nhập"', '"Điều chỉnh"', '"Vay mượn"', '"Đặt về 0"', '"Dùng"', '"Có phiếu xuất"', '"Tồn cuối"']);
     // bảng theo ngày ở cuối tệp cũng phải thểm cột mới, không thì số tồn cuối ngày đứng sai cột
     const dHdr = rows.find((l) => l.startsWith('"Ngày"')).split(';');
     const dRow = rows[rows.indexOf(rows.find((l) => l.startsWith('"Ngày"'))) + 1].split(';');
@@ -2769,6 +2769,52 @@ async function main() {
     ok('không ai bị tính thiếu thay cho khu C', d.nguoi.every((n) => n.thieu.every((t) => t.khu !== 'C')));
     eq('khu trống không bị đòi', d.khu.some((k) => !['A', 'B', 'C'].includes(k.khu) && k.phai), false);
     eq('khoảng ngày ngược: từ chối', (await S.call('GET', '/cham-cong?from=' + day + '&to=2000-01-01')).status, 400);
+  }
+
+  /* ================= 60. Báo cáo kỳ có ngày đặt tồn về 0: đẳng thức vẫn khép =================
+     Ngày đặt lại ghi tồn = 0 mà cột Dùng để trống (cố ý, để không thành cú "đã dùng" khổng lồ).
+     Không có cột riêng cho phần bị đặt về 0 thì Tồn đầu + Nhập − Dùng lệch khỏi Tồn cuối đúng bằng
+     số tồn trước lúc đặt lại, và bảng không nói vì sao. */
+  {
+    const S = await setup();
+    const d0 = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
+    await bao(S, { khu: 'A', day: d0, items: items({ D16: 100 }) }, 'An');
+    eq('chốt ngày 1', (await chot(S)).status, 200);
+    addDays(1);
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 20 }] });
+    const d1 = vnDay();
+    eq('ngày 2: đặt tồn về 0', (await S.call('POST', '/reset', { mode: 'zero' })).status, 200);
+    addDays(1);
+    const d2 = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 50 }] });
+    await bao(S, { khu: 'A', day: d2, items: items({ D16: 45 }) }, 'An');
+    eq('chốt ngày 3', (await chot(S)).status, 200);
+
+    const rep = (await S.call('GET', `/report?from=${d0}&to=${d2}`)).data;
+    const r = rep.rows.find((x) => x.phi === 'D16');
+    eq('D16: tồn đầu, nhập, dùng, tồn cuối', [r.dau, r.nhap, r.dung, r.cuoi], [100, 70, 5, 45]);
+    eq('D16: phần đặt về 0 = −(tồn 100 + nhập trong ngày 20)', r.kk, -120);
+    eq('đẳng thức khép: đầu + nhập + điều chỉnh + vay mượn + đặt về 0 − dùng = cuối',
+      r.dau + r.nhap + r.dc + r.vay + r.kk - r.dung, r.cuoi);
+    ok('đẳng thức khép cả theo tấn',
+      Math.abs(r.dau_kg + r.nhap_kg + r.dc_kg + r.vay_kg + r.kk_kg - r.dung_kg - r.cuoi_kg) < 1e-6,
+      [r.dau_kg, r.nhap_kg, r.kk_kg, r.dung_kg, r.cuoi_kg].join(' / '));
+    eq('báo cáo liệt kê ngày đặt lại', rep.resetDays, [d1]);
+    eq('phi không bị đặt lại gì: 0', rep.rows.find((x) => x.phi === 'D18').kk, 0);
+
+    const csv = String((await S.call('GET', `/report?format=csv&from=${d0}&to=${d2}`)).data);
+    // dòng 0 là "sep=;", dòng 1 là tên báo cáo, dòng 2 là tiêu đề cột
+    const dong = csv.split('\r\n');
+    const head = dong[2].split(';').length;
+    ok('CSV có cột "Đặt về 0"', /Đặt về 0/.test(dong[2]), dong[2]);
+    ok('CSV: mọi dòng phi và dòng tổng đủ số ô như tiêu đề', dong.slice(3, 3 + PHI.length + 1).every((l) => l.split(';').length === head), head);
+    ok('CSV: dòng D16 ghi −120 ở cột Đặt về 0',
+      dong.find((l) => l.startsWith('"D16"')).split(';')[dong[2].split(';').indexOf('"Đặt về 0"')] === '-120', dong.find((l) => l.startsWith('"D16"')));
+
+    // kỳ không có ngày đặt lại: không có gì đổi
+    const rep2 = (await S.call('GET', `/report?from=${d2}&to=${d2}`)).data;
+    eq('kỳ không có ngày đặt lại: không có cột, mọi phi 0', [rep2.hasKk, rep2.rows.every((x) => x.kk === 0)], [false, true]);
   }
 
   /* ================= kết quả ================= */

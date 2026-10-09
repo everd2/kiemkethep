@@ -68,7 +68,7 @@ export async function report(env, url) {
   const firstIn = baseR[1].results[0] && baseR[1].results[0].d;
   const baseDay = before || firstIn || '';
   const openStock = !before && !!firstIn; // mốc là buổi kiểm kê mở sổ nằm trong kỳ
-  const [phiR, openR, sumR, closeR, daysR] = await db.batch([
+  const [phiR, openR, sumR, closeR, daysR, kkR, resetR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, bo_size, unit FROM phi ORDER BY sort'),
     /* Số tấn nhân với kg/cây LÚC CHỐT của từng ngày (d.kg), không phải kg/cây hiện tại: sửa kg/cây
        hôm nay không được viết lại số tấn của ngày đã khoá. Thiếu kg (không thể có sau migration 17,
@@ -84,7 +84,21 @@ export async function report(env, url) {
       `SELECT d.day, MAX(d.span) span, SUM(d.nhap * ${KGD}) nhap_kg, SUM(COALESCE(d.dung, 0) * ${KGD}) dung_kg, SUM(d.ton * ${KGD}) ton_kg, SUM(d.dc * ${KGD}) dc_kg, SUM(d.xuat * ${KGD}) xuat_kg, SUM(d.vay * ${KGD}) vay_kg
        FROM daily_summary d JOIN phi p ON p.id = d.phi_id WHERE d.day > ? AND d.day <= ? GROUP BY d.day ORDER BY d.day`
     ).bind(baseDay, to),
+    /* Ngày ĐẶT TỒN VỀ 0 trong kỳ: tồn ngày đó ghi 0 mà cột Dùng để trống (cố ý, không thì chênh lệch
+       thành một cú "đã dùng" khổng lồ, xem resetData). Phần bị đặt về 0 = tồn ngày chốt trước + mọi
+       thứ vào/ra trong ngày đó, ghi âm. Không có cột này thì Tồn đầu + Nhập − Dùng lệch khỏi Tồn cuối
+       đúng bằng số đó và bảng không nói vì sao. Tính thẳng từ ngày đặt lại chứ không lấy hiệu số của
+       đẳng thức: lấy hiệu số là cột này nuốt luôn mọi chỗ lệch khác, đúng thứ cần lộ ra. */
+    db.prepare(
+      `SELECT d.phi_id, -SUM(COALESCE(pv.ton, 0) + d.nhap + d.dc + d.vay) kk,
+         -SUM(COALESCE(pv.ton * COALESCE(pv.kg, p.kg_per_cay), 0) + (d.nhap + d.dc + d.vay) * ${KGD}) kk_kg
+       FROM daily_summary d JOIN day_close z ON z.day = d.day AND z.kind = 'reset' JOIN phi p ON p.id = d.phi_id
+       LEFT JOIN daily_summary pv ON pv.phi_id = d.phi_id AND pv.day = (SELECT MAX(day) FROM daily_summary WHERE day < d.day)
+       WHERE d.day > ? AND d.day <= ? GROUP BY d.phi_id`
+    ).bind(baseDay, to),
+    db.prepare("SELECT day FROM day_close WHERE kind = 'reset' AND day > ? AND day <= ? ORDER BY day").bind(baseDay, to),
   ]);
+  const kkBy = Object.fromEntries(kkR.results.map((r) => [r.phi_id, r]));
   const by = (rs, f) => Object.fromEntries(rs.map((r) => [r.phi_id, r[f]]));
   const open = by(openR.results, 'ton'), close = by(closeR.results, 'ton');
   const nhap = by(sumR.results, 'nhap'), dung = by(sumR.results, 'dung'), dcs = by(sumR.results, 'dc');
@@ -105,6 +119,8 @@ export async function report(env, url) {
       dung: dung[p.id] == null ? 0 : dung[p.id], cuoi: c,
       dau_kg: hasOpen ? kgOpen[p.id] || 0 : null, nhap_kg: ks.nhap_kg || 0, dc_kg: ks.dc_kg || 0, xuat_kg: ks.xuat_kg || 0,
       vay_kg: ks.vay_kg || 0, dung_kg: ks.dung_kg || 0, cuoi_kg: cKg,
+      // kk: phần bị đặt về 0 (âm). Đẳng thức: đầu + nhập + điều chỉnh + vay mượn + kk − dùng = cuối
+      kk: (kkBy[p.id] || {}).kk || 0, kk_kg: (kkBy[p.id] || {}).kk_kg || 0,
     };
   });
   const out = {
@@ -118,6 +134,8 @@ export async function report(env, url) {
     hasXuat: rows.some((r) => r.xuat),
     // cột "Vay mượn": thép ra/vào theo sổ vay mượn — không phải nhập, không phải dùng
     hasVay: rows.some((r) => r.vay),
+    // cột "Đặt về 0": chỉ bày khi kỳ có ngày đặt tồn về 0 làm mất số thật
+    hasKk: rows.some((r) => r.kk), resetDays: resetR.results.map((r) => r.day),
   };
   if (url.searchParams.get('format') !== 'csv') return json(out);
 
@@ -126,20 +144,20 @@ export async function report(env, url) {
   const pBy = Object.fromEntries(phiR.results.map((p) => [p.id, p]));
   const lines = [
     esc(`Báo cáo Nhập - Dùng - Tồn từ ${fmtDay(from)} đến ${fmtDay(to)} (${out.closedDays} ngày đã chốt)`),
-    csvRow(['Phi', 'Đơn vị', 'Tồn đầu', 'Nhập', 'Điều chỉnh', 'Vay mượn', 'Dùng', 'Có phiếu xuất', 'Tồn cuối', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Vay mượn (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối (tấn)'].map(esc)),
+    csvRow(['Phi', 'Đơn vị', 'Tồn đầu', 'Nhập', 'Điều chỉnh', 'Vay mượn', 'Đặt về 0', 'Dùng', 'Có phiếu xuất', 'Tồn cuối', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Vay mượn (tấn)', 'Đặt về 0 (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối (tấn)'].map(esc)),
   ];
-  const tot = { dau: 0, nhap: 0, dc: 0, vay: 0, xuat: 0, dung: 0, cuoi: 0 };
+  const tot = { dau: 0, nhap: 0, dc: 0, vay: 0, kk: 0, xuat: 0, dung: 0, cuoi: 0 };
   for (const r of rows) {
     const p = pBy[r.phi], n = (x) => (x == null ? '' : csvQty(x, p));
-    lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dc), n(r.vay), n(r.dung), n(r.xuat), n(r.cuoi),
-      t(r.dau_kg), t(r.nhap_kg), t(r.dc_kg), t(r.vay_kg), t(r.dung_kg), t(r.xuat_kg), t(r.cuoi_kg)]));
-    tot.dau += r.dau_kg || 0; tot.nhap += r.nhap_kg; tot.dc += r.dc_kg; tot.vay += r.vay_kg;
+    lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dc), n(r.vay), n(r.kk), n(r.dung), n(r.xuat), n(r.cuoi),
+      t(r.dau_kg), t(r.nhap_kg), t(r.dc_kg), t(r.vay_kg), t(r.kk_kg), t(r.dung_kg), t(r.xuat_kg), t(r.cuoi_kg)]));
+    tot.dau += r.dau_kg || 0; tot.nhap += r.nhap_kg; tot.dc += r.dc_kg; tot.vay += r.vay_kg; tot.kk += r.kk_kg;
     tot.xuat += r.xuat_kg; tot.dung += r.dung_kg; tot.cuoi += r.cuoi_kg || 0;
   }
-  /* Đúng 16 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả khối số tấn tụt sang trái một
+  /* Đúng 18 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả khối số tấn tụt sang trái một
      cột và Excel đọc "tồn đầu" thành "tồn cuối" — sai ngay trên tệp mang đi đối chiếu. Thêm một cột là
-     thêm MỘT ô rỗng ở đây nữa: 8 ô rỗng (đứng sau nhãn TỔNG) rồi 7 số tấn, đếm lại chứ đừng đoán. */
-  const totCells = ['', '', '', '', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dc, tot.vay, tot.dung, tot.xuat, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
+     thêm MỘT ô rỗng ở đây nữa: 9 ô rỗng (đứng sau nhãn TỔNG) rồi 8 số tấn, đếm lại chứ đừng đoán. */
+  const totCells = ['', '', '', '', '', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dc, tot.vay, tot.kk, tot.dung, tot.xuat, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
   lines.push(csvRow([esc('TỔNG (tấn)'), ...totCells]));
   lines.push('', csvRow(['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Vay mượn (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối ngày (tấn)'].map(esc)));
   for (const d of out.days) lines.push(csvRow([esc(fmtDay(d.day)), d.span, csvDec(d.nhap_kg / 1000, 3), csvDec((d.dc_kg || 0) / 1000, 3), csvDec((d.vay_kg || 0) / 1000, 3), csvDec(d.dung_kg / 1000, 3), csvDec((d.xuat_kg || 0) / 1000, 3), csvDec(d.ton_kg / 1000, 3)]));
