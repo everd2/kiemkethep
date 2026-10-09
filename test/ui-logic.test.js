@@ -1099,6 +1099,52 @@ const run = async () => {
   ok('đối tác đã tất toán: dòng có "Xem chi tiết"', /data-a="ldtview" data-id="6"><span>Cty Đã Xong<\/span><span[^>]*>Xem chi tiết ›/.test(VQ), (VQ.match(/data-id="6".{0,160}/) || [''])[0]);
   r(`S.loans = null; S.screen = 'home'; S.loan = { doitac: null, kind: 'vay', phi: null, qty: 0, done: null };`);
 
+  // ---- 1d10. Nhắc ĐÚNG NGƯỜI phụ trách ----
+  /* Khu A giao cho An (id 2). Khu B chưa giao ai, nên ai cũng đếm được, ai cũng được nhắc. Bình (id 3)
+     không phụ trách A thì không được nhắc gì về A. */
+  const nhacBoot = (extra) => `var NB = _boot(); NB.khuUser = [{ khu_id: 'A', user_id: 2, name: 'An' }];
+    NB.lastClosed = '${yday}'; ${extra || ''} indexBoot(NB); S.boot = NB; S.screen = 'home';`;
+  const theNhac = (h) => (h.match(/<b style="font-size:17px">[^<]*<\/b><span class="sm">[^<]*/g) || []).join(' || ');
+  r(`${nhacBoot()} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('An (phụ trách A): được nhắc A, và B vì B chưa giao ai', /2 khu chưa báo<\/b><span class="sm">Khu A, Khu B/.test(r('vHome()')), theNhac(r('vHome()')));
+  r(`S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  const HB = r('vHome()');
+  ok('Bình (không phụ trách A): không bị nhắc A', /Khu B chưa báo/.test(HB) && !/Khu A/.test(theNhac(HB)), theNhac(HB));
+  ok('một khu chưa báo: bấm mở thẳng khu đó', /data-s="dem" data-k="B"/.test(HB));
+  r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
+  const HA = r('vHome()');
+  ok('admin: thẻ chưa báo nói ai phụ trách từng khu', /Khu A \(An\) · Khu B \(chưa giao ai\)/.test(HA), theNhac(HA));
+  ok('admin: được nhắc có khu chưa giao người phụ trách', /1 khu chưa giao người phụ trách<\/b><span class="sm">Khu B/.test(HA) && /data-s="settings"/.test(HA));
+  // khu trống (không tồn, không phiếu, chưa đếm ra gì) thì không bị nhắc báo — khớp với server
+  r(`${nhacBoot("NB.baseline = NB.baseline.filter((x) => x.khu_id !== 'B');")} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('khu trống: không bị nhắc chưa báo', !/Khu B \(/.test(r('vHome()')) && /Khu A chưa báo/.test(r('vHome()')), theNhac(r('vHome()')));
+  // ngày đầu tiên (chưa có tồn chuẩn nào): khu nào cũng phải báo để lập sổ
+  r(`${nhacBoot("NB.baseline = []; NB.innKhu = []; NB.mvNew = [];")} NB.lastClosed = null; S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('ngày đầu tiên: nhắc mọi khu', /2 khu chưa báo/.test(r('vHome()')), theNhac(r('vHome()')));
+
+  // yêu cầu đếm lại / hai người báo khác số: chỉ người liên quan thấy; đếm lại mở thẳng khu
+  const repA = (o) => `NB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0, ...${o} }];`;
+  r(`${nhacBoot(repA('{ recount: 1 }'))} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  ok('đếm lại khu A: Bình không thấy', !/cần đếm lại/.test(r('vHome()')));
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('đếm lại khu A: An thấy, bấm mở thẳng khu A', /Khu A cần đếm lại/.test(r('vHome()')) && /data-s="dem" data-k="A"><span class="f1 col" style="gap:2px"><b style="font-size:17px">Khu A cần đếm lại/.test(r('vHome()')));
+  r(`${nhacBoot(repA('{ conflict: 1 }'))} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  // (thẻ KHU bên dưới vẫn ghi trạng thái cho mọi người xem — đó là thông tin; ở đây chỉ xét THẺ NHẮC)
+  ok('hai người báo khác số ở A: Bình không bị nhắc', !/2 người báo số khác nhau/.test(theNhac(r('vHome()'))), theNhac(r('vHome()')));
+
+  // báo cáo chưa duyệt CHUYỂN từ hôm qua: chỉ là "chưa báo hôm nay", không nhắc trùng thiếu khung
+  r(`${slotBoot({}, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00"); SB.reports = [{ khu_id: "A", user_id: 2, uname: "An", ts: Date.now() - 864e5, conflict: 0, resolved: 0, recount: 0 }];')} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  const HC = r('vHome()');
+  ok('báo cáo chuyển từ hôm qua: không nhắc thiếu khung trùng với "chưa báo"', /Khu A/.test(theNhac(HC)) && !/Khu A thiếu lần đếm/.test(HC) && !/Khu A chưa đếm buổi/.test(HC), theNhac(HC));
+  ok('và không tính là đã báo hôm nay', r(`daBaoHomNay('A')`) === false);
+
+  // sổ vay chờ duyệt: admin MỘT thẻ (không trùng); người khác không thấy số của cả bãi
+  r(`${nhacBoot('NB.loanPending = 2;')} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('admin: một thẻ sổ vay chờ duyệt, không trùng', (r('vHome()').match(/vay mượn chờ duyệt|vay\/mượn chờ duyệt/g) || []).length === 1);
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('người đếm: không thấy số sổ vay chờ duyệt của cả bãi', !/vay mượn chờ duyệt|vay\/mượn chờ duyệt/.test(r('vHome()')));
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

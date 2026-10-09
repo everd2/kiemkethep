@@ -50,7 +50,8 @@ export async function bootstrap(env, user) {
     ).bind(last, day),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
-    env.DB.prepare('SELECT khu_id, user_id FROM khu_user'),
+    // kèm tên: Tổng quan của admin nói được khu chưa báo là của ai, để biết nhắc ai
+    env.DB.prepare('SELECT ku.khu_id, ku.user_id, u.name FROM khu_user ku JOIN users u ON u.id = ku.user_id WHERE u.deleted = 0'),
     /* Id admin ĐẦU TIÊN (xem firstAdminId). Gửi trong bootstrap chứ không chỉ trong /users: những
        việc dành riêng cho chủ hệ thống nằm rải ở nhiều màn (đặt lại số liệu, mở lại ngày đã qua),
        mà /users chỉ nạp khi vào đúng màn Người dùng — thiếu nó thì nút biến mất đúng lúc cần. */

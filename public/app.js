@@ -263,7 +263,11 @@ function indexBoot(b) {
   // phi admin đã tắt: không hiện trong bảng đếm / nhập kho nữa, nhưng vẫn tra cứu được số liệu cũ qua phiBy
   b.phiAct = b.phi.filter((p) => p.active !== 0);
   // ku[khu] = mảng user_id phụ trách; khu không có trong ku = chưa phân công, ai cũng đếm được
-  b.ku = {}; (b.khuUser || []).forEach((r) => { (b.ku[r.khu_id] = b.ku[r.khu_id] || []).push(r.user_id); });
+  b.ku = {}; b.kuTen = {};
+  (b.khuUser || []).forEach((r) => {
+    (b.ku[r.khu_id] = b.ku[r.khu_id] || []).push(r.user_id);
+    if (r.name) (b.kuTen[r.khu_id] = b.kuTen[r.khu_id] || []).push(r.name);
+  });
   // ai là chủ hệ thống: bootstrap gửi sẵn nên mọi màn đều biết, không phải chờ nạp màn Người dùng
   if (b.uFirst !== undefined) S.uFirst = b.uFirst;
 }
@@ -433,6 +437,17 @@ const slotNow = () => {
 };
 /* Khu có bị đòi đếm không: giống server, khu chưa báo lần nào kể từ lần chốt trước thì thẻ
    "chưa báo" đã nói, còn khu trống trơn (không tồn, không phiếu, không đếm ra gì) thì không bị đòi. */
+/* Khu có gì để đếm không: còn tồn chuẩn, có phiếu đã duyệt, hoặc đã đếm ra số khác 0 — cùng điều
+   kiện server dùng để đòi khu báo (khu_missing chỉ tính khu có items). Khu trống trơn thì không ai
+   phải ra đếm 13 số 0, nên cũng không nhắc. Ngày đầu tiên (chưa có tồn chuẩn nào) thì khu nào cũng
+   phải báo để lập sổ, nên khi đó coi mọi khu là có việc. */
+function khuCoViec(kid) {
+  const b = S.boot;
+  if (!b.lastClosed) return true;
+  return b.phi.some((p) => (b.bm[kid + '|' + p.id] || 0) !== 0 || (b.mv[kid + '|' + p.id] || 0) !== 0)
+    || (b.counts || []).some((c) => c.khu_id === kid && c.v !== 0)
+    || (b.eff || []).some((c) => c.khu_id === kid && c.v !== 0);
+}
 function slotNeed(kid) {
   const b = S.boot;
   const daBao = !!b.rm[kid] || (b.eff || []).some((c) => c.khu_id === kid);
@@ -655,18 +670,34 @@ function vHome() {
      đếm được — khu người khác phụ trách thì họ không làm gì được, nhắc chỉ thành nhiễu.
      Dòng "Tạm tính: N khu chưa báo" ở đầu trang vẫn tính cả bãi, vì đó là nói về con số tồn. */
   const miss = b.khuAct.filter((k) => !daBaoHomNay(k.id));
-  const missMine = isAdmin() ? miss : miss.filter((k) => canCount(k.id));
-  if (missMine.length) alerts.push({ bad: false, t: (missMine.length === 1 ? missMine[0].name : missMine.length + ' khu') + ' chưa báo', s: missMine.map((k) => k.name).join(', '), to: 'dem' });
+  // chỉ nhắc khu có gì để đếm (khớp với server); dòng "Tạm tính" đầu trang vẫn tính mọi khu
+  const missViec = miss.filter((k) => khuCoViec(k.id));
+  const missMine = isAdmin() ? missViec : missViec.filter((k) => canCount(k.id));
+  /* Admin cần biết NHẮC AI: kèm tên người phụ trách từng khu; khu chưa giao ai thì nói thẳng. */
+  const ai = (k) => (b.kuTen[k.id] && b.kuTen[k.id].length ? b.kuTen[k.id].join(', ') : 'chưa giao ai');
+  const missS = isAdmin() ? missMine.map((k) => k.name + ' (' + ai(k) + ')').join(' · ') : missMine.map((k) => k.name).join(', ');
+  // một khu và người này đếm được: bấm là mở thẳng khu đó
+  const missK = missMine.length === 1 && canCount(missMine[0].id) ? missMine[0].id : null;
+  if (missMine.length) alerts.push({ bad: false, t: (missMine.length === 1 ? missMine[0].name : missMine.length + ' khu') + ' chưa báo', s: missS, to: 'dem', k: missK });
+  /* Khu CHƯA GIAO NGƯỜI PHỤ TRÁCH thì app không biết nhắc ai, nên nhắc TẤT CẢ mọi người — tức là nhắc
+     sai người. Chỉ admin sửa được (Cài đặt → Khu bãi), nên chỉ admin thấy thẻ này. */
+  if (isAdmin()) {
+    const chuaGiao = b.khuAct.filter((k) => !(b.ku[k.id] && b.ku[k.id].length));
+    if (chuaGiao.length) alerts.push({ bad: false, t: chuaGiao.length + ' khu chưa giao người phụ trách', s: chuaGiao.map((k) => k.name).join(', ') + ' · ai cũng được nhắc đếm các khu này. Giao ở Cài đặt → Khu bãi', to: 'settings' });
+  }
   b.reports.forEach((r) => {
     const k = b.khuBy[r.khu_id];
     if (!k || !k.active) return;
+    // chỉ người liên quan: admin, và người đếm được khu đó — khu của người khác thì không có việc gì cho họ
+    if (!isAdmin() && !canCount(k.id)) return;
     if (r.conflict && !r.resolved) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: isAdmin() ? 'Vào Duyệt để chọn số' : 'Admin đang xem', to: isAdmin() ? 'duyet' : null });
-    if (r.recount) alerts.push({ bad: false, t: k.name + ' cần đếm lại', s: 'Admin yêu cầu đếm lại', to: 'dem' });
+    if (r.recount) alerts.push({ bad: false, t: k.name + ' cần đếm lại', s: 'Admin yêu cầu đếm lại · bấm để đếm', to: 'dem', k: canCount(k.id) ? k.id : null });
   });
   /* Việc chờ duyệt phải hiện ngay ở Tổng quan, cho cả hai phía: admin biết còn phải duyệt, còn
      người đếm biết báo cáo của mình đã tới chứ chưa được tính vào tồn. */
   // ngày đã chốt thì không còn gì "chờ duyệt" nữa: nhãn khu đã nói số đó không vào tồn
-  const cho = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id));
+  // người không phải admin: chỉ khu mình đếm được (báo cáo của mình đang chờ), không phải cả bãi
+  const cho = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id) && (isAdmin() || canCount(k.id)));
   if (cho.length) {
     alerts.push({
       bad: false,
@@ -681,7 +712,9 @@ function vHome() {
      đã nói, nhắc thêm nữa thành hai thẻ trùng ý cho cùng một khu. Nhiều khu thì gom một thẻ. */
   /* Khung ĐÃ HẾT mà thiếu: chỉ admin cần biết (để nhắc khu, việc thiếu ghi vào nhật ký chốt). Người
      đếm không bù được khung đã qua — thẻ đỏ không bấm được chỉ làm họ quen bỏ qua cảnh báo. */
-  const thieuSlot = !isAdmin() ? [] : b.khuAct.filter((k) => b.rm[k.id]).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
+  // daBaoHomNay chứ không phải b.rm: báo cáo chưa duyệt chuyển từ hôm qua sang không phải "đã báo hôm nay",
+  // khu đó đã có thẻ "chưa báo" ở trên — nhắc thêm thiếu khung là hai thẻ trùng ý cho một khu
+  const thieuSlot = !isAdmin() ? [] : b.khuAct.filter((k) => daBaoHomNay(k.id)).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
   const slotHint = 'Lần đếm sau không bù được. Việc thiếu được ghi vào nhật ký lúc sổ tự chốt';
   if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: isAdmin() ? 'duyet' : null });
   else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu lần đếm ' + slotTxt(x.m), s: slotHint, to: isAdmin() ? 'duyet' : null }));
@@ -692,7 +725,7 @@ function vHome() {
     /* Admin đếm được mọi khu nhưng thường không đi đếm: chỉ nhắc admin những khu CHÍNH họ được gán.
        Ai khác thì nhắc mọi khu họ đếm được. */
     const cuaToi = isAdmin() ? b.khuAct.filter((k) => (b.ku[k.id] || []).includes(S.me.id)) : myKhu();
-    const chua = cuaToi.filter((k) => b.rm[k.id] && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
+    const chua = cuaToi.filter((k) => daBaoHomNay(k.id) && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
     const con = 'Còn tới ' + fmtGio(curS.to);
     if (chua.length > 2) alerts.push({ bad: false, t: chua.length + ' khu chưa đếm ' + curS.label, s: chua.map((k) => k.name).join(', ') + ' · ' + con, to: 'dem' });
     else chua.forEach((k) => alerts.push({ bad: false, t: k.name + ' chưa đếm ' + curS.label, s: con + ' · bấm để đếm', to: 'dem', k: k.id }));
@@ -711,14 +744,8 @@ function vHome() {
       to: isAdmin() ? 'duyet' : canIn() ? 'nhap' : null,
     });
   }
-  if (b.loanPending) {
-    alerts.push({
-      bad: false,
-      t: b.loanPending + ' lần vay/mượn chờ duyệt',
-      s: isAdmin() ? 'Vào Vay mượn ngoài bãi để duyệt' : 'Chưa tính vào sổ công nợ, chờ admin duyệt',
-      to: 'vaymuon',
-    });
-  }
+  /* (Đã có thẻ "lần ghi vay mượn chờ duyệt" cho admin ở trên. Không bày thêm cho người khác: số này là
+     của CẢ BÃI, không phải lần ghi của người đang xem — trạng thái từng lần ghi đã có ở màn Vay mượn.) */
   // Gom các phi cùng một loại cảnh báo vào MỘT thẻ khi có nhiều hơn 2:
   // ngày đầu chưa có tồn chuẩn, cả 15 phi đều dưới mức tối thiểu sẽ đẩy hết nội dung khác xuống dưới.
   const rateTxt = (p) => (b.rate[p.id] ? (isCuon(p) ? fmtDec(b.rate[p.id] / p.bo_size) + ' cuộn/ngày' : fmtInt(b.rate[p.id]) + ' cây/ngày') : '');
@@ -852,7 +879,7 @@ function vKhu() {
   const cur = slotNow();
   const sub = !mine.length ? 'Bạn chưa được giao khu nào'
     : cur ? 'Đang ' + cur.label + ': đã đếm ' + mine.filter((k) => (b.slotDone[k.id] || new Set()).has(cur.i)).length + '/' + mine.length + ' khu của bạn'
-    : 'Đã báo ' + mine.filter((k) => b.rm[k.id]).length + '/' + mine.length + ' khu của bạn';
+    : 'Đã báo ' + mine.filter((k) => daBaoHomNay(k.id)).length + '/' + mine.length + ' khu của bạn';
   const body = mine.length
     ? `<div class="grid2">${cards}</div>${hidden ? `<div class="sm muted" style="padding:10px 2px;line-height:1.4">Còn ${hidden} khu do người khác phụ trách nên không hiện ở đây.</div>` : ''}`
     : `<div class="card warn col gap6"><b style="font-size:18px">Chưa được giao khu nào</b><span class="sm" style="line-height:1.4">Admin cần vào Thêm → Cài đặt → Khu bãi để gán bạn phụ trách khu. Khi đó khu sẽ hiện ở màn này.</span></div>`;
@@ -927,7 +954,7 @@ function demView() {
       // mọi khu nay đều có đủ 13 dòng mà phần lớn là 0: hiện dấu · cho bảng đỡ rối
       const v = tonOf(x.id, p.id);
       const has = v !== 0;
-      const unrep = !b.rm[x.id];
+      const unrep = !daBaoHomNay(x.id); // báo cáo chuyển từ hôm qua chưa phải số hôm nay
       return `<div class="oc" style="${cwStyle};font-size:${cFont}px;color:${has ? (unrep ? '#4B5360' : '#1C1F22') : '#9A9489'};background:${st.cls === 'warn' ? '#FFF3D6' : unrep ? '#EDEBE4' : 'transparent'}">${has ? (isCuon(p.id) ? fmtDec(v / p.bo_size) : v) : '·'}</div>`;
     }).join('')}</div>`);
   });

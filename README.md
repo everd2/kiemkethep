@@ -4,6 +4,7 @@
 
 ## Cách hệ thống tính
 
+- **Nhắc đúng người phụ trách**: thẻ *chưa báo*, *cần đếm lại*, *chưa đếm buổi…* chỉ hiện cho người phụ trách khu đó (và admin); khu **chưa giao ai** thì ai cũng được nhắc, nên admin thấy thẻ *"N khu chưa giao người phụ trách"* để đi giao ở **Cài đặt → Khu bãi**. Thẻ *chưa báo* của admin ghi kèm tên người phụ trách từng khu. Khu trống (không có thép, không có phiếu) không bị nhắc. App chỉ nhắc khi người đó **mở app** — chưa có thông báo đẩy.
 - **Tổng quan**: chạm vào thẻ một khu để xem thép của khu đó với **đủ mọi đường kính** (phi không có thép ghi 0), và bấm **Đếm / báo cáo** ngay ở đó (chỉ hiện với người đếm được khu đó, khi ngày chưa chốt).
 - Mỗi ô **(ngày × khu × phi)** là đơn vị gốc. Mọi thống kê (toàn bãi, theo khu, theo phi) tính từ các ô này.
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.
