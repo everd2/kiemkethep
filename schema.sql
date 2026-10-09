@@ -223,6 +223,11 @@ CREATE TABLE IF NOT EXISTS day_close (
 --       cột dung chứ không cộng thêm, nên đẳng thức trên không đổi: ghi phiếu xuất là tự nguyện
 --       và chỉ để tách "đã dùng" thành phần có phiếu và phần không rõ. Ngược chiều với dc: xuất
 --       là thép đi THẬT nên phải nằm trong lượng dùng, còn dc là sửa sổ nên không.
+-- kg:  kg/cây của phi LÚC CHỐT. Báo cáo, xem lại ngày cũ, thống kê nhân với số này, nên sửa kg/cây
+--       sau này không viết lại số tấn của ngày đã khoá.
+-- vay: thép ra (−) / vào (+) theo sổ vay mượn qua bãi (phiếu kho kind 'vay'): đổi tồn, không phải
+--       nhập, không phải dùng.
+-- bt:  1 = ngày bất thường của phi (dùng âm / dùng cao). Vẫn chốt, nhưng không vào mức dùng trung bình.
 CREATE TABLE IF NOT EXISTS daily_summary (
   day TEXT NOT NULL,
   phi_id TEXT NOT NULL,
@@ -232,6 +237,9 @@ CREATE TABLE IF NOT EXISTS daily_summary (
   span INTEGER NOT NULL DEFAULT 1,
   dc INTEGER NOT NULL DEFAULT 0,
   xuat INTEGER NOT NULL DEFAULT 0,
+  kg REAL,
+  vay INTEGER NOT NULL DEFAULT 0,
+  bt INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, phi_id)
 );
 
@@ -316,7 +324,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('rev', 1);
 -- Phiên bản cấu trúc: Worker tự nâng cấp khi số này nhỏ hơn bản trong code
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 16);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 19);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

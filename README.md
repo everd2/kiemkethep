@@ -173,7 +173,7 @@ npx wrangler d1 execute kho-thep --remote --file=schema.sql
 ```
 npx wrangler deploy
 ```
-Cuối lệnh có địa chỉ dạng `https://kho-thep.<ten-cua-ban>.workers.dev`. Đó là địa chỉ ứng dụng.
+Cuối lệnh có địa chỉ dạng `https://khothep.<ten-cua-ban>.workers.dev` (phần đầu là `name` trong `wrangler.toml`, hiện là `khothep`). Đó là địa chỉ ứng dụng.
 
 ### 5. Đặt hai bí mật (bắt buộc)
 Tạo hai chuỗi ngẫu nhiên:
@@ -190,7 +190,7 @@ Mỗi lệnh sẽ hỏi giá trị, dán một chuỗi vào rồi Enter (PEPPER 
 > **PEPPER** dùng để băm PIN. Hãy lưu nó ở nơi an toàn. **Nếu mất hoặc đổi PEPPER, mọi PIN sẽ không dùng được nữa** (phải đặt lại PIN cho từng người).
 
 ### 6. Tạo admin đầu tiên
-Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên, số điện thoại, PIN 4 số. Trang này chỉ dùng được một lần, có admin rồi hệ thống tự từ chối.
+Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên, số điện thoại, PIN 4 số. Trang này chỉ dùng được một lần, có admin rồi hệ thống tự từ chối.
 
 ### 7. Thiết lập ban đầu trong ứng dụng
 Đăng nhập admin, vào **Thêm**:
@@ -208,7 +208,7 @@ Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tê
 
 | Việc | Lệnh / cách làm |
 |---|---|
-| Cập nhật code sau khi sửa | Đẩy code lên GitHub (Cloudflare tự deploy), hoặc `npx wrangler deploy` |
+| Cập nhật code sau khi sửa | `npx wrangler deploy` (chạy từ nhánh `main` sạch, không có thay đổi chưa commit). **Đẩy lên GitHub KHÔNG tự deploy** — dự án chưa nối Cloudflare Workers Builds. Máy đang mở app sẽ tự hiện dải "Có bản mới" |
 | Nâng cấp cấu trúc database | **Tự động**: Worker tự áp dụng thay đổi ở lần chạy đầu sau deploy (số phiên bản lưu ở bảng `meta`, khóa `schema`). Không cần chạy lại `schema.sql` |
 | Sao lưu dữ liệu ra file | `npx wrangler d1 export kho-thep --remote --output=backup.sql` |
 | Khôi phục về thời điểm cũ | Cloudflare Dashboard → Storage & Databases → D1 → kho-thep → **Time Travel** (khôi phục theo từng phút, thời hạn lưu tùy gói, xem trang giá D1 của Cloudflare) |

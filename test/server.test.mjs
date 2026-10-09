@@ -2643,6 +2643,28 @@ async function main() {
     ok('nhật ký chốt nói rõ', /D16 dùng âm/.test(S3.one('SELECT note FROM day_close WHERE day=?', f).note));
   }
 
+  /* ================= 55. schema.sql khớp với code =================
+     schema.sql là cấu trúc dùng khi cài mới. Nó lệch với code thì cài mới vẫn chạy (Worker tự chạy
+     migration), nhưng file mô tả cấu trúc nói sai — và lần sửa sau dễ dựa vào cái sai đó. Kiểm trên
+     database vừa dựng từ schema.sql, TRƯỚC khi Worker chạy migration nào. */
+  {
+    const S = await boot(ROOT);
+    eq('schema.sql khai đúng phiên bản cấu trúc của code', S.one("SELECT value FROM meta WHERE key='schema'").value, SCHEMA_NOW);
+    const truoc = (t) => S.sql(`SELECT name FROM pragma_table_info('${t}') ORDER BY name`).map((x) => x.name).join(',');
+    const bangTruoc = S.sql("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").map((x) => x.name);
+    const cot = Object.fromEntries(bangTruoc.map((t) => [t, truoc(t)]));
+    // dựng thêm một database đi đường "nâng cấp": schema 14 rồi để Worker chạy migration lên bản mới nhất
+    const S2 = await boot(ROOT);
+    S2.raw.exec("UPDATE meta SET value = 14 WHERE key = 'schema'");
+    S2.raw.exec('DROP TABLE IF EXISTS khu_report_log; DROP TABLE IF EXISTS doitac; DROP TABLE IF EXISTS loans');
+    S2.raw.exec('CREATE TABLE ds_tam AS SELECT day, phi_id, ton, nhap, dung, span, dc, xuat FROM daily_summary; DROP TABLE daily_summary; ALTER TABLE ds_tam RENAME TO daily_summary');
+    await S2.call('POST', '/setup', { token: 'setup-tok', name: 'Admin', phone: '0900000001', pin: '2468' });
+    const bangSau = S2.sql("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").map((x) => x.name);
+    eq('cài mới và nâng cấp ra cùng một bộ bảng', bangTruoc, bangSau);
+    const lech = bangTruoc.filter((t) => cot[t] !== S2.sql(`SELECT name FROM pragma_table_info('${t}') ORDER BY name`).map((x) => x.name).join(','));
+    eq('và cùng cột ở mọi bảng', lech, []);
+  }
+
   /* ================= kết quả ================= */
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] ? '  [' + x[2] + ']' : '')).join('\n'));
