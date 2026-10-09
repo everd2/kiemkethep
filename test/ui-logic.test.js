@@ -1145,6 +1145,23 @@ const run = async () => {
   ok('người đếm: không thấy số sổ vay chờ duyệt của cả bãi', !/vay mượn chờ duyệt|vay\/mượn chờ duyệt/.test(r('vHome()')));
   r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
 
+  // ---- 1d11. Trang Thống kê ----
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'stats'; S.statScope = 'B'; S.usage = [];`);
+  const TK = r('vStats()');
+  ok('chọn một khu: vẫn bày đủ mọi phi, phi trống ghi 0', ['D8', 'D10', 'D12'].every((ph) => TK.includes('<b>' + ph + '</b>')) && /<span>0<\/span>/.test(TK), (TK.match(/Tồn hiện tại.{0,400}/) || [''])[0]);
+  ok('và đếm số phi có thép', /Cộng · 1\/3 phi có thép/.test(TK));
+  ok('tiêu đề bảng tồn ghi khu đang chọn', /Tồn hiện tại · Khu B/.test(TK));
+  ok('nói rõ lượng dùng luôn tính cả bãi', /Thép đã dùng · toàn bãi/.test(TK));
+  r(`S.boot.lastClosed = null;`);
+  ok('sổ chưa chốt ngày nào: nói vì sao trống và khi nào có số', /Sổ chưa chốt ngày nào/.test(r('vStats()')) && /tự chốt sau 0h/.test(r('vStats()')));
+  // ngày mở sổ (used rỗng): không được hiện "0,00 tấn" như thể không dùng gì
+  r(`S.boot = _boot(); indexBoot(S.boot); S.usage = [{ day: '${today}', span: 1, used: { D10: 50 }, kg: { D10: 1 }, xuat: {} }, { day: '${yday}', span: 1, used: {}, kg: {}, xuat: {} }];`);
+  const TK2 = r('vStats()');
+  ok('ngày mở sổ: ghi "mở sổ · chưa tính dùng", không ghi 0 tấn', /mở sổ · chưa tính dùng/.test(TK2) && (TK2.match(/0,00 tấn/g) || []).length === 0, (TK2.match(/Theo ngày.{0,300}/) || [''])[0]);
+  r(`S.usage = [{ day: '${yday}', span: 1, used: {}, kg: {}, xuat: {} }];`);
+  ok('chỉ có ngày mở sổ: giải thích lượng dùng có từ lần chốt sau', /Lượng dùng bắt đầu có từ lần chốt kế tiếp/.test(r('vStats()')));
+  r(`S.usage = null; S.statScope = 'all'; S.screen = 'home';`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

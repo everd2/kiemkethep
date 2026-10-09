@@ -1753,11 +1753,12 @@ function vStats() {
   const b = S.boot, T = totals();
   const scope = S.statScope;
   const chips = [['all', 'Toàn bãi']].concat(b.khuAct.map((k) => [k.id, k.name]));
-  const rows = b.phiAct.map((p) => {
-    const v = scope === 'all' ? T.perPhi[p.id] : tonOf(scope, p.id);
-    return { p, v };
-    // phi nào cũng có ở mọi khu, nên chỉ hiện dòng còn thép cho bảng tồn khỏi toàn số 0
-  }).filter((r) => scope === 'all' || r.v > 0);
+  /* Bày ĐỦ mọi đường kính, kể cả khi chọn một khu: phi không có thép ghi 0 (chữ mờ), như thẻ khu ở
+     Tổng quan. Ẩn đi thì khu trống trơn chỉ còn dòng "Cộng 0" — trông như trang hỏng, và người xem
+     không đối chiếu được "không thấy D25 là hết hay là quên". */
+  const rows = b.phiAct.map((p) => ({ p, v: scope === 'all' ? T.perPhi[p.id] : tonOf(scope, p.id) }));
+  const coThep = rows.filter((r) => r.v > 0).length;
+  const tenScope = scope === 'all' ? 'toàn bãi' : ((b.khuBy[scope] || {}).name || scope);
   const sumCay = rows.filter((r) => !isCuon(r.p)).reduce((a, r) => a + r.v, 0);
   const sumKg = rows.reduce((a, r) => a + r.v * r.p.kg_per_cay, 0);
   let usageHtml = panelWait('stats');
@@ -1771,18 +1772,29 @@ function vStats() {
       for (const p in d.used) { per[p] = (per[p] || 0) + d.used[p]; dayKg += d.used[p] * kgOfDay(p); }
       for (const p in d.xuat || {}) { perX[p] = (perX[p] || 0) + d.xuat[p]; totX += d.xuat[p] * kgOfDay(p); }
       d.tan = dayKg; tot += dayKg;
+      // used rỗng = ngày mở sổ (chốt đầu tiên, hoặc đặt tồn về 0): không có tồn hôm trước để trừ
+      d.moSo = !d.used || Object.keys(d.used).length === 0;
     });
+    const tinhDuoc = S.usage.filter((d) => !d.moSo).length;
     const coPhieu = (p) => (perX[p.id] ? `<span class="sm muted">trong đó ${fmtQs(perX[p.id], p)} có phiếu xuất</span>` : '');
     usageHtml = S.usage.length ? `<div class="card" style="padding:0;overflow:hidden">${b.phiAct.filter((p) => per[p.id]).map((p) => `<div class="li"><b>${p.id}</b><span class="col" style="align-items:flex-end"><b>${qMain(per[p.id], p)}</b><span class="sm muted">${qSub(per[p.id], p)}</span>${coPhieu(p)}</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Tổng dùng</b><b>${fmtT(tot)} tấn</b></div>${totX ? `<div class="li"><span class="sm">trong đó có phiếu xuất</span><span class="sm">${fmtT(totX)} tấn · không rõ ${fmtT(tot - totX)} tấn</span></div>` : ''}</div>
-      <h2 class="sec">Theo ngày</h2><div class="card" style="padding:0;overflow:hidden">${S.usage.map((d) => `<div class="li"><span>${d.day.split('-').reverse().join('/')}</span><b>${fmtT(d.tan)} tấn</b></div>`).join('')}</div>` : '<div class="muted">Chưa có ngày nào được chốt trong khoảng này.</div>';
+      <h2 class="sec">Theo ngày</h2><div class="card" style="padding:0;overflow:hidden">${S.usage.map((d) => `<div class="li"><span>${d.day.split('-').reverse().join('/')}</span>${d.moSo
+        ? '<span class="sm muted">mở sổ · chưa tính dùng</span>' : `<b>${fmtT(d.tan)} tấn</b>`}</div>`).join('')}</div>
+      ${tinhDuoc ? '' : '<div class="sm muted" style="line-height:1.4">Ngày mở sổ là ngày lập tồn đầu tiên: chưa có tồn hôm trước nên chưa tính được lượng dùng. Lượng dùng bắt đầu có từ lần chốt kế tiếp.</div>'}`
+      /* 1. Trống: nói rõ VÌ SAO trống và KHI NÀO có số, không chỉ "chưa có" — trang trống mà không nói
+         gì thì người dùng tưởng app hỏng. */
+      : b.lastClosed ? '<div class="muted">Chưa có ngày nào được chốt trong khoảng này.</div>'
+      : '<div class="card col gap6"><b>Sổ chưa chốt ngày nào</b><span class="sm" style="line-height:1.45">Sổ tự chốt sau 0h mỗi đêm. Lần chốt đầu tiên là ngày <b>mở sổ</b> (lập tồn đầu kỳ); lượng dùng bắt đầu tính từ ngày thứ hai.</span></div>';
   }
-  return `${head('Thống kê', 'Theo khu hoặc toàn bãi', 'more')}
+  return `${head('Thống kê', 'Tồn theo khu hoặc toàn bãi · lượng dùng toàn bãi', 'more')}
   <div class="f1 scroll pad col gap12" id="body">
-    <h2 class="sec">Tồn hiện tại</h2>
+    <h2 class="sec">Tồn hiện tại · ${esc(tenScope)}</h2>
     <div class="wrap">${chips.map((c) => `<button class="chip s ${scope === c[0] ? 'on' : ''}" data-a="sscope" data-v="${esc(c[0])}">${esc(c[1])}</button>`).join('')}</div>
-    <div class="sm muted">Bộ chọn khu này chỉ áp dụng cho mục Tồn hiện tại ngay dưới.</div>
-    <div class="card" style="padding:0;overflow:hidden">${rows.map((r) => `<div class="li"><b>${r.p.id}</b><span class="col" style="align-items:flex-end"><b>${qMain(r.v, r.p)}</b><span class="sm muted">${qSub(r.v, r.p)}</span></span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Cộng</b><b>${cayTxt(sumCay)} · ${fmtT(sumKg)} tấn</b></div></div>
-    <h2 class="sec">Thép đã dùng (toàn bãi)</h2>
+    <div class="sm muted">Chọn khu chỉ đổi bảng tồn ngay dưới; lượng dùng bên dưới luôn tính cho cả bãi.</div>
+    <div class="card" style="padding:0;overflow:hidden">${rows.map((r) => (r.v
+      ? `<div class="li"><b>${r.p.id}</b><span class="col" style="align-items:flex-end"><b>${qMain(r.v, r.p)}</b><span class="sm muted">${qSub(r.v, r.p)}</span></span></div>`
+      : `<div class="li" style="color:var(--mut)"><b>${r.p.id}</b><span>0</span></div>`)).join('')}<div class="li" style="background:#E8EEF6"><b>Cộng · ${coThep}/${rows.length} phi có thép</b><b>${cayTxt(sumCay)} · ${fmtT(sumKg)} tấn</b></div></div>
+    <h2 class="sec">Thép đã dùng · toàn bãi, các ngày đã chốt</h2>
     <div class="wrap">${[7, 30, 90].map((d) => `<button class="chip s ${S.usageDays === d ? 'on' : ''}" data-a="sdays" data-v="${d}">${d} ngày</button>`).join('')}</div>
     ${usageHtml}
   </div>`;
