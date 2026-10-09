@@ -368,7 +368,9 @@ function totals() {
   /* "Nhập hôm nay" chỉ tính THÉP VỀ: chuyển khu chỉ dời chỗ, còn điều chỉnh là sửa sổ chứ không
      có xe thép nào vào bãi. Gộp điều chỉnh vào đây là con số "nhập hôm nay" ở Tổng quan nói có
      thép về trong khi không có, và nó lệch luôn với cột Nhập của báo cáo kỳ (đã trừ dc ở server). */
-  b.receipts.forEach((r) => { const p = b.phiBy[r.phi_id]; if (p && !['chuyen', 'dc', 'xuat'].includes(r.kind)) T.inKg += r.qty * p.kg_per_cay; });
+  /* Và chỉ tính phiếu ĐÃ DUYỆT HÔM NAY: b.receipts còn gồm phiếu chờ duyệt (cả của ngày trước), mà
+     chưa duyệt thì chưa vào tồn. Phiếu tính theo NGÀY DUYỆT, đúng như cột Nhập của báo cáo kỳ. */
+  b.receipts.forEach((r) => { const p = b.phiBy[r.phi_id]; if (p && r.duyet_day === b.today && !r.voided && !['chuyen', 'dc', 'xuat'].includes(r.kind)) T.inKg += r.qty * p.kg_per_cay; });
   // nhập kể từ lần chốt gần nhất (gồm ngày quên chốt), giống cách server tính; chuyển khu tự triệt tiêu
   const inn = b.innPhi;
   if (b.lastClosed) {
@@ -635,9 +637,10 @@ function vHome() {
     const nP = new Set(choP.map((r) => r.grp || 'id' + r.id)).size;
     alerts.push({
       bad: false,
-      t: nP + ' phiếu nhập/chuyển chờ duyệt',
+      t: nP + ' phiếu chờ duyệt',
       s: isAdmin() ? 'Chưa tính vào tồn. Vào Duyệt để duyệt hoặc từ chối' : 'Chưa tính vào tồn, chờ admin duyệt',
-      to: isAdmin() ? 'duyet' : 'nhap',
+      // người đếm không có tab Nhập: thẻ chỉ để đọc, không dẫn vào màn họ không dùng được
+      to: isAdmin() ? 'duyet' : canIn() ? 'nhap' : null,
     });
   }
   if (b.loanPending) {
@@ -927,6 +930,14 @@ const dcSauText = (qty, dangCo, dir, p, phiId) => {
   return `${phiId}: ${fmtQs(dangCo, p)} → ${fmtQs(sau, p)}`
     + (sau < 0 ? ' — quá số đang có, phiếu sẽ bị từ chối' : '');
 };
+/* Còn lấy ra được bao nhiêu ở một ô = thép đang có TRỪ phần các phiếu rút thép (chuyển đi, xuất,
+   điều chỉnh giảm) ĐANG CHỜ DUYỆT. Server chặn theo đúng con số này (stockOf): phiếu chờ duyệt đã
+   giữ phần thép đó, nên hai phiếu không cùng rút một lô. Hiện tonOf trần thì màn hình nói "còn đủ"
+   rồi lưu lại bị từ chối. */
+const choRut = (k, p) => (S.boot.receipts || []).reduce((a, r) => a + (!r.duyet_day && !r.voided && r.khu_id === k && r.phi_id === p && r.qty < 0 ? -r.qty : 0), 0);
+const conLay = (k, p) => tonOf(k, p) - choRut(k, p);
+// tổng sẽ rút của phi đang chọn: các dòng đã thêm vào phiếu + số đang gõ dở
+const nhapRut = (N) => (N.lines || []).reduce((a, l) => a + (l.phi === N.phi ? l.qty : 0), 0) + N.qty * uStepOf(N.phi);
 const kName = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
 /* Nhãn lý do điều chỉnh do server gửi xuống (boot.dcReasons), nên mã lý do chỉ có MỘT nguồn và
    hai bên không bao giờ lệch nhau. Danh sách dự phòng là cho bản app còn trong cache của máy cũ:
@@ -967,6 +978,8 @@ function receiptGroups(list) {
 }
 function vNhap() {
   const b = S.boot, N = S.nhap;
+  // tới được đây bằng nút Back hoặc link cũ: người đếm không lập phiếu (server cũng chặn)
+  if (!canIn()) return `${head('Nhập kho', '', 'home')}<div class="pad"><div class="card warn">Chỉ thủ kho và admin lập phiếu nhập, chuyển, xuất và điều chỉnh.</div></div>`;
   if (!b.khuAct.length) return `${head('Nhập kho', '', 'home')}<div class="pad muted">Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.</div>`;
   const okKhu = (id) => id && b.khuBy[id] && b.khuBy[id].active;
   if (!okKhu(N.khu)) N.khu = okKhu(S.khu) ? S.khu : b.khuAct[0].id;
@@ -1001,7 +1014,10 @@ function vNhap() {
     const nut = isAdmin() && cho
       ? `<div class="row gap6"><button class="btn s ok" data-a="pduyet" data-id="${g.id}">Duyệt</button><button class="btn s bad" data-a="void" data-id="${g.id}">Từ chối</button></div>`
       : can ? `<button class="btn s bad" data-a="void" data-id="${g.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>`
-      : '<span class="sm muted" style="text-align:right;max-width:92px">quá 10 phút, nhờ admin huỷ</span>';
+      // không có nút thì nói vì sao: phiếu của người khác đang chờ duyệt, hay của mình mà đã quá giờ
+      : cho ? '<span class="sm muted" style="text-align:right;max-width:92px">chờ admin duyệt</span>'
+      : mine ? '<span class="sm muted" style="text-align:right;max-width:92px">quá 10 phút, nhờ admin huỷ</span>'
+      : '';
     return `<div class="li"><span><b>${g.title}</b> ${trangThai}<br>${esc(g.what)} · ${fmtT(g.kg)} tấn<br><span class="sm muted">${esc(g.r0.uname)} · ${hhmm(g.r0.ts)}${ngay}${g.r0.note ? ' · ' + esc(g.r0.note) : ''}</span></span>${nut}</div>`;
   }).join('');
   const saveLbl = dc ? 'XÁC NHẬN ĐIỀU CHỈNH' : xuat ? 'GHI PHIẾU XUẤT' : chuyen ? 'XÁC NHẬN CHUYỂN KHU' : 'XÁC NHẬN NHẬP KHO';
@@ -1014,7 +1030,8 @@ function vNhap() {
      nên nó đứng riêng một bước có chữ giải thích, không nhét vào cùng chỗ gõ số. */
   const stepDc = dc ? 1 : 0;
   // đang có bao nhiêu ở đúng ô này: con số người lập phiếu cần để biết mình sửa TỪ ĐÂU về đâu
-  const dangCo = dc || xuat ? tonOf(N.khu, N.phi) : 0;
+  const dangCo = dc || xuat ? conLay(N.khu, N.phi) : 0;
+  const giu = dc || xuat ? choRut(N.khu, N.phi) : 0;
   const sau = dangCo + (N.dir === 'tang' ? 1 : -1) * N.qty * uStep;
   // tổng khối lượng cả phiếu, gồm cả số đang gõ dở, vì nút lưu cũng tính số đó vào phiếu
   const dcKg = Math.abs(N.lines.reduce((a, l) => a + l.qty * b.phiBy[l.phi].kg_per_cay, 0) + N.qty * uStep * p.kg_per_cay);
@@ -1037,11 +1054,11 @@ function vNhap() {
       <div class="row gap6"><button class="chip f1 ${N.dir === 'tang' ? 'on' : ''}" data-a="ndir" data-v="tang">Tăng tồn (+)</button><button class="chip f1 ${N.dir === 'giam' ? 'on' : ''}" data-a="ndir" data-v="giam">Giảm tồn (−)</button></div>
       <span class="sm muted">${N.dir === 'tang' ? 'Máy đang ghi THIẾU so với thực tế ngoài bãi.' : 'Máy đang ghi THỪA so với thực tế ngoài bãi.'}</span></div>` : ''}
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 3 : 2 + stepDc + (xuat ? 1 : 0)}. Chọn phi</b><div class="grid4">${b.phiAct.map((x) => `<button class="chip ${x.id === N.phi ? 'on' : ''}" data-a="nphi" data-v="${x.id}">${x.id}</button>`).join('')}</div>
-      ${dc || xuat ? `<span class="sm">${esc(kName(N.khu))} đang có <b>${fmtQs(dangCo, p)}</b> ${N.phi}</span>` : ''}</div>
+      ${dc || xuat ? `<span class="sm">${esc(kName(N.khu))} còn lấy được <b>${fmtQs(dangCo, p)}</b> ${N.phi}${giu ? ` <span class="muted">(đã trừ ${fmtQs(giu, p)} phiếu khác đang chờ duyệt)</span>` : ''}</span>` : ''}</div>
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 4 : 3 + stepDc + (xuat ? 1 : 0)}. Số ${isCuon(p) ? 'cuộn' : 'cây'}${dc ? (N.dir === 'tang' ? ' cộng thêm' : ' bớt đi') : xuat ? ' xuất đi' : ''} ${N.phi}</b>
       <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><input class="f1" id="nqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số ${unitLbl(p)} ${N.phi}" placeholder="0" value="${N.qty || ''}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
       <span class="muted" id="nkg">${nkgText(N.qty * uStep, p)}</span>
-      ${dc ? `<span class="sm b" id="ndcsau">${dcSauText(N.qty * uStep, dangCo, N.dir, p, N.phi)}</span>` : ''}
+      ${dc || xuat ? `<span class="sm b" id="ndcsau">${dcSauText(dc ? N.qty * uStep : nhapRut(N), dangCo, xuat ? 'giam' : N.dir, p, N.phi)}</span>` : ''}
       <div class="row gap6">${isCuon(p) ? '' : `<button class="btn s f1" data-a="nq" data-v="bo">+1 bó (${p.bo_size})</button>`}<button class="btn s f1" data-a="nadd">+ Thêm phi khác</button></div></div>
     ${lines}
     ${dc ? `<div class="col gap8"><b style="font-size:18px">${4 + stepDc}. Lý do</b>
@@ -1270,7 +1287,10 @@ function vDuyet() {
 
     const choPhieu = !choP ? '' : `<div class="sm b" style="color:var(--warn)">Còn ${choP} phiếu chờ duyệt của khu này: ${k.phieu.map((g) => {
       const v = phieuBy[g];
-      return v ? esc(v.lines.filter((l) => l.qty > 0).map((l) => l.phi + ' ' + fmtQs(l.qty, b.phiBy[l.phi])).join(', ')) : '';
+      if (!v) return '';
+      // chuyển khu: chỉ kể dòng của CHÍNH khu này (bên đi âm, bên đến dương); xuất/điều chỉnh: đủ dấu
+      const ls = v.lines.filter((l) => l.khu === k.khu);
+      return esc(ls.map((l) => l.phi + ' ' + (l.qty < 0 ? '−' : '+') + fmtQs(Math.abs(l.qty), b.phiBy[l.phi])).join(', '));
     }).filter(Boolean).join(' · ')}. Bấm Duyệt khu là duyệt luôn.</div>`;
     const blankWarn = k.blank ? `<div class="sm b" style="color:var(--bad)">${k.blank} phi được để trống trong khi đang có thép — xem lại trước khi duyệt.</div>` : '';
     /* recheck thay cho cảnh báo "nhập muộn" cũ, và quan trọng là GỠ ĐƯỢC: duyệt lại khu là hết.
@@ -1317,7 +1337,7 @@ function vDuyet() {
     <button class="card b" style="text-align:left;min-height:52px;font-size:16px;border:2px solid #B9B4A8" data-a="toggle-normal">${normal.length} phi bình thường · ${S.showNormal ? 'bấm để ẩn' : 'bấm để xem'}</button>${normalHtml}
     <label class="col gap6" style="font-weight:600">Ghi chú lý do ${allOk ? '(không bắt buộc)' : '(bắt buộc khi còn việc chưa xử lý)'}<input class="inp s" style="height:52px" id="note" data-model="note" placeholder="Ví dụ: nhập sót phiếu D16" value="${esc(S.form.note || '')}"></label>
   </div>
-  <div class="sendbar"><button class="btn ${R.closed ? 'dis' : 'ok'} full" style="min-height:60px;font-size:20px" data-a="close" ${R.closed ? 'disabled' : ''}>${R.closed ? 'ĐÃ CHỐT NGÀY' : allOk ? 'XÁC NHẬN CHỐT NGÀY' : 'DUYỆT & CHỐT NGÀY'}</button></div>`;
+  <div class="sendbar"><button class="btn ${R.closed ? 'dis' : 'ok'} full" style="min-height:60px;font-size:20px" data-a="close" ${R.closed ? 'disabled' : ''}>${R.closed ? 'ĐÃ CHỐT NGÀY' : allOk ? 'XÁC NHẬN CHỐT NGÀY' : 'CHỐT NGÀY (KÈM LÝ DO)'}</button></div>`;
 }
 
 /* --- Xem lại ngày cũ --- */
@@ -1599,7 +1619,7 @@ function vMore() {
     ${installCard()}
     <button class="menu" data-a="nav" data-s="pin">Đổi PIN của tôi</button>
     <button class="menu" style="color:var(--bad)" data-a="logout">Đăng xuất</button>
-    <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.2</div>
+    <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.3</div>
   </div>`;
 }
 function vPin() {
@@ -2410,13 +2430,21 @@ const ACTIONS = {
   async close() {
     const R = S.review; if (!R || R.closed) return;
     const note = val('note'); S.form.note = note;
-    if ((R.pending != null ? R.pending : R.exceptions.length) && !note.trim()) return say('Còn việc chưa duyệt: duyệt khu lệch hoặc ghi chú lý do trước khi chốt.', true), render();
-    if (!(await ask('Chốt ngày hôm nay?\nSố đếm hôm nay thành tồn chuẩn mới và ngày này bị khoá.', 'CHỐT NGÀY'))) return;
+    const pend = R.pending != null ? R.pending : R.exceptions.length;
+    if (pend && !note.trim()) return say('Còn việc chưa xử lý: duyệt từng khu, hoặc ghi lý do trước khi chốt.', true), render();
+    /* Chốt KHÔNG duyệt gì cả: chỉ số ĐÃ DUYỆT thành tồn chuẩn. Báo cáo còn chờ duyệt lúc chốt thì bị
+       bỏ qua, khu đó giữ số đã duyệt trước. Phải nói rõ ở đây, không thì người bấm chốt "kèm lý do"
+       tưởng mình vừa duyệt luôn các khu đang chờ. */
+    const cho = (R.khus || []).filter((k) => k.waiting || k.phieu.length).map((k) => k.name);
+    const msg = 'Chốt ngày hôm nay?\nSố ĐÃ DUYỆT hôm nay thành tồn chuẩn mới và ngày này bị khoá.'
+      + (cho.length ? `\n\nChưa duyệt: ${cho.join(', ')}. Chốt bây giờ thì báo cáo và phiếu đang chờ của các khu này KHÔNG vào tồn chuẩn hôm nay.` : '')
+      + (pend ? `\n\nCòn ${pend} việc chưa xử lý, lý do sẽ ghi vào nhật ký: "${note.trim()}"` : '');
+    if (!(await ask(msg, 'CHỐT NGÀY'))) return;
     act(async () => {
       try { await api('POST', '/close', { note }); }
       catch (e) { if (e.code === 'changed' || e.code === 'closed') { S.review = await api('GET', '/review'); await loadBoot(); } throw e; }
       S.form.note = ''; S.review = await api('GET', '/review'); await loadBoot();
-    }, 'Đã chốt ngày. Số đếm hôm nay là tồn chuẩn mới.');
+    }, 'Đã chốt ngày. Số đã duyệt hôm nay là tồn chuẩn mới.');
   },
   async reopen() {
     const note = val('reopenNote').trim();
@@ -2631,7 +2659,12 @@ const ACTIONS = {
     });
   },
   ksave(d) { act(async () => { await api('PATCH', '/khu/' + d.k, { name: val('kn-' + d.k) }); delete S.form['kn-' + d.k]; await loadBoot(); }, 'Đã lưu tên khu.'); },
-  async khide(d) { if (d.v !== '1' && !(await ask('Ẩn ' + kName(d.k) + '?\nKhu ẩn không còn trong danh sách đếm, nhưng thép còn lại vẫn được tính vào tổng bãi.', 'ẨN KHU', true))) return; act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.'); },
+  async khide(d) {
+    /* Server không cho ẩn khu còn thép (ẩn rồi thì không ai đếm được nữa, tồn "đóng băng"), nên
+       nói luật đó TRƯỚC khi bấm, đừng để người ta xác nhận xong mới nhận lỗi. */
+    if (d.v !== '1' && !(await ask('Ẩn ' + kName(d.k) + '?\nChỉ ẩn được khi khu đã hết thép: chuyển thép sang khu khác hoặc đếm về 0 trước. Khu ẩn không còn trong danh sách đếm, hiện lại được bất cứ lúc nào.', 'ẨN KHU', true))) return;
+    act(async () => { await api('PATCH', '/khu/' + d.k, { active: d.v === '1' }); await loadBoot(); }, d.v === '1' ? 'Đã hiện lại khu.' : 'Đã ẩn khu.');
+  },
   // Gọi hộp cài app của trình duyệt. Mỗi sự kiện chỉ dùng được một lần.
   async install() {
     if (!installEvt) return;
@@ -2816,7 +2849,8 @@ document.addEventListener('input', (e) => {
     const sv = document.getElementById('ndcsau');
     if (sv && p) {
       const N = S.nhap;
-      sv.textContent = dcSauText(N.qty * uStepOf(p), tonOf(N.khu, N.phi), N.dir, p, N.phi);
+      const xuat = N.mode === 'xuat';
+      sv.textContent = dcSauText(xuat ? nhapRut(N) : N.qty * uStepOf(p), conLay(N.khu, N.phi), xuat ? 'giam' : N.dir, p, N.phi);
     }
   }
 });

@@ -240,6 +240,8 @@ S.boot.closed = false; S.review.closed = false;
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
 // khu thiếu khung đếm: thẻ khu phải nói khung nào thiếu, khung nào đã đếm, và lần gửi muộn
 S.screen = 'duyet'; render();
+{ const h = $app.innerHTML; out.push(['duyet+nut-chot', h.length,
+  h.includes('CHỐT NGÀY (KÈM LÝ DO)') && !h.includes('DUYỆT & CHỐT') && h.includes('D8 +1,1 cuộn') ? 'ok' : 'BAD:nút chốt hoặc phiếu chờ của khu']); }
 { const h = $app.innerHTML; out.push(['duyet+thieu-khung', h.length,
   ['Thiếu lần đếm buổi sáng (6h–12h)', '✗ buổi sáng', '✓ buổi chiều', 'gửi muộn', 'mỗi khu đếm 2 lần/ngày'].every((x) => h.includes(x))
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }

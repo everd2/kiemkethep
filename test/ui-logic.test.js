@@ -826,6 +826,34 @@ const run = async () => {
   ok('nhật ký: có chip lọc Vay mượn', /data-v="vay">Vay mượn/.test(r('vNhatKy()')));
   r(`S.loans = null; S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);
 
+  // ---- 1d4. Các lỗi giao diện cũ (lần rà soát đầu) ----
+  const rc = (o) => JSON.stringify({ id: 1, phi_id: 'D10', khu_id: 'A', qty: 100, kind: 'nhap', grp: null, ts: Date.now(), user_id: 2, uname: 'Kho', day: today, duyet_day: null, duyet_ts: null, voided: 0, ...o });
+  // B2: "Nhập hôm nay" chỉ tính phiếu nhập đã duyệt hôm nay
+  r(`var RB = _boot(); RB.receipts = [${rc({ id: 1, qty: 100 })}, ${rc({ id: 2, qty: 50, duyet_day: today, duyet_ts: Date.now() })}, ${rc({ id: 3, qty: 70, day: yday })}];
+    indexBoot(RB); S.boot = RB; S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('Nhập hôm nay: bỏ phiếu chờ duyệt, chỉ tính phiếu đã duyệt', Math.abs(r('totals().inKg') - 50 * 0.617) < 1e-6, r('totals().inKg'));
+  // B3: người đếm không bị dẫn vào màn Nhập kho
+  r(`S.me = { id: 9, name: 'B', role: 'nguoidem' };`);
+  ok('người đếm: thẻ phiếu chờ không dẫn vào màn Nhập', !/data-s="nhap"/.test(r('vHome()')) && /2 phiếu chờ duyệt/.test(r('vHome()')), (r('vHome()').match(/phiếu chờ duyệt.{0,80}/) || [''])[0]);
+  ok('người đếm vào màn Nhập (Back, link cũ): chỉ thấy lời nhắc, không có form', /Chỉ thủ kho và admin/.test(r('vNhap()')) && !/data-a="nconfirm"/.test(r('vNhap()')));
+  // B5: phiếu chờ duyệt của người KHÁC không phải "quá 10 phút"
+  r(`S.me = { id: 7, name: 'Kho 2', role: 'thukho' };`);
+  ok('thủ kho xem phiếu chờ của người khác: "chờ admin duyệt"', /chờ admin duyệt/.test(r('vNhap()')) && !/quá 10 phút/.test(r('vNhap()')));
+  // B6: "còn lấy được" trừ phiếu rút thép đang chờ; xuất cũng báo đỏ khi vượt
+  r(`var RX = _boot(); RX.receipts = [${rc({ id: 4, phi_id: 'D10', qty: -250, kind: 'xuat' })}]; indexBoot(RX); S.boot = RX; S.me = { id: 1, name: 'A', role: 'admin' };
+    S.nhap.mode = 'xuat'; S.nhap.khu = 'A'; S.nhap.phi = 'D10'; S.nhap.lines = []; S.nhap.qty = 60;`);
+  ok('còn lấy được = có 300 − 250 đang chờ xuất = 50', r("conLay('A', 'D10')") === 50, r("conLay('A', 'D10')"));
+  const VX = r('vNhap()');
+  ok('màn Xuất nói đã trừ phiếu khác đang chờ', /còn lấy được <b>50 cây<\/b>/.test(VX) && /đã trừ 250 cây phiếu khác đang chờ duyệt/.test(VX));
+  ok('xuất vượt số còn lấy được: báo đỏ trước khi lưu', /quá số đang có/.test(VX));
+  r(`S.nhap.mode = 'nhap'; S.nhap.qty = 0; S.boot = _boot(); indexBoot(S.boot);`);
+  // B4: hộp xác nhận ẩn khu nói đúng luật
+  r(`ACTIONS.khide({ k: 'A', v: '0' })`);
+  ok('ẩn khu: nói trước là phải hết thép', /Chỉ ẩn được khi khu đã hết thép/.test(r('S.ask ? S.ask.msg : ""')));
+  r(`ACTIONS.askno()`);
+  // C1: số phiên bản
+  ok('phiên bản 1.3', /phiên bản 1\.3/.test(r('vMore()')));
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');
