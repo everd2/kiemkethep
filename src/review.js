@@ -99,10 +99,13 @@ export async function computeReview(env, day, opt = {}) {
      cho khung trước, vì đòi đếm nhiều lần/ngày là để có số ở từng buổi — nên cách gỡ duy nhất là
      admin ghi lý do lúc chốt, giống khu không báo. */
   const slotSt = parseSettings(setR.results), nSlot = slotSt.report_slots_per_day;
-  const slotDone = {}, slotLate = {};
+  const slotDone = {}, slotLate = {}, slotGio = {};
   if (nSlot > 1) {
     slotR.results.forEach((r) => {
-      (slotDone[r.khu_id] = slotDone[r.khu_id] || new Set()).add(slotOf(r.at, slotSt));
+      const i = slotOf(r.at, slotSt);
+      (slotDone[r.khu_id] = slotDone[r.khu_id] || new Set()).add(i);
+      const g = slotGio[r.khu_id] || (slotGio[r.khu_id] = {});
+      if (!g[i] || r.at > g[i]) g[i] = r.at;
       if (r.ts - r.at > SLOT_LATE_MS) (slotLate[r.khu_id] = slotLate[r.khu_id] || []).push({ at: r.at, ts: r.ts });
     });
   }
@@ -275,6 +278,7 @@ export async function computeReview(env, day, opt = {}) {
         done: [...(slotDone[k.id] || [])].sort(),
         missing: due.filter((d) => !(slotDone[k.id] && slotDone[k.id].has(d.i))).map((d) => d.i),
         late: slotLate[k.id] || [],
+        gio: slotGio[k.id] || {}, // khung → lúc đếm (muộn nhất trong khung)
       } : null,
     };
   });

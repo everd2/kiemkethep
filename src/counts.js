@@ -1,6 +1,7 @@
 // Báo cáo đếm của khu, và xử lý khi hai người báo khác số.
 import { HttpError, KINDS, bad, fmtDay, json, vnDay } from './core.js';
 import { computeReview } from './review.js';
+import { slotDefs, slotOf } from './slots.js';
 import { IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, boWord, bump, closedErr,
   guardStmt, intIn, parseSettings, readJson, unitWord } from './helpers.js';
 
@@ -176,6 +177,15 @@ export async function putCounts(req, env, user) {
   const tuoi = Number(b.tuoi);
   const atIn = Number.isFinite(tuoi) && tuoi >= 0 ? ts - tuoi : Number(b.at);
   const at = Number.isFinite(atIn) && atIn <= ts && vnDay(atIn) === day ? Math.round(atIn) : ts;
+  /* Mốc để so XUNG ĐỘT: chỉ lần báo của người khác TRONG CÙNG KHUNG GIỜ mới đem so. Bắt đếm 2 lần/ngày
+     thì số buổi chiều khác buổi sáng là chuyện thường (thép dùng, thép về giữa hai buổi) — coi là
+     "hai người báo khác số" thì ngày nào khu cũng bị bắt chọn số, và nút chọn lại mời admin lấy số
+     buổi sáng đè số buổi chiều. Khung đầu tính từ 0h (đếm trước giờ làm cũng thuộc khung đầu). */
+  let tXd = t0;
+  if (settings.report_slots_per_day > 1) {
+    const i = slotOf(at, settings);
+    if (i > 0) tXd = t0 + Math.round(slotDefs(settings)[i].from * 3600e3);
+  }
   const changes = [];
   let conflict = 0;
   const rows = clean.map((it) => {
@@ -198,7 +208,7 @@ export async function putCounts(req, env, user) {
          người đếm đi tìm một chuyến xe không tồn tại. */
       throw bad(`Phi ${it.phi} có thay đổi tồn (nhập, chuyển khu hoặc điều chỉnh) ở khu này từ lần chốt trước, không giữ nguyên được, hãy đếm thực tế`);
     }
-    if (!demLai && p && p.ts >= t0 && p.user_id !== user.id && p.v !== it.v) conflict = 1;
+    if (!demLai && p && p.ts >= tXd && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
     const keep = it.kind === 'giu' ? keep0 + 1 : 0;
     return { ...it, prev: p ? p.v : null, keep };
@@ -207,7 +217,7 @@ export async function putCounts(req, env, user) {
 
   const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     // chạy TRƯỚC khi ghi counts: cờ này nói "lần gửi NÀY lệch với người khác", để trả lời người gửi
-    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4, 5)} AND NOT EXISTS (SELECT 1 FROM khu_report WHERE day = ?1 AND khu_id = ?2 AND recount = 1) conflict`).bind(day, khuId, user.id, data, t0),
+    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4, 5)} AND NOT EXISTS (SELECT 1 FROM khu_report WHERE day = ?1 AND khu_id = ?2 AND recount = 1) conflict`).bind(day, khuId, user.id, data, tXd),
     env.DB.prepare(
       `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
        SELECT ?1, ?2, ?3, ?4, CASE WHEN ${conflictCond(1, 2, 3, 5, 6)} THEN 1 ELSE 0 END, 0, 0
@@ -216,7 +226,7 @@ export async function putCounts(req, env, user) {
          conflict = CASE WHEN khu_report.recount = 1 THEN 0 WHEN excluded.conflict = 1 THEN 1 ELSE khu_report.conflict END,
          resolved = CASE WHEN khu_report.recount = 1 THEN 0 WHEN excluded.conflict = 1 THEN 0 ELSE khu_report.resolved END,
          recount = 0`
-    ).bind(day, khuId, user.id, ts, data, t0),
+    ).bind(day, khuId, user.id, ts, data, tXd),
     /* Ghi LẦN BÁO MỚI, cố ý KHÔNG chạm tới duyet_*: số mới ở trạng thái chờ duyệt, còn số đã
        duyệt trước đó vẫn nguyên và vẫn là số mà tồn đang dùng. Ô thành chờ duyệt một cách tự
        nhiên vì ts vừa nhảy lên lớn hơn duyet_ts — không cần cờ, không cần dấu số liệu. */
@@ -289,11 +299,26 @@ export async function conflictResolve(req, env, user) {
   if (!repR.results.length) throw bad('Không có khu cần xử lý');
   const cur = Object.fromEntries(curR.results.map((r) => [r.phi_id, r]));
   const pick = b.pick && typeof b.pick === 'object' ? b.pick : {};
+  /* from: lần báo (ts) mà số được chọn lấy ra — một số cho cả lần báo, hoặc { phi: ts } khi chọn từng
+     phi giữa hai người. Dùng để giữ LOẠI của ô: chọn lại một lần báo mà ô đó "để trống" thì nó vẫn là
+     để trống, không thành "admin xác nhận đếm = 0" — nếu không thì cảnh báo "để trống phi đang có
+     thép" ở màn Duyệt biến mất đúng lúc nó cần nhất. */
+  const from = b.from;
+  const srcTs = (phi) => Number(from && typeof from === 'object' ? from[phi] : from) || 0;
+  const tsList = [...new Set(Object.keys(pick).map(srcTs).filter(Boolean))];
+  const logKind = {};
+  if (tsList.length) {
+    const lg = await env.DB.prepare(
+      `SELECT phi_id, ts, kind FROM counts_log WHERE day = ?1 AND khu_id = ?2 AND ts IN (SELECT value FROM json_each(?3))`
+    ).bind(day, khu, JSON.stringify(tsList)).all();
+    lg.results.forEach((r) => (logKind[r.ts + '|' + r.phi_id] = r.kind));
+  }
   const changes = [];
   for (const phi of Object.keys(pick)) {
     if (!(phi in cur)) throw bad('Phi không có trong báo cáo: ' + phi);
     const v = intIn(pick[phi], 0, 99999, 'Số đếm của ' + phi);
-    if (v !== cur[phi].v) changes.push({ phi, prev: cur[phi].v, v });
+    const kind = v === 0 && logKind[srcTs(phi) + '|' + phi] === 'zero' ? 'zero' : 'dem';
+    if (v !== cur[phi].v || kind !== cur[phi].kind) changes.push({ phi, prev: cur[phi].v, v, kind });
   }
   // mốc phải vượt mọi mốc cũ của khu, cùng lý do như putCounts
   const ts = Math.max(Date.now(), curR.results.reduce((m, r) => Math.max(m, r.ts || 0, r.duyet_at || 0), 0) + 1);
@@ -307,12 +332,13 @@ export async function conflictResolve(req, env, user) {
     stmts.push(
       env.DB.prepare(
         `UPDATE counts SET v = (SELECT ${J('v')} FROM json_each(?3) j WHERE ${J('phi')} = counts.phi_id),
-           kind = 'dem', bo = NULL, le = NULL, user_id = ?4, ts = ?5
+           kind = (SELECT ${J('kind')} FROM json_each(?3) j WHERE ${J('phi')} = counts.phi_id),
+           bo = NULL, le = NULL, user_id = ?4, ts = ?5
          WHERE day = ?1 AND khu_id = ?2 AND phi_id IN (SELECT ${J('phi')} FROM json_each(?3) j)`
       ).bind(day, khu, data, user.id, ts),
       env.DB.prepare(
         `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
-         SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, 'dem', ?3, ?4 FROM json_each(?5) j`
+         SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
       ).bind(day, khu, user.id, ts, data),
       env.DB.prepare(
         `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)

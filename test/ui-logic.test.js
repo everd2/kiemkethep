@@ -728,18 +728,18 @@ const run = async () => {
     ${extra || ''}
     indexBoot(SB); S.boot = SB; S.me = { id: 1, name: 'A', role: 'admin' };`;
   r(`${slotBoot({ A: [0] })} var H1 = vHome();`);
-  ok('Tổng quan: khu thiếu buổi chiều có thẻ đỏ', /Khu A thiếu lần đếm buổi chiều \(12h–18h\)/.test(r('H1')), r('H1').slice(0, 0));
-  ok('thẻ nói lần đếm sau không bù được', /không bù được/.test(r('H1')));
-  ok('khu chưa báo hôm nay không bị nhắc trùng với thẻ "chưa báo"', !/Khu B thiếu lần đếm/.test(r('H1')));
+  ok('Tổng quan: khu thiếu buổi chiều có thẻ đỏ, câu ngắn', /Khu A thiếu buổi chiều<\/b>/.test(r('H1')), (r('H1').match(/thiếu buổi.{0,80}/) || [''])[0]);
+  ok('thẻ nói lần đếm sau không bù được', /Không bù được/.test(r('H1')));
+  ok('khu chưa báo hôm nay không bị nhắc trùng với thẻ "chưa báo"', !/Khu B thiếu buổi/.test(r('H1')));
   ok('nhãn khu đổi thành Thiếu lần đếm, không mang nhãn xanh', r('khuStatus(S.boot.khuBy.A).label') === 'Thiếu lần đếm', r('khuStatus(S.boot.khuBy.A).label'));
   r(`${slotBoot({ A: [0, 1] })} var H2 = vHome();`);
-  ok('đủ hai khung: không nhắc', !/thiếu lần đếm/.test(r('H2')));
+  ok('đủ hai khung: không nhắc', !/thiếu buổi/.test(r('H2')));
   r(`${slotBoot({ A: [0] }, 'SB.closed = true;')} var H3 = vHome();`);
-  ok('ngày đã chốt: không nhắc nữa (không còn gửi số được)', !/thiếu lần đếm/.test(r('H3')));
+  ok('ngày đã chốt: không nhắc nữa (không còn gửi số được)', !/thiếu buổi/.test(r('H3')));
   r(`${slotBoot({ A: [0] }, "SB.baseline = SB.baseline.filter((x) => x.khu_id !== 'A'); SB.innKhu = []; SB.mvNew = [];")} var H4 = vHome();`);
-  ok('khu trống không bị đòi đếm', !/Khu A thiếu lần đếm/.test(r('H4')));
+  ok('khu trống không bị đòi đếm', !/Khu A thiếu buổi/.test(r('H4')));
   r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T14:00:00+07:00");')} var H5 = vHome();`);
-  ok('14h: buổi chiều chưa hết giờ nên chưa thiếu', !/thiếu lần đếm/.test(r('H5')));
+  ok('14h: buổi chiều chưa hết giờ nên chưa thiếu', !/thiếu buổi/.test(r('H5')));
   ok('màn chọn khu nói đang ở khung nào', /Đang buổi chiều \(12h–18h\): đã đếm 0\/2/.test(r('vKhu()')), r('vKhu()').slice(0, 300));
   r(`${slotBoot({ A: [0] })}`);
   ok('cài đặt nói rõ là bắt buộc', /bắt buộc/.test(r('vSettings()')));
@@ -889,16 +889,16 @@ const run = async () => {
   // khung ĐANG DIỄN RA (13h, buổi chiều) mà khu đã báo sáng chưa đếm chiều: nhắc, bấm mở thẳng khu đó
   r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00");')} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
   const HN = r('vHome()');
-  ok('người đếm: nhắc khung đang diễn ra', /Khu A chưa đếm buổi chiều \(12h–18h\)/.test(HN) && /Còn tới 18h/.test(HN), (HN.match(/chưa đếm.{0,60}/) || [''])[0]);
+  ok('người đếm: nhắc khung đang diễn ra', /Khu A chưa đếm buổi chiều<\/b><span class="sm">Còn tới 18h</.test(HN), (HN.match(/chưa đếm.{0,60}/) || [''])[0]);
   ok('thẻ nhắc mở thẳng khu đó', /data-s="dem" data-k="A"/.test(HN));
   r(`ACTIONS.nav({ s: 'dem', k: 'A' })`);
   ok('bấm thẻ: mở màn Đếm của đúng khu', r('S.khu') === 'A' && r('S.screen') === 'dem');
   ok('màn Đếm nói khu này chưa đếm khung đang diễn ra', /khu này chưa đếm/.test(r('demView()')));
   // khung ĐÃ HẾT mà thiếu: người đếm không làm gì được, nên không thấy thẻ đỏ; admin thì thấy
   r(`${slotBoot({ A: [0] })} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
-  ok('người đếm: không thấy thẻ đỏ thiếu khung đã qua', !/thiếu lần đếm/.test(r('vHome()')));
+  ok('người đếm: không thấy thẻ đỏ thiếu khung đã qua', !/thiếu buổi/.test(r('vHome()')));
   r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
-  ok('admin: vẫn thấy thẻ thiếu khung', /Khu A thiếu lần đếm/.test(r('vHome()')));
+  ok('admin: vẫn thấy thẻ thiếu khung', /Khu A thiếu buổi/.test(r('vHome()')));
   r(`S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
   // Cài đặt: 1 lần/ngày thì không bày ô giờ làm; khi đó lưu không gửi giờ làm
@@ -1135,7 +1135,7 @@ const run = async () => {
   // báo cáo chưa duyệt CHUYỂN từ hôm qua: chỉ là "chưa báo hôm nay", không nhắc trùng thiếu khung
   r(`${slotBoot({}, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00"); SB.reports = [{ khu_id: "A", user_id: 2, uname: "An", ts: Date.now() - 864e5, conflict: 0, resolved: 0, recount: 0 }];')} S.me = { id: 1, name: 'A', role: 'admin' };`);
   const HC = r('vHome()');
-  ok('báo cáo chuyển từ hôm qua: không nhắc thiếu khung trùng với "chưa báo"', /Khu A/.test(theNhac(HC)) && !/Khu A thiếu lần đếm/.test(HC) && !/Khu A chưa đếm buổi/.test(HC), theNhac(HC));
+  ok('báo cáo chuyển từ hôm qua: không nhắc thiếu khung trùng với "chưa báo"', /Khu A/.test(theNhac(HC)) && !/Khu A thiếu buổi/.test(HC) && !/Khu A chưa đếm buổi/.test(HC), theNhac(HC));
   ok('và không tính là đã báo hôm nay', r(`daBaoHomNay('A')`) === false);
 
   // sổ vay chờ duyệt: admin MỘT thẻ (không trùng); người khác không thấy số của cả bãi
@@ -1161,6 +1161,15 @@ const run = async () => {
   r(`S.usage = [{ day: '${yday}', span: 1, used: {}, kg: {}, xuat: {} }];`);
   ok('chỉ có ngày mở sổ: giải thích lượng dùng có từ lần chốt sau', /Lượng dùng bắt đầu có từ lần chốt kế tiếp/.test(r('vStats()')));
   r(`S.usage = null; S.statScope = 'all'; S.screen = 'home';`);
+
+  // ---- 1d12. Khung giờ ở màn Duyệt: mỗi khung một dòng ✓/✗, không câu dài ----
+  r(`${slotBoot({ A: [0] })}`);
+  const SB2 = r(`slotBang(S.boot.slotDefs, [0], [1], { 0: Date.parse(S.boot.today + 'T09:15:00+07:00') })`);
+  ok('dòng ✓: tên ngắn, giờ khung, giờ đếm thật', /✓<\/b><b>Sáng<\/b> <span class="muted">6h–12h<\/span><\/span><span[^>]*>09:15</.test(SB2), SB2);
+  ok('dòng ✗: ghi "thiếu"', /✗<\/b><b>Chiều<\/b>.*thiếu</.test(SB2));
+  ok('không còn câu "Lần đếm hôm nay"', !/Lần đếm hôm nay/.test(SB2));
+  ok('đếm 1 lần/ngày: không bày bảng khung', r(`slotBang([{ i: 0, from: 6, to: 18, label: 'x' }], [], [], {})`) === '');
+  r(`S.boot = _boot(); indexBoot(S.boot);`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

@@ -464,6 +464,25 @@ function slotMissing(kid) {
   return b.slotDefs.filter((d) => d.to <= h && !done.has(d.i));
 }
 const slotTxt = (defs) => defs.map((d) => d.label).join(', ');
+/* Tên khung NGẮN cho câu nhắc ("buổi sáng", "lần 2") — giờ của khung đã có ở bảng ✓/✗ và ở Cài đặt,
+   nhắc lại trong mọi câu chỉ làm câu dài. */
+const slotTen = (d, n) => (n === 2 ? (d.i === 0 ? 'buổi sáng' : 'buổi chiều') : 'lần ' + (d.i + 1));
+const slotTenNgan = (ds) => ds.map((d) => slotTen(d, S.boot.nSlot)).join(', ');
+/* Mỗi khung MỘT DÒNG ngắn: dấu, tên, giờ khung, và bên phải là giờ đếm thật / thiếu / đang trong giờ.
+     ✓ Sáng   6h–12h30    09:15
+     ✗ Chiều  12h30–19h   thiếu
+   Đọc là hiểu, không cần câu giải thích. */
+function slotBang(defs, done, missing, gio) {
+  if (!defs || defs.length < 2) return '';
+  const h = vnHourNow(), n = defs.length;
+  return `<div class="col" style="gap:2px;margin:2px 0">${defs.map((d) => {
+    const ok = done.includes(d.i), thieu = missing.includes(d.i);
+    const mau = ok ? 'var(--ok)' : thieu ? 'var(--bad)' : 'var(--mut)';
+    const phai = ok ? (gio && gio[d.i] ? hhmm(gio[d.i]) : 'đã đếm') : thieu ? 'thiếu' : h >= d.from && h < d.to ? 'đang trong giờ' : 'chưa tới giờ';
+    const ten = slotTen(d, n);
+    return `<div class="row sm" style="justify-content:space-between;gap:8px"><span><b style="color:${mau};display:inline-block;width:18px">${ok ? '✓' : thieu ? '✗' : '·'}</b><b>${ten.replace('buổi ', '').charAt(0).toUpperCase() + ten.replace('buổi ', '').slice(1)}</b> <span class="muted">${fmtGio(d.from)}–${fmtGio(d.to)}</span></span><span style="color:${mau};white-space:nowrap${thieu ? ';font-weight:700' : ''}">${phai}</span></div>`;
+  }).join('')}</div>`;
+}
 /* Báo cáo chưa duyệt lúc tự chốt sổ được CHUYỂN sang hôm nay, giữ nguyên giờ đếm (carryStmts ở server).
    Nó vẫn nằm trong khu_report hôm nay, nên phải nhận ra để không nói "đã báo hôm nay". */
 const vnDayOf = (ms) => new Date(ms + 7 * 3600e3).toISOString().slice(0, 10);
@@ -479,7 +498,7 @@ function khuStatus(k) {
   if (r.recount) return { cls: 'warn', label: 'Đếm lại', who: 'Admin yêu cầu đếm lại' };
   // thiếu khung đếm không được mang nhãn xanh "Đã duyệt" như đã xong việc trong ngày
   const thieu = slotMissing(k.id);
-  if (thieu.length) return { cls: 'warn', label: 'Thiếu lần đếm', who: 'Chưa đếm ' + slotTxt(thieu) + (khuWaiting(k.id) ? ' · có báo cáo chờ duyệt' : '') };
+  if (thieu.length) return { cls: 'warn', label: 'Thiếu lần đếm', who: 'Thiếu ' + slotTenNgan(thieu) + (khuWaiting(k.id) ? ' · có báo cáo chờ duyệt' : '') };
   /* Báo rồi mà chưa duyệt thì tồn CHƯA đổi, nên không được hiện "Đã báo" màu xanh như đã xong:
      người đếm phải thấy báo cáo của mình đang chờ, không thì tưởng hệ thống làm mất số. */
   if (khuWaiting(k.id)) return { cls: 'warn', label: 'Chờ duyệt', who: who + ' · chờ admin duyệt' };
@@ -715,9 +734,9 @@ function vHome() {
   // daBaoHomNay chứ không phải b.rm: báo cáo chưa duyệt chuyển từ hôm qua sang không phải "đã báo hôm nay",
   // khu đó đã có thẻ "chưa báo" ở trên — nhắc thêm thiếu khung là hai thẻ trùng ý cho một khu
   const thieuSlot = !isAdmin() ? [] : b.khuAct.filter((k) => daBaoHomNay(k.id)).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
-  const slotHint = 'Lần đếm sau không bù được. Việc thiếu được ghi vào nhật ký lúc sổ tự chốt';
+  const slotHint = 'Không bù được, ghi vào nhật ký khi chốt sổ';
   if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: isAdmin() ? 'duyet' : null });
-  else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu lần đếm ' + slotTxt(x.m), s: slotHint, to: isAdmin() ? 'duyet' : null }));
+  else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu ' + slotTenNgan(x.m), s: slotHint, to: isAdmin() ? 'duyet' : null }));
   /* Khung ĐANG DIỄN RA mà khu chưa đếm: đây mới là lời nhắc có ích — còn kịp đếm. Chỉ khu đã báo
      hôm nay (khu chưa báo gì thì thẻ "chưa báo" ở trên đã nói) và khu người này được đếm. */
   const curS = slotNow(), hNow = curS ? vnHourNow() : 0;
@@ -728,7 +747,7 @@ function vHome() {
     const chua = cuaToi.filter((k) => daBaoHomNay(k.id) && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
     const con = 'Còn tới ' + fmtGio(curS.to);
     if (chua.length > 2) alerts.push({ bad: false, t: chua.length + ' khu chưa đếm ' + curS.label, s: chua.map((k) => k.name).join(', ') + ' · ' + con, to: 'dem' });
-    else chua.forEach((k) => alerts.push({ bad: false, t: k.name + ' chưa đếm ' + curS.label, s: con + ' · bấm để đếm', to: 'dem', k: k.id }));
+    else chua.forEach((k) => alerts.push({ bad: false, t: k.name + ' chưa đếm ' + slotTen(curS, b.nSlot), s: con, to: 'dem', k: k.id }));
   }
   // sổ vay mượn chờ duyệt: chỉ nhắc admin, vì chỉ admin duyệt được, và việc này không chặn chốt ngày
   if (isAdmin() && b.loanPending) alerts.push({ bad: false, t: b.loanPending + ' lần ghi vay mượn chờ duyệt', s: 'Chưa tính vào dư nợ với đối tác', to: 'vaymuon' });
@@ -1223,26 +1242,38 @@ function renderSubsPanel(khu, R) {
   const phiList = S.boot.phi.filter((p) => phiSet.has(p.id));
   const rep = R.reports.find((r) => r.khu_id === khu);
   const canPick = !R.closed && subData.length > 1 && !(rep && rep.recount);
+  /* Đếm nhiều lần/ngày: lần báo của KHUNG GIỜ KHÁC không phải là phương án thay thế cho số mới nhất —
+     buổi chiều khác buổi sáng là vì thép đã dùng, đã về. Nên chỉ đem so (tô màu) và chỉ cho "Dùng"
+     những lần báo cùng khung với lần mới nhất; lần của khung trước chỉ để xem lại. */
+  const defs = (R.slot && R.slot.n > 1 && R.slot.defs) || [];
+  const khungOf = (ts) => {
+    if (!defs.length) return 0;
+    const h = ((ts + 7 * 3600e3) % 864e5) / 3600e3;
+    const d = defs.find((x) => h < x.to);
+    return d ? d.i : defs.length - 1;
+  };
+  const cungKhung = (i) => khungOf(subData[i].ts) === khungOf(lastSub.ts);
   const hdrs = subData.map((s, i) => {
     const cur = i === subData.length - 1;
-    return `<th style="text-align:center;${cur ? 'color:var(--pri)' : ''};white-space:nowrap;font-size:13px">${esc(s.uname)}<br><span style="font-weight:400">${hhmm(s.ts)}${cur ? ' ✓' : ''}</span></th>`;
+    const khung = defs.length ? '<br><span style="font-weight:400;font-size:12px">' + esc(defs[khungOf(s.ts)].label.split(' (')[0]) + '</span>' : '';
+    return `<th style="text-align:center;${cur ? 'color:var(--pri)' : ''};white-space:nowrap;font-size:13px">${esc(s.uname)}<br><span style="font-weight:400">${hhmm(s.ts)}${cur ? ' ✓' : ''}</span>${khung}</th>`;
   }).join('');
   const bodyRows = phiList.map((p) => {
     const lastV = lastSub.vals[p.id]; // undefined nếu lần cuối là admin-pick chỉ ghi phi thay đổi
     // hasDiff: so với lastV nếu lastV có giá trị; nếu không, so giữa các lần báo trước với nhau
     const hasDiff = lastV !== undefined
-      ? subData.some((s, i) => i < subData.length - 1 && s.vals[p.id] !== undefined && s.vals[p.id] !== lastV)
-      : (() => { const vs = new Set(subData.slice(0, -1).map((s) => s.vals[p.id]).filter((v) => v !== undefined)); return vs.size > 1; })();
+      ? subData.some((s, i) => i < subData.length - 1 && cungKhung(i) && s.vals[p.id] !== undefined && s.vals[p.id] !== lastV)
+      : (() => { const vs = new Set(subData.slice(0, -1).filter((s, i) => cungKhung(i)).map((s) => s.vals[p.id]).filter((v) => v !== undefined)); return vs.size > 1; })();
     const cells = subData.map((s, i) => {
       const v = s.vals[p.id];
-      const diff = lastV !== undefined && i < subData.length - 1 && v !== undefined && v !== lastV;
+      const diff = lastV !== undefined && i < subData.length - 1 && cungKhung(i) && v !== undefined && v !== lastV;
       return `<td style="text-align:center${diff ? ';color:var(--warn);font-weight:700' : ''}">${v !== undefined ? fmtQs(v, p) : '—'}</td>`;
     }).join('');
     return `<tr${hasDiff ? ' style="background:rgba(255,160,0,0.12)"' : ''}><td><b>${p.id}</b></td>${cells}</tr>`;
   }).join('');
   const footRow = canPick ? `<tr><td></td>${subData.map((s, i) => {
     const cur = i === subData.length - 1;
-    return `<td style="text-align:center;padding:6px 4px">${cur ? '<span class="sm muted">đang dùng</span>' : `<button class="btn s" data-a="spick" data-k="${esc(khu)}" data-i="${i}">Dùng</button>`}</td>`;
+    return `<td style="text-align:center;padding:6px 4px">${cur ? '<span class="sm muted">đang dùng</span>' : !cungKhung(i) ? '<span class="sm muted">khung trước</span>' : `<button class="btn s" data-a="spick" data-k="${esc(khu)}" data-i="${i}">Dùng</button>`}</td>`;
   }).join('')}</tr>` : '';
   return `<div style="overflow-x:auto;margin-top:6px"><table class="tbl"><thead><tr><th>ɸ</th>${hdrs}</tr></thead><tbody>${bodyRows}</tbody>${footRow ? '<tfoot>' + footRow + '</tfoot>' : ''}</table></div>`;
 }
@@ -1442,9 +1473,10 @@ function vDuyet() {
        lại) thì khung tính theo lúc máy khai là đã đếm — bày cả hai giờ ra cho người duyệt soi. */
     const sl = k.rep && k.slots ? k.slots : null;
     const sDefs = (R.slot && R.slot.defs) || [];
-    const slotLine = !sl ? '' : `<span class="sm muted" style="line-height:1.4">Lần đếm hôm nay: ${sDefs.map((d) => (sl.done.includes(d.i) ? '✓ ' : '✗ ') + esc(d.label)).join(' · ')}</span>`;
-    const slotWarn = sl && sl.missing.length && k.items.length ? `<div class="sm b" style="color:var(--bad);line-height:1.4">Thiếu lần đếm ${esc(sl.missing.map((i) => (sDefs[i] || {}).label).join(', '))}. Lần đếm sau không bù được: việc thiếu được ghi vào nhật ký lúc sổ tự chốt sau 0h.</div>` : '';
-    const slotLate = sl && sl.late.length ? `<div class="sm" style="color:var(--warn);line-height:1.4">Báo cáo gửi muộn: ${sl.late.map((x) => 'đếm lúc ' + hhmm(x.at) + ', tới máy chủ lúc ' + hhmm(x.ts)).join('; ')}. Khung giờ tính theo lúc đếm.</div>` : '';
+    // mỗi khung một dòng ✓/✗ — thay cho câu "Lần đếm hôm nay…" và đoạn giải thích chữ đỏ
+    const slotLine = !sl ? '' : slotBang(sDefs, sl.done, k.items.length ? sl.missing : [], sl.gio);
+    const slotWarn = '';
+    const slotLate = sl && sl.late.length ? `<div class="sm" style="color:var(--warn)">Gửi muộn: đếm ${sl.late.map((x) => hhmm(x.at) + ', tới ' + hhmm(x.ts)).join('; ')}</div>` : '';
     const recheck = k.recheck ? `<div class="sm b" style="color:var(--warn);line-height:1.4">Có phiếu được duyệt SAU khi số của khu đã duyệt, nên số dự kiến vừa đổi. Xem bảng trên rồi duyệt lại khu, hoặc yêu cầu đếm lại.</div>` : '';
 
     const btns = R.closed ? '' : `<div class="row gap6">${cho || choP
@@ -2729,11 +2761,15 @@ const ACTIONS = {
   cresolve(d) {
     const C = S.cmp; if (!C || !C.data) return;
     const pick = {};
-    C.data.diffs.forEach((x) => { const v = C.pick[x.phi] === 'a' ? x.a : x.b; if (v != null) pick[x.phi] = v; });
+    const from = {};
+    C.data.diffs.forEach((x) => {
+      const a = C.pick[x.phi] === 'a', v = a ? x.a : x.b;
+      if (v != null) { pick[x.phi] = v; from[x.phi] = (a ? C.data.a : C.data.b).ts; }
+    });
     const mark = markOf(d.k);
     act(async () => {
       let r;
-      try { r = await api('POST', '/conflict/resolve', { khu: d.k, pick, mark }); S.cmp = null; }
+      try { r = await api('POST', '/conflict/resolve', { khu: d.k, pick, mark, from }); S.cmp = null; }
       finally { await reloadReview(); await loadBoot(); }
       say('Đã lưu lựa chọn' + (r.changed ? ' (' + r.changed + ' phi đổi số).' : '.'));
     });
@@ -2758,7 +2794,7 @@ const ACTIONS = {
     const pick = { ...sub.vals };
     const mark = markOf(khu);
     act(async () => {
-      try { await api('POST', '/conflict/resolve', { khu, pick, mark }); delete S.subs[khu]; }
+      try { await api('POST', '/conflict/resolve', { khu, pick, mark, from: sub.ts }); delete S.subs[khu]; }
       finally { await reloadReview(); await loadBoot(); }
     }, 'Đã cập nhật số ' + kName(khu) + '.');
   },

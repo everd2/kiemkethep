@@ -2156,7 +2156,9 @@ async function main() {
     atHour(18, 30);
     rv = (await S.call('GET', '/review')).data;
     eq('18h30: thiếu buổi chiều', rv.exceptions.filter((e) => e.type === 'slot_missing').map((e) => [e.khu, e.missing]), [['A', ['buổi chiều (12h–18h)']]]);
-    eq('màn Duyệt nói khung nào đã đếm', rv.khus.find((k) => k.khu === 'A').slots, { done: [0], missing: [1], late: [] });
+    const slA = rv.khus.find((k) => k.khu === 'A').slots;
+    eq('màn Duyệt nói khung nào đã đếm', { done: slA.done, missing: slA.missing, late: slA.late }, { done: [0], missing: [1], late: [] });
+    eq('và giờ đếm thật của khung đã đếm (8h)', new Date(slA.gio[0] + 7 * 3600e3).getUTCHours(), 8);
     ok('thiếu khung là việc chưa xử lý', rv.pending >= 1, rv.pending);
     await cron();
     eq('trong ngày: chưa tự chốt', S.one('SELECT 1 x FROM day_close WHERE day=?', day), undefined);
@@ -2663,6 +2665,31 @@ async function main() {
     eq('cài mới và nâng cấp ra cùng một bộ bảng', bangTruoc, bangSau);
     const lech = bangTruoc.filter((t) => cot[t] !== S2.sql(`SELECT name FROM pragma_table_info('${t}') ORDER BY name`).map((x) => x.name).join(','));
     eq('và cùng cột ở mọi bảng', lech, []);
+  }
+
+  /* ================= 60. Đếm 2 lần/ngày: hai buổi khác số không phải xung đột =================
+     Buổi chiều khác buổi sáng vì thép đã dùng, đã về. Chỉ hai người báo khác số TRONG CÙNG KHUNG mới
+     là xung đột. Chọn lại một lần báo thì ô "để trống" vẫn là để trống. */
+  {
+    const S = await setup();
+    const atHour = (h, m = 0) => { const t = Date.parse(vnDay() + 'T' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':00+07:00'); clock.offset += t - Date.now(); };
+    await S.call('PUT', '/settings', { report_slots_per_day: 2 });
+    const day = vnDay();
+    atHour(10, 39);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({}) }, 'An');
+    atHour(14, 37);
+    const b = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D12: { v: 18560, bo: 58, le: 0 } }) }, 'Binh');
+    eq('buổi chiều người khác báo khác buổi sáng: không phải xung đột', b.data.conflict, false);
+    eq('màn Duyệt không bắt chọn số', (await S.call('GET', '/review')).data.exceptions.some((e) => e.type === 'conflict'), false);
+    atHour(15, 10);
+    const c = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D12: { v: 18000, bo: 56, le: 80 } }) }, 'An');
+    eq('cùng buổi chiều hai người báo khác số: là xung đột', c.data.conflict, true);
+
+    // chọn lại lần báo buổi sáng (để trống hết): ô vẫn là "để trống", không thành "admin đếm = 0"
+    const subs = (await S.call('GET', '/submissions?khu=A')).data.subs;
+    const mk = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').mark;
+    eq('chọn lại lần báo: được', (await S.call('POST', '/conflict/resolve', { khu: 'A', pick: subs[0].vals, mark: mk, from: subs[0].ts })).status, 200);
+    eq('ô để trống vẫn là để trống', S.one("SELECT v, kind FROM counts WHERE day=? AND khu_id='A' AND phi_id='D12'", day), { v: 0, kind: 'zero' });
   }
 
   /* ================= kết quả ================= */

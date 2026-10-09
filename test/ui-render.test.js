@@ -263,6 +263,16 @@ render();
 S.screen = 'dem'; render();
 { const h = $app.innerHTML; out.push(['dem+dat-lai', h.length, h.includes('vừa đặt lại số liệu') && h.includes('btn full dis" data-a="send"') ? 'ok' : 'BAD:màn Báo cáo ngày đặt lại']); }
 S.boot.closed = false; S.boot.closedReset = false; S.review.closed = false;
+// đếm 2 lần/ngày: lần báo của khung trước chỉ để xem, không có nút "Dùng"
+{ const giuSlot = S.review.slot, giuSubs = S.subs;
+  const t = (h) => Date.parse(S.boot.today + 'T' + h + ':00+07:00');
+  S.review.slot = { n: 2, defs: [{ i: 0, from: 6, to: 12, label: 'buổi sáng (6h–12h)' }, { i: 1, from: 12, to: 18, label: 'buổi chiều (12h–18h)' }], changed: null };
+  S.subs = { B: [{ uname: 'Duy', ts: t('10:39'), vals: { D12: 0 } }, { uname: 'Lý', ts: t('14:37'), vals: { D12: 18560 } }] };
+  S.screen = 'duyet'; render(); const h = $app.innerHTML;
+  out.push(['duyet+lan-bao-khung-truoc', h.length, h.includes('khung trước') && !h.includes('data-a="spick"') ? 'ok' : 'BAD:lần báo buổi sáng vẫn có nút Dùng']);
+  S.subs = { B: [{ uname: 'Duy', ts: t('13:00'), vals: { D12: 18000 } }, { uname: 'Lý', ts: t('14:37'), vals: { D12: 18560 } }] }; render();
+  out.push(['duyet+lan-bao-cung-khung', 0, $app.innerHTML.includes('data-a="spick"') ? 'ok' : 'BAD:cùng khung mà không cho chọn']);
+  S.review.slot = giuSlot; S.subs = giuSubs; }
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
 // các phần mới phải THẬT SỰ hiện ra, không chỉ "không lỗi"
@@ -288,7 +298,7 @@ S.screen = 'duyet'; render();
   r0.ts = giu; r0.conflict = xd; S.screen = 'duyet'; }
 { S.screen = 'home'; render(); const h = $app.innerHTML; out.push(['tab-bao-cao', h.length, />Báo cáo</.test(h) && !/>Đếm</.test(h) ? 'ok' : 'BAD:tab Đếm chưa đổi thành Báo cáo']); S.screen = 'duyet'; render(); }
 { const h = $app.innerHTML; out.push(['duyet+thieu-khung', h.length,
-  ['Thiếu lần đếm buổi sáng (6h–12h)', '✗ buổi sáng', '✓ buổi chiều', 'gửi muộn', 'mỗi khu đếm 2 lần/ngày'].every((x) => h.includes(x))
+  ['✗</b><b>Sáng</b>', '✓</b><b>Chiều</b>', '>thiếu<', 'Gửi muộn', 'mỗi khu đếm 2 lần/ngày'].every((x) => h.includes(x)) && !h.includes('Lần đếm hôm nay')
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }
 
 // trạng thái đang tải và tải lỗi
