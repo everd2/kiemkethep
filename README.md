@@ -9,20 +9,18 @@
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.
 - **Chưa duyệt thì không vào tồn.** Đây là quy tắc trung tâm, áp cho cả báo cáo đếm lẫn phiếu nhập/chuyển: tồn của một khu luôn bằng **báo cáo mới nhất ĐƯỢC DUYỆT** của khu đó, không liên quan khu khác. Khu báo lại số mới mà chưa ai duyệt thì tồn vẫn là số đã duyệt trước đó.
 - **Đã dùng = Tồn chuẩn hôm qua + Nhập trong ngày − Tổng đếm hôm nay** (tính ở cấp toàn bãi, **không ai phải nhập phiếu xuất**). Muốn biết thép đi đâu thì ghi **phiếu xuất** — tuỳ chọn, không bắt buộc, và nó **không thay phép tính này**, chỉ tách con số "đã dùng" thành phần *có phiếu* và phần *không rõ*. Xem mục [Phiếu xuất](#phiếu-xuất-tuỳ-chọn). Vế "Tổng đếm" ở đây là **số đếm**, không phải số đang có — phần nhập đã nằm ở vế "Nhập" rồi, cộng vào cả hai vế là tính trùng.
-- **Thép đang có** của một khu = số đếm đã duyệt gần nhất **+ phiếu đã duyệt sau lần đếm đó**. Đã duyệt thì phải vào tồn, nên một khu vừa nhận thép đã duyệt mà chưa kịp đếm vẫn thấy ngay ở Tổng quan và Tồn bãi, khớp với số "dự kiến" mà màn Đếm đang hiện. **Tệp xuất CSV và màn Xem lại ngày cũ** cũng tính đúng con số đó cho ngày chưa chốt; ngày đã chốt thì tồn chuẩn là số chính thức.
+- **Thép đang có** của một khu = số đếm đã duyệt gần nhất **+ phiếu đã duyệt sau lần đếm đó**. Đã duyệt thì phải vào tồn, nên một khu vừa nhận thép đã duyệt mà chưa kịp đếm vẫn thấy ngay ở Tổng quan và Tồn bãi, khớp với số "dự kiến" mà màn Báo cáo đang hiện. **Tệp xuất CSV và màn Xem lại ngày cũ** cũng tính đúng con số đó cho ngày chưa chốt; ngày đã chốt thì tồn chuẩn là số chính thức.
 - **Duyệt theo từng khu, độc lập.** Màn Duyệt bày cho mỗi khu một bảng *dự kiến → khu báo → lệch*, rồi admin bấm **Duyệt khu**. Lệch to hay nhỏ chỉ đổi màu chữ để dễ thấy, **không** quyết định khu có duyệt được hay không — khu nào đã báo cũng duyệt được. Duyệt khu nào thì duyệt luôn phiếu đang chờ của khu đó, trong cùng một lần ghi.
 - Admin vẫn được nhắc riêng những việc không duyệt được bằng một nút: khu chưa báo, hai người báo khác số, khu đang chờ đếm lại, phi dùng âm hoặc dùng quá 3 lần mức bình thường.
 - **Để trống phi đang có thép** thì app hỏi lại ngay lúc gửi (*"gửi là ghi 0, đúng chưa?"*), và màn Duyệt đánh dấu riêng ô đó cho người duyệt thấy. Phi dự kiến đang 0 mà để trống thì không hỏi gì.
-- Chốt ngày thì khóa số liệu, số **đã duyệt** hôm đó trở thành **tồn chuẩn** cho ngày sau. Chốt nhầm thì **mở lại** được — nhưng chỉ **lần chốt gần nhất**, xem mục [Mở lại ngày đã chốt](#mở-lại-ngày-đã-chốt).
-- **Đếm nhiều lần/ngày (tuỳ chọn, bắt buộc khi bật)**: admin đặt mỗi khu phải đếm 1–4 lần/ngày. Từ 2 lần trở lên, khung giờ đã qua mà khu chưa đếm thì chặn chốt ngày như một việc chưa xử lý. Xem mục [Đếm nhiều lần mỗi ngày](#đếm-nhiều-lần-mỗi-ngày).
+- **Sổ ngày tự chốt sau nửa đêm — không có nút chốt.** Admin chỉ việc duyệt. Ngay sau 0h, số **đã duyệt** của ngày hôm trước trở thành **tồn chuẩn** cho ngày sau, ngày đó được khoá. Xem mục [Sổ ngày tự chốt](#sổ-ngày-tự-chốt).
+- **Đếm nhiều lần/ngày (tuỳ chọn, bắt buộc khi bật)**: admin đặt mỗi khu phải đếm 1–4 lần/ngày. Từ 2 lần trở lên, khung giờ đã qua mà khu chưa đếm là một việc chưa xử lý và được ghi vào nhật ký lúc sổ tự chốt. Xem mục [Đếm nhiều lần mỗi ngày](#đếm-nhiều-lần-mỗi-ngày).
 - **Số tấn của ngày đã chốt được khoá.** Lúc chốt, app lưu kg/cây của từng phi; báo cáo kỳ, Xem lại ngày cũ, Thống kê và tệp CSV ngày cũ nhân với số đó. Sửa kg/cây ở Cài đặt chỉ có tác dụng từ ngày chưa chốt trở đi, không viết lại số tấn của quá khứ.
-- **Tự chốt lúc 23:50** (mặc định **tắt**, bật ở **Cài đặt**): khi bật, chỉ chốt nếu đủ khu đã báo và không còn việc nào chờ duyệt. Ngày có bất thường thì không tự chốt, nhật ký ghi lý do.
-- Quên chốt vài ngày: lượng dùng được gộp cho cả khoảng đó, cảnh báo "dùng nhiều" tự chia theo số ngày.
 - Mất mạng khi gửi báo cáo: app lưu báo cáo kèm **ngày đếm** và tự gửi lại khi có mạng. Nếu đã sang ngày mới, báo cáo hiện ở Tổng quan để người dùng chọn *Gửi làm số hôm nay* hoặc *Bỏ*, không tự ghi vào sai ngày.
 - **Nhiều người dùng chung một điện thoại**: báo cáo chờ gửi và nháp đếm dở gắn với **từng người**. App chỉ tự gửi báo cáo của người đang đăng nhập; báo cáo của người khác nằm chờ chính người đó đăng nhập lại, không bị gửi dưới tên người khác và người khác cũng không bỏ được.
 - **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu. Mọi nút lưu đều bị khóa trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
 - **Mọi phiếu đều chờ admin duyệt**, kể cả phiếu admin tự nhập. Phiếu ghi **cả ngày nhập và ngày duyệt**, và tính vào tồn theo **ngày duyệt**: thép về chiều ngày 7 duyệt sáng ngày 8 thì nằm trong số liệu ngày 8, chứng từ vẫn ghi đủ hai mốc. Nhờ vậy phiếu treo qua đêm không cần chặn chốt ngày.
-- Người lập **rút lại** phiếu chưa duyệt bất cứ lúc nào; phiếu đã duyệt thì chỉ hoàn tác được trong 10 phút kể từ **lúc duyệt**, sau đó nhờ admin. Admin **từ chối** phiếu chờ duyệt, hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
+- Người lập **rút lại** phiếu chưa duyệt bất cứ lúc nào; phiếu đã duyệt thì chỉ hoàn tác được trong 10 phút kể từ **lúc duyệt**, sau đó nhờ admin. Admin **từ chối** phiếu chờ duyệt, hoặc **huỷ** phiếu đã duyệt cho tới khi sổ của ngày duyệt tự chốt (sau 0h).
 - **Chuyển khu** (Nhập → Chuyển khu): ghi một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng.
 - **Điều chỉnh tồn** (Nhập → Điều chỉnh): sửa tồn một ô (khu × phi) khi **sổ sai** mà không phiếu nào giải thích được. Bắt buộc chọn **lý do**, phải **admin duyệt** mới vào tồn, và **không giảm quá số khu đang thực có**. Xem mục [Điều chỉnh tồn](#điều-chỉnh-tồn) bên dưới.
 - Bấm **Hết (0)** trên phi **đang có thép** thì app hỏi lại (nút này nằm sát nút TIẾP, bấm nhầm là ghi 0 cho phi còn thép).
@@ -52,11 +50,11 @@ Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Ngườ
 - Đổi giờ làm giữa ngày thì các lần đã đếm hôm đó được **xếp lại theo khung mới**, không mất lần nào.
 - **Đây là quy định bắt buộc, không chỉ là lời nhắc.** Khung **đã kết thúc** mà khu chưa đếm thì:
   - Tổng quan hiện thẻ đỏ, thẻ khu đổi nhãn thành *"Thiếu lần đếm"*;
-  - màn Duyệt tính là **việc chưa xử lý**, nên muốn chốt ngày phải **ghi lý do**;
-  - đêm đó **không tự chốt**, nhật ký ghi rõ khu nào thiếu khung nào.
-- **Lần đếm khung sau không bù cho khung trước.** Mục đích của việc đếm nhiều lần là có số ở từng buổi; cho bù thì ai cũng đếm một lần buổi chiều cho xong. Nên quên buổi sáng thì cách gỡ duy nhất là admin ghi lý do lúc chốt.
-- Khung **đang diễn ra** chưa tính là thiếu, nhưng Tổng quan **nhắc người đếm** khu nào chưa đếm khung đó (*"Khu A chưa đếm buổi chiều, còn tới 18h"*), bấm vào là mở thẳng màn đếm khu đó; màn Đếm cũng ghi *"khu này đã đếm / chưa đếm"*. Khung **đã hết** mà thiếu thì chỉ admin thấy (chỉ admin có việc để làm). Khu **trống** (không có thép, không có phiếu) không bị đòi. Khu chưa báo lần nào thì đã có nhắc *"chưa báo"*, không bị nhắc thêm lần nữa.
-- Đổi số lần đếm hoặc giờ làm **trong ngày** thì màn Duyệt hôm đó báo *"Khung giờ đếm vừa đổi lúc … (ai đổi)"*, vì các lần đếm hôm đó được xếp lại theo khung mới. Ngày chốt kèm lý do thì **Xem lại ngày cũ** ghi rõ lúc chốt còn treo việc gì (khu nào thiếu khung nào...).
+  - màn Duyệt tính là **việc chưa xử lý**;
+  - lần sổ tự chốt sau 0h ghi rõ vào nhật ký khu nào thiếu khung nào.
+- **Lần đếm khung sau không bù cho khung trước.** Mục đích của việc đếm nhiều lần là có số ở từng buổi; cho bù thì ai cũng đếm một lần buổi chiều cho xong. Quên buổi sáng thì việc thiếu nằm lại trong nhật ký chốt của ngày đó.
+- Khung **đang diễn ra** chưa tính là thiếu, nhưng Tổng quan **nhắc người đếm** khu nào chưa đếm khung đó (*"Khu A chưa đếm buổi chiều, còn tới 18h"*), bấm vào là mở thẳng màn đếm khu đó; màn Báo cáo cũng ghi *"khu này đã đếm / chưa đếm"*. Khung **đã hết** mà thiếu thì chỉ admin thấy (chỉ admin có việc để làm). Khu **trống** (không có thép, không có phiếu) không bị đòi. Khu chưa báo lần nào thì đã có nhắc *"chưa báo"*, không bị nhắc thêm lần nữa.
+- Đổi số lần đếm hoặc giờ làm **trong ngày** thì màn Duyệt hôm đó báo *"Khung giờ đếm vừa đổi lúc … (ai đổi)"*, vì các lần đếm hôm đó được xếp lại theo khung mới. **Xem lại ngày cũ** ghi rõ lúc tự chốt còn treo việc gì (khu nào thiếu khung nào...).
 - **Mỗi lần khu báo lại phải được duyệt lại**: đếm 2 lần/ngày là admin duyệt mỗi khu 2 lần.
 - Khung giờ tính theo **giờ Việt Nam của máy chủ**, không theo đồng hồ điện thoại, nên máy để sai giờ cũng không nhắc sai.
 - Báo cáo lưu lúc mất mạng rồi tự gửi lại thì khung tính theo **lúc đếm**, không theo lúc có mạng. Gửi muộn quá 15 phút thì màn Duyệt hiện cả hai giờ (*"đếm lúc 11:30, tới máy chủ lúc 13:00"*) để người duyệt soi.
@@ -111,15 +109,18 @@ Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Ngườ
 - Nhật ký ghi **nơi đến** của từng phiếu, nên tra lại được "tháng này xuất cho công trình nào bao nhiêu".
 - Hoàn tác như mọi phiếu: người lập **rút lại** khi chưa duyệt, admin **từ chối** phiếu chờ hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
 
-### Mở lại ngày đã chốt
+### Sổ ngày tự chốt
 
-Ở màn **Xem lại ngày cũ** (Thêm → Xem lại ngày cũ), chọn ngày rồi bấm **Mở lại ngày …**. Ngày hôm nay cũng mở lại được ngay ở màn **Duyệt**. Bắt buộc ghi **lý do**, và lý do nằm trong nhật ký.
+Không có nút chốt. Việc của admin trong ngày chỉ là **duyệt**: từng khu, và các phiếu. Ngay sau nửa đêm (lần chạy 0h05), hệ thống tự chốt sổ của ngày vừa qua:
 
-- **Chỉ mở lại được lần chốt gần nhất.** Tồn chuẩn của một ngày là điểm xuất phát của **mọi ngày sau nó**. Mở một ngày ở giữa thì các lần chốt sau đó vẫn giữ con số tính từ mốc cũ, và từ đó trở đi không ngày nào còn khớp với ngày trước nó — sai mà không chỗ nào báo. Mở lần chốt gần nhất thì sau nó chưa có gì phái sinh, app chỉ quay về đúng trạng thái *"chưa chốt"* mà nó vốn đã biết xử lý (kể cả khi bỏ quên nhiều ngày: gộp span).
-- Ngày **đã qua** thì chỉ **admin đầu tiên** mở được (giống đặt lại số liệu), vì nó dời cái mốc cả bãi đang dựa vào. Ngày **hôm nay** thì admin nào cũng mở được — hôm nay chưa là mốc của ngày nào cả.
-- Mở lại là **bỏ mốc chốt**, không phải xoá công đếm: **số đếm của các khu vẫn còn nguyên**. Chỉ tồn chuẩn và bảng tổng hợp của ngày đó bị bỏ, và phải chốt lại.
-- Ngày đã chốt mà **không phải lần gần nhất** thì màn hình nói thẳng vì sao không mở được, kèm đường đi đúng.
-- **Sổ đã chốt lâu rồi mà phát hiện sai thì đừng mở lại — hãy lập phiếu [Điều chỉnh tồn](#điều-chỉnh-tồn).** Đó là cách làm đúng của sổ sách: sửa con số **hiện tại** và để lại dấu vết, chứ không viết lại những ngày đã khóa. Mở lại chỉ dành cho trường hợp **vừa chốt nhầm**.
+- **Chỉ số đã duyệt vào sổ**, như trước. Tồn chuẩn, lượng dùng của ngày, mức dùng trung bình 28 ngày và báo cáo kỳ đều có số đều đặn mỗi ngày, không còn ngày bị gộp vì quên chốt.
+- **Việc còn treo không chặn chốt** mà được tự ghi vào nhật ký của lần chốt: khu chưa báo, khu thiếu lần đếm, hai người báo khác số, phiếu chờ duyệt... **Xem lại ngày cũ** hiện đủ.
+- **Báo cáo chưa duyệt lúc 0h không mất**: nó chuyển sang ngày mới, vẫn chờ duyệt, giữ nguyên **giờ đếm thật** (thẻ khu ghi *"báo ngày …"*). Duyệt sáng hôm sau là vào tồn; khu đếm mới trong ngày thì số mới thay số cũ. Ngày hôm trước thì khu đó giữ số đã duyệt trước, nên phần dùng của khu dồn sang ngày được duyệt — tổng nhiều ngày vẫn khớp.
+- **Phiếu chờ duyệt** nằm chờ qua đêm như trước và vào sổ đúng ngày được duyệt.
+- **Ngày bất thường** của một phi (dùng âm, dùng cao bất thường — thường do quên nhập phiếu) vẫn chốt và vẫn hiện trong báo cáo, nhưng **không tính vào mức dùng trung bình**, để câu *"còn đủ dùng N ngày"* không sai suốt 4 tuần vì một lần quên.
+- Cloudflare lỡ một lần chạy thì **giờ sau tự bù**; lỡ nhiều ngày thì mỗi giờ bù một ngày, ngày nào riêng ngày đó.
+- **Không mở lại được ngày đã chốt.** Sổ ngày cũ mà phát hiện sai thì lập phiếu [Điều chỉnh tồn](#điều-chỉnh-tồn): sửa con số **hiện tại** và để lại dấu vết. Sai trong **hôm nay** thì cứ đếm lại / duyệt lại — hôm nay chưa chốt cho tới 0h.
+- Riêng **Đặt lại số liệu** (kiểm kê lại) vẫn khoá ngày hôm đó và **hoàn tác được trong ngày** ở màn Duyệt.
 
 ### Sao lưu toàn bộ
 
@@ -195,7 +196,7 @@ Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tê
 Đăng nhập admin, vào **Thêm**:
 1. **Cài đặt**: đổi tên khu, thêm/ẩn khu theo bãi thực tế (mặc định có Khu A → H). Với từng phi, đặt **số cây mỗi bó**, **mức tồn tối thiểu** và **kg/cây** (mặc định theo 0,00617 × D² × 11,7 m, sửa theo trọng lượng thực tế nhà máy nếu khác).
 2. **Người dùng và PIN**: tạo tài khoản cho thủ kho và các tổ. Hệ thống tạo PIN ngẫu nhiên hiện **một lần**, đưa cho người dùng. Họ phải tự đổi PIN khi đăng nhập lần đầu.
-3. Ngày đầu tiên: các khu đếm và báo hết, admin vào **Duyệt**, duyệt từng khu rồi **Chốt ngày**. Số đã duyệt hôm đó trở thành tồn chuẩn đầu tiên, từ ngày sau hệ thống tính lượng dùng.
+3. Ngày đầu tiên: các khu báo cáo hết, admin vào **Duyệt** và duyệt từng khu. Sau 0h sổ tự chốt, số đã duyệt hôm đó trở thành tồn chuẩn đầu tiên; từ ngày sau hệ thống tính lượng dùng.
 
 ### 8. Cài lên điện thoại
 - **Android (Chrome):** mở địa chỉ → menu ⋮ → **Thêm vào Màn hình chính** (hoặc **Cài đặt ứng dụng**).
@@ -219,8 +220,8 @@ Mở `https://kho-thep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tê
 | Đặt sai tên tài khoản | Admin đầu tiên vào **Người dùng → Sửa tên**. Số đếm và phiếu cũ hiện tên mới ngay |
 | Chạy thử xong, muốn dùng thật | Admin đầu tiên vào **Cài đặt → Dữ liệu thép → Xoá sạch**. Tải bản sao CSV trước |
 | Kiểm kê lại cả bãi | **Cài đặt → Dữ liệu thép → Đặt tồn về 0**. Lịch sử cũ vẫn giữ, hoàn tác được |
-| Vừa chốt nhầm | **Xem lại ngày cũ** → chọn ngày → **Mở lại ngày**. Chỉ được lần chốt gần nhất |
-| Sổ ngày cũ sai, không mở lại được | **Nhập → Điều chỉnh**: sửa số hiện tại, để lại dấu vết. Không viết lại ngày đã khóa |
+| Sổ ngày cũ sai | **Nhập → Điều chỉnh**: sửa số hiện tại, để lại dấu vết. Ngày đã chốt không mở lại được |
+| Đặt lại số liệu nhầm | **Duyệt → Hoàn tác đặt lại số liệu**, trong cùng ngày |
 | Sổ sai một phi ở một khu | **Nhập → Điều chỉnh**, chọn tăng/giảm và lý do, rồi admin duyệt. Không ảnh hưởng lượng dùng |
 | Xuất thép đi công trình | **Nhập → Xuất kho** (tuỳ chọn), ghi rõ nơi đến, rồi admin duyệt. Không ghi cũng được — app vẫn tính lượng dùng |
 | Vay / cho đối tác vay thép | **Thêm → Vay mượn ngoài bãi** (hoặc lối tắt ở màn Nhập), chọn *thép qua bãi* + khu nếu thép đi qua cổng. Admin duyệt. Không tính là nhập hay dùng |
@@ -241,7 +242,7 @@ Mở http://localhost:8787/setup để tạo admin thử.
 |---|---|---|
 | Workers | 100.000 yêu cầu/ngày (reset 7:00 sáng giờ VN) | Dưới 15.000: máy hỏi số phiên bản mỗi 60 giây khi đang dùng, 5 phút khi để yên, 15 phút ngoài giờ (20:00–6:00), không hỏi khi app chạy nền |
 | D1 truy vấn mỗi yêu cầu | 50 | Tối đa khoảng 15 (gửi báo cáo cả khu chỉ 12, ghi hàng loạt bằng một câu lệnh `json_each`) |
-| Cron | 5 | 1 (23:50 tự chốt + dọn dẹp) |
+| Cron | 5 | 1 (mỗi giờ: tự chốt sổ ngày đã qua + dọn dẹp) |
 | D1 đọc | 5 triệu dòng/ngày | Dưới 1 triệu |
 | D1 ghi | 100.000 dòng/ngày | Vài trăm đến vài nghìn |
 | D1 dung lượng | 500 MB mỗi database | Khoảng 40 MB/năm |
@@ -263,7 +264,7 @@ Nếu Cloudflare chặn do hết hạn mức trong ngày, app vẫn mở đượ
 ```
 wrangler.toml        cấu hình Cloudflare (nhớ điền database_id)
 schema.sql           cấu trúc database + dữ liệu mặc định
-src/worker.js        điểm vào: định tuyến /api/* và Cron 23:50
+src/worker.js        điểm vào: định tuyến /api/* và Cron mỗi giờ
 src/core.js          tiện ích, giờ Việt Nam, hằng số, phi mặc định
 src/db.js            tự nâng cấp database (migration, SCHEMA_VERSION)
 src/helpers.js       hàm dùng chung: đọc request, CSV, nhật ký, phiên, cài đặt
@@ -273,7 +274,7 @@ src/bootstrap.js     dữ liệu chung cho máy khách
 src/counts.js        báo cáo đếm, hai người báo khác số, nhật ký, tệp CSV ngày
 src/phieu.js         nhập, chuyển, xuất, điều chỉnh tồn
 src/loans.js         sổ vay mượn ngoài bãi
-src/review.js        màn Duyệt, chốt / mở lại ngày, tự chốt
+src/review.js        màn Duyệt, tự chốt sổ sau 0h, hoàn tác đặt lại số liệu
 src/data.js          đặt lại số liệu, sao lưu, nạp lại
 src/admin.js         người dùng, khu, phi, cài đặt
 src/reports.js       xem ngày cũ, báo cáo theo kỳ

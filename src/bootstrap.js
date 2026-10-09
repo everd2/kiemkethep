@@ -11,7 +11,7 @@ export async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, late] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -30,7 +30,7 @@ export async function bootstrap(env, user) {
                       r.day, r.duyet_day, r.duyet_ts, COALESCE(ud.name, r.duyet_name) duyet_name
                     FROM receipts r LEFT JOIN users u ON u.id = r.user_id LEFT JOIN users ud ON ud.id = r.duyet_by
                     WHERE r.voided = 0 AND (r.day = ?1 OR r.duyet_day IS NULL OR r.duyet_day = ?1) ORDER BY r.id DESC`).bind(day),
-    env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
     /* Nhập/chuyển/xuất ĐÃ DUYỆT kể từ lần chốt gần nhất theo khu × phi × LOẠI (gồm cả ngày
        quên chốt). Lọc theo duyet_day chứ không phải day: phiếu chỉ tác động tới tồn kể từ ngày được
@@ -60,14 +60,14 @@ export async function bootstrap(env, user) {
     // đếm nhanh để nhắc ở Tổng quan; chi tiết nạp khi vào đúng màn Vay mượn, như /users
     // đếm theo LẦN GHI (grp) chứ không theo dòng: ghi một lần ba phi là MỘT việc admin phải duyệt
     env.DB.prepare('SELECT COUNT(DISTINCT COALESCE(grp, id)) n FROM loans WHERE voided = 0 AND duyet_ts IS NULL'),
-    // báo cáo khu gửi sau khi chốt, chờ admin nhận: để Tổng quan nhắc admin và người gửi
-    env.DB.prepare(`SELECT b.khu_id, b.user_id, ${UNAME}, b.ts, b.data FROM bao_sau_chot b LEFT JOIN users u ON u.id = b.user_id WHERE b.day = ?`).bind(day),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
     today: day,
     lastClosed: last || null,
     closed: closed.results.length > 0,
+    // hôm nay là mốc đặt lại số liệu (cách duy nhất để ngày hôm nay bị khoá, xem putCounts)
+    closedReset: !!(closed.results[0] && closed.results[0].kind === 'reset'),
     user: { id: user.id, name: user.name, role: user.role },
     uFirst: (uFirst.results[0] || {}).id || 0,
     phi: phi.results,
@@ -93,6 +93,5 @@ export async function bootstrap(env, user) {
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
     doitacAct: doitacAct.results,
     loanPending: loanPending.results[0] ? loanPending.results[0].n : 0,
-    late: late.results,
   };
 }

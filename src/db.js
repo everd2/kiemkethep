@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -207,10 +207,17 @@ export const MIGRATIONS = {
        day TEXT NOT NULL, khu_id TEXT NOT NULL, user_id INTEGER NOT NULL, ts INTEGER NOT NULL,
        at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (day, khu_id))`,
   ],
+  /* SỔ NGÀY TỰ CHỐT (bỏ chốt tay):
+     - bt: phi có ngày BẤT THƯỜNG (dùng âm / dùng cao) — vẫn chốt, nhưng không vào mức dùng TB.
+     - bao_sau_chot bỏ: ngày D chỉ chốt sau nửa đêm nên không còn báo cáo nào gửi "sau chốt". */
+  19: [
+    'ALTER TABLE daily_summary ADD COLUMN bt INTEGER NOT NULL DEFAULT 0',
+    'DROP TABLE IF EXISTS bao_sau_chot',
+  ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
   SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
-  WHERE dung IS NOT NULL AND day > date(?1, '-28 days') AND day <= ?1 GROUP BY phi_id`;
+  WHERE dung IS NOT NULL AND bt = 0 AND day > date(?1, '-28 days') AND day <= ?1 GROUP BY phi_id`;
 export async function migrate(env) {
   const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
   for (let n = (r ? r.value : 1) + 1; n <= SCHEMA_VERSION; n++) {

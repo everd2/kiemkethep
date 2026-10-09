@@ -696,49 +696,18 @@ const run = async () => {
   ok('và vẫn kể được dòng âm', /D12/.test(r('AX2.text')), r('AX2.text'));
   r(`S.boot = _boot(); indexBoot(S.boot); S.nhap.mode = 'nhap'; S.nhap.lines = []; S.form.nnoi = '';`);
 
-  /* ---- 1f. MỞ LẠI NGÀY ĐÃ CHỐT ----
-     Chỉ LẦN CHỐT GẦN NHẤT mở lại được: tồn chuẩn của một ngày là điểm xuất phát của mọi ngày sau
-     nó, nên mở một ngày ở giữa là mọi lần chốt sau đó vẫn giữ con số tính từ mốc cũ. Và ngày ĐÃ
-     QUA thì chỉ admin đầu tiên, vì nó dời cái mốc mà cả bãi đang dựa vào. Server mới là chỗ chặn
-     thật; phần này chỉ để khỏi bày một cái nút bấm vào là bị từ chối. */
+  /* ---- 1f. KHÔNG CÒN MỞ LẠI NGÀY ĐÃ CHỐT ----
+     Sổ tự chốt sau 0h: mở một ngày đã qua thì giờ sau hệ thống chốt lại ngay, nên màn Xem lại ngày
+     cũ không còn nút mở lại. Sai số của ngày đã qua thì lập phiếu Điều chỉnh tồn. */
   const hist = (over) => `S.hist = { date: '${yday}', data: Object.assign({
       day: '${yday}', close: { uname: 'A', ts: Date.now(), note: '', span: 1 }, lastClose: '${yday}',
       counts: [{ khu_id: 'A', phi_id: 'D10', v: 300 }], baseline: [], prevBaseline: [],
       summary: [{ phi_id: 'D10', nhap: 0, dung: 20, dc: 0, xuat: 12 }],
       reports: [], receipts: [] }, ${over}) };`;
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.uFirst = 1; ${hist('{}')} var L1 = vLichSu();`);
-  ok('lần chốt gần nhất: admin đầu tiên thấy nút mở lại', /data-a="hreopen"/.test(r('L1')));
-  ok('nút ghi rõ ngày nào', /MỞ LẠI NGÀY \d\d\/\d\d/.test(r('L1')), (r('L1').match(/MỞ LẠI NGÀY[^<]*/) || [''])[0]);
-  ok('và nhắc rằng số đếm của khu vẫn còn', /vẫn còn nguyên/.test(r('L1')));
-  ok('và chỉ sang phiếu Điều chỉnh cho trường hợp sổ đã chốt mà sai', /Điều chỉnh tồn/.test(r('L1')));
+  ok('lịch sử: không còn nút mở lại ngày', !/data-a="hreopen"/.test(r('L1')) && !/MỞ LẠI NGÀY/.test(r('L1')));
   ok('nói luôn phần đã dùng có phiếu xuất', /có phiếu xuất/.test(r('L1')));
-
-  // ngày cũ hơn lần chốt gần nhất: không có nút, nhưng phải nói vì sao
-  r(`${hist("{ lastClose: S.boot.today }")} var L2 = vLichSu();`);
-  ok('ngày cũ hơn: không bày nút mở lại', !/data-a="hreopen"/.test(r('L2')));
-  ok('nhưng nói rõ vì sao không mở được', /đã có lần chốt khác/.test(r('L2')));
-
-  // chưa chốt thì chẳng có gì để mở lại, cũng không có lời giải thích nào
-  r(`${hist('{ close: null }')} var L3 = vLichSu();`);
-  ok('ngày chưa chốt: không nút, không lời giải thích', !/data-a="hreopen"/.test(r('L3')) && !/đã có lần chốt khác/.test(r('L3')));
-
-  // không phải admin đầu tiên: ngày đã qua thì không thấy nút
-  r(`S.uFirst = 9; ${hist('{}')} var L4 = vLichSu();`);
-  ok('admin thường: ngày đã qua không thấy nút mở lại', !/data-a="hreopen"/.test(r('L4')));
-  // nhưng chính ngày HÔM NAY thì admin nào cũng mở được, vì hôm nay chưa là mốc của ngày nào
-  r(`${hist('{ day: S.boot.today, lastClose: S.boot.today }')} var L5 = vLichSu();`);
-  ok('ngày hôm nay: admin thường vẫn mở lại được', /data-a="hreopen"/.test(r('L5')));
-
-  // người đếm thì không bao giờ thấy
-  r(`S.me = { id: 9, name: 'B', role: 'nguoidem' }; ${hist('{}')} var L6 = vLichSu();`);
-  ok('người đếm không thấy nút mở lại', !/data-a="hreopen"/.test(r('L6')));
-  ok('và cũng không thấy lời giải thích dành cho admin', !/đã có lần chốt khác/.test(r('L6')));
-
-  // bỏ trống lý do thì chặn ngay, khỏi phải chờ một vòng mạng mới biết
-  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.uFirst = 1;`);
-  EL.hreopenNote = mkEl('hreopenNote'); EL.hreopenNote.value = '';
-  r(`S.toast = ''; ACTIONS.hreopen({ d: '${yday}' });`);
-  ok('bỏ trống lý do: chặn và nhắc', /lý do/i.test(r('S.toast')), r('S.toast'));
+  ok('không còn thao tác mở lại ngày cũ', typeof r('ACTIONS.hreopen') === 'undefined');
 
   /* Bootstrap gửi sẵn id admin đầu tiên. Trước đây chỉ /users gửi, mà /users chỉ nạp khi vào đúng
      màn Người dùng — nên nút dành riêng cho chủ hệ thống biến mất ở những màn khác. */
@@ -1043,11 +1012,11 @@ const run = async () => {
   r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 2, name: 'An', role: 'nguoidem' }; S.khuMo = { A: true }; S.screen = 'home';`);
   const HKA = r('vHome()');
   ok('thẻ khu: bày đủ mọi phi', ['D8', 'D10', 'D12'].every((ph) => new RegExp('<b style="width:44px">' + ph + '</b>').test(HKA)));
-  ok('thẻ khu: có nút đếm / báo cáo, mở thẳng khu đó', /data-s="dem" data-k="A">ĐẾM/.test(HKA));
+  ok('thẻ khu: có nút báo cáo, mở thẳng khu đó', /data-s="dem" data-k="A">BÁO CÁO/.test(HKA));
   r(`S.boot.closed = true;`);
-  ok('ngày đã chốt: không có nút đếm', !/data-s="dem" data-k="A">ĐẾM/.test(r('vHome()')));
+  ok('ngày đã khoá: không có nút báo cáo', !/data-s="dem" data-k="A">BÁO CÁO/.test(r('vHome()')));
   r(`S.boot.closed = false; S.boot.ku = { A: [99] };`);
-  ok('khu người khác phụ trách: không có nút đếm', !/data-s="dem" data-k="A">ĐẾM/.test(r('vHome()')));
+  ok('khu người khác phụ trách: không có nút báo cáo', !/data-s="dem" data-k="A">BÁO CÁO/.test(r('vHome()')));
   r(`S.boot = _boot(); indexBoot(S.boot); S.khuMo = {};`);
 
   // chi tiết một đối tác

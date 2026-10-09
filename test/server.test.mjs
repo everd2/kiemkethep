@@ -2,8 +2,11 @@
 import { boot, addDays, advance, vnDay, clock } from './harness.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = process.argv[2] || '.';
+// hàm tự chốt sổ mà việc chạy mỗi giờ dùng (không còn API chốt tay)
+const REV = await import(pathToFileURL(path.resolve(ROOT, 'src/review.js')).href);
 const T = [];
 let only = process.argv[3] || '';
 const ok = (name, cond, extra) => { T.push([cond ? 'PASS' : 'FAIL', name, extra === undefined ? '' : String(extra)]); };
@@ -69,11 +72,14 @@ const bao = async (S, body, who) => {
   if (r.status === 200) await duyet(S, body.khu);
   return r;
 };
-// chốt ngày: duyệt hết những gì còn chờ rồi mới chốt (bỏ qua bước duyệt khi đang thử phân quyền)
-const chot = async (S, body, who) => {
-  if (!who) await duyetAll(S);
-  return S.call('POST', '/close', body === undefined ? { note: '' } : body, who);
+/* Chốt sổ HÔM NAY bằng đúng hàm tự chốt (closeDayAuto). Gọi cho hôm nay nghĩa là "từ giờ tới 0h
+   không có gì xảy ra nữa" — kết quả y như lần chạy 0h05 chốt ngày này. 200 = vừa chốt, 409 = đã chốt. */
+const chotNgay = async (S) => {
+  try { return { status: (await REV.closeDayAuto(S.env, vnDay())) ? 200 : 409 }; }
+  catch (e) { return { status: e.status || 500, data: { code: e.code, error: e.message } }; }
 };
+// duyệt hết những gì còn chờ rồi mới chốt
+const chot = async (S) => { await duyetAll(S); return chotNgay(S); };
 
 async function main() {
   /* ================= 1. Luồng cơ bản: nhập, đếm, chốt ================= */
@@ -102,7 +108,6 @@ async function main() {
       { v: 1800, duyet_v: null });
     rv = (await S.call('GET', '/review')).data;
     eq('khu A chờ duyệt', rv.exceptions.filter((e) => e.type === 'khu_pending').map((e) => e.khu), ['A']);
-    eq('chưa duyệt thì chưa chốt được không ghi chú', (await S.call('POST', '/close', { note: '' })).status, 400);
 
     eq('duyệt khu A', (await duyet(S, 'A')).status, 200);
     eq('duyệt rồi thì số vào tồn',
@@ -112,7 +117,7 @@ async function main() {
     eq('ngày đầu chưa có tồn chuẩn -> used null', rv.rows.find((x) => x.phi === 'D16').used, null);
     eq('span ngày đầu', rv.span, 1);
     eq('duyệt hết thì không còn việc chờ', rv.pending, 0);
-    r = await S.call('POST', '/close', { note: '' });
+    r = await chotNgay(S);
     eq('chốt ngày đầu được', r.status, 200);
     const base = S.sql("SELECT khu_id, phi_id, v FROM baseline WHERE day = ? AND v <> 0", day0);
     eq('tồn chuẩn ghi đúng 1 dòng khác 0', base.map((x) => [x.khu_id, x.phi_id, x.v]), [['A', 'D16', 1800]]);
@@ -129,7 +134,7 @@ async function main() {
     const d16 = rv2.rows.find((x) => x.phi === 'D16');
     eq('dùng = tồn cũ + nhập − đếm', [d16.old, d16.inn, d16.cnt, d16.used], [1800, 0, 1500, 300]);
     eq('duyệt hết rồi thì không còn việc chờ', rv2.pending, 0);
-    await S.call('POST', '/close', { note: '' });
+    await chotNgay(S);
     eq('dung ghi vào daily_summary', S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', day1, 'D16').dung, 300);
     eq('phi_rate sau 1 ngày có dùng', S.one('SELECT per_day, days FROM phi_rate WHERE phi_id=?', 'D16'), { per_day: 300, days: 1 });
 
@@ -352,15 +357,9 @@ async function main() {
     await chot(S, { note: '' });
     addDays(1); day = vnDay();
     await bao(S, { khu: 'A', day, items: items({ D22: 0 }) }, 'An');
-    const cl = await chot(S, { note: 'Khu A đã xuất hết D22' });
-    eq('chốt kèm ghi chú khi có biến động khu', cl.status, 200);
-    const r = await S.call('POST', '/recount-after-close', { khu: 'A' });
-    eq('mở lại ngày để đếm lại: ok', r.status, 200);
-    eq('ngày đã mở lại', S.sql('SELECT 1 FROM day_close WHERE day=?', day).length, 0);
-    // số đã duyệt KHÔNG bị xoá: nó vẫn là tồn của khu cho tới khi số mới được duyệt
-    eq('số đã duyệt của khu vẫn còn', S.one("SELECT duyet_v FROM counts WHERE day=? AND khu_id='A' AND phi_id='D22'", day).duyet_v, 0);
-    eq('khu mang cờ đếm lại', S.one("SELECT recount FROM khu_report WHERE day=? AND khu_id='A'", day).recount, 1);
-    eq('báo lại sau khi mở ngày: ghi được', (await bao(S, { khu: 'A', day, items: items({ D22: 0 }) }, 'Binh')).status, 200);
+    const cl = await chot(S);
+    eq('chốt được khi khu có biến động', cl.status, 200);
+    eq('không còn API đếm lại sau chốt', (await S.call('POST', '/recount-after-close', { khu: 'A' })).status, 404);
   }
 
   /* ================= 12. Quên chốt nhiều ngày ================= */
@@ -388,14 +387,12 @@ async function main() {
     await nhap(S, { khu: 'A', lines: [{ phi: 'D18', qty: 138 }] });
     await bao(S, { khu: 'A', day, items: items({ D18: 138 }) }, 'An');
     await chot(S, { note: '' });
-    // gửi được, nhưng chỉ thành báo cáo chờ admin nhận (mục 55), không đụng số đếm
     const a = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D18: 130 }) }, 'An');
-    eq('đã chốt: báo số thành báo cáo sau chốt', [a.status, a.data.late], [200, true]);
+    eq('đã chốt: không báo số được', [a.status, a.data.code], [409, 'closed']);
     eq('đã chốt: số đếm không đổi', S.one("SELECT v FROM counts WHERE day=? AND khu_id='A' AND phi_id='D18'", day).v, 138);
     const b = await nhap(S, { khu: 'A', lines: [{ phi: 'D18', qty: 1 }] });
     eq('đã chốt: không nhập kho được', b.status, 409);
-    const c = await chot(S, { note: 'x' });
-    eq('chốt hai lần: từ chối', c.status, 409);
+    eq('chốt hai lần: không làm gì', (await chotNgay(S)).status, 409);
   }
 
   /* ================= 14. Bảo mật / phân quyền ================= */
@@ -403,7 +400,7 @@ async function main() {
     const S = await setup();
     eq('người đếm không vào được Duyệt', (await S.call('GET', '/review', undefined, 'An')).status, 403);
     eq('người đếm không nhập kho được', (await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 1 }] }, 'An')).status, 403);
-    eq('thủ kho không chốt ngày được', (await chot(S, { note: 'x' }, 'Kho')).status, 403);
+    eq('không còn API chốt tay', (await S.call('POST', '/close', { note: 'x' })).status, 404);
     eq('thủ kho nhập kho được', (await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 10 }] }, 'Kho')).status, 200);
     eq('recovery token sai: từ chối', (await S.call('POST', '/recover', { token: 'sai', phone: '0900000001', newPin: '2469' })).status, 403);
     eq('recovery token đúng: đổi được PIN', (await S.call('POST', '/recover', { token: 'rec-tok', phone: '0900000001', newPin: '2469' })).status, 200);
@@ -560,10 +557,10 @@ async function main() {
     eq('hụt 50 cây (1,7 tấn) và quá nửa: tô đậm', await lech(40), [-50, true]);
     eq('hụt sạch: tô đậm', await lech(0), [-90, true]);
     // lệch to đến mấy cũng KHÔNG chặn chốt, vì nó đã được duyệt
-    eq('đã duyệt thì lệch không chặn chốt', (await S.call('POST', '/close', { note: '' })).status, 200);
+    eq('đã duyệt thì lệch không chặn chốt', (await chotNgay(S)).status, 200);
   }
 
-  /* ================= 20. Duyệt theo khu + tự chốt chỉ khi được bật ================= */
+  /* ================= 20. Duyệt theo khu + tự chốt sau nửa đêm ================= */
   {
     const S = await setup();
     const cron = async () => { let pr; await S.worker.scheduled({}, S.env, { waitUntil: (p) => (pr = p) }); await pr; };
@@ -573,9 +570,8 @@ async function main() {
     await nhap(S, { khu: 'B', lines: [{ phi: 'D22', qty: 90 }] });
     await bao(S, { khu: 'A', day, items: items({ D22: 90 }) }, 'An');
     await bao(S, { khu: 'B', day, items: items({ D22: 90 }) }, 'Binh');
-    eq('tự chốt mặc định tắt', (await S.call('GET', '/bootstrap')).data.settings.auto_close, 0);
     await cron();
-    eq('tắt thì cron không chốt', closedToday(), 0);
+    eq('cron trong ngày không chốt ngày đang chạy', closedToday(), 0);
     await chot(S, { note: '' });
     addDays(1); day = vnDay();
     // cả hai khu xuất hết D22
@@ -593,7 +589,6 @@ async function main() {
     eq('còn 1 việc: khu B', rv.pending, 1);
     eq('khu A đã ghi tên người duyệt', rv.khus.find((k) => k.khu === 'A').duyet.by, 'Admin');
     eq('khu B vẫn đang chờ', rv.khus.find((k) => k.khu === 'B').duyet, null);
-    eq('còn khu chưa duyệt: chốt không ghi chú bị từ chối', (await S.call('POST', '/close', { note: '' })).status, 400);
 
     /* Khu A báo lại số khác: lần duyệt cũ hết hiệu lực NGAY, không cần dấu số liệu nào.
        Bản cũ phải so "sig" vì duyệt là một cờ rời; nay duyệt gắn vào đúng lần báo qua mốc ts,
@@ -610,17 +605,23 @@ async function main() {
     eq('số mới đã vào tồn', S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D22').duyet_v, 5);
     eq('không còn gì chờ thì duyệt nữa: từ chối', (await duyetAll(S)).status, 400);
 
-    // bật tự chốt: còn việc chưa duyệt thì cron bỏ qua và ghi lý do
+    // còn báo cáo chưa duyệt lúc nửa đêm: vẫn chốt, theo số đã duyệt, và ghi lại việc còn treo
     advance(2000);
     await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 1 }) }, 'Binh');
-    await S.call('PUT', '/settings', { auto_close: 1 });
+    const homQua = day;
+    addDays(1); day = vnDay();
     await cron();
-    eq('còn việc chưa duyệt: cron không chốt', closedToday(), 0);
-    ok('cron ghi lý do bỏ qua', /chưa duyệt/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
-    await duyet(S, 'B');
+    eq('sau 0h: sổ hôm qua tự chốt', S.sql('SELECT 1 FROM day_close WHERE day=?', homQua).length, 1);
+    eq('tồn chuẩn khu B theo số ĐÃ DUYỆT (0), không theo số đang chờ (1)',
+      S.one("SELECT v FROM baseline WHERE day=? AND khu_id='B' AND phi_id='D22'", homQua).v, 0);
+    ok('nhật ký chốt ghi khu chưa duyệt', /chưa duyệt \(chuyển sang ngày sau\): Khu B/.test(S.one('SELECT note FROM day_close WHERE day=?', homQua).note));
+    rv = (await S.call('GET', '/review')).data;
+    eq('báo cáo chưa duyệt chuyển sang hôm nay, vẫn chờ duyệt', rv.khus.find((k) => k.khu === 'B').waiting > 0, true);
+    eq('giữ giờ đếm thật', rv.khus.find((k) => k.khu === 'B').rep.ts < Date.parse(day + 'T00:00:00+07:00'), true);
+    eq('duyệt được ở ngày mới', (await duyet(S, 'B')).status, 200);
+    eq('và số đó vào tồn', S.one("SELECT duyet_v FROM counts WHERE day=? AND khu_id='B' AND phi_id='D22'", day).duyet_v, 1);
     await cron();
-    eq('duyệt hết: cron tự chốt', closedToday(), 1);
-    eq('đã chốt thì không duyệt được nữa', (await duyetAll(S)).status, 409);
+    eq('chạy lại trong ngày: không chốt thêm gì', S.sql('SELECT 1 FROM day_close WHERE day=?', day).length, 0);
   }
 
   /* ================= 4c. "Có N việc cần xem" đếm theo số lần admin phải ra tay =================
@@ -709,7 +710,7 @@ async function main() {
     eq('tổng bãi theo hai số vừa duyệt (100 + 190)', rv.rows.find((x) => x.phi === 'D20').cnt, 290);
 
     // chốt: tồn chuẩn lấy đúng số đã duyệt
-    await S.call('POST', '/close', { note: '' });
+    await chotNgay(S);
     eq('tồn chuẩn ghi số đã duyệt',
       S.sql("SELECT khu_id, v FROM baseline WHERE day=? AND phi_id='D20' AND v<>0 ORDER BY khu_id", day).map((x) => [x.khu_id, x.v]),
       [['A', 100], ['B', 190]]);
@@ -1177,10 +1178,9 @@ async function main() {
     await bao(S, { khu: 'C', day, items: items({}) }, 'An');
     const rvT = (await S.call('GET', '/review')).data;
     eq('đếm khớp phiếu thì không còn việc gì', rvT.pending, 0, JSON.stringify(rvT.exceptions));
-    eq('chốt ngày thường được', (await S.call('POST', '/close', { note: '' })).status, 200);
+    eq('chốt ngày thường được', (await chotNgay(S)).status, 200);
     const ro2 = await S.call('POST', '/reopen', { note: 'chốt nhầm' });
-    eq('mở lại ngày chốt thường: được', ro2.status, 200);
-    eq('và KHÔNG phải mốc kiểm kê', ro2.data.reset, false);
+    eq('mở lại ngày chốt thường: không còn (chỉ hoàn tác đặt lại số liệu)', ro2.status, 400);
     eq('số đếm của khu còn nguyên',
       S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D16').duyet_v, 480);
   }
@@ -1221,7 +1221,7 @@ async function main() {
     eq('không còn việc gì chờ', rv.pending, 0);
     day = vnDay();
     eq('đếm lại được bình thường', (await bao(S, { khu: 'A', day, items: items({ D16: 500 }) }, 'An')).status, 200);
-    eq('và chốt được', (await S.call('POST', '/close', { note: '' })).status, 200);
+    eq('và chốt được', (await chotNgay(S)).status, 200);
     eq('lần chốt này tạo tồn chuẩn đầu tiên',
       S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 500);
   }
@@ -1304,7 +1304,8 @@ async function main() {
     const day = vnDay();
     const rc = await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1800 }] });
     await bao(S, { khu: 'A', day, items: items({ D16: 1800 }) }, 'An');
-    await chot(S, { note: 'trước khi sao lưu' });
+    await chot(S);
+    const noteTruoc = S.one('SELECT note FROM day_close WHERE day=?', day).note;
 
     eq('người đếm không tải được bản sao', (await S.call('GET', '/backup', undefined, 'An')).status, 403);
     eq('thủ kho cũng không', (await S.call('GET', '/backup', undefined, 'Kho')).status, 403);
@@ -1349,7 +1350,7 @@ async function main() {
       (S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day) || {}).v, 1800);
     eq('phiếu nhập dựng lại đủ, giữ nguyên trạng thái duyệt',
       S.one('SELECT qty, duyet_day FROM receipts WHERE id=?', rc.data.id) || null, { qty: 1800, duyet_day: day });
-    eq('ngày đã chốt dựng lại đủ', S.sql('SELECT note FROM day_close WHERE day=?', day).map((x) => x.note), ['trước khi sao lưu']);
+    eq('ngày đã chốt dựng lại đủ', S.sql('SELECT note FROM day_close WHERE day=?', day).map((x) => x.note), [noteTruoc]);
     eq('tài khoản dựng lại đủ', S.sql('SELECT 1 FROM users').length, f.bang.users.length);
     eq('và đăng nhập lại được bằng PIN cũ', (await S.call('POST', '/login', { phone: '0900000002', pin: '1357' }, 'An3')).status, 200);
     eq('báo cáo theo kỳ đọc lại được', (await S.call('GET', `/report?from=${day}&to=${day}`)).data.rows.some((x) => x.phi === 'D16'), true);
@@ -1453,78 +1454,20 @@ async function main() {
     eq('và phần có phiếu bằng 0', row2.xuat, 0);
   }
 
-  /* ================= 42. Mở lại ngày đã chốt =================
-     Trước bản này chỉ mở lại được ĐÚNG ngày hôm nay: chốt nhầm hôm qua mà sang ngày mới mới phát
-     hiện thì không có đường nào sửa. Nhưng cũng không được mở ngày bất kỳ: tồn chuẩn của một ngày
-     là điểm xuất phát của mọi ngày sau nó, nên mở một ngày ở GIỮA là mọi lần chốt sau đó vẫn giữ
-     con số tính từ mốc cũ — từ đó không ngày nào còn khớp với ngày trước nó, sai mà không chỗ nào
-     báo. Vậy phạm vi đúng là: chỉ LẦN CHỐT GẦN NHẤT, vì sau nó chưa có gì phái sinh. */
+  /* ================= 42. Không còn mở lại ngày đã chốt =================
+     Sổ tự chốt sau nửa đêm: mở một ngày đã qua thì giờ sau hệ thống chốt lại ngay, nên không còn
+     đường mở lại. Sai số của ngày đã qua thì lập phiếu Điều chỉnh tồn. "Mở lại" chỉ còn để hoàn tác
+     lần đặt lại số liệu của hôm nay (mục đặt lại số liệu kiểm riêng). */
   {
     const S = await setup();
-    let d1 = vnDay();
+    const d1 = vnDay();
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 1000 }] });
     await bao(S, { khu: 'A', day: d1, items: items({ D16: 1000 }) }, 'An');
-    await chot(S, { note: 'mo so' });
-
+    await chot(S);
     addDays(1);
-    const d2 = vnDay();
-    await bao(S, { khu: 'A', day: d2, items: items({ D16: 900 }) }, 'An');
-    await chot(S, { note: 'ngay 2' });
-
-    addDays(1);
-    const d3 = vnDay();
-    eq('ngày cũ hơn lần chốt gần nhất: từ chối',
-      (await S.call('POST', '/reopen', { day: d1, note: 'thu mo ngay dau' })).status, 400);
-    eq('và nói rõ phải dùng phiếu điều chỉnh',
-      /Điều chỉnh/.test((await S.call('POST', '/reopen', { day: d1, note: 'x' })).data.error), true);
-    eq('ngày chưa chốt: không có gì để mở',
-      (await S.call('POST', '/reopen', { day: d3, note: 'x' })).status, 400);
-    eq('thiếu lý do: từ chối', (await S.call('POST', '/reopen', { day: d2 })).status, 400);
-    eq('ngày không hợp lệ: từ chối', (await S.call('POST', '/reopen', { day: 'hom-qua', note: 'x' })).status, 400);
-
-    /* Mở ngày ĐÃ QUA thì chỉ admin đầu tiên, giống như đặt lại số liệu: nó dời tồn chuẩn mà cả
-       bãi đang dựa vào. Admin thứ hai vẫn mở được ngày HÔM NAY, vì hôm nay chưa là mốc của ai. */
-    const a2 = await S.call('POST', '/users', { name: 'Admin Hai', phone: '0900000009', role: 'admin' });
-    await S.call('POST', '/login', { phone: '0900000009', pin: a2.data.pin }, 'A2');
-    // phải đổi PIN trước, không thì 403 nào cũng là 403 "cần đổi PIN" và test đo sai thứ
-    await S.call('POST', '/change-pin', { pin: a2.data.pin, newPin: '4681' }, 'A2');
-    const t403 = await S.call('POST', '/reopen', { day: d2, note: 'x' }, 'A2');
-    eq('admin thứ hai không mở được ngày đã qua', t403.status, 403);
-    ok('và bị chặn vì không phải admin đầu tiên, không phải vì lý do khác',
-      /admin đầu tiên/.test(t403.data.error), t403.data.error);
-
-    const r = await S.call('POST', '/reopen', { day: d2, note: 'chot nham hom qua' });
-    eq('admin đầu tiên mở lại được lần chốt gần nhất', r.status, 200);
-    eq('và trả về đúng ngày đã mở', r.data.day, d2);
-    eq('mốc chốt của ngày đó bị bỏ', S.one('SELECT COUNT(*) n FROM day_close WHERE day=?', d2).n, 0);
-    eq('tồn chuẩn của ngày đó bị bỏ', S.one('SELECT COUNT(*) n FROM baseline WHERE day=?', d2).n, 0);
-    eq('bảng tổng hợp của ngày đó bị bỏ', S.one('SELECT COUNT(*) n FROM daily_summary WHERE day=?', d2).n, 0);
-    eq('lần chốt gần nhất quay về ngày đầu', S.one('SELECT MAX(day) d FROM day_close').d, d1);
-    // không để khiển trách này nổ khi không có dòng nào: nổ là che mất cả phần test còn lại
-    const nkR = (S.one("SELECT detail FROM audit WHERE action='reopen_day' ORDER BY id DESC") || {}).detail || '';
-    ok('nhật ký ghi rõ mở lại ngày cũ kèm lý do', /chot nham hom qua/.test(nkR), nkR);
-
-    /* Số đếm của ngày đã mở KHÔNG bị xoá: mở lại là bỏ mốc chốt, không phải xoá công đếm của khu.
-       Nhờ vậy app quay về đúng trạng thái "chưa chốt từ d1" mà nó vốn đã biết xử lý (span > 1). */
-    eq('số đếm của ngày mở lại vẫn còn',
-      (S.one('SELECT duyet_v v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', d2, 'A', 'D16') || {}).v, 900);
-    const rv = (await S.call('GET', '/review')).data;
-    eq('tồn cũ quay về mốc ngày đầu', rv.rows.find((x) => x.phi === 'D16').old, 1000);
-    eq('và khoảng gộp thành 2 ngày', rv.span, 2);
-
-    // sửa số rồi chốt lại: ngày d3 chốt gộp cả d2, lần này tồn ra đúng số đã sửa
-    await bao(S, { khu: 'A', day: d3, items: items({ D16: 950 }) }, 'An');
-    eq('chốt lại được', (await S.call('POST', '/close', { note: 'chot lai' })).status, 200);
-    eq('tồn chuẩn mới theo số đã sửa',
-      (S.one('SELECT v FROM baseline WHERE day=? AND khu_id=? AND phi_id=?', d3, 'A', 'D16') || {}).v, 950);
-    eq('lượng dùng gộp cả hai ngày', (S.one('SELECT dung FROM daily_summary WHERE day=? AND phi_id=?', d3, 'D16') || {}).dung, 50);
-
-    // mở lại ngày HÔM NAY thì admin nào cũng được, như trước
-    eq('admin thứ hai vẫn mở được ngày hôm nay',
-      (await S.call('POST', '/reopen', { day: d3, note: 'bam nham' }, 'A2')).status, 200);
-    eq('không gửi ngày thì mặc định là hôm nay',
-      (await S.call('POST', '/close', { note: 'x' })).status, 200);
-    eq('và mở lại không cần nêu ngày', (await S.call('POST', '/reopen', { note: 'bam nham lan 2' })).status, 200);
+    eq('mở lại ngày đã qua: từ chối', (await S.call('POST', '/reopen', { day: d1, note: 'x' })).status, 400);
+    eq('mở lại hôm nay (không phải đặt lại số liệu): từ chối', (await S.call('POST', '/reopen', { note: 'x' })).status, 400);
+    eq('ngày đã qua vẫn chốt nguyên', S.sql('SELECT 1 FROM day_close WHERE day=?', d1).length, 1);
   }
 
   /* ================= 20. Tệp CSV mở được bằng Excel tiếng Việt ================= */
@@ -2215,13 +2158,11 @@ async function main() {
     eq('18h30: thiếu buổi chiều', rv.exceptions.filter((e) => e.type === 'slot_missing').map((e) => [e.khu, e.missing]), [['A', ['buổi chiều (12h–18h)']]]);
     eq('màn Duyệt nói khung nào đã đếm', rv.khus.find((k) => k.khu === 'A').slots, { done: [0], missing: [1], late: [] });
     ok('thiếu khung là việc chưa xử lý', rv.pending >= 1, rv.pending);
-    eq('chốt không ghi lý do: từ chối', (await S.call('POST', '/close', { note: '' })).status, 400);
-    await S.call('PUT', '/settings', { auto_close: 1 });
     await cron();
-    eq('tự chốt bỏ qua', S.one('SELECT 1 x FROM day_close WHERE day=?', day), undefined);
-    ok('nhật ký nói khu nào thiếu khung nào',
-      /thiếu lần đếm: Khu A buổi chiều/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
-    eq('ghi lý do thì chốt được', (await S.call('POST', '/close', { note: 'An nghỉ chiều' })).status, 200);
+    eq('trong ngày: chưa tự chốt', S.one('SELECT 1 x FROM day_close WHERE day=?', day), undefined);
+    eq('thiếu khung vẫn tự chốt', (await chotNgay(S)).status, 200);
+    ok('nhật ký chốt nói khu nào thiếu khung nào',
+      /thiếu lần đếm: Khu A buổi chiều/.test(S.one('SELECT note FROM day_close WHERE day=?', day).note));
 
     // --- ngày 2: đếm sau 18h tính vào khung cuối ---
     addDays(1); day = vnDay();
@@ -2229,8 +2170,8 @@ async function main() {
     atHour(19); await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
     rv = (await S.call('GET', '/review')).data;
     eq('đếm 19h tính vào buổi chiều, đủ khung', rv.exceptions.filter((e) => e.type === 'slot_missing').length, 0);
-    await cron();
-    eq('ngày đủ khung thì tự chốt', !!S.one('SELECT 1 x FROM day_close WHERE day=?', day), true);
+    await chotNgay(S);
+    eq('ngày đủ khung: nhật ký không nói thiếu khung', /thiếu lần đếm/.test(S.one('SELECT note FROM day_close WHERE day=?', day).note), false);
 
     // --- ngày 3: đếm chiều KHÔNG bù cho sáng ---
     addDays(1); day = vnDay();
@@ -2318,29 +2259,19 @@ async function main() {
     eq('tuoi lùi sang ngày khác: tính theo giờ tới', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0, 1]);
     await chot(S, { note: '' });
 
-    // --- giờ làm tới 24h: khung cuối kết thúc sau lúc tự chốt, mà vẫn phải bị đòi ---
-    await S.call('PUT', '/settings', { work_from: 12, work_to: 24, auto_close: 1 });
+    // --- giờ làm tới 24h: khung cuối hết lúc 24h, lần tự chốt 0h05 vẫn phải đòi nó ---
+    await S.call('PUT', '/settings', { work_from: 12, work_to: 24 });
     addDays(1); day = vnDay();
     atHour(13); await bao(S, { khu: 'A', day, items: items({ D16: 1600 }) }, 'An');
     atHour(23, 50);
     eq('23h50 xem tay: khung 18h–24h chưa hết nên chưa thiếu',
       (await S.call('GET', '/review')).data.exceptions.filter((e) => e.type === 'slot_missing').length, 0);
+    const ngay24 = day;
+    addDays(1); atHour(0, 5);
     await cron();
-    eq('tự chốt 23h50 vẫn đòi khung cuối: không chốt', S.one('SELECT 1 x FROM day_close WHERE day=?', day), undefined);
-    ok('nhật ký nói thiếu buổi chiều (18h–24h)',
-      /buổi chiều \(18h–24h\)/.test((S.sql("SELECT detail FROM audit WHERE action='auto_close_skip' ORDER BY id DESC LIMIT 1")[0] || {}).detail || ''));
-    await S.call('POST', '/close', { note: 'thử' });
-
-    // --- yêu cầu đếm lại sau khi chốt: số bị bỏ thì dấu khung cũng bỏ ---
-    await S.call('PUT', '/settings', { work_from: 6, work_to: 18, auto_close: 0 });
-    addDays(1); day = vnDay();
-    atHour(9); await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
-    atHour(14); await bao(S, { khu: 'A', day, items: items({ D16: 1500 }) }, 'An');
-    await chot(S, { note: '' });
-    eq('mở lại & đếm lại được', (await S.call('POST', '/recount-after-close', { khu: 'A' })).status, 200);
-    // lần đếm đã có thật, nên dấu khung giữ; việc "chờ đếm lại" tự chặn chốt trơn
-    eq('dấu khung của khu giữ nguyên', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0, 1]);
-    ok('chờ đếm lại là việc chưa xử lý', (await S.call('GET', '/review')).data.exceptions.some((e) => e.type === 'recount'));
+    ok('lần chốt 0h05 ghi thiếu buổi chiều (18h–24h)',
+      /buổi chiều \(18h–24h\)/.test((S.one('SELECT note FROM day_close WHERE day=?', ngay24) || {}).note || ''));
+    await S.call('PUT', '/settings', { work_from: 6, work_to: 18 });
   }
 
   /* ================= 50. Sổ vay mượn ngoài bãi =================
@@ -2583,66 +2514,6 @@ async function main() {
     eq('sang ngày sau thì thôi báo', (await S.call('GET', '/review')).data.slot.changed, null);
   }
 
-  /* ================= 55. Báo cáo gửi sau khi chốt: nhận hoặc xoá =================
-     Người đếm vẫn gửi được sau giờ chốt; số nằm riêng, không vào tồn. Admin NHẬN = mở lại, duyệt,
-     chốt lại trong một lần bấm; XOÁ = bỏ hẳn, không để lại rác. */
-  {
-    const S = await setup();
-    const day = vnDay();
-    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
-    await bao(S, { khu: 'A', day, items: items({ D16: 100 }) }, 'An');
-    await bao(S, { khu: 'B', day, items: items({ D18: 40 }) }, 'Binh');
-    eq('chốt ngày', (await chot(S, { note: 'chốt chiều' })).status, 200);
-    const base0 = S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v;
-
-    // gửi sau chốt: nằm riêng, tồn chuẩn không đổi, gửi lại thì thay (một khu một dòng)
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 90 }) }, 'An');
-    advance(2000);
-    const g = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 95 }) }, 'An');
-    eq('gửi sau chốt: ok, đánh dấu late', [g.status, g.data.late], [200, true]);
-    eq('một khu một báo cáo chờ', S.one('SELECT COUNT(*) n FROM bao_sau_chot').n, 1);
-    eq('tồn chuẩn chưa đổi', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, base0);
-    eq('người đếm thấy báo cáo của mình đang chờ', (await S.call('GET', '/bootstrap', undefined, 'An')).data.late.map((l) => l.khu_id), ['A']);
-    let rv = (await S.call('GET', '/review')).data;
-    eq('màn Duyệt chỉ bày phi khác số đã chốt', rv.late[0].diffs, [{ phi: 'D16', from: 100, to: 95 }]);
-    // ts = lần gửi admin đang xem (màn Duyệt gửi kèm)
-    const lts = async (khu) => ((await S.call('GET', '/review')).data.late.find((l) => l.khu === khu) || {}).ts;
-    eq('người đếm không nhận được', (await S.call('POST', '/late', { khu: 'A', ts: await lts('A') }, 'An')).status, 403);
-
-    // NHẬN: mở lại, duyệt, tự chốt lại; khu B không đổi, ghi chú cũ giữ
-    const tsA = await lts('A');
-    const r = await S.call('POST', '/late', { khu: 'A', ts: tsA });
-    eq('nhận số: ok và đã chốt lại', [r.status, r.data.reclosed], [200, true]);
-    eq('tồn chuẩn khu A theo số mới', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 95);
-    eq('khu B giữ nguyên', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='B' AND phi_id='D18'", day).v, 40);
-    ok('ghi chú chốt giữ lý do cũ, thêm dòng nhận số', /^chốt chiều · Nhận số /.test(S.one('SELECT note FROM day_close WHERE day=?', day).note));
-    eq('báo cáo chờ đã hết', S.one('SELECT COUNT(*) n FROM bao_sau_chot').n, 0);
-    eq('số đếm ghi tên người gửi, không phải admin', S.one("SELECT u.name FROM counts c JOIN users u ON u.id=c.user_id WHERE c.day=? AND c.khu_id='A' AND c.phi_id='D16'", day).name, 'An');
-    eq('nhận lần hai: báo không còn', (await S.call('POST', '/late', { khu: 'A', ts: tsA })).status, 400);
-
-    // XOÁ: bỏ hẳn, tồn không đổi
-    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D18: 10 }) }, 'Binh');
-    eq('xoá báo cáo: ok', (await S.call('DELETE', '/late/B?ts=' + await lts('B'))).status, 200);
-    eq('xoá xong không còn dòng nào', S.one('SELECT COUNT(*) n FROM bao_sau_chot').n, 0);
-    eq('tồn khu B giữ nguyên', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='B' AND phi_id='D18'", day).v, 40);
-
-    // ngày admin tự mở lại: nhận chỉ ghi + duyệt, không tự chốt; còn treo thì chặn chốt trơn
-    await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D18: 30 }) }, 'Binh');
-    await S.call('POST', '/reopen', { note: 'sửa' });
-    rv = (await S.call('GET', '/review')).data;
-    ok('ngày đang mở: báo cáo sau chốt là việc chưa xử lý', rv.exceptions.some((e) => e.type === 'late' && e.khu === 'B'));
-    const r2 = await S.call('POST', '/late', { khu: 'B', ts: await lts('B') });
-    eq('nhận khi ngày đang mở: không tự chốt', [r2.status, r2.data.reclosed], [200, false]);
-    eq('số khu B đã duyệt', S.one("SELECT duyet_v FROM counts WHERE day=? AND khu_id='B' AND phi_id='D18'", day).duyet_v, 30);
-
-    // báo cáo thường mới hơn thay luôn báo cáo sau chốt còn treo
-    await chot(S, { note: '' });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 80 }) }, 'An');
-    await S.call('POST', '/reopen', { note: 'mở' });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 81 }) }, 'An');
-    eq('báo thường thay báo cáo sau chốt', S.one('SELECT COUNT(*) n FROM bao_sau_chot').n, 0);
-  }
-
   /* ================= 56. Không duyệt nhầm số chưa xem ================= */
   {
     const S = await setup();
@@ -2667,53 +2538,26 @@ async function main() {
     eq('duyệt tất cả khi có khu mới: từ chối', (await S.call('POST', '/review/duyet', { all: true, marks: all })).status, 409);
   }
 
-  /* ================= 57. Đếm lại sau chốt: giữ tồn, không bật lại xung đột cũ ================= */
+  /* ================= 57. Đếm lại: không bật lại xung đột cũ; ngày đã khoá thì không treo cờ ================= */
   {
     const S = await setup();
-    let day = vnDay();
-    await bao(S, { khu: 'A', day, items: items({ D16: 100 }) }, 'An');
-    await chot(S, { note: '' });
-    addDays(1); day = vnDay();
+    const day = vnDay();
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 80 }) }, 'An'); advance(3000);
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 70 }) }, 'Binh');
     await S.call('POST', '/conflict/resolve', { khu: 'A' });
-    await chot(S, { note: '' });
-    const rq = await S.call('POST', '/recount', { khu: 'A' });
-    eq('/recount khi đã chốt: từ chối', [rq.status, rq.data.code], [409, 'closed']);
-    eq('và không treo cờ đếm lại', S.one("SELECT recount FROM khu_report WHERE day=? AND khu_id='A'", day).recount, 0);
-    await S.call('POST', '/recount-after-close', { khu: 'A' });
-    eq('mở lại để đếm lại: tồn khu vẫn là số đã duyệt', (await S.call('GET', '/review')).data.rows.find((r) => r.phi === 'D16').cnt, 70);
+    eq('yêu cầu đếm lại', (await S.call('POST', '/recount', { khu: 'A' })).status, 200);
     advance(3000);
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 75 }) }, 'An');
     const ex = (await S.call('GET', '/review')).data.exceptions.map((e) => e.type);
     eq('báo lại xong: chỉ còn chờ duyệt, xung đột cũ không bật lại', ex, ['khu_pending']);
+    await S.call('POST', '/reset', { mode: 'zero' });
+    const rq = await S.call('POST', '/recount', { khu: 'A' });
+    eq('/recount khi ngày đã khoá (đặt lại số liệu): từ chối', [rq.status, rq.data.code], [409, 'closed']);
   }
 
   /* ================= 58. Không quyết trên số đã cũ: gửi sau chốt, chọn số xung đột ================= */
   {
-    const S = await setup();
     const day = vnDay();
-    await bao(S, { khu: 'A', day, items: items({ D16: 100 }) }, 'An');
-    await chot(S, { note: '' });
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 95 }) }, 'An');
-    const seen = (await S.call('GET', '/review')).data.late[0].ts;
-    advance(2000);
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 10 }) }, 'An');
-    eq('nhận trên số đã cũ: từ chối', (await S.call('POST', '/late', { khu: 'A', ts: seen })).status, 409);
-    eq('xoá trên số đã cũ: từ chối, báo cáo mới còn nguyên', [(await S.call('DELETE', '/late/A?ts=' + seen)).status, S.one('SELECT COUNT(*) n FROM bao_sau_chot').n], [409, 1]);
-    eq('tồn chuẩn chưa đổi', S.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D16'", day).v, 100);
-    eq('nhận không kèm ts: từ chối', (await S.call('POST', '/late', { khu: 'A' })).status, 409);
-
-    // phi bị ẩn sau lúc gửi: không được đưa thép vào phi đã ẩn
-    const S2 = await setup();
-    await bao(S2, { khu: 'A', day, items: items({}) }, 'An');
-    await chot(S2, { note: '' });
-    await S2.call('PUT', '/counts', { khu: 'A', day, items: items({ D36: 50 }) }, 'An');
-    await S2.call('PATCH', '/phi/D36', { active: 0 });
-    const t2 = (await S2.call('GET', '/review')).data.late[0].ts;
-    eq('báo cáo có thép ở phi vừa ẩn: từ chối nhận', (await S2.call('POST', '/late', { khu: 'A', ts: t2 })).status, 400);
-    eq('phi đã ẩn vẫn không có thép', (S2.one("SELECT v FROM baseline WHERE day=? AND khu_id='A' AND phi_id='D36'", day) || { v: 0 }).v, 0);
-
     // chọn số khi hai người báo khác nhau trên bảng so sánh đã cũ
     const S3 = await setup();
     await S3.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 100 }) }, 'An'); advance(2000);
@@ -2726,11 +2570,74 @@ async function main() {
     const mk2 = (await S3.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').mark;
     eq('dấu mới: chọn được', (await S3.call('POST', '/conflict/resolve', { khu: 'A', pick: { D16: 100 }, mark: mk2 })).status, 200);
 
-    // dọn rác: sang ngày, việc 23:50 xoá báo cáo gửi sau chốt còn sót
+    // ngày đặt lại số liệu: không nhận báo cáo sau chốt (admin không nhận được, chỉ thành rác)
+    const S4 = await setup();
+    eq('đặt tồn về 0', (await S4.call('POST', '/reset', { mode: 'zero' })).status, 200);
+    const r4 = await S4.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 5 }) }, 'An');
+    eq('gửi sau mốc đặt lại: từ chối', [r4.status, r4.data.code], [409, 'closed']);
+    eq('máy khách biết hôm nay là mốc đặt lại', (await S4.call('GET', '/bootstrap', undefined, 'An')).data.closedReset, true);
+
+  }
+
+  /* ================= 59. Sổ ngày tự chốt sau nửa đêm =================
+     Không còn chốt tay: lần chạy mỗi giờ chốt ngày cũ nhất chưa chốt nếu ngày đó đã qua. */
+  {
+    const S = await setup();
     const cron = async () => { let pr; await S.worker.scheduled({}, S.env, { waitUntil: (p) => (pr = p) }); await pr; };
-    addDays(1);
+    const soNgayChot = () => S.one('SELECT COUNT(*) n FROM day_close').n;
     await cron();
-    eq('sang ngày: báo cáo sau chốt cũ bị dọn', S.one('SELECT COUNT(*) n FROM bao_sau_chot').n, 0);
+    eq('chưa có số liệu nào: không chốt gì', soNgayChot(), 0);
+
+    // --- lỡ nhiều ngày: mỗi lần chạy bù MỘT ngày, ngày nào riêng ngày đó ---
+    const d0 = vnDay();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
+    await bao(S, { khu: 'A', day: d0, items: items({ D16: 100 }) }, 'An');
+    addDays(3);
+    await cron();
+    eq('lần 1: chốt ngày đầu tiên có số liệu', S.sql('SELECT day FROM day_close').map((x) => x.day), [d0]);
+    await cron(); await cron();
+    eq('lần 2, 3: bù tiếp từng ngày', soNgayChot(), 3);
+    await cron();
+    eq('hôm nay chưa qua: không chốt', soNgayChot(), 3);
+    eq('ngày nào riêng ngày đó, không gộp', S.sql('SELECT DISTINCT span FROM day_close').map((x) => x.span), [1]);
+
+    // --- báo cáo chuyển từ hôm qua: không tính là xung đột, không làm sai chuỗi "giữ nguyên" ---
+    let day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 100, kind: 'giu' } }) }, 'An');
+    eq('giữ nguyên lần 1: chuỗi = 1', S.one("SELECT keep_streak k FROM khu_phi WHERE khu_id='A' AND phi_id='D16'").k, 1);
+    addDays(1); day = vnDay();
+    await cron();
+    ok('báo cáo chưa duyệt đã chuyển sang hôm nay',
+      !!S.one("SELECT 1 x FROM counts WHERE day=? AND khu_id='A' AND phi_id='D16' AND duyet_v IS NULL", day));
+    const g = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 100, kind: 'giu' } }) }, 'An');
+    eq('giữ nguyên lần 2 (hôm nay): chuỗi = 2, không bị trừ vì số chuyển từ hôm qua', [g.status, S.one("SELECT keep_streak k FROM khu_phi WHERE khu_id='A' AND phi_id='D16'").k], [200, 2]);
+    const S2 = await setup();
+    const e0 = vnDay();
+    await S2.call('PUT', '/counts', { khu: 'A', day: e0, items: items({ D16: 50 }) }, 'An');
+    addDays(1);
+    const cron2 = async () => { let pr; await S2.worker.scheduled({}, S2.env, { waitUntil: (p) => (pr = p) }); await pr; };
+    await cron2();
+    const k2 = await S2.call('PUT', '/counts', { khu: 'A', day: vnDay(), items: items({ D16: 40 }) }, 'Binh');
+    eq('người khác báo hôm nay khác số hôm qua: không phải xung đột', k2.data.conflict, false);
+    eq('màn Duyệt cũng không có xung đột', (await S2.call('GET', '/review')).data.exceptions.some((e) => e.type === 'conflict'), false);
+
+    // --- ngày bất thường: vẫn chốt, nhưng không vào mức dùng trung bình ---
+    const S3 = await setup();
+    const f0 = vnDay();
+    await nhap(S3, { khu: 'A', lines: [{ phi: 'D16', qty: 300 }] });
+    await bao(S3, { khu: 'A', day: f0, items: items({ D16: 300 }) }, 'An');
+    await chot(S3);
+    addDays(1); let f = vnDay();
+    await bao(S3, { khu: 'A', day: f, items: items({ D16: 200 }) }, 'An');   // dùng 100: bình thường
+    await chot(S3);
+    eq('ngày bình thường: bt = 0', S3.one('SELECT bt FROM daily_summary WHERE day=? AND phi_id=?', f, 'D16').bt, 0);
+    const rate1 = S3.one("SELECT per_day, days FROM phi_rate WHERE phi_id='D16'");
+    addDays(1); f = vnDay();
+    await bao(S3, { khu: 'A', day: f, items: items({ D16: 400 }) }, 'An');   // thép "tự sinh" 200 cây: dùng âm
+    await chot(S3);
+    eq('ngày dùng âm: vẫn chốt, đánh dấu bất thường', S3.one('SELECT dung, bt FROM daily_summary WHERE day=? AND phi_id=?', f, 'D16'), { dung: -200, bt: 1 });
+    eq('mức dùng trung bình không bị ngày bất thường kéo lệch', S3.one("SELECT per_day, days FROM phi_rate WHERE phi_id='D16'"), rate1);
+    ok('nhật ký chốt nói rõ', /D16 dùng âm/.test(S3.one('SELECT note FROM day_close WHERE day=?', f).note));
   }
 
   /* ================= kết quả ================= */

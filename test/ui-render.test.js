@@ -253,20 +253,16 @@ S.stale = Date.now() - 6e5; one('home+mat-ket-noi'); S.stale = null;
 navigator.onLine = false; one('home+offline'); navigator.onLine = true;
 S.netBad = true; one('home+chua-cap-nhat'); S.netBad = false;
 S.boot.closed = true; S.screen = 'duyet'; S.review.closed = true; one('duyet+da-chot');
-// báo cáo gửi sau khi chốt: thẻ Duyệt có hai nút, Tổng quan nhắc, màn Đếm vẫn gửi được
-S.boot.late = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now() }];
-S.review.late = [{ khu: 'A', name: 'Khu A', uname: 'An', ts: Date.now(), diffs: [{ phi: 'D8', from: 300, to: 280 }] }];
+// ngày deploy mà admin đã lỡ chốt tay: khoá, nhưng KHÔNG có nút hoàn tác đặt lại số liệu
 render();
-{ const h = $app.innerHTML; const thieu = ['gửi báo cáo sau khi chốt', 'NHẬN SỐ', 'data-a="lxoa"', '→ <b>'].filter((x) => !h.includes(x));
-  out.push(['duyet+bao-sau-chot', h.length, thieu.length ? 'BAD:thiếu ' + thieu.join(' | ') : 'ok']); }
-S.screen = 'home'; render();
-{ const h = $app.innerHTML; out.push(['home+bao-sau-chot', h.length, h.includes('Khu A gửi báo cáo sau khi chốt') && h.includes('Chờ nhận') ? 'ok' : 'BAD:Tổng quan không nhắc']); }
-S.boot.late[0].data = JSON.stringify([{ phi: 'D8', v: 777, kind: 'dem', bo: 0, le: 777 }]);
-S.screen = 'dem'; loadDraft(true); render();
-out.push(['dem+nhap-tu-bao-sau-chot', 0, S.draft.cells.D8 && S.draft.cells.D8.v === 777 ? 'ok' : 'BAD:không lấy số đã gửi sau chốt']);
-{ const h = $app.innerHTML; out.push(['dem+bao-sau-chot', h.length, h.includes('GỬI SAU CHỐT') && h.includes('đang chờ admin nhận') && !h.includes('btn full dis" data-a="send"') ? 'ok' : 'BAD:màn Đếm sau chốt']); }
-S.boot.late = []; S.review.late = [];
-S.boot.closed = false; S.review.closed = false;
+{ const h = $app.innerHTML; out.push(['duyet+chot-cu', h.length, h.includes('Sổ hôm nay đã chốt') && !h.includes('HOÀN TÁC') ? 'ok' : 'BAD:ngày chốt kiểu cũ']); }
+S.boot.closedReset = true;
+// ngày bị khoá chỉ còn vì đặt lại số liệu: Duyệt có nút hoàn tác, không có nút chốt
+render();
+{ const h = $app.innerHTML; out.push(['duyet+dat-lai', h.length, h.includes('HOÀN TÁC ĐẶT LẠI SỐ LIỆU') && !h.includes('data-a="close"') ? 'ok' : 'BAD:màn Duyệt ngày đặt lại']); }
+S.screen = 'dem'; render();
+{ const h = $app.innerHTML; out.push(['dem+dat-lai', h.length, h.includes('vừa đặt lại số liệu') && h.includes('btn full dis" data-a="send"') ? 'ok' : 'BAD:màn Báo cáo ngày đặt lại']); }
+S.boot.closed = false; S.boot.closedReset = false; S.review.closed = false;
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
 // các phần mới phải THẬT SỰ hiện ra, không chỉ "không lỗi"
@@ -284,7 +280,13 @@ S.cmp = null;
 // khu thiếu khung đếm: thẻ khu phải nói khung nào thiếu, khung nào đã đếm, và lần gửi muộn
 S.screen = 'duyet'; render();
 { const h = $app.innerHTML; out.push(['duyet+nut-chot', h.length,
-  h.includes('CHỐT NGÀY (KÈM LÝ DO)') && !h.includes('DUYỆT & CHỐT') && h.includes('D8 +1,1 cuộn') ? 'ok' : 'BAD:nút chốt hoặc phiếu chờ của khu']); }
+  !h.includes('data-a="close"') && h.includes('tự chốt sau 0h') && h.includes('D8 +1,1 cuộn') ? 'ok' : 'BAD:không còn nút chốt / phiếu chờ của khu']); }
+// báo cáo chưa duyệt chuyển từ hôm qua: thẻ khu nói rõ ngày đếm, không tính là "đã báo hôm nay"
+{ const kq = Object.keys(S.boot.rm)[0]; const r0 = S.boot.rm[kq]; const giu = r0.ts, xd = r0.conflict; r0.conflict = 0; r0.ts = Date.parse(S.boot.today + 'T17:00:00+07:00') - 864e5;
+  S.screen = 'home'; render(); const h = $app.innerHTML;
+  out.push(['home+bao-tu-hom-qua', h.length, h.includes('báo ngày ') && !daBaoHomNay(kq) ? 'ok' : 'BAD:báo cáo chuyển từ hôm qua']);
+  r0.ts = giu; r0.conflict = xd; S.screen = 'duyet'; }
+{ S.screen = 'home'; render(); const h = $app.innerHTML; out.push(['tab-bao-cao', h.length, />Báo cáo</.test(h) && !/>Đếm</.test(h) ? 'ok' : 'BAD:tab Đếm chưa đổi thành Báo cáo']); S.screen = 'duyet'; render(); }
 { const h = $app.innerHTML; out.push(['duyet+thieu-khung', h.length,
   ['Thiếu lần đếm buổi sáng (6h–12h)', '✗ buổi sáng', '✓ buổi chiều', 'gửi muộn', 'mỗi khu đếm 2 lần/ngày'].every((x) => h.includes(x))
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }

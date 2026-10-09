@@ -1,6 +1,5 @@
 // Báo cáo đếm của khu, và xử lý khi hai người báo khác số.
 import { HttpError, KINDS, bad, fmtDay, json, vnDay } from './core.js';
-import { RATE_SQL } from './db.js';
 import { computeReview } from './review.js';
 import { IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, boWord, bump, closedErr,
   guardStmt, intIn, parseSettings, readJson, unitWord } from './helpers.js';
@@ -59,11 +58,16 @@ export const KHU_X_PHI_ALL = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p`
 
 /* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
    So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
-   "người báo khác nhau" thì hai người báo giống số cũng bị coi là xung đột. */
-export const conflictCond = (day, khu, usr, data) =>
+   "người báo khác nhau" thì hai người báo giống số cũng bị coi là xung đột.
+   t0 = 0h hôm nay (ms): chỉ so với lần báo ĐẾM TRONG HÔM NAY. Báo cáo chưa duyệt của hôm qua được
+   chuyển sang hôm nay (xem carryStmts) — số hôm nay khác số hôm qua là chuyện thường, không phải
+   hai người báo khác nhau. */
+export const conflictCond = (day, khu, usr, data, t0) =>
   `EXISTS (SELECT 1 FROM counts c, json_each(?${data}) j
      WHERE c.day = ?${day} AND c.khu_id = ?${khu} AND c.phi_id = ${J('phi')}
-       AND c.user_id <> ?${usr} AND c.v <> ${J('v')})`;
+       AND c.user_id <> ?${usr} AND c.v <> ${J('v')} AND c.ts >= ?${t0})`;
+// 0h giờ Việt Nam của một ngày, tính bằng mili-giây
+export const dayStart = (day) => Date.parse(day + 'T00:00:00+07:00');
 
 export async function putCounts(req, env, user) {
   const b = await readJson(req);
@@ -77,7 +81,7 @@ export async function putCounts(req, env, user) {
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
   const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR, rcR] = await env.DB.batch([
-    env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT id, bo_size, unit FROM phi WHERE active = 1'),
@@ -107,10 +111,13 @@ export async function putCounts(req, env, user) {
      xung đột — không thì mọi lần đếm lại sau một xung đột đều tự bật ra xung đột mới. */
   const demLai = !!(rcR.results[0] && rcR.results[0].recount);
   const moved = Object.fromEntries(innR.results.map((r) => [r.phi_id, r.q]));
-  /* Ngày đã chốt KHÔNG còn từ chối: báo cáo vẫn được kiểm y như thường, nhưng không ghi vào counts mà
-     nằm riêng ở bao_sau_chot chờ admin nhận (xem lateAccept). Người đếm phát hiện sai sau giờ chốt
-     thì cứ đếm lại và gửi, không phải gọi điện nhờ admin mở ngày. */
-  const closed = closedR.results.length > 0;
+  /* Sổ ngày tự chốt sau nửa đêm, nên ngày HÔM NAY chỉ bị khoá khi admin vừa đặt lại số liệu (mốc
+     kiểm kê khoá luôn hôm đó) — hoặc ngày deploy bản này mà admin đã lỡ chốt tay từ trước. */
+  if (closedR.results.length) {
+    throw new HttpError(409, closedR.results[0].kind === 'reset' ? 'Hôm nay vừa đặt lại số liệu, ngày đã khoá. Ngày mai hãy báo số như thường.'
+      : 'Sổ hôm nay đã chốt. Ngày mai hãy báo số như thường.', 'closed');
+  }
+  const t0 = dayStart(day);
   const k = khuR.results[0];
   if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
   // Khu đã phân công thì chỉ người phụ trách mới đếm được; admin luôn đếm được để xử lý khi có người nghỉ
@@ -179,7 +186,8 @@ export async function putCounts(req, env, user) {
        Chuỗi này vẫn cộng lúc GỬI chứ không lúc duyệt: nó đo hành vi của người đếm (bấm "giữ nguyên"
        bao nhiêu ngày liền), mà cái bấm đó đã xảy ra rồi, duyệt hay không không đổi được. */
     let keep0 = old ? old.keep_streak : 0;
-    if (p && p.kind === 'giu') keep0 = Math.max(0, keep0 - 1);
+    // chỉ lần báo ĐẾM HÔM NAY mới đã cộng chuỗi hôm nay; số chuyển từ hôm qua đã cộng vào ngày hôm qua
+    if (p && p.kind === 'giu' && p.ts >= t0) keep0 = Math.max(0, keep0 - 1);
     if (it.kind === 'giu' && keep0 >= settings.max_keep_streak) {
       throw bad(`Phi ${it.phi} đã giữ nguyên quá ${settings.max_keep_streak} ngày liên tiếp, hãy đếm lại`);
     }
@@ -190,39 +198,25 @@ export async function putCounts(req, env, user) {
          người đếm đi tìm một chuyến xe không tồn tại. */
       throw bad(`Phi ${it.phi} có thay đổi tồn (nhập, chuyển khu hoặc điều chỉnh) ở khu này từ lần chốt trước, không giữ nguyên được, hãy đếm thực tế`);
     }
-    if (!demLai && p && p.user_id !== user.id && p.v !== it.v) conflict = 1;
+    if (!demLai && p && p.ts >= t0 && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
     const keep = it.kind === 'giu' ? keep0 + 1 : 0;
     return { ...it, prev: p ? p.v : null, keep };
   });
   const data = JSON.stringify(rows);
 
-  if (closed) {
-    // gửi lại thì THAY báo cáo đang chờ (mỗi khu mỗi ngày một dòng); dòng của ngày trước là rác, dọn luôn
-    await batchGuarded(env, guardStmt(env, 'NOT ' + IS_CLOSED, day), [
-      env.DB.prepare('DELETE FROM bao_sau_chot WHERE day < ?').bind(day),
-      env.DB.prepare(
-        `INSERT INTO bao_sau_chot (day, khu_id, user_id, ts, at, data) VALUES (?,?,?,?,?,?)
-         ON CONFLICT(day, khu_id) DO UPDATE SET user_id = excluded.user_id, ts = excluded.ts, at = excluded.at, data = excluded.data`
-      ).bind(day, khuId, user.id, ts, at, data),
-      auditStmt(env, user, 'count_late', { khu: khuId, changes: changes.slice(0, 30) }),
-      bump(env),
-    ], new HttpError(409, 'Ngày vừa được mở lại, hãy bấm gửi lại báo cáo', 'changed'));
-    return json({ ok: true, late: true });
-  }
-
   const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     // chạy TRƯỚC khi ghi counts: cờ này nói "lần gửi NÀY lệch với người khác", để trả lời người gửi
-    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4)} AND NOT EXISTS (SELECT 1 FROM khu_report WHERE day = ?1 AND khu_id = ?2 AND recount = 1) conflict`).bind(day, khuId, user.id, data),
+    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4, 5)} AND NOT EXISTS (SELECT 1 FROM khu_report WHERE day = ?1 AND khu_id = ?2 AND recount = 1) conflict`).bind(day, khuId, user.id, data, t0),
     env.DB.prepare(
       `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
-       SELECT ?1, ?2, ?3, ?4, CASE WHEN ${conflictCond(1, 2, 3, 5)} THEN 1 ELSE 0 END, 0, 0
+       SELECT ?1, ?2, ?3, ?4, CASE WHEN ${conflictCond(1, 2, 3, 5, 6)} THEN 1 ELSE 0 END, 0, 0
        WHERE 1
        ON CONFLICT(day, khu_id) DO UPDATE SET user_id = excluded.user_id, ts = excluded.ts,
          conflict = CASE WHEN khu_report.recount = 1 THEN 0 WHEN excluded.conflict = 1 THEN 1 ELSE khu_report.conflict END,
          resolved = CASE WHEN khu_report.recount = 1 THEN 0 WHEN excluded.conflict = 1 THEN 0 ELSE khu_report.resolved END,
          recount = 0`
-    ).bind(day, khuId, user.id, ts, data),
+    ).bind(day, khuId, user.id, ts, data, t0),
     /* Ghi LẦN BÁO MỚI, cố ý KHÔNG chạm tới duyet_*: số mới ở trạng thái chờ duyệt, còn số đã
        duyệt trước đó vẫn nguyên và vẫn là số mà tồn đang dùng. Ô thành chờ duyệt một cách tự
        nhiên vì ts vừa nhảy lên lớn hơn duyet_ts — không cần cờ, không cần dấu số liệu. */
@@ -242,8 +236,6 @@ export async function putCounts(req, env, user) {
        SELECT ?1, ${J('phi')}, 1, 0, ${J('keep')} FROM json_each(?2) j WHERE 1
        ON CONFLICT(khu_id, phi_id) DO UPDATE SET keep_streak = excluded.keep_streak`
     ).bind(khuId, data),
-    // báo cáo thường mới hơn thay luôn báo cáo gửi sau chốt còn treo của khu (ngày đã được mở lại)
-    env.DB.prepare('DELETE FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khuId),
     auditStmt(env, user, 'count', { khu: khuId, n: clean.length, changes: changes.slice(0, 30), conflict: !!conflict }),
     bump(env),
   ], closedErr());
@@ -352,34 +344,4 @@ export async function submissionsView(env, url) {
     s.vals[r.phi_id] = r.v;
   }
   return json({ khu, subs: subs.map((s) => ({ uname: s.uname, ts: s.ts, vals: s.vals })) });
-}
-
-/* Mở lại ngày và yêu cầu một khu đếm lại, sau khi đã chốt.
-   KHÔNG xoá số đếm của khu: số đã duyệt vẫn là tồn của khu cho tới khi số mới được duyệt — đúng quy
-   tắc "tồn = số mới nhất ĐÃ DUYỆT". Bản cũ xoá số nên tồn khu lùi về số hôm qua suốt lúc chờ đếm
-   lại, và nếu khu không đếm lại kịp thì lần chốt sau lấy luôn số hôm qua làm tồn chuẩn.
-   Xung đột cũ của khu cũng xoá (conflict = 0): admin đã chọn đường đếm lại, giữ cờ thì lần báo mới
-   bị so với số của người kia mà có khi đã sai, xung đột đã xử lý bật lại. */
-export async function recountAfterClose(req, env, user) {
-  const b = await readJson(req);
-  const khu = String(b.khu || '');
-  const day = vnDay();
-  const [closedR, repR] = await env.DB.batch([
-    env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('SELECT 1 x FROM khu_report WHERE day = ? AND khu_id = ?').bind(day, khu),
-  ]);
-  if (!closedR.results[0]) throw bad('Ngày chưa chốt, dùng nút đếm lại thông thường');
-  // mốc kiểm kê lại phải mở bằng reopenDay (dựng lại từ ảnh chụp), bỏ mốc chốt trơn là mất số gốc
-  if (closedR.results[0].kind === 'reset') throw bad('Hôm nay là ngày đặt lại số liệu: hãy dùng Mở lại ngày ở màn Duyệt');
-  if (!repR.results[0]) throw bad('Khu này chưa có báo cáo');
-  await batchGuarded(env, guardStmt(env, 'NOT ' + IS_CLOSED, day), [
-    env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
-    env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
-    env.DB.prepare(RATE_SQL).bind(day),
-    env.DB.prepare('UPDATE khu_report SET recount = 1, conflict = 0, resolved = 0 WHERE day = ? AND khu_id = ?').bind(day, khu),
-    auditStmt(env, user, 'recount_after_close', { day, khu }),
-    bump(env),
-  ], new HttpError(409, 'Ngày vừa được mở lại', 'changed'));
-  return json({ ok: true });
 }

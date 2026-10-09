@@ -6,10 +6,10 @@ import { migrate } from './db.js';
 import { auditStmt, auth, bump, readJson } from './helpers.js';
 import { changePin, login, logout, recoverAdmin, setup } from './auth.js';
 import { bootstrap } from './bootstrap.js';
-import { conflictResolve, conflictView, putCounts, recountAfterClose, submissionsView } from './counts.js';
+import { conflictResolve, conflictView, putCounts, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansView, postLoan, voidLoan } from './loans.js';
-import { closeDay, computeReview, lateAccept, lateDelete, nightly, reopenDay, reviewDuyet } from './review.js';
+import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
   settingsUpdate, userAction } from './admin.js';
@@ -97,11 +97,8 @@ async function handle(req, env, url) {
   need(['admin']);
   if (r0 === 'review' && method === 'GET') return json(await computeReview(env, vnDay()));
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
-  if (r0 === 'close' && method === 'POST') return closeDay(req, env, user);
+  // không còn chốt tay (sổ tự chốt sau nửa đêm, xem hourly); "mở lại" chỉ còn để hoàn tác đặt lại số liệu
   if (r0 === 'reopen' && method === 'POST') return reopenDay(req, env, user);
-  // báo cáo khu gửi sau khi chốt: nhận (mở lại, duyệt, chốt lại) hoặc xoá hẳn
-  if (r0 === 'late' && method === 'POST' && p.length === 1) return lateAccept(req, env, user);
-  if (r0 === 'late' && method === 'DELETE' && p.length === 2) return lateDelete(env, user, p[1], url.searchParams.get('ts'));
   // đặt lại số liệu thép: chỉ admin đầu tiên (chốt chặn thật nằm trong resetData)
   if (r0 === 'reset' && method === 'POST') return resetData(req, env, user);
   // sao lưu / nạp lại: chốt chặn thật nằm trong backupData / restoreData
@@ -124,7 +121,6 @@ async function handle(req, env, url) {
   if (r0 === 'conflict' && !p[1] && method === 'GET') return conflictView(env, url);
   if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') return conflictResolve(req, env, user);
   if (r0 === 'submissions' && method === 'GET') return submissionsView(env, url);
-  if (r0 === 'recount-after-close' && method === 'POST') return recountAfterClose(req, env, user);
   if (r0 === 'audit' && method === 'GET') return auditList(env, url);
   if (r0 === 'export' && method === 'GET') return exportCsv(env, url);
   if (r0 === 'users') {
@@ -159,6 +155,6 @@ export default {
     }
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(ensureSchema(env).then(() => nightly(env)).catch((e) => console.error(e && e.stack ? e.stack : e)));
+    ctx.waitUntil(ensureSchema(env).then(() => hourly(env)).catch((e) => console.error(e && e.stack ? e.stack : e)));
   },
 };

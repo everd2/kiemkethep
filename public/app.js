@@ -425,17 +425,17 @@ function slotMissing(kid) {
   return b.slotDefs.filter((d) => d.to <= h && !done.has(d.i));
 }
 const slotTxt = (defs) => defs.map((d) => d.label).join(', ');
-// báo cáo khu gửi SAU KHI ngày đã chốt, đang chờ admin nhận (xem lateAccept ở server)
-const lateOf = (kid) => (S.boot.late || []).find((l) => l.khu_id === kid) || null;
+/* Báo cáo chưa duyệt lúc tự chốt sổ được CHUYỂN sang hôm nay, giữ nguyên giờ đếm (carryStmts ở server).
+   Nó vẫn nằm trong khu_report hôm nay, nên phải nhận ra để không nói "đã báo hôm nay". */
+const vnDayOf = (ms) => new Date(ms + 7 * 3600e3).toISOString().slice(0, 10);
+const tuHomQua = (r) => !!(r && r.ts && vnDayOf(r.ts) !== S.boot.today);
+const daBaoHomNay = (kid) => { const r = S.boot.rm[kid]; return !!r && !tuHomQua(r); };
 function khuStatus(k) {
-  const lt = lateOf(k.id);
-  if (lt) return { cls: 'warn', label: 'Chờ nhận', who: lt.uname + ' · ' + hhmm(lt.ts) + ' · gửi sau chốt, chờ admin nhận' };
   const r = S.boot.rm[k.id];
   if (!r) return { cls: 'idle', label: 'Chưa báo', who: 'Chưa có ai báo' };
-  const who = r.uname + ' · ' + hhmm(r.ts);
-  /* Ngày đã chốt mà số chưa duyệt: không ai duyệt được nữa, số này KHÔNG vào tồn. Để nhãn "Chờ duyệt"
-     là hứa một việc sẽ không xảy ra — người đếm tưởng chỉ cần đợi. */
-  if (S.boot.closed && khuWaiting(k.id)) return { cls: 'warn', label: 'Không duyệt', who: who + ' · ngày đã chốt, số này không vào tồn' };
+  const who = r.uname + ' · ' + (tuHomQua(r) ? 'báo ngày ' + fmtDay(vnDayOf(r.ts)).slice(0, 5) + ' ' : '') + hhmm(r.ts);
+  /* Ngày hôm nay chỉ bị khoá khi admin đặt lại số liệu: số chưa duyệt lúc đó không vào tồn nữa. */
+  if (S.boot.closed && khuWaiting(k.id)) return { cls: 'warn', label: 'Không duyệt', who: who + ' · ngày đã khoá, số này không vào tồn' };
   if (r.conflict && !r.resolved) return { cls: 'warn', label: 'Cần xem', who: '2 người báo số khác nhau' };
   if (r.recount) return { cls: 'warn', label: 'Đếm lại', who: 'Admin yêu cầu đếm lại' };
   // thiếu khung đếm không được mang nhãn xanh "Đã duyệt" như đã xong việc trong ngày
@@ -446,7 +446,7 @@ function khuStatus(k) {
   if (khuWaiting(k.id)) return { cls: 'warn', label: 'Chờ duyệt', who: who + ' · chờ admin duyệt' };
   return { cls: 'ok', label: 'Đã duyệt', who };
 }
-const reportedCount = () => S.boot.khuAct.filter((k) => S.boot.rm[k.id]).length;
+const reportedCount = () => S.boot.khuAct.filter((k) => daBaoHomNay(k.id)).length;
 
 /* ===================== NHÁP & GỬI BÁO CÁO ===================== */
 /* Nháp tách theo NGƯỜI ĐĂNG NHẬP, không chỉ theo ngày + khu. Nhiều người dùng chung một điện thoại
@@ -465,13 +465,7 @@ function loadDraft(fresh) {
   if (d && d.cells && rep && rep.user_id !== S.me.id && rep.ts > (d.baseTs || 0) && Object.keys(d.cells).length) S.draftWarn = { uname: rep.uname, ts: rep.ts };
   if (!d || !d.cells) {
     d = { cells: {}, baseTs: rep ? rep.ts : 0 };
-    /* Khu có báo cáo gửi sau chốt đang chờ: màn Đếm phải bày đúng số đã gửi đó (dòng báo trên màn
-       nói "đang chờ admin nhận"), không phải số cũ đã chốt — gửi lại là sửa tiếp từ số mình vừa gửi. */
-    const lt = S.boot.closed ? lateOf(S.khu) : null;
-    let lrows = null;
-    try { lrows = lt && lt.data ? JSON.parse(lt.data) : null; } catch (e) { lrows = null; }
-    if (Array.isArray(lrows)) lrows.forEach((c) => { d.cells[c.phi] = { v: c.v, kind: c.kind, bo: c.bo == null ? undefined : c.bo, le: c.le == null ? undefined : c.le }; });
-    else for (const c of S.boot.counts) {
+    for (const c of S.boot.counts) {
       if (c.khu_id === S.khu) d.cells[c.phi_id] = { v: c.v, kind: c.kind, bo: c.bo == null ? undefined : c.bo, le: c.le == null ? undefined : c.le };
     }
   }
@@ -520,7 +514,7 @@ async function flushPending() {
   if (!q.some((j) => !j.err && ofMe(j))) return;
   flushing = true;
   const rest = [];
-  let sent = 0, failed = 0, late = 0;
+  let sent = 0, failed = 0;
   try {
     for (const job of q) {
       // báo cáo của người khác: để nguyên, chờ chính người đó đăng nhập lại trên máy này
@@ -529,7 +523,7 @@ async function flushPending() {
       /* tuoi = đã trôi bao lâu từ lúc bấm gửi lần đầu, để khung giờ tính theo buổi khu ra bãi đếm chứ
          không theo lúc có mạng lại. Gửi THỜI GIAN ĐÃ TRÔI chứ không gửi giờ máy: máy để sai giờ thì
          hiệu hai mốc vẫn đúng, server tự lấy giờ của nó trừ đi. */
-      try { const rr = await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items, tuoi: Math.max(0, Date.now() - job.ts) }); sent++; if (rr && rr.late) late++; }
+      try { await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items, tuoi: Math.max(0, Date.now() - job.ts) }); sent++; }
       catch (e) { if (e.retry) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
     }
   } finally {
@@ -539,7 +533,7 @@ async function flushPending() {
   }
   if (sent || failed) {
     try { await loadBoot(); } catch (e) { /* bỏ qua */ }
-    if (sent) say('Đã tự gửi ' + sent + ' báo cáo lưu khi mất mạng.' + (late ? ' Ngày đã chốt nên ' + (late === sent ? '' : late + ' báo cáo ') + 'chờ admin nhận.' : '') + (failed ? ' Có báo cáo không gửi được, xem ở Tổng quan.' : ''), !!failed);
+    if (sent) say('Đã tự gửi ' + sent + ' báo cáo lưu khi mất mạng.' + (failed ? ' Có báo cáo không gửi được, xem ở Tổng quan.' : ''), !!failed);
     else say('Có báo cáo lưu khi mất mạng không gửi được, xem ở Tổng quan.', true);
     render();
   }
@@ -569,8 +563,7 @@ async function sendCountsInner() {
     try { localStorage.removeItem(draftKey()); } catch (e) { /* bỏ qua */ }
     await loadBoot();
     S.sel = null; S.screen = 'home';
-    say(r.late ? 'Đã gửi báo cáo ' + khuName + '. Ngày đã chốt nên báo cáo chờ admin nhận.'
-      : 'Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, admin sẽ xem.' : '. Cảm ơn bạn!'));
+    say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, admin sẽ xem.' : '. Cảm ơn bạn!'));
   } catch (e) {
     if (e.retry) { queuePending(job); say('Chưa gửi được (' + e.message + '). Đã lưu báo cáo, sẽ tự gửi lại.', true); }
     else if (e.code === 'stale_day') {
@@ -637,7 +630,7 @@ function vHome() {
   /* Khu chưa báo: admin theo dõi cả bãi nên thấy mọi khu; người đếm và thủ kho chỉ thấy khu mình
      đếm được — khu người khác phụ trách thì họ không làm gì được, nhắc chỉ thành nhiễu.
      Dòng "Tạm tính: N khu chưa báo" ở đầu trang vẫn tính cả bãi, vì đó là nói về con số tồn. */
-  const miss = b.khuAct.filter((k) => !b.rm[k.id]);
+  const miss = b.khuAct.filter((k) => !daBaoHomNay(k.id));
   const missMine = isAdmin() ? miss : miss.filter((k) => canCount(k.id));
   if (missMine.length) alerts.push({ bad: false, t: (missMine.length === 1 ? missMine[0].name : missMine.length + ' khu') + ' chưa báo', s: missMine.map((k) => k.name).join(', '), to: 'dem' });
   b.reports.forEach((r) => {
@@ -648,14 +641,6 @@ function vHome() {
   });
   /* Việc chờ duyệt phải hiện ngay ở Tổng quan, cho cả hai phía: admin biết còn phải duyệt, còn
      người đếm biết báo cáo của mình đã tới chứ chưa được tính vào tồn. */
-  /* Báo cáo gửi sau khi chốt: admin là người duy nhất xử lý được (nhận hoặc xoá). Người đếm chỉ thấy
-     báo cáo của khu mình, để biết nó đã tới và đang chờ. */
-  (b.late || []).forEach((l) => {
-    const k = b.khuBy[l.khu_id];
-    if (!k) return;
-    if (isAdmin()) alerts.push({ bad: true, t: k.name + ' gửi báo cáo sau khi chốt', s: l.uname + ' · ' + hhmm(l.ts) + ' · Vào Duyệt để nhận hoặc xoá', to: 'duyet' });
-    else if (canCount(k.id)) alerts.push({ bad: false, t: k.name + ': báo cáo gửi sau chốt chờ admin nhận', s: 'Admin nhận thì số này thay số đã chốt, không nhận thì báo cáo bị xoá', to: null });
-  });
   // ngày đã chốt thì không còn gì "chờ duyệt" nữa: nhãn khu đã nói số đó không vào tồn
   const cho = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id));
   if (cho.length) {
@@ -667,13 +652,13 @@ function vHome() {
     });
   }
   /* Admin bắt mỗi khu đếm nhiều lần/ngày (Cài đặt → Quy tắc). Đây là việc BẮT BUỘC: khung đã qua
-     mà khu chưa đếm thì màn Duyệt tính là việc chưa xử lý, chốt phải ghi lý do, đêm đó không tự
+     mà khu chưa đếm thì màn Duyệt tính là việc chưa xử lý và ghi vào nhật ký lúc sổ tự chốt, không
      chốt — nên thẻ màu đỏ. Chỉ nhắc khu ĐÃ báo hôm nay: khu chưa báo gì thì thẻ "chưa báo" ở trên
      đã nói, nhắc thêm nữa thành hai thẻ trùng ý cho cùng một khu. Nhiều khu thì gom một thẻ. */
-  /* Khung ĐÃ HẾT mà thiếu: chỉ admin có việc để làm (ghi lý do khi chốt), nên chỉ admin thấy. Người
+  /* Khung ĐÃ HẾT mà thiếu: chỉ admin cần biết (để nhắc khu, việc thiếu ghi vào nhật ký chốt). Người
      đếm không bù được khung đã qua — thẻ đỏ không bấm được chỉ làm họ quen bỏ qua cảnh báo. */
   const thieuSlot = !isAdmin() ? [] : b.khuAct.filter((k) => b.rm[k.id]).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
-  const slotHint = isAdmin() ? 'Lần đếm sau không bù được. Muốn chốt ngày phải ghi lý do ở màn Duyệt' : 'Lần đếm sau không bù được, admin sẽ phải ghi lý do khi chốt';
+  const slotHint = 'Lần đếm sau không bù được. Việc thiếu được ghi vào nhật ký lúc sổ tự chốt';
   if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: isAdmin() ? 'duyet' : null });
   else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu lần đếm ' + slotTxt(x.m), s: slotHint, to: isAdmin() ? 'duyet' : null }));
   /* Khung ĐANG DIỄN RA mà khu chưa đếm: đây mới là lời nhắc có ích — còn kịp đếm. Chỉ khu đã báo
@@ -734,7 +719,7 @@ function vHome() {
   const maxBarKg = Math.max(1, ...b.phiAct.map((p) => T.perPhi[p.id] * p.kg_per_cay), ...b.phiAct.map((p) => p.min_stock * p.kg_per_cay));
   const khuCards = b.khuAct.map((k) => {
     const st = khuStatus(k), tk = T.perKhu[k.id];
-    const unrep = !b.rm[k.id];
+    const unrep = !daBaoHomNay(k.id);
     const open = !!S.khuMo[k.id];
     return `<div class="card col gap8" style="${st.cls === 'warn' ? 'background:var(--warnbg);border:2px solid var(--warn)' : ''}">
       <button class="col gap8" style="background:transparent;border:0;padding:0;width:100%;text-align:left;align-items:stretch" aria-expanded="${open}" data-a="khumo" data-k="${esc(k.id)}">
@@ -765,7 +750,7 @@ function vHome() {
       <div class="sm" style="color:#D6E0EE">${note}</div>
       <div class="mini"><div><span>Nhập hôm nay</span><b>${fmtT(T.inKg)} tấn</b></div><div><span>${usedLabel}</span><b>${usedTxt}</b></div></div>
     </div>
-    ${b.closed ? '<div class="toast" style="margin-top:12px">Ngày hôm nay đã được admin chốt.</div>' : ''}
+    ${b.closed ? `<div class="toast" style="margin-top:12px">${b.closedReset ? 'Hôm nay admin vừa đặt lại số liệu, ngày đã khoá.' : 'Sổ hôm nay đã chốt.'}</div>` : ''}
     <div class="pad col gap12">
       ${pendingHtml()}
       ${alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => {
@@ -809,7 +794,7 @@ function khuChiTiet(k) {
   const tongKg = rows.reduce((a, r) => a + r.v * r.p.kg_per_cay, 0);
   // đếm/báo cáo ngay từ đây: chỉ khi người này đếm được khu này và ngày chưa chốt
   const nutDem = !b.closed && canCount(k.id)
-    ? `<button class="btn s pri full" data-a="nav" data-s="dem" data-k="${esc(k.id)}">${b.rm[k.id] ? 'ĐẾM LẠI / BÁO CÁO ' : 'ĐẾM / BÁO CÁO '}${esc(cut(k.name, 18).toUpperCase())}</button>` : '';
+    ? `<button class="btn s pri full" data-a="nav" data-s="dem" data-k="${esc(k.id)}">${daBaoHomNay(k.id) ? 'BÁO CÁO LẠI ' : 'BÁO CÁO '}${esc(cut(k.name, 18).toUpperCase())}</button>` : '';
   const dong = (r) => {
     const lech = r.moi === null ? null : r.moi - r.v;
     return `<div class="li" style="gap:6px${r.v || r.moi ? '' : ';color:var(--mut)'}"><b style="width:44px">${r.p.id}</b>
@@ -847,15 +832,15 @@ function vKhu() {
   const body = mine.length
     ? `<div class="grid2">${cards}</div>${hidden ? `<div class="sm muted" style="padding:10px 2px;line-height:1.4">Còn ${hidden} khu do người khác phụ trách nên không hiện ở đây.</div>` : ''}`
     : `<div class="card warn col gap6"><b style="font-size:18px">Chưa được giao khu nào</b><span class="sm" style="line-height:1.4">Admin cần vào Thêm → Cài đặt → Khu bãi để gán bạn phụ trách khu. Khi đó khu sẽ hiện ở màn này.</span></div>`;
-  return `${head('Chọn khu để đếm', sub, S.khu ? 'dem' : 'home')}
+  return `${head('Chọn khu để báo cáo', sub, S.khu ? 'dem' : 'home')}
     <div class="f1 scroll pad" id="body">${body}</div>`;
 }
 
 /* --- Bảng đếm toàn bãi --- */
 function demView() {
   const b = S.boot, k = S.khu, kname = b.khuBy[k].name;
-  if (!b.phiAct.length) return `${head('Đếm ' + esc(kname), '', 'home')}<div class="pad muted">Chưa có phi thép nào trong hệ thống. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
-  if (!canCount(k)) return `${head('Đếm ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Admin đã giao khu này cho người khác. Bấm "Đổi khu" để chọn khu của bạn, hoặc nhờ admin gán quyền.</span><button class="btn s full" data-a="nav" data-s="khu">Đổi khu</button></div></div>`;
+  if (!b.phiAct.length) return `${head('Báo cáo ' + esc(kname), '', 'home')}<div class="pad muted">Chưa có phi thép nào trong hệ thống. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
+  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Admin đã giao khu này cho người khác. Bấm "Đổi khu" để chọn khu của bạn, hoặc nhờ admin gán quyền.</span><button class="btn s full" data-a="nav" data-s="khu">Đổi khu</button></div></div>`;
   const zk =S.zoomK && S.zoomK !== k ? S.zoomK : null;
   const others = b.khuAct.filter((x) => x.id !== k);
   const shown = zk ? others.filter((x) => x.id === zk) : others;
@@ -926,7 +911,7 @@ function demView() {
   const tots = shown.map((x) => `<div class="oc" style="${cwStyle};font-size:${zk ? 16 : 12}px;font-weight:700;height:40px;white-space:nowrap">${fmtT(colTotKg[x.id])}</div>`).join('');
 
   const rep0 = b.rm[k];
-  const already = rep0 && rep0.user_id !== S.me.id ? rep0 : null;
+  const already = rep0 && !tuHomQua(rep0) && rep0.user_id !== S.me.id ? rep0 : null;
   const keepable = pend.filter((p) => !keepBlock(k, p.id));
   const empty = list.length === 0; // không còn phi nào đang bật trong hệ thống
   const keepTxt = empty ? 'Chưa có phi thép nào'
@@ -960,10 +945,10 @@ function demView() {
   }
   const pendingNote = readPending().filter(ofMe).length;
 
-  return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Đếm ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
+  return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Báo cáo ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
     ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}
-    ${b.closed ? `<div class="toast">${lateOf(k) ? `Báo cáo gửi sau chốt lúc ${hhmm(lateOf(k).ts)} đang chờ admin nhận. Gửi lại sẽ thay báo cáo đó.` : 'Ngày đã chốt. Vẫn gửi được: báo cáo chờ admin nhận, không nhận thì bị xoá.'}</div>` : ''}
+    ${b.closed ? `<div class="toast err">${b.closedReset ? 'Hôm nay vừa đặt lại số liệu, ngày đã khoá. Ngày mai hãy báo số như thường.' : 'Sổ hôm nay đã chốt. Ngày mai hãy báo số như thường.'}</div>` : ''}
     ${S.sel ? '' : `<div class="col gap6 tbar" style="padding:6px 12px 2px">${already ? `<div class="card sm" style="line-height:1.4"><b>${esc(already.uname)} đã báo ${esc(kname)} lúc ${hhmm(already.ts)}.</b> Bạn đang đếm lại: chỉ gửi khi vừa đếm thực tế, số khác với người trước sẽ chuyển admin xem.</div>` : ''}${rep0 && khuWaiting(k) && !b.closed ? `<div class="card warn sm" style="line-height:1.4"><b>Báo cáo ${esc(kname)} lúc ${hhmm(rep0.ts)} đang chờ admin duyệt.</b> Số dưới đây là số đã gửi; nó chỉ vào tồn bãi sau khi được duyệt. Gửi lại sẽ thay số đang chờ.</div>` : ''}<button class="btn s full ${pend.length === 0 || !keepable.length ? 'dis' : ''}" data-a="keepall">${keepTxt}</button>
       ${S.draftWarn ? `<div class="card warn col gap6"><b>${esc(S.draftWarn.uname)} đã gửi báo cáo khu này lúc ${hhmm(S.draftWarn.ts)}, sau khi bạn bắt đầu nháp.</b><div class="row gap6"><button class="btn s f1" data-a="draftnew">Dùng số mới</button><button class="btn s f1" data-a="draftkeep">Giữ nháp của tôi</button></div></div>` : ''}
       <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="legend">${S.legend ? 'Ẩn chú thích' : 'ⓘ Chú thích màu'}</button>
@@ -973,7 +958,7 @@ function demView() {
       <div class="mxl"><div class="mxh"><div class="mxp" style="font-size:13px">ɸ</div><div class="mxo" style="font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div class="mxv" style="font-size:13px">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div class="mxp" style="font-size:12px;line-height:1.1">Tổng<br>(tấn)</div><div class="mxo" style="font-weight:700;color:var(--pri)">${fmtT(T.ownKg)}</div><div class="mxv">${fmtT(T.allKg)}</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
-    ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend ? 'pri' : 'dis'}" data-a="send">${!canSend ? 'CHƯA CÓ PHI THÉP NÀO' : b.closed ? 'GỬI SAU CHỐT · ' + esc(cut(kname, 14).toUpperCase()) : 'GỬI BÁO CÁO ' + esc(cut(kname, 20).toUpperCase())}</button></div>`}`;
+    ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(cut(kname, 20).toUpperCase()) : 'CHƯA CÓ PHI THÉP NÀO'}</button></div>`}`;
 }
 
 /* --- Nhập kho / chuyển khu --- */
@@ -1255,7 +1240,6 @@ function vDuyet() {
   if (!R) return `${head('Duyệt số liệu', '', 'home')}${panelWait('duyet')}`;
   const badRows = R.rows.filter((r) => r.neg || r.high), normal = R.rows.filter((r) => !(r.neg || r.high));
   const kname = (id) => (b.khuBy[id] ? b.khuBy[id].name : id);
-  const recountA = R.closed ? 'recountclose' : 'recount';
   const khus = R.khus || [];
   const phieu = R.phieu || [];
   const phieuBy = Object.fromEntries(phieu.map((v) => [v.key, v]));
@@ -1295,16 +1279,6 @@ function vDuyet() {
     <div class="sm muted" style="line-height:1.4">Phiếu chỉ tính vào tồn kể từ ngày được duyệt. Duyệt khu cũng duyệt luôn phiếu của khu đó.</div>
     ${phieu.map(phieuCard).join('')}</div>`;
 
-  /* --- Báo cáo gửi sau khi chốt: một thẻ, hai nút. Chỉ bày phi KHÁC số đang làm tồn --- */
-  const lateSec = (R.late || []).map((l) => {
-    const ds = l.diffs.map((x) => `${x.phi} ${fmtQs(x.from, b.phiBy[x.phi])} → <b>${fmtQs(x.to, b.phiBy[x.phi])}</b>`).join(' · ');
-    return `<div class="card bad col gap8"><div class="col" style="gap:2px"><b style="font-size:17px">${esc(l.name)} gửi báo cáo sau khi chốt</b>
-      <span class="sm muted">${esc(l.uname)} · ${hhmm(l.ts)}</span>
-      <span style="font-size:16px;line-height:1.4">${ds || 'Không khác số đang làm tồn.'}</span>
-      <span class="sm" style="line-height:1.4">${R.closed ? 'Nhận: mở lại ngày, duyệt số này rồi tự chốt lại.' : 'Nhận: số này được duyệt vào tồn.'} Xoá: bỏ hẳn báo cáo, số cũ giữ nguyên.</span></div>
-      <div class="row gap6"><button class="btn s ok f1" data-a="lnhan" data-k="${esc(l.khu)}">NHẬN SỐ</button><button class="btn s bad f1" data-a="lxoa" data-k="${esc(l.khu)}">XOÁ</button></div></div>`;
-  }).join('');
-
   /* --- Việc cần xử lý riêng: xung đột hai người báo, và chờ đếm lại --- */
   const items = R.exceptions.filter((e) => e.type === 'conflict' || e.type === 'recount').map((e) => {
     if (e.type === 'recount') return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)} đang chờ đếm lại</b><span class="sm">Đã yêu cầu, chưa có số mới.</span></div>`;
@@ -1318,10 +1292,10 @@ function vDuyet() {
         const pickB = C.pick[x.phi] !== 'a';
         return `<div class="li"><b style="width:44px">${x.phi}</b><button class="chip s f1 ${pickB ? '' : 'on'}" data-a="cpick" data-p="${x.phi}" data-v="a">${x.a == null ? '—' : fmtQs(x.a, x.phi)}</button><button class="chip s f1 ${pickB ? 'on' : ''}" data-a="cpick" data-p="${x.phi}" data-v="b">${x.b == null ? '—' : fmtQs(x.b, x.phi)}</button></div>`;
       }).join('')}</div><span class="sm">Chạm số đúng cho từng phi (đang chọn: ô đậm), rồi lưu. Chọn số xong vẫn phải bấm Duyệt khu.</span>
-      <div class="row gap8"><button class="btn s warnb f1" data-a="cresolve" data-k="${esc(e.khu)}">LƯU LỰA CHỌN</button><button class="btn s warnb f1" data-a="${recountA}" data-k="${esc(e.khu)}">ĐẾM LẠI</button></div>`;
+      <div class="row gap8"><button class="btn s warnb f1" data-a="cresolve" data-k="${esc(e.khu)}">LƯU LỰA CHỌN</button><button class="btn s warnb f1" data-a="recount" data-k="${esc(e.khu)}">ĐẾM LẠI</button></div>`;
     } else if (C && C.data) cmp = '<span class="sm">Không tìm thấy khác biệt trong lịch sử, có thể giữ số báo sau.</span>';
     return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)}: 2 người báo số khác nhau</b><span class="sm">Số đang chờ duyệt là của ${esc(r ? r.uname : '')} (báo sau). Dùng "Xem lần báo" ở thẻ khu để xem chi tiết từng người.</span>
-      ${cmp || `<div class="row gap8"><button class="btn s warnb f1" data-a="cview" data-k="${esc(e.khu)}">SO SÁNH 2 SỐ</button><button class="btn s warnb f1" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button></div><button class="btn s warnb full" data-a="${recountA}" data-k="${esc(e.khu)}">YÊU CẦU ĐẾM LẠI</button>`}
+      ${cmp || `<div class="row gap8"><button class="btn s warnb f1" data-a="cview" data-k="${esc(e.khu)}">SO SÁNH 2 SỐ</button><button class="btn s warnb f1" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button></div><button class="btn s warnb full" data-a="recount" data-k="${esc(e.khu)}">YÊU CẦU ĐẾM LẠI</button>`}
       ${C && C.data && !C.data.diffs.length ? `<button class="btn s warnb full" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button>` : ''}</div>`;
   }).join('');
 
@@ -1341,16 +1315,16 @@ function vDuyet() {
         ? 'Đã dùng âm (tồn nhiều hơn tính toán): có thể nhập sót phiếu hoặc đếm sai.'
         : `Dùng cao bất thường: hơn 3 lần mức trung bình${avgDisp ? ' (' + avgDisp + ')' : ''}${peakDisp ? ' và hơn 1,5 lần ngày dùng nhiều nhất (' + peakDisp + ')' : ''}.`}</b>
       ${r.topKhu ? `<span class="sm">Khu biến động lớn nhất: <b>${esc(kname(r.topKhu))}</b> (${topNetDisp})</span>` : ''}
-      ${canRe ? `<button class="btn s bad full" data-a="${recountA}" data-k="${esc(r.topKhu)}">YÊU CẦU KHU NÀY ĐẾM LẠI</button>` : ''}</div>`;
+      ${canRe ? `<button class="btn s bad full" data-a="recount" data-k="${esc(r.topKhu)}">YÊU CẦU KHU NÀY ĐẾM LẠI</button>` : ''}</div>`;
   }).join('');
 
   const pend = R.pending != null ? R.pending : R.exceptions.length;
   const allOk = pend === 0;
   const verdict = allOk
-    ? `<div class="card ok col" style="gap:4px"><b style="font-size:19px">Đã duyệt hết, đề xuất chốt</b><span style="font-size:16px;line-height:1.4">Mọi khu đã báo đều đã duyệt và không còn phiếu nào chờ. Khu nào báo lại số khác sẽ phải duyệt lại.</span></div>`
-    : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Có ${pend} việc cần xử lý trước khi chốt</b><span class="sm" style="line-height:1.4">Duyệt từng khu${khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length > 1 ? ', hoặc "Duyệt tất cả"' : ''}. Việc không duyệt được (khu chưa báo, hai người báo khác số, khu thiếu lần đếm) thì xử lý, hoặc ghi chú lý do rồi chốt.</span></div>`;
-  const gap = R.span > 1 && !R.closed ? `<div class="card warn col" style="gap:4px"><b>Có ${R.span - 1} ngày chưa chốt</b><span class="sm" style="line-height:1.4">Lượng dùng dưới đây gộp ${R.span} ngày kể từ ngày chốt ${esc(fmtDay(R.last))}. Cảnh báo "dùng nhiều" đã chia theo số ngày.</span></div>` : '';
-  const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Chốt ngày này để số đã duyệt hôm nay trở thành tồn chuẩn đầu tiên.</span></div>` : '';
+    ? `<div class="card ok col" style="gap:4px"><b style="font-size:19px">Đã duyệt hết</b><span style="font-size:16px;line-height:1.4">Mọi khu đã báo đều đã duyệt và không còn phiếu nào chờ. Sổ hôm nay tự chốt sau 0h; khu nào báo lại số khác sẽ phải duyệt lại.</span></div>`
+    : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Còn ${pend} việc cần xử lý</b><span class="sm" style="line-height:1.4">Duyệt từng khu${khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length > 1 ? ', hoặc "Duyệt tất cả"' : ''}. Sổ hôm nay <b>tự chốt sau 0h</b> theo số đã duyệt: báo cáo chưa duyệt chuyển sang ngày mai chờ duyệt tiếp, việc còn treo được ghi vào nhật ký.</span></div>`;
+  const gap = R.span > 1 && !R.closed ? `<div class="card warn col" style="gap:4px"><b>Có ${R.span - 1} ngày chưa tự chốt xong</b><span class="sm" style="line-height:1.4">Lượng dùng dưới đây gộp ${R.span} ngày kể từ ngày chốt ${esc(fmtDay(R.last))}. Cảnh báo "dùng nhiều" đã chia theo số ngày.</span></div>` : '';
+  const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Sau 0h, số đã duyệt hôm nay tự trở thành tồn chuẩn đầu tiên.</span></div>` : '';
 
   /* --- Thẻ của từng khu: NỘI DUNG NHƯ NHAU dù lệch hay không --- */
   // khu "cần xem lại" cũng cần một lần bấm Duyệt khu, nên tính vào số khu đang chờ
@@ -1375,7 +1349,9 @@ function vDuyet() {
       : k.slots && k.slots.missing.length && k.items.length ? '<span class="badge bad">Thiếu lần đếm</span>'
       : '<span class="badge ok">Đã duyệt</span>';
     // lần báo của ngày trước (quên chốt): phải nói rõ ngày, không thì admin tưởng là số hôm nay
-    const cuNgay = k.rep && k.rep.day !== R.day ? ` · <b style="color:var(--warn)">báo ngày ${esc(fmtDay(k.rep.day))}</b>` : '';
+    // báo từ ngày trước (chuyển sang lúc tự chốt, giữ giờ đếm thật): nói rõ ngày đếm
+    const ngayDem = k.rep ? vnDayOf(k.rep.ts) : null;
+    const cuNgay = k.rep && ngayDem !== R.day ? ` · <b style="color:var(--warn)">báo ngày ${esc(fmtDay(ngayDem))}</b>` : '';
     const who = k.rep
       ? esc(k.rep.uname) + ' · ' + hhmm(k.rep.ts) + cuNgay + (k.rep.recount ? ' · <b style="color:var(--warn)">chờ đếm lại</b>' : '')
       : 'Chưa có ai báo kể từ lần chốt trước';
@@ -1416,21 +1392,19 @@ function vDuyet() {
     const sl = k.rep && k.slots ? k.slots : null;
     const sDefs = (R.slot && R.slot.defs) || [];
     const slotLine = !sl ? '' : `<span class="sm muted" style="line-height:1.4">Lần đếm hôm nay: ${sDefs.map((d) => (sl.done.includes(d.i) ? '✓ ' : '✗ ') + esc(d.label)).join(' · ')}</span>`;
-    const slotWarn = sl && sl.missing.length && k.items.length ? `<div class="sm b" style="color:var(--bad);line-height:1.4">Thiếu lần đếm ${esc(sl.missing.map((i) => (sDefs[i] || {}).label).join(', '))}. Lần đếm sau không bù được: muốn chốt ngày phải ghi lý do ở ô cuối trang.</div>` : '';
+    const slotWarn = sl && sl.missing.length && k.items.length ? `<div class="sm b" style="color:var(--bad);line-height:1.4">Thiếu lần đếm ${esc(sl.missing.map((i) => (sDefs[i] || {}).label).join(', '))}. Lần đếm sau không bù được: việc thiếu được ghi vào nhật ký lúc sổ tự chốt sau 0h.</div>` : '';
     const slotLate = sl && sl.late.length ? `<div class="sm" style="color:var(--warn);line-height:1.4">Báo cáo gửi muộn: ${sl.late.map((x) => 'đếm lúc ' + hhmm(x.at) + ', tới máy chủ lúc ' + hhmm(x.ts)).join('; ')}. Khung giờ tính theo lúc đếm.</div>` : '';
     const recheck = k.recheck ? `<div class="sm b" style="color:var(--warn);line-height:1.4">Có phiếu được duyệt SAU khi số của khu đã duyệt, nên số dự kiến vừa đổi. Xem bảng trên rồi duyệt lại khu, hoặc yêu cầu đếm lại.</div>` : '';
 
-    const btns = R.closed
-      ? (k.rep && k.rep.day === R.day ? `<div class="row gap6"><button class="btn s bad f1" data-a="recountclose" data-k="${esc(k.khu)}">Yêu cầu đếm lại (mở lại ngày)</button></div>` : '')
-      : `<div class="row gap6">${cho || choP
+    const btns = R.closed ? '' : `<div class="row gap6">${cho || choP
       ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT ${esc(cut(k.name, 14).toUpperCase())}</button>`
       : k.recheck ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT LẠI</button>` : ''}
-      ${k.rep && k.rep.day === R.day ? `<button class="btn s bad f1" data-a="${recountA}" data-k="${esc(k.khu)}">Yêu cầu đếm lại</button>` : ''}</div>`;
+      ${k.rep && k.rep.day === R.day ? `<button class="btn s bad f1" data-a="recount" data-k="${esc(k.khu)}">Yêu cầu đếm lại</button>` : ''}</div>`;
 
     return `<div class="card col gap6" style="${edge}"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
       <div class="col" style="gap:2px"><div class="row gap6" style="align-items:center"><b style="font-size:16px">${esc(k.name)}</b>${badge}</div><span class="sm muted">${who}</span>${duyetLine}</div>
       ${k.rep ? `<button class="btn s" data-a="svload" data-k="${esc(k.khu)}">${subOpen ? 'Ẩn' : 'Xem lần báo'}</button>` : ''}
-    </div>${slotLine}${k.rep ? bang : '<span class="sm">Hãy nhắc người phụ trách, hoặc tự đếm khu này ở tab Đếm.</span>'}${slotWarn}${slotLate}${blankWarn}${recheck}${choPhieu}${btns}${renderSubsPanel(k.khu, R)}</div>`;
+    </div>${slotLine}${k.rep ? bang : '<span class="sm">Hãy nhắc người phụ trách, hoặc tự báo cáo khu này ở tab Báo cáo.</span>'}${slotWarn}${slotLate}${blankWarn}${recheck}${choPhieu}${btns}${renderSubsPanel(k.khu, R)}</div>`;
   }).join('')}</div>`;
 
   /* Phép tính phải CÒN ĐÚNG VỀ SỐ HỌC mà nhãn vẫn nói thật: r.inn là TỔNG (gồm điều chỉnh), nên
@@ -1448,16 +1422,13 @@ function vDuyet() {
   const normalHtml = S.showNormal ? `<div class="card" style="padding:0;overflow:hidden">${normal.map((r) => { const np = b.phiBy[r.phi]; const fE = (v) => fmtQe(v, np); return `<div class="li"><b>${r.phi}</b><span class="sm">${R.last ? eqTxt(r, fE) : 'đếm ' + fE(r.cnt)}</span></div>`; }).join('')}</div>` : '';
   return `${head('Duyệt ngày ' + b.today.split('-').reverse().slice(0, 2).join('/'), 'Duyệt theo từng khu' + (R.slot && R.slot.n > 1 ? ' · mỗi khu đếm ' + R.slot.n + ' lần/ngày' : ''), 'home')}
   <div class="f1 scroll pad col gap12" id="body">
-    ${lateSec}
-    ${R.closed ? '<div class="card ok"><b>Đã chốt ngày hôm nay.</b> Số đã duyệt hôm nay là tồn chuẩn mới, ngày này đã khóa.</div>' : verdict}
-    ${R.closed ? `<div class="card col gap6"><b>Chốt nhầm?</b><input class="inp s" id="reopenNote" placeholder="Lý do mở lại (bắt buộc)" data-model="reopenNote" value="${esc(S.form.reopenNote || '')}"><button class="btn s bad full" data-a="reopen">MỞ LẠI NGÀY HÔM NAY</button></div>` : ''}
-    ${R.slot && R.slot.changed ? `<div class="card warn col" style="gap:4px"><b>Khung giờ đếm vừa đổi hôm nay lúc ${hhmm(R.slot.changed.at)}${R.slot.changed.by ? ' (' + esc(R.slot.changed.by) + ')' : ''}</b><span class="sm" style="line-height:1.4">Các lần đếm hôm nay đã được xếp lại theo khung mới, nên việc "thiếu lần đếm" có thể khác lúc trước khi đổi. Xem lại trước khi chốt.</span></div>` : ''}
+    ${R.closed ? (b.closedReset ? '<div class="card ok"><b>Hôm nay vừa đặt lại số liệu.</b> Tồn cả bãi về 0, ngày này đã khoá. Ngày mai các khu báo số như thường.</div>' : '<div class="card ok"><b>Sổ hôm nay đã chốt.</b> Ngày mai các khu báo số như thường.</div>') : verdict}
+    ${R.closed && b.closedReset ? `<div class="card col gap6"><b>Đặt lại nhầm?</b><input class="inp s" id="reopenNote" placeholder="Lý do hoàn tác (bắt buộc)" data-model="reopenNote" value="${esc(S.form.reopenNote || '')}"><button class="btn s bad full" data-a="reopen">HOÀN TÁC ĐẶT LẠI SỐ LIỆU</button></div>` : ''}
+    ${R.slot && R.slot.changed ? `<div class="card warn col" style="gap:4px"><b>Khung giờ đếm vừa đổi hôm nay lúc ${hhmm(R.slot.changed.at)}${R.slot.changed.by ? ' (' + esc(R.slot.changed.by) + ')' : ''}</b><span class="sm" style="line-height:1.4">Các lần đếm hôm nay đã được xếp lại theo khung mới, nên việc "thiếu lần đếm" có thể khác lúc trước khi đổi.</span></div>` : ''}
     ${gap}${first}${phieuSec}${loanSec(R)}${items}${cards}
     ${khuSec}
     <button class="card b" style="text-align:left;min-height:52px;font-size:16px;border:2px solid #B9B4A8" data-a="toggle-normal">${normal.length} phi bình thường · ${S.showNormal ? 'bấm để ẩn' : 'bấm để xem'}</button>${normalHtml}
-    <label class="col gap6" style="font-weight:600">Ghi chú lý do ${allOk ? '(không bắt buộc)' : '(bắt buộc khi còn việc chưa xử lý)'}<input class="inp s" style="height:52px" id="note" data-model="note" placeholder="Ví dụ: nhập sót phiếu D16" value="${esc(S.form.note || '')}"></label>
-  </div>
-  <div class="sendbar"><button class="btn ${R.closed ? 'dis' : 'ok'} full" style="min-height:60px;font-size:20px" data-a="close" ${R.closed ? 'disabled' : ''}>${R.closed ? 'ĐÃ CHỐT NGÀY' : allOk ? 'XÁC NHẬN CHỐT NGÀY' : 'CHỐT NGÀY (KÈM LÝ DO)'}</button></div>`;
+  </div>`;
 }
 
 /* --- Xem lại ngày cũ --- */
@@ -1507,30 +1478,8 @@ function vLichSu() {
   const status = closed
     ? `<div class="card ok col" style="gap:4px"><b>Đã chốt${D.close.uname ? ' bởi ' + esc(D.close.uname) : ' tự động'} lúc ${dmy(D.close.ts)}</b>${D.close.span > 1 ? `<span class="sm">Gộp ${D.close.span} ngày (các ngày trước đó chưa chốt)</span>` : ''}${D.close.note ? `<span class="sm">Ghi chú: ${esc(D.close.note)}</span>` : ''}${treoTxt(D.close.exc_json)}</div>`
     : `<div class="card warn col" style="gap:4px"><b>Ngày này chưa chốt</b><span class="sm">Số tồn lấy theo báo cáo đếm trong ngày; khu không báo tạm lấy tồn chuẩn trước đó.</span></div>`;
-  /* Mở lại CHỈ lần chốt gần nhất. Tồn chuẩn của một ngày là điểm xuất phát của mọi ngày sau nó,
-     nên mở một ngày ở giữa là mọi lần chốt sau đó vẫn giữ con số tính từ mốc cũ — từ đó không ngày
-     nào còn khớp với ngày trước nó. Ngày cũ hơn thì cách đúng là phiếu Điều chỉnh tồn: nó sửa số
-     hiện tại và để lại dấu vết, chứ không viết lại sổ đã chốt. */
-  const laCuoi = closed && D.lastClose === D.day;
-  const laHomNay = D.day === b.today;
-  const moDuoc = laCuoi && isAdmin() && (laHomNay || isOwner());
-  const moBox = !moDuoc ? '' : `<div class="card col gap6" style="border:2px solid var(--bad)">
-    <b style="font-size:17px">Chốt nhầm ngày này?</b>
-    <span class="sm" style="line-height:1.45">Mở lại là bỏ mốc chốt của ngày ${esc(fmtDay(D.day))}: số đếm của các khu vẫn còn nguyên, nhưng tồn chuẩn và bảng tổng hợp của ngày đó bị bỏ, và phải chốt lại. Chỉ dùng khi vừa chốt nhầm — <b>sổ đã chốt mà phát hiện sai thì lập phiếu Điều chỉnh tồn</b>, đừng viết lại sổ cũ.</span>
-    <input class="inp s" id="hreopenNote" placeholder="Lý do mở lại (bắt buộc)" data-model="hreopenNote" value="${esc(S.form.hreopenNote || '')}">
-    <button class="btn s bad full" data-a="hreopen" data-d="${esc(D.day)}">MỞ LẠI NGÀY ${esc(fmtDay(D.day))}</button></div>`;
-  /* Ngày đã chốt mà KHÔNG phải lần gần nhất: nói thẳng vì sao không mở được, không thì người dùng
-     đi tìm cái nút không tồn tại. */
-  const moNote = closed && !laCuoi && isAdmin()
-    ? `<div class="card sm" style="line-height:1.45">Ngày này không mở lại được vì sau nó đã có lần chốt khác (gần nhất: ${esc(fmtDay(D.lastClose || ''))}). Sổ đã chốt mà sai thì lập <b>phiếu Điều chỉnh tồn</b> ở màn Nhập.</div>`
-    /* Lần chốt gần nhất nhưng là ngày ĐÃ QUA, mà người xem không phải admin đầu tiên: nút bị ẩn
-       đúng luật (ngày đã qua dời mốc cả bãi đang dựa vào), nhưng phải nói ra, không thì admin đi
-       tìm cái nút không có. */
-    : laCuoi && !laHomNay && isAdmin() && !isOwner()
-    ? `<div class="card sm" style="line-height:1.45">Đây là lần chốt gần nhất, nhưng là ngày đã qua: chỉ <b>admin đầu tiên</b> (người thiết lập hệ thống) mới mở lại được, vì nó dời mốc cả bãi đang dựa vào. Nhờ người đó, hoặc lập <b>phiếu Điều chỉnh tồn</b> nếu chỉ cần sửa số.</div>`
-    : '';
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${status}${moBox}${moNote}
+    ${status}
     <div class="hero" style="border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:15px">Tồn cuối ngày ${esc(fmtDay(D.day))}</span><span style="font-size:28px;font-weight:700">${fmtT(totKg)} tấn</span></div>${closed ? `<div class="col" style="align-items:flex-end;font-size:15px"><span>Nhập ${fmtT(totIn)} tấn</span>${totDc ? `<span>Điều chỉnh ${totDc > 0 ? '+' : '−'}${fmtT(Math.abs(totDc))} tấn</span>` : ''}${totVay ? `<span>Vay mượn ${totVay > 0 ? '+' : '−'}${fmtT(Math.abs(totVay))} tấn</span>` : ''}<span>Dùng ${fmtT(totUse)} tấn</span>${totX ? `<span class="sm">trong đó ${fmtT(totX)} tấn có phiếu xuất</span>` : ''}</div>` : ''}</div></div>
     <h2 class="sec">Theo đường kính (chạm để xem từng khu)</h2>
     <div class="card" style="padding:0;overflow:hidden">${rows}</div>
@@ -1666,7 +1615,7 @@ function fmtAudit(a) {
     close_day: ['chốt ngày ' + fmtDay(d.day) + (d.note ? ' (' + d.note + ')' : ''), 'admin'],
     late_accept: ['nhận số ' + kn(d.khu) + ' gửi sau chốt' + (d.changes && d.changes.length ? ': ' + d.changes.map((c) => c.phi + ' ' + (c.from == null ? 'mới' : c.from) + ' → ' + c.to).join('; ') : ' (không đổi)'), 'flag'],
     late_delete: ['xoá báo cáo ' + kn(d.khu) + ' gửi sau chốt (không nhận)', 'admin'],
-    auto_close: ['tự chốt ngày ' + fmtDay(d.day) + ' (ngày bình thường)', 'admin'],
+    auto_close: ['tự chốt sổ ngày ' + fmtDay(d.day) + (d.note && d.note !== 'Tự chốt: không còn việc treo' ? ' (' + d.note.replace(/^Tự chốt · /, '') + ')' : ''), 'admin'],
     auto_close_skip: ['không tự chốt ngày ' + fmtDay(d.day) + ': ' + d.reason, 'flag'],
     // bảng nhãn được dựng cho MỌI dòng nhật ký: d.khu ở dòng khác là chuỗi, nên không gọi .join trực tiếp
     khu_duyet: ['duyệt số của ' + [].concat(d.names || d.khu || []).join(', ')
@@ -2215,8 +2164,8 @@ function vSettings() {
     ${slotForm().n > 1 ? `<div class="row gap6"><label class="f1 sm">Giờ làm từ<select class="inp s" style="width:100%" id="s-from" data-model="sfrom">${hourOpts(slotForm().a, 0, 23)}</select></label>
       <label class="f1 sm">đến<select class="inp s" style="width:100%" id="s-to" data-model="sto">${hourOpts(slotForm().z, 1, 24)}</select></label></div>` : ''}
     <span class="sm b" id="slotprev" style="line-height:1.45;${slotBad() ? 'color:var(--bad)' : ''}">${esc(slotPrevTxt())}</span>
-    <span class="sm muted" style="line-height:1.45">Từ 2 lần trở lên là <b>bắt buộc</b>: giờ làm được chia đều thành các khung; khung đã qua mà khu chưa đếm thì màn Duyệt tính là việc chưa xử lý, chốt ngày phải ghi lý do, và đêm đó không tự chốt. Lần đếm sau không bù cho khung trước. Khu trống không bị đòi. Mỗi lần khu báo lại phải được duyệt lại.</span>
-    <label class="sm">Tự chốt lúc 23:50 (mặc định Tắt). Khi Bật: chỉ chốt nếu đã có khu báo và không còn việc nào chờ duyệt<select class="inp s" style="width:100%" id="s-auto"><option value="1" ${b.settings.auto_close ? 'selected' : ''}>Bật</option><option value="0" ${b.settings.auto_close ? '' : 'selected'}>Tắt</option></select></label><button class="btn s" data-a="ssave">Lưu quy tắc</button></div>
+    <span class="sm muted" style="line-height:1.45">Từ 2 lần trở lên là <b>bắt buộc</b>: giờ làm được chia đều thành các khung; khung đã qua mà khu chưa đếm thì màn Duyệt tính là việc chưa xử lý, và việc thiếu được ghi vào nhật ký lúc sổ tự chốt sau 0h. Lần đếm sau không bù cho khung trước. Khu trống không bị đòi. Mỗi lần khu báo lại phải được duyệt lại.</span>
+<button class="btn s" data-a="ssave">Lưu quy tắc</button></div>
     <h2 class="sec">Khu bãi</h2>${khu}
     <div class="card col gap6"><b>Thêm khu mới</b><input class="inp s" id="newk" placeholder="Tên khu, ví dụ: Khu I" data-model="newk" value="${esc(S.form.newk || '')}"><button class="btn s pri" data-a="kadd">Thêm khu</button></div>
     <h2 class="sec">Phi thép (D6 - D36)</h2>
@@ -2255,7 +2204,7 @@ function vReset() {
     </div>
   </div>
   <div class="card col gap8"><b style="font-size:17px">Đặt tồn về 0 (kiểm kê lại)</b>
-    <span class="sm" style="line-height:1.45">Ghi một mốc <b>cả bãi = 0</b> cho hôm nay: coi như admin vừa kiểm kê và khai 0 cho mọi khu. Lịch sử và báo cáo theo kỳ cũ <b>vẫn xem được</b>; thống kê tính lại từ mốc này. Hôm nay thành <b>đã chốt</b>, từ mai đếm và nhập bình thường từ 0.<br>Bấm nhầm thì vào Duyệt → <i>Mở lại ngày hôm nay</i>: tồn và các báo cáo của hôm nay trở lại <b>đúng như trước</b>, vì hệ thống chụp lại trạng thái trước khi đặt lại.</span>
+    <span class="sm" style="line-height:1.45">Ghi một mốc <b>cả bãi = 0</b> cho hôm nay: coi như admin vừa kiểm kê và khai 0 cho mọi khu. Lịch sử và báo cáo theo kỳ cũ <b>vẫn xem được</b>; thống kê tính lại từ mốc này. Hôm nay thành <b>đã chốt</b>, từ mai đếm và nhập bình thường từ 0.<br>Bấm nhầm thì vào Duyệt → <i>Hoàn tác đặt lại số liệu</i> (trong ngày): tồn và các báo cáo của hôm nay trở lại <b>đúng như trước</b>, vì hệ thống chụp lại trạng thái trước khi đặt lại.</span>
     <button class="btn s full" style="border:2px solid var(--warn)" data-a="resetzero">ĐẶT TỒN VỀ 0</button>
   </div>
   <div class="card bad col gap8"><b style="font-size:17px">Xoá sạch dữ liệu thép</b>
@@ -2268,7 +2217,7 @@ function vReset() {
 /* ===================== KHUNG CHÍNH ===================== */
 function tabsHtml() {
   const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more' }[S.screen];
-  const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Đếm', IC.count, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isAdmin()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
+  const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Báo cáo', IC.count, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isAdmin()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
   return `<nav class="tabs">${T.map((t) => `<button class="tab ${on === t[0] ? 'on' : ''}" data-a="nav" data-s="${t[0]}">${t[2]}${t[1]}</button>`).join('')}</nav>`;
 }
 
@@ -2519,6 +2468,7 @@ const ACTIONS = {
   zoom(d) { S.zoomK = S.zoomK === d.k ? null : d.k; render(); },
   cell(d) {
     const p = d.p;
+    if (S.boot.closed) return say(S.boot.closedReset ? 'Hôm nay vừa đặt lại số liệu, ngày đã khoá. Ngày mai hãy báo số như thường.' : 'Sổ hôm nay đã chốt. Ngày mai hãy báo số như thường.', true), render();
     S.sel = p; fillSel(p); S.scrollSel = p; render();
   },
   key(d) { pressKey(Number(d.d)); render(); },
@@ -2561,6 +2511,7 @@ const ACTIONS = {
      khỏi giấy tờ bằng một lần quên gõ, nên hỏi lại ở đúng đây — lúc người đếm còn đứng trước đống
      thép, chứ không đẩy sang cho người duyệt phát hiện qua cột lệch. Phi dự kiến 0 thì gửi thẳng. */
   async send() {
+    if (S.boot.closed) return say(S.boot.closedReset ? 'Hôm nay vừa đặt lại số liệu, ngày đã khoá. Ngày mai hãy báo số như thường.' : 'Sổ hôm nay đã chốt. Ngày mai hãy báo số như thường.', true), render();
     if (!myPhiList().length) return say('Chưa có phi thép nào trong hệ thống.', true), render();
     const blank = blankWithStock();
     if (blank.length) {
@@ -2747,68 +2698,12 @@ const ACTIONS = {
       finally { await reloadReview(); await loadBoot(); }
     }, 'Đã cập nhật số ' + kName(khu) + '.');
   },
-  async lnhan(d) {
-    const R = S.review; if (!R) return;
-    const lt = (R.late || []).find((l) => l.khu === d.k); if (!lt) return;
-    const msg = 'Nhận số ' + kName(d.k) + ' gửi sau chốt?\n' + (R.closed ? 'Ngày được mở lại, số này được duyệt rồi tự chốt lại.' : 'Số này được duyệt vào tồn.');
-    if (!(await ask(msg, 'NHẬN SỐ'))) return;
-    act(async () => {
-      let r;
-      try { r = await api('POST', '/late', { khu: d.k, ts: lt.ts }); }
-      finally { await reloadReview(); await loadBoot(); }
-      say('Đã nhận số ' + kName(d.k) + (r.reclosed ? ' và chốt lại ngày.' : R.closed ? '. Ngày đang mở, hãy chốt lại.' : '.'));
-    });
-  },
-  async lxoa(d) {
-    const lt = ((S.review && S.review.late) || []).find((l) => l.khu === d.k); if (!lt) return;
-    if (!(await ask('Xoá báo cáo ' + kName(d.k) + ' gửi sau chốt?\nSố đã chốt giữ nguyên.', 'XOÁ BÁO CÁO', true))) return;
-    act(async () => {
-      try { await api('DELETE', '/late/' + encodeURIComponent(d.k) + '?ts=' + lt.ts); }
-      finally { await reloadReview(); await loadBoot(); }
-      say('Đã xoá báo cáo ' + kName(d.k) + '.');
-    });
-  },
-  async recountclose(d) {
-    if (!(await ask('Yêu cầu ' + kName(d.k) + ' đếm lại?\nNgày đã chốt sẽ được mở lại. Số đã duyệt của khu vẫn là tồn cho tới khi số mới được duyệt.', 'MỞ LẠI & ĐẾM LẠI', true))) return;
-    act(async () => { await api('POST', '/recount-after-close', { khu: d.k }); S.review = await api('GET', '/review'); S.subs = {}; await loadBoot(); }, 'Đã mở lại ngày, yêu cầu ' + kName(d.k) + ' đếm lại.');
-  },
-  async close() {
-    const R = S.review; if (!R || R.closed) return;
-    const note = val('note'); S.form.note = note;
-    const pend = R.pending != null ? R.pending : R.exceptions.length;
-    if (pend && !note.trim()) return say('Còn việc chưa xử lý: duyệt từng khu, hoặc ghi lý do trước khi chốt.', true), render();
-    /* Chốt KHÔNG duyệt gì cả: chỉ số ĐÃ DUYỆT thành tồn chuẩn. Báo cáo còn chờ duyệt lúc chốt thì bị
-       bỏ qua, khu đó giữ số đã duyệt trước. Phải nói rõ ở đây, không thì người bấm chốt "kèm lý do"
-       tưởng mình vừa duyệt luôn các khu đang chờ. */
-    const cho = (R.khus || []).filter((k) => k.waiting || k.phieu.length).map((k) => k.name);
-    const msg = 'Chốt ngày hôm nay?\nSố ĐÃ DUYỆT hôm nay thành tồn chuẩn mới và ngày này bị khoá.'
-      + (cho.length ? `\n\nChưa duyệt: ${cho.join(', ')}. Chốt bây giờ thì báo cáo và phiếu đang chờ của các khu này KHÔNG vào tồn chuẩn hôm nay.` : '')
-      + (pend ? `\n\nCòn ${pend} việc chưa xử lý, lý do sẽ ghi vào nhật ký: "${note.trim()}"` : '');
-    if (!(await ask(msg, 'CHỐT NGÀY'))) return;
-    act(async () => {
-      try { await api('POST', '/close', { note }); }
-      catch (e) { if (!e.retry) { await reloadReview(); await loadBoot(); } throw e; }
-      S.form.note = ''; S.review = await api('GET', '/review'); await loadBoot();
-    }, 'Đã chốt ngày. Số đã duyệt hôm nay là tồn chuẩn mới.');
-  },
+  // hoàn tác lần đặt lại số liệu của hôm nay: việc duy nhất còn "mở lại" một ngày đã khoá
   async reopen() {
     const note = val('reopenNote').trim();
-    if (!note) return say('Ghi lý do mở lại ngày vào ô phía trên.', true), render();
-    if (!(await ask('Mở lại ngày hôm nay?\nSố đếm sẽ sửa được và cần chốt lại.', 'MỞ LẠI NGÀY', true))) return;
-    act(async () => { await api('POST', '/reopen', { note }); S.form.reopenNote = ''; S.review = await api('GET', '/review'); await loadBoot(); }, 'Đã mở lại ngày. Có thể sửa số và chốt lại.');
-  },
-  /* Mở lại một ngày từ màn Xem lại ngày cũ. Dùng CHUNG đường /reopen với nút ở màn Duyệt; chốt
-     chặn thật ("chỉ lần chốt gần nhất", "ngày đã qua thì chỉ admin đầu tiên") nằm ở server. */
-  async hreopen(d) {
-    const day = d.d;
-    const note = val('hreopenNote').trim();
-    if (!note) return say('Ghi lý do mở lại ngày vào ô phía trên.', true), render();
-    if (!(await ask(`Mở lại ngày ${fmtDay(day)}?\nTồn chuẩn và bảng tổng hợp của ngày đó bị bỏ, phải chốt lại.\nSố đếm của các khu vẫn còn.`, 'MỞ LẠI NGÀY', true))) return;
-    act(async () => {
-      await api('POST', '/reopen', { day, note });
-      S.form.hreopenNote = '';
-      await loadBoot(); await loadHist(day);
-    }, 'Đã mở lại ngày. Có thể sửa số và chốt lại.');
+    if (!note) return say('Ghi lý do hoàn tác vào ô phía trên.', true), render();
+    if (!(await ask('Hoàn tác lần đặt lại số liệu hôm nay?\nSố đếm trước lúc đặt lại được dựng lại, ngày hôm nay mở lại.', 'HOÀN TÁC', true))) return;
+    act(async () => { await api('POST', '/reopen', { note }); S.form.reopenNote = ''; await reloadReview(); await loadBoot(); }, 'Đã hoàn tác lần đặt lại số liệu.');
   },
   hprev() { loadHist(ydayOf(S.hist.date)); },
   hnext() { const n = new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
@@ -2866,7 +2761,7 @@ const ACTIONS = {
       + `• Đang có ${fmtT(T.kg)} tấn — sau khi đặt lại, mọi khu về 0 và thống kê tính lại từ hôm nay.\n`
       + `• Lịch sử và báo cáo theo kỳ cũ VẪN xem được.\n`
       + `• Hôm nay thành đã chốt; từ mai đếm và nhập bình thường từ 0.\n`
-      + `• Bấm nhầm thì Duyệt → Mở lại ngày hôm nay: mọi thứ trở lại đúng như trước.\n\n`
+      + `• Bấm nhầm thì Duyệt → Hoàn tác đặt lại số liệu (trong ngày): mọi thứ trở lại đúng như trước.\n\n`
       + `Nên tải bản sao trước nếu chưa tải.`;
     if (!(await ask(msg, 'ĐẶT TỒN VỀ 0', true))) return render();
     act(async () => {
@@ -3189,7 +3084,7 @@ const ACTIONS = {
     act(async () => {
       // giờ làm chỉ có ô khi đếm từ 2 lần/ngày: không có ô thì không gửi, giữ nguyên số đang lưu
       const o = (id) => (document.getElementById(id) ? val(id) : undefined);
-      await api('PUT', '/settings', { max_keep_streak: val('s-keep'), auto_close: val('s-auto'), report_slots_per_day: val('s-slots'), work_from: o('s-from'), work_to: o('s-to') });
+      await api('PUT', '/settings', { max_keep_streak: val('s-keep'), report_slots_per_day: val('s-slots'), work_from: o('s-from'), work_to: o('s-to') });
       ['sslots', 'sfrom', 'sto'].forEach((k) => delete S.form[k]);
       await loadBoot();
     }, 'Đã lưu quy tắc.');
@@ -3273,7 +3168,7 @@ async function refresh() {
     if (S.boot && r.today !== S.boot.today && S.screen === 'dem') {
       // nháp đang đếm thuộc ngày cũ: không để lẫn sang ngày mới
       S.screen = 'home'; S.sel = null;
-      say('Đã sang ngày mới, hãy mở lại màn Đếm để đếm cho hôm nay.', true);
+      say('Đã sang ngày mới, hãy mở lại màn Báo cáo để báo cho hôm nay.', true);
     }
     const changed = !S.boot || S.stale || r.rev !== S.boot.rev || r.today !== S.boot.today;
     // đang nhập số ở màn Đếm thì không vẽ lại giữa chừng (trừ khi sang ngày mới)

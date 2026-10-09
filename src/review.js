@@ -1,13 +1,12 @@
 // Màn Duyệt: tính tồn, lượng dùng, cảnh báo; duyệt khu, chốt và mở lại ngày; việc tự động 23:50.
-import { DAY_RE, HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
-  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, fmtDay, json, vnDay } from './core.js';
+import { HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
+  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, json, vnDay } from './core.js';
 import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { RATE_SQL } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, bump,
   closedErr, guardStmt, parseSettings, readJson } from './helpers.js';
 import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI } from './counts.js';
 import { checkTransferStock } from './phieu.js';
-import { firstAdminId } from './admin.js';
 
 /* ========================= DUYỆT / CHỐT NGÀY =========================
    Một quy tắc duy nhất: chưa duyệt thì không vào tồn. Màn Duyệt vì thế không còn là màn
@@ -31,7 +30,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, lateR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -93,9 +92,6 @@ export async function computeReview(env, day, opt = {}) {
                 ORDER BY l.id`),
     // ai vừa đổi khung giờ đếm (xem settingsUpdate): tên để màn Duyệt nói ra
     db.prepare("SELECT name FROM users WHERE id = (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'slot_changed_by')"),
-    // báo cáo khu gửi sau khi ngày đã chốt, chờ admin nhận hoặc xoá (xem lateAccept)
-    db.prepare(`SELECT b.khu_id, ${UNAME}, b.ts, b.data FROM bao_sau_chot b LEFT JOIN users u ON u.id = b.user_id
-                WHERE b.day = ? ORDER BY b.ts`).bind(day),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -283,23 +279,7 @@ export async function computeReview(env, day, opt = {}) {
     };
   });
 
-  /* Báo cáo gửi sau chốt: chỉ bày PHI KHÁC số đang làm tồn (số đã duyệt, hoặc tồn chuẩn nếu khu chưa
-     có số duyệt nào), vì đó đúng là cái admin đang quyết — nhận thì tồn đổi đúng bằng chừng đó. */
-  const khuName = Object.fromEntries(khuR.results.map((k) => [k.id, k.name]));
-  const late = lateR.results.map((r) => {
-    let rows = [];
-    try { rows = JSON.parse(r.data) || []; } catch (e) { rows = []; }
-    const diffs = rows.map((x) => {
-      const key = r.khu_id + '|' + x.phi;
-      const from = eff[key] !== undefined ? eff[key] : base[key] || 0;
-      return { phi: x.phi, from, to: x.v };
-    }).filter((x) => x.from !== x.to);
-    return { khu: r.khu_id, name: khuName[r.khu_id] || r.khu_id, uname: r.uname, ts: r.ts, diffs };
-  });
-
   const exceptions = [];
-  // ngày đang mở (admin tự mở lại) mà còn báo cáo gửi sau chốt: chốt mà quên nó là nó mất
-  if (!closedR.results.length) late.forEach((l) => exceptions.push({ type: 'late', khu: l.khu, name: l.name }));
   for (const k of khus) {
     /* "Chưa báo" chỉ tính khu CÓ GÌ ĐỂ ĐẾM: còn tồn chuẩn, hoặc vừa có phiếu đã duyệt, hoặc đã
        từng báo (items rỗng nghĩa là mọi phi đều dự kiến 0 và chưa báo gì). Khu trống trơn thì
@@ -349,22 +329,14 @@ export async function computeReview(env, day, opt = {}) {
       changed: slotSt.slot_changed_at && vnDay(slotSt.slot_changed_at) === day
         ? { at: slotSt.slot_changed_at, by: (slotByR.results[0] || {}).name || null } : null,
     },
-    loans: loanR.results, late,
+    loans: loanR.results,
     reports: repR.results.filter((r) => r.day === day), khu: khuR.results,
   };
 }
 
-export async function closeDay(req, env, user) {
-  const b = await readJson(req);
-  const rv = await computeReview(env, vnDay());
-  if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã được chốt', 'closed');
-  const note = String(b.note || '').trim().slice(0, 500);
-  if (rv.pending && !note) throw bad('Còn ' + rv.pending + ' việc chưa xử lý, hãy duyệt hoặc ghi chú lý do trước khi chốt');
-  await doClose(env, user, rv, note, 'close_day');
-  return json({ ok: true });
-}
-
-export async function doClose(env, user, rv, note, action) {
+/* Ghi mốc chốt của ngày rv.day. Chỉ việc tự chốt (closeDayAuto) và đặt lại số liệu gọi tới đây.
+   extra: câu lệnh chạy cùng giao dịch (chuyển báo cáo chưa duyệt sang ngày sau). */
+export async function doClose(env, user, rv, note, action, extra = []) {
   const day = rv.day;
   const used = {};
   rv.rows.forEach((r) => { if (r.used !== null) used[r.phi] = r.used; });
@@ -380,9 +352,12 @@ export async function doClose(env, user, rv, note, action) {
          báo cáo kỳ là `Tồn đầu + Nhập + Điều chỉnh − Dùng = Tồn cuối` và vẫn khép kín. */
       /* nhap còn trừ thêm phần vay mượn (thép đi vay về không phải thép mua về); kg là kg/cây LÚC
          CHỐT, để sửa kg/cây sau này không viết lại số tấn của ngày đã khoá. */
-      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat, vay, kg)
-       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')} FROM json_each(?3) j`
-    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, used: r.used, kg: r.kg })))),
+      /* bt = ngày BẤT THƯỜNG của phi (dùng âm / dùng cao bất thường). Vẫn chốt, vẫn hiện trong báo
+         cáo, nhưng RATE_SQL bỏ qua: không còn ai xem lại trước lúc chốt, một lần quên nhập phiếu mà
+         vào mức dùng trung bình là câu "còn đủ dùng N ngày" sai suốt 28 ngày. */
+      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat, vay, kg, bt)
+       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')}, ${J('bt')} FROM json_each(?3) j`
+    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, used: r.used, kg: r.kg, bt: r.neg || r.high ? 1 : 0 })))),
     env.DB.prepare(RATE_SQL).bind(day),
     /* Tồn chuẩn chốt theo số ĐÃ DUYỆT (EFF_JOIN đã lọc duyet_v IS NOT NULL): báo cáo chưa duyệt
        không bao giờ thành tồn chuẩn. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
@@ -403,84 +378,59 @@ export async function doClose(env, user, rv, note, action) {
        ${EFF_JOIN(2, 1)}
        LEFT JOIN baseline b ON b.day = ?2 AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id`
     ).bind(day, rv.last || ''),
+    ...extra,
     auditStmt(env, user, action, { day, exceptions: rv.exceptions.length, acked: rv.exceptions.length - rv.pending, note }),
     bump(env),
-  ], new HttpError(409, 'Vừa có số liệu mới hoặc ngày đã được chốt. Hãy tải lại màn Duyệt rồi chốt.', 'changed'));
+  ], new HttpError(409, 'Vừa có số liệu mới hoặc ngày đã được chốt.', 'changed'));
 }
 
-/* MỞ LẠI NGÀY ĐÃ CHỐT — chỉ LẦN CHỐT GẦN NHẤT, không phải ngày bất kỳ.
-   Vì sao chỉ lần gần nhất: tồn chuẩn của một ngày là điểm xuất phát của MỌI ngày sau nó. Mở lại
-   một ngày ở giữa là mọi lần chốt sau đó vẫn giữ con số tính từ mốc cũ, và từ đó trở đi không có
-   ngày nào còn khớp với ngày trước nó — sai mà không chỗ nào báo. Mở lần chốt gần nhất thì sau nó
-   chưa có gì phái sinh, nên app chỉ quay về đúng trạng thái "chưa chốt" mà nó vốn đã biết xử lý
-   (kể cả trường hợp quên chốt nhiều ngày: span > 1).
-   Sổ đã chốt hôm qua mà hôm nay phát hiện sai THÌ KHÔNG NÊN mở lại: cách đúng là lập phiếu
-   Điều chỉnh tồn, sửa số hiện tại và để lại dấu vết. Mở lại dành cho trường hợp vừa chốt nhầm. */
+/* HOÀN TÁC ĐẶT LẠI SỐ LIỆU — việc duy nhất còn "mở lại" một ngày đã chốt.
+   Sổ ngày tự chốt sau nửa đêm (closeDayAuto) nên không còn chốt tay, cũng không còn mở lại ngày:
+   mở một ngày đã qua thì giờ sau hệ thống chốt lại ngay, còn sai số của ngày đã qua thì sửa bằng
+   phiếu Điều chỉnh tồn (có dấu vết). Riêng mốc đặt lại số liệu là việc admin làm GIỮA NGÀY và khoá
+   luôn hôm đó; đặt nhầm thì phải gỡ được trong ngày, dựng lại đúng số đếm từ ảnh chụp undo_json. */
 export async function reopenDay(req, env, user) {
   const b = await readJson(req);
-  const today = vnDay();
-  const day = String(b.day || today);
-  if (!DAY_RE.test(day) || day > today) throw bad('Ngày không hợp lệ');
+  const day = vnDay();
   const note = String(b.note || '').trim().slice(0, 500);
-  if (!note) throw bad('Cần ghi lý do mở lại ngày');
-  /* Mở lại NGÀY CŨ thì chỉ admin đầu tiên, giống như đặt lại số liệu: nó dời tồn chuẩn mà cả bãi
-     đang dựa vào, và làm mất bảng tổng hợp của ngày đó. Chốt nhầm trong hôm nay thì admin nào
-     cũng sửa được, vì ngày hôm nay chưa là mốc của ngày nào cả. */
-  if (day !== today) {
-    const first = await firstAdminId(env);
-    if (user.id !== first) {
-      throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới mở lại ngày đã qua');
-    }
-  }
+  if (!note) throw bad('Cần ghi lý do hoàn tác');
   const c = await env.DB.prepare('SELECT kind, undo_json FROM day_close WHERE day = ?').bind(day).first();
-  if (!c) throw bad(day === today ? 'Hôm nay chưa chốt, không cần mở lại' : 'Ngày này chưa chốt, không có gì để mở lại');
-  const maxR = await env.DB.prepare('SELECT MAX(day) d FROM day_close').first();
-  if (maxR && maxR.d && maxR.d !== day) {
-    throw bad('Chỉ mở lại được lần chốt gần nhất (ngày ' + fmtDay(maxR.d) + '). Ngày cũ hơn thì dùng phiếu Điều chỉnh tồn.');
-  }
-  const laReset = c.kind === 'reset';
+  if (!c || c.kind !== 'reset') throw bad('Hôm nay không có lần đặt lại số liệu nào để hoàn tác');
   let snap = { counts: [], reports: [] };
-  if (laReset && c.undo_json) { try { snap = JSON.parse(c.undo_json); } catch (e) { /* ảnh chụp lỗi: coi như rỗng */ } }
-  /* Mốc kiểm kê lại đã GHI SỐ 0 vào số đếm của mọi ô, nên mở lại ngày phải bỏ luôn các số đó;
-     chỉ bỏ mốc chốt thì tồn vẫn bằng 0 và lần đặt lại thành không hoàn tác được.
-     Bỏ cả khu_report của hôm nay: số đếm đã mất thì để lại dấu "khu đã báo" chỉ sinh ra một khu
-     mang nhãn đã báo mà không có số nào. Các khu báo trước lúc đặt lại sẽ phải báo lại — số cũ
-     của họ đã bị mốc kiểm kê ghi đè lên, chỉ còn trong lịch sử đếm (bảng chỉ-ghi-thêm). */
+  if (c.undo_json) { try { snap = JSON.parse(c.undo_json); } catch (e) { /* ảnh chụp lỗi: coi như rỗng */ } }
+  /* Mốc kiểm kê lại đã GHI SỐ 0 vào số đếm của mọi ô, nên hoàn tác phải bỏ luôn các số đó; chỉ bỏ
+     mốc chốt thì tồn vẫn bằng 0. Bỏ cả khu_report của hôm nay rồi dựng lại từ ảnh chụp: các khu báo
+     trước lúc đặt lại có lại đúng số của họ. */
   const stmts = [
     env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
+    env.DB.prepare('DELETE FROM counts WHERE day = ?').bind(day),
+    env.DB.prepare('DELETE FROM khu_report WHERE day = ?').bind(day),
+    env.DB.prepare('UPDATE khu_phi SET keep_streak = 0'),
   ];
-  if (laReset) {
-    // bỏ các số 0 mà mốc kiểm kê ghi, rồi DỰNG LẠI đúng những gì có trước đó từ ảnh chụp
-    stmts.push(
-      env.DB.prepare('DELETE FROM counts WHERE day = ?').bind(day),
-      env.DB.prepare('DELETE FROM khu_report WHERE day = ?').bind(day),
-      env.DB.prepare('UPDATE khu_phi SET keep_streak = 0')
-    );
-    if (snap.counts && snap.counts.length) {
-      stmts.push(env.DB.prepare(
-        `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name)
-         SELECT ?1, ${J('khu_id')}, ${J('phi_id')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ${J('user_id')}, ${J('ts')},
-                ${J('duyet_v')}, ${J('duyet_kind')}, ${J('duyet_ts')}, ${J('duyet_at')}, ${J('duyet_by')}, ${J('duyet_name')}
-         FROM json_each(?2) j`
-      ).bind(day, JSON.stringify(snap.counts)));
-    }
-    if (snap.reports && snap.reports.length) {
-      stmts.push(env.DB.prepare(
-        `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
-         SELECT ?1, ${J('khu_id')}, ${J('user_id')}, ${J('ts')}, ${J('conflict')}, ${J('resolved')}, ${J('recount')}
-         FROM json_each(?2) j`
-      ).bind(day, JSON.stringify(snap.reports)));
-    }
+  if (snap.counts && snap.counts.length) {
+    stmts.push(env.DB.prepare(
+      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name)
+       SELECT ?1, ${J('khu_id')}, ${J('phi_id')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ${J('user_id')}, ${J('ts')},
+              ${J('duyet_v')}, ${J('duyet_kind')}, ${J('duyet_ts')}, ${J('duyet_at')}, ${J('duyet_by')}, ${J('duyet_name')}
+       FROM json_each(?2) j`
+    ).bind(day, JSON.stringify(snap.counts)));
+  }
+  if (snap.reports && snap.reports.length) {
+    stmts.push(env.DB.prepare(
+      `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
+       SELECT ?1, ${J('khu_id')}, ${J('user_id')}, ${J('ts')}, ${J('conflict')}, ${J('resolved')}, ${J('recount')}
+       FROM json_each(?2) j`
+    ).bind(day, JSON.stringify(snap.reports)));
   }
   stmts.push(
     env.DB.prepare(RATE_SQL).bind(day),
-    auditStmt(env, user, 'reopen_day', { day, note, reset: laReset || undefined, cu: day !== today || undefined }),
+    auditStmt(env, user, 'reopen_day', { day, note, reset: true }),
     bump(env)
   );
   await env.DB.batch(stmts);
-  return json({ ok: true, reset: laReset, day });
+  return json({ ok: true, reset: true, day });
 }
 
 /* Duyệt báo cáo đếm của MỘT khu (hoặc all = mọi khu đang chờ). Duyệt là chuyển số của lần báo
@@ -571,144 +521,88 @@ export async function reviewDuyet(req, env, user) {
   return json({ ok: true, khu: list.length, phieu: phieu.length });
 }
 
-/* ========================= BÁO CÁO GỬI SAU KHI CHỐT =========================
-   Một nút cho admin: NHẬN = mở lại ngày, ghi số của khu thành số đếm ĐÃ DUYỆT, rồi chốt lại ngay
-   (ghi chú cũ của lần chốt được giữ, nối thêm dòng "nhận số khu X"). Số đã duyệt của các khu
-   khác không đụng tới, nên ngày chốt lại chỉ khác lần trước đúng ở khu này.
-   Admin đã tự mở lại ngày trước đó thì chỉ ghi và duyệt số, không tự chốt: ngày đang mở là ý của admin.
-   Không nhận thì lateDelete xoá hẳn dòng, không để lại rác. */
-export async function lateAccept(req, env, user) {
-  const b = await readJson(req);
-  const khu = String(b.khu || '');
-  const day = vnDay();
-  const [lateR, dcR, lastR, curR, khuR, phiR] = await env.DB.batch([
-    env.DB.prepare('SELECT user_id, ts, at, data FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khu),
-    env.DB.prepare('SELECT kind, note FROM day_close WHERE day = ?').bind(day),
-    env.DB.prepare('SELECT MAX(day) d FROM day_close WHERE day < ?').bind(day),
-    env.DB.prepare('SELECT phi_id, v, ts, duyet_at FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
-    env.DB.prepare('SELECT name, active FROM khu WHERE id = ?').bind(khu),
-    env.DB.prepare('SELECT id FROM phi WHERE active = 1'),
-  ]);
-  const late = lateR.results[0];
-  if (!late) throw bad('Báo cáo này không còn (đã được nhận hoặc đã xoá)');
-  /* ts = lần gửi mà admin ĐANG XEM. Người đếm gửi lại trong lúc admin xem thì số đã khác: nhận lúc
-     đó là nhận một con số chưa ai thấy (cùng lỗi với duyệt khu, xem mark ở computeReview). */
-  if (Number(b.ts) !== late.ts) throw new HttpError(409, 'Khu vừa gửi lại báo cáo khác. Màn Duyệt đã tải lại, hãy xem rồi nhận.', 'changed');
-  const k = khuR.results[0];
-  if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
-  const dc = dcR.results[0] || null;
-  // mốc kiểm kê lại: mở lại phải dựng lại từ ảnh chụp (reopenDay), không bỏ mốc chốt trơn được
-  if (dc && dc.kind === 'reset') throw bad('Hôm nay là ngày đặt lại số liệu. Hãy xoá báo cáo này và cho khu đếm lại.');
-  const last = (lastR.results[0] || {}).d || '';
-  let rows;
-  try { rows = JSON.parse(late.data); } catch (e) { rows = null; }
-  if (!Array.isArray(rows) || !rows.length) throw bad('Báo cáo hỏng, hãy xoá và cho khu gửi lại');
-  /* Phi bị ẩn SAU lúc gửi: chốt chặn ẩn phi chỉ thấy thép đã vào tồn, không thấy báo cáo đang chờ.
-     Nhận nguyên thì thép hiện ra ở phi đã ẩn. Phi đó báo 0 thì bỏ dòng là xong; khác 0 thì từ chối. */
-  const act = new Set(phiR.results.map((r) => r.id));
-  const an = rows.filter((r) => !act.has(r.phi) && r.v !== 0).map((r) => r.phi);
-  if (an.length) throw bad('Phi ' + an.join(', ') + ' đã bị ẩn sau lúc gửi. Hãy xoá báo cáo này và cho khu gửi lại.');
-  rows = rows.filter((r) => act.has(r.phi));
-  const cur = Object.fromEntries(curR.results.map((r) => [r.phi_id, r]));
-  const data = JSON.stringify(rows.map((r) => ({ ...r, prev: cur[r.phi] ? cur[r.phi].v : null })));
-  // mốc phải vượt mọi mốc cũ của khu, cùng lý do như putCounts
-  const ts = Math.max(Date.now(), curR.results.reduce((m, r) => Math.max(m, r.ts || 0, r.duyet_at || 0), 0) + 1);
-  const changes = rows.filter((r) => !cur[r.phi] || cur[r.phi].v !== r.v).map((r) => ({ phi: r.phi, from: cur[r.phi] ? cur[r.phi].v : null, to: r.v }));
-  /* Chặn khi báo cáo vừa bị gửi lại (ts đổi) — admin phải nhận đúng số mình đang xem — hoặc trạng
-     thái chốt vừa đổi giữa lúc đọc và lúc ghi. */
-  const guard = guardStmt(env,
-    `NOT EXISTS (SELECT 1 FROM bao_sau_chot WHERE day = ?1 AND khu_id = ?2 AND ts = ?3)
-     OR (SELECT COUNT(*) FROM day_close WHERE day = ?1) <> ?4`, day, khu, late.ts, dc ? 1 : 0);
-  const stmts = [];
-  if (dc) {
-    stmts.push(
-      env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
-      env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
-      env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
-      env.DB.prepare(RATE_SQL).bind(day)
-    );
-  }
-  stmts.push(
+/* ========================= TỰ CHỐT SỔ NGÀY =========================
+   Không còn nút chốt: sổ của ngày D tự chốt ngay SAU NỬA ĐÊM (lần chạy đầu tiên của ngày D+1).
+   - Chốt sau nửa đêm chứ không phải 23:50: mọi thứ ghi sau 0h đã thuộc ngày D+1 (số đếm theo ngày
+     đếm, phiếu theo ngày duyệt), nên không có khe "ngày D còn chạy mà sổ D đã khoá".
+   - Chỉ số ĐÃ DUYỆT vào sổ (như trước). Việc còn treo không chặn chốt nữa — chặn là quên chốt, quên
+     chốt là gộp ngày — mà được tự ghi vào nhật ký chốt thay cho lý do admin từng phải gõ tay.
+   - Báo cáo đếm CHƯA DUYỆT lúc chốt không mất: chuyển sang ngày D+1, vẫn chờ duyệt, giữ nguyên giờ
+     đếm thật (xem carryStmts). */
+const nextDay = (d) => new Date(Date.parse(d + 'T00:00:00Z') + 864e5).toISOString().slice(0, 10);
+
+// lời ghi của lần tự chốt: việc còn treo, gom theo loại, đủ ngắn để đọc trong nhật ký
+export function autoNote(rv) {
+  const by = (t) => rv.exceptions.filter((e) => e.type === t);
+  const ten = (list) => list.map((e) => e.name || e.khu).join(', ');
+  const parts = [];
+  if (by('khu_missing').length) parts.push('chưa báo: ' + ten(by('khu_missing')));
+  const cho = rv.khus.filter((k) => k.waiting);
+  if (cho.length) parts.push('chưa duyệt (chuyển sang ngày sau): ' + cho.map((k) => k.name).join(', '));
+  if (by('conflict').length) parts.push('hai người báo khác số: ' + ten(by('conflict')));
+  if (by('recount').length) parts.push('chờ đếm lại: ' + ten(by('recount')));
+  if (by('recheck').length) parts.push('cần xem lại: ' + ten(by('recheck')));
+  if (by('slot_missing').length) parts.push('thiếu lần đếm: ' + by('slot_missing').map((e) => e.name + ' ' + e.missing.join(', ')).join('; '));
+  if (by('receipt_pending').length) parts.push(by('receipt_pending').length + ' phiếu chờ duyệt');
+  const bt = rv.rows.filter((r) => r.neg || r.high);
+  if (bt.length) parts.push('bất thường, không tính vào mức dùng TB: ' + bt.map((r) => r.phi + (r.neg ? ' dùng âm' : ' dùng cao')).join(', '));
+  return ('Tự chốt' + (parts.length ? ' · ' + parts.join(' · ') : ': không còn việc treo')).slice(0, 500);
+}
+
+/* Chuyển báo cáo chưa duyệt của ngày D sang D+1. Chỉ ô đang chờ (ts khác duyet_ts) và chỉ khi D+1
+   chưa có số của ô đó (số của D+1 bao giờ cũng mới hơn). Giữ ts: lần đếm diễn ra lúc nào thì vẫn là
+   lúc đó, nhờ vậy thép được duyệt sáng D+1 tính đúng là "về SAU lần đếm" và cộng thêm vào tồn.
+   Dấu "khu đã báo" cũng chuyển theo (không có nó thì màn Duyệt coi khu là chưa báo và không cho
+   duyệt), nhưng xung đột và yêu cầu đếm lại thì không: bảng so sánh chỉ đọc lịch sử của hôm nay. */
+function carryStmts(env, day) {
+  const nd = nextDay(day);
+  const cho = `SELECT 1 FROM counts c2 WHERE c2.day = ?1 AND c2.khu_id = r.khu_id
+                 AND NOT (c2.duyet_ts IS NOT NULL AND c2.duyet_ts = c2.ts)`;
+  return [
     env.DB.prepare(
       `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
-       SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4 FROM json_each(?5) j WHERE 1
-       ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET v=excluded.v, kind=excluded.kind, bo=excluded.bo, le=excluded.le, user_id=excluded.user_id, ts=excluded.ts`
-    ).bind(day, khu, late.user_id, ts, data),
+       SELECT ?2, c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, c.ts FROM counts c
+       WHERE c.day = ?1 AND NOT (c.duyet_ts IS NOT NULL AND c.duyet_ts = c.ts)
+       ON CONFLICT(day, khu_id, phi_id) DO NOTHING`
+    ).bind(day, nd),
     env.DB.prepare(
-      `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
-       SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
-    ).bind(day, khu, late.user_id, ts, data),
-    // lần đếm này là có thật (khu ra bãi lúc `at`), nên cũng tính vào khung giờ đã đếm
-    env.DB.prepare('INSERT INTO khu_report_log (day, khu_id, ts, at, user_id) VALUES (?,?,?,?,?)').bind(day, khu, ts, late.at, late.user_id),
-    env.DB.prepare(
-      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
-       SELECT ?1, ${J('phi')}, 1, 0, ${J('keep')} FROM json_each(?2) j WHERE 1
-       ON CONFLICT(khu_id, phi_id) DO UPDATE SET keep_streak = excluded.keep_streak`
-    ).bind(khu, data),
-    // admin đã xem và chọn số này: không còn xung đột hay yêu cầu đếm lại nào treo trên khu
-    env.DB.prepare(
-      `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount) VALUES (?,?,?,?,0,0,0)
-       ON CONFLICT(day, khu_id) DO UPDATE SET user_id = excluded.user_id, ts = excluded.ts, conflict = 0, resolved = 0, recount = 0`
-    ).bind(day, khu, late.user_id, ts),
-    // duyệt như reviewDuyet: mọi ô của khu từ sau lần chốt trước
-    env.DB.prepare(
-      `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
-       WHERE khu_id = ?4 AND day > ?5 AND day <= ?6`
-    ).bind(ts, user.id, user.name, khu, last, day),
-    env.DB.prepare('DELETE FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khu),
-    auditStmt(env, user, 'late_accept', { day, khu, changes: changes.slice(0, 30) }),
-    bump(env)
-  );
-  await batchGuarded(env, guard, stmts,
-    new HttpError(409, 'Báo cáo vừa được gửi lại hoặc ngày vừa đổi trạng thái chốt. Hãy xem lại rồi nhận.', 'changed'));
-  if (!dc) return json({ ok: true, reclosed: false });
-  // chốt lại ngay; hỏng (vừa có người ghi số khác) thì ngày để mở, admin chốt tay ở màn Duyệt
-  const note = ((dc.note ? dc.note + ' · ' : '') + 'Nhận số ' + k.name + ' gửi sau chốt').slice(0, 500);
-  try { await doClose(env, user, await computeReview(env, day), note, 'close_day'); }
-  catch (e) { if (!(e instanceof HttpError)) throw e; return json({ ok: true, reclosed: false }); }
-  return json({ ok: true, reclosed: true });
+      `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
+       SELECT ?2, r.khu_id, r.user_id, r.ts, 0, 0, 0 FROM khu_report r
+       WHERE r.day = ?1 AND EXISTS (${cho})
+       ON CONFLICT(day, khu_id) DO NOTHING`
+    ).bind(day, nd),
+  ];
 }
 
-// ts: lần gửi admin đang xem, như lateAccept — không xoá mất lần gửi mới hơn mà admin chưa thấy
-export async function lateDelete(env, user, khu, ts) {
-  const day = vnDay();
-  const res = await env.DB.prepare('DELETE FROM bao_sau_chot WHERE day = ? AND khu_id = ? AND ts = ?').bind(day, khu, Number(ts)).run();
-  if (!res.meta.changes) {
-    const con = await env.DB.prepare('SELECT 1 x FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khu).first();
-    if (con) throw new HttpError(409, 'Khu vừa gửi lại báo cáo khác. Màn Duyệt đã tải lại, hãy xem rồi quyết.', 'changed');
-    throw bad('Báo cáo này không còn (đã được nhận hoặc đã xoá)');
-  }
-  await env.DB.batch([auditStmt(env, user, 'late_delete', { day, khu }), bump(env)]);
-  return json({ ok: true });
+// Chốt sổ một ngày ĐÃ QUA. Trả false nếu ngày đó đã chốt. Bộ test gọi thẳng hàm này.
+export async function closeDayAuto(env, day) {
+  const rv = await computeReview(env, day, { cuoiNgay: true });
+  if (rv.closed) return false;
+  await doClose(env, SYSTEM, rv, autoNote(rv), 'auto_close', carryStmts(env, day));
+  return true;
 }
 
-/* ========================= VIỆC TỰ ĐỘNG (CRON) =========================
-   Một Cron mỗi ngày lúc 23:50 giờ VN (16:50 UTC), chỉ dùng 1/5 Cron của gói Free. */
-export async function nightly(env) {
-  const day = vnDay();
-  const [setR] = await env.DB.batch([env.DB.prepare(SETTINGS_SQL)]);
-  if (parseSettings(setR.results).auto_close) {
-    const rv = await computeReview(env, day, { cuoiNgay: true });
-    if (!rv.closed) {
-      const reasons = [];
-      if (!rv.reports.length) reasons.push('chưa khu nào báo');
-      // việc admin đã duyệt (cảnh báo lệch khu) không chặn tự chốt
-      if (rv.pending) reasons.push(rv.pending + ' việc chưa duyệt');
-      // nói rõ khu nào thiếu khung nào: "3 việc chưa duyệt" không cho admin biết sáng mai hỏi ai
-      const thieu = rv.exceptions.filter((e) => e.type === 'slot_missing');
-      if (thieu.length) reasons.push('thiếu lần đếm: ' + thieu.map((e) => e.name + ' ' + e.missing.join(', ')).join('; '));
-      if (reasons.length) await auditStmt(env, SYSTEM, 'auto_close_skip', { day, reason: reasons.join(', ') }).run();
-      else {
-        const note = 'Tự chốt: mọi khu đã duyệt, không còn việc chờ';
-        try { await doClose(env, SYSTEM, rv, note, 'auto_close'); }
-        catch (e) { if (!(e instanceof HttpError)) throw e; await auditStmt(env, SYSTEM, 'auto_close_skip', { day, reason: e.message }).run(); }
-      }
-    }
+/* Chạy MỖI GIỜ (Cron "5 * * * *", vẫn chỉ 1 trên 5 Cron của gói Free). Mỗi lần chốt NGÀY CŨ NHẤT
+   chưa chốt, nếu nó đã qua:
+   - lần chạy 0h05 chốt hôm qua; Cloudflare lỡ một lần thì giờ sau tự bù, không ngày nào bị gộp;
+   - lỡ nhiều ngày thì mỗi giờ bù một ngày, ngày nào riêng ngày đó. Một lần chỉ một ngày vì chốt một
+     ngày đã tốn ~30 truy vấn, hạn mức gói Free là ~50/lần chạy;
+   - vướng người đang ghi (doClose bị chặn vì số liệu vừa đổi) thì giờ sau chạy lại.
+   Chưa từng chốt thì bắt đầu từ ngày đầu tiên có số liệu, không chốt những ngày trống trước đó. */
+export async function hourly(env) {
+  const today = vnDay();
+  const r = await env.DB.prepare(
+    `SELECT (SELECT MAX(day) FROM day_close) last,
+            (SELECT MIN(d) FROM (SELECT MIN(day) d FROM counts UNION ALL
+                                 SELECT MIN(duyet_day) FROM receipts WHERE duyet_day IS NOT NULL)) first`
+  ).first();
+  const day = r.last ? nextDay(r.last) : r.first;
+  if (day && day < today) {
+    try { await closeDayAuto(env, day); }
+    catch (e) { if (!(e instanceof HttpError)) throw e; /* vướng người đang ghi: giờ sau thử lại */ }
   }
   await env.DB.batch([
     env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Date.now()),
-    env.DB.prepare('DELETE FROM login_fail WHERE day < ?').bind(day),
-    // báo cáo gửi sau chốt chỉ nhận được trong đúng ngày đó: sang ngày là rác
-    env.DB.prepare('DELETE FROM bao_sau_chot WHERE day < ?').bind(day),
+    env.DB.prepare('DELETE FROM login_fail WHERE day < ?').bind(today),
   ]);
 }

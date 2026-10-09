@@ -3,8 +3,16 @@
    số trong database, số API trả về, và số của sổ bóng phải khớp nhau.
    Mục đích: tìm lỗi logic mà test kịch bản tay không nghĩ ra.  node test/sim.test.mjs <repo> [seed] */
 import { boot, addDays, vnDay } from './harness.mjs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = process.argv[2] || '.';
+// sổ ngày tự chốt: mô phỏng gọi đúng hàm mà việc chạy mỗi giờ dùng (không còn API chốt tay)
+const REV = await import(pathToFileURL(path.resolve(ROOT, 'src/review.js')).href);
+const chotNgay = async (S, day) => {
+  try { return { status: (await REV.closeDayAuto(S.env, day)) ? 200 : 409 }; }
+  catch (e) { return { status: e.status || 500, data: { code: e.code, error: e.message } }; }
+};
 /* seed: "7" một lần, "1:30" cả dải; ngày: tham số thứ hai. Mặc định nhẹ để npm test chạy nhanh. */
 const ARG = process.argv[3] || '1:5';
 const SEEDS = ARG.includes(':')
@@ -164,8 +172,7 @@ async function sim(seed) {
     const full = KHU.every((k) => reported.has(k) || PHI.every((p) => get(k, p) === 0));
     if (full && rnd() < 0.85) {
       const rv = (await S.call('GET', '/review')).data;
-      const note = rv.exceptions.length ? 'mô phỏng' : '';
-      const c = await S.call('POST', '/close', { note });
+      const c = await chotNgay(S, day);
       if (c.status !== 200) { bug(seed, 'chốt ngày bị từ chối', JSON.stringify(c.data), log); return; }
       say(`CHỐT (${rv.exceptions.length} cảnh báo)`);
       closedDays.push(day);
@@ -187,49 +194,6 @@ async function sim(seed) {
             `${k}/${p}: sổ ${want}, database ${got}\n  khu_phi: ${JSON.stringify(kp)}\n  counts: ${JSON.stringify(ct)}\n  baseline: ${JSON.stringify(bl)}\n  receipts: ${JSON.stringify(rc)}\n  nhật ký ${p}: ${log.filter((l) => l.includes(' ' + p + ' ') || l.includes(p + '=')).slice(-10).join(' // ')}`,
             log);
           return;
-        }
-      }
-      // ----- đôi khi admin mở lại ngày rồi chốt lại -----
-      if (rnd() < 0.1) {
-        const ro = await S.call('POST', '/reopen', { note: 'mô phỏng' });
-        if (ro.status !== 200) { bug(seed, 'mở lại ngày bị từ chối', JSON.stringify(ro.data), log); return; }
-        say('MỞ LẠI ngày');
-        const rv2 = (await S.call('GET', '/review')).data;
-        const c2 = await S.call('POST', '/close', { note: rv2.exceptions.length ? 'mô phỏng' : '' });
-        if (c2.status !== 200) { bug(seed, 'chốt lại sau khi mở bị từ chối', JSON.stringify(c2.data), log); return; }
-        say('CHỐT LẠI');
-      }
-      // ----- đôi khi admin bắt một khu đếm lại sau khi đã chốt -----
-      if (rnd() < 0.1) {
-        const k2 = pick(KHU.filter((x) => reported.has(x)));
-        if (k2) {
-          const rc = await S.call('POST', '/recount-after-close', { khu: k2 });
-          if (rc.status !== 200) { bug(seed, 'đếm lại sau chốt bị từ chối', `${k2}: ${JSON.stringify(rc.data)}`, log); return; }
-          // số của khu đó bị xoá: hệ thống quay về tồn chuẩn cũ nên mọi ô của khu thành "chưa biết"
-          PHI.forEach((p2) => dirty.add(key(k2, p2)));
-          say(`ĐẾM LẠI ${k2} (đã xoá số, mở lại ngày)`);
-          {
-            const its2 = soAll(k2);
-            const r4 = await S.call('PUT', '/counts', { khu: k2, day, items: its2 }, 'An');
-            if (r4.status !== 200) { bug(seed, 'báo lại sau khi bị bắt đếm lại bị từ chối', JSON.stringify(r4.data), log); return; }
-            const dk4 = await duyetKhu(k2);
-            if (dk4.status !== 200) { bug(seed, 'duyệt lại sau khi đếm lại bị từ chối', `${k2}: ${JSON.stringify(dk4.data)}`, log); return; }
-            clean(k2, PHI);
-            say(`báo lại ${k2} sau đếm lại + duyệt`);
-          }
-          const rv3 = (await S.call('GET', '/review')).data;
-          const c3 = await S.call('POST', '/close', { note: rv3.exceptions.length ? 'mô phỏng' : '' });
-          if (c3.status !== 200) { bug(seed, 'chốt lại sau đếm lại bị từ chối', JSON.stringify(c3.data), log); return; }
-          say('CHỐT LẠI sau đếm lại');
-          lastClosedSnap = { ...real }; lastClosedDirty = new Set(dirty);
-          const base2 = S.sql('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?', day);
-          const bm3 = {};
-          base2.forEach((r) => (bm3[key(r.khu_id, r.phi_id)] = r.v));
-          for (const k3 of KHU) for (const p3 of PHI) {
-            if (dirty.has(key(k3, p3))) continue;
-            const want3 = get(k3, p3), got3 = bm3[key(k3, p3)] || 0;
-            if (want3 !== got3) { bug(seed, 'tồn chuẩn sau đếm lại lệch sổ bóng', `${k3}/${p3}: sổ ${want3}, database ${got3}`, log); return; }
-          }
         }
       }
       // ===== bất biến 2: daily_summary.ton = tổng sổ bóng theo phi =====
