@@ -1,10 +1,8 @@
 // Phiếu nhập kho, chuyển khu, xuất kho và điều chỉnh tồn.
-import { HIGH_KG, HttpError, KHU_UP_KG, bad, json, rand, vnDay } from './core.js';
+import { HttpError, bad, json, rand, vnDay } from './core.js';
 import { IS_CLOSED, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, qtyWord, readJson,
   unitWord } from './helpers.js';
-import { EFF_SELECT, J, putCounts } from './counts.js';
-import { computeReview, reviewDuyet } from './review.js';
-import { WIPE_WORD, resetData } from './data.js';
+import { EFF_SELECT, J } from './counts.js';
 
 /* ========================= NHẬP KHO ========================= */
 

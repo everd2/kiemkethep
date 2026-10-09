@@ -4,7 +4,6 @@ import { slotInfo } from './slots.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './helpers.js';
 import { EFF_SELECT } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
-import { firstAdminId } from './admin.js';
 
 /* ========================= DỮ LIỆU CHUNG ========================= */
 

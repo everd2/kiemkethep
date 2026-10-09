@@ -3,7 +3,7 @@ import { HttpError, PHI_DEFAULTS, ROLES, bad, hashPin, json, rand, seedPhi, vnDa
 import { SETTINGS_SQL, SETTING_RANGE, auditStmt, boWord, bump, genPin, intIn, normPhone,
   parseSettings, qtyWord, readJson, unitWord } from './helpers.js';
 import { logout } from './auth.js';
-import { KHU_X_PHI_ALL, putCounts } from './counts.js';
+import { KHU_X_PHI_ALL } from './counts.js';
 
 /* ========================= QUẢN TRỊ ========================= */
 

@@ -1,5 +1,4 @@
 // Tiện ích dùng chung không phụ thuộc gì: lỗi HTTP, băm, giờ Việt Nam, hằng số ngưỡng, phi mặc định.
-import { computeReview } from './review.js';
 
 export class HttpError extends Error {
   constructor(status, msg, code) { super(msg); this.status = status; this.code = code; }

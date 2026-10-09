@@ -2,7 +2,6 @@
 import { HttpError, bad, json, rand } from './core.js';
 import { DUYET_JOIN_LOAN, DUYET_NAME_LOAN, UNAME, auditStmt, bump, intIn, readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
-import { parseLines, voidReceipt } from './phieu.js';
 
 /* ========================= VAY MƯỢN NGOÀI BÃI =========================
    Sổ công nợ thép với đối tác NGOÀI bãi — KHÔNG đụng tới tồn kho (counts/receipts), xem chú thích

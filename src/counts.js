@@ -1,9 +1,8 @@
 // Báo cáo đếm của khu, và xử lý khi hai người báo khác số.
-import { DAY_RE, HttpError, KINDS, bad, fmtDay, json, vnDay } from './core.js';
-import { SLOT_LATE_MS } from './slots.js';
+import { HttpError, KINDS, bad, fmtDay, json, vnDay } from './core.js';
 import { RATE_SQL } from './db.js';
-import { CSV_HEAD, IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, boWord, bump, closedErr,
-  csvDec, csvQty, csvRow, guardStmt, intIn, isCuon, parseSettings, readJson, unitWord } from './helpers.js';
+import { IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, boWord, bump, closedErr,
+  guardStmt, intIn, parseSettings, readJson, unitWord } from './helpers.js';
 
 /* ========================= BÁO CÁO ĐẾM ========================= */
 
@@ -355,64 +354,4 @@ export async function recountAfterClose(req, env, user) {
     bump(env),
   ]);
   return json({ ok: true });
-}
-
-export async function auditList(env, url) {
-  const limit = Math.min(Number(url.searchParams.get('limit')) || 150, 500);
-  const { results } = await env.DB.prepare('SELECT id, ts, user_name, action, detail FROM audit ORDER BY id DESC LIMIT ?').bind(limit).all();
-  return json({ items: results });
-}
-
-export async function usage(env, url) {
-  const days = Math.min(Number(url.searchParams.get('days')) || 30, 180);
-  const { results } = await env.DB.prepare('SELECT day, used_json, span FROM day_close ORDER BY day DESC LIMIT ?').bind(days).all();
-  return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used }; }) });
-}
-
-export async function exportCsv(env, url) {
-  const day = DAY_RE.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : vnDay();
-  const [phiR, khuR, cntR, baseR, mvR] = await env.DB.batch([
-    env.DB.prepare('SELECT id, kg_per_cay, active, bo_size, unit FROM phi ORDER BY sort'),
-    env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
-    env.DB.prepare(EFF_BY_BASELINE).bind(day),
-    env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT MAX(day) FROM baseline WHERE day <= ?)').bind(day),
-    env.DB.prepare(MV_CHUA_DEM).bind(day),
-  ]);
-  const c = {}, b = {}, mv = {};
-  cntR.results.forEach((r) => (c[r.khu_id + '|' + r.phi_id] = r.v));
-  baseR.results.forEach((r) => (b[r.khu_id + '|' + r.phi_id] = r.v));
-  mvR.results.forEach((r) => (mv[r.khu_id + '|' + r.phi_id] = r.q));
-  const hasData = new Set();
-  Object.keys(c).concat(Object.keys(b), Object.keys(mv)).forEach((key) => {
-    if (((c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0)) > 0) hasData.add(key.split('|')[1]);
-  });
-  const phis = phiR.results.filter((p) => p.active !== 0 || hasData.has(p.id));
-  const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
-  // cột thép cuộn ghi số cuộn; "Tổng (cây)" chỉ cộng thép cây, không lẫn số phần của cuộn
-  const head = ['Khu', ...phis.map((p) => (isCuon(p) ? p.id + ' (cuộn)' : p.id)), 'Tổng thép cây (cây)', 'Tổng (tấn)'];
-  const lines = [csvRow(head.map(esc))];
-  const colV = phis.map(() => 0);
-  let allKg = 0;
-  for (const k of khuR.results) {
-    let sum = 0, kg = 0;
-    const cells = phis.map((p, i) => {
-      const key = k.id + '|' + p.id;
-      const v = (c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0);
-      if (!isCuon(p)) sum += v;
-      kg += v * p.kg_per_cay; colV[i] += v;
-      return csvQty(v, p);
-    });
-    allKg += kg;
-    // khu đã ẩn mà còn thép vẫn nằm trong tổng của app, nên tệp xuất ra phải có để khớp số
-    lines.push(csvRow([esc(k.name + (k.active ? '' : ' (đã ẩn)')), ...cells, sum, csvDec(kg / 1000, 2)]));
-  }
-  const sumCay = phis.reduce((a, p, i) => a + (isCuon(p) ? 0 : colV[i]), 0);
-  lines.push(csvRow([esc('TỔNG'), ...colV.map((v, i) => csvQty(v, phis[i])), sumCay, csvDec(allKg / 1000, 2)]));
-  return new Response(CSV_HEAD + lines.join('\r\n'), {
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="ton-kho-${day}.csv"`,
-      'Cache-Control': 'no-store',
-    },
-  });
 }

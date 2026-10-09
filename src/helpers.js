@@ -1,7 +1,5 @@
 // Hàm dùng chung của các API: đọc request, CSV, ghi có chốt chặn, nhật ký, phiên đăng nhập, cài đặt.
 import { HttpError, SESSION_MS, bad, json, rand, sha256 } from './core.js';
-import { computeReview } from './review.js';
-import { settingsUpdate } from './admin.js';
 
 export function normPhone(p) {
   const d = String(p || '').replace(/\D/g, '');

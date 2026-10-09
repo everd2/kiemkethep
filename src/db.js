@@ -1,8 +1,5 @@
 // Tự nâng cấp cấu trúc database (migration) khi deploy bản mới.
-import { KINDS, seedPhi } from './core.js';
-import { UNAME } from './helpers.js';
-import { MV_CHUA_DEM } from './counts.js';
-import { stockOf } from './phieu.js';
+import { seedPhi } from './core.js';
 
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
