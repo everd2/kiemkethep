@@ -113,7 +113,7 @@ export async function checkTransferStock(env, day, lines, opt) {
   const o = opt || {};
   const dc = o.kind === 'dc';
   const dau = o.duyet === false ? '' : 'Không duyệt được: ';
-  const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất' }[o.kind] || 'phiếu chuyển';
+  const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất', vay: 'phiếu vay mượn' }[o.kind] || 'phiếu chuyển';
   const byKhu = {};
   out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
   const phiR = await env.DB.prepare('SELECT id, bo_size, unit FROM phi').all();
@@ -153,7 +153,7 @@ export async function duyetReceipt(env, user, id) {
   const list = r.grp && rows.length ? rows : [{ phi_id: r.phi_id, khu_id: r.khu_id, qty: r.qty }];
   // chuyển khu và điều chỉnh giảm đều RÚT thép khỏi một khu, nên cùng phải kiểm lại tồn lúc duyệt
   const rk = r.kind || 'nhap';
-  await checkTransferStock(env, day, ['chuyen', 'dc', 'xuat'].includes(rk) ? list : [], { kind: rk });
+  await checkTransferStock(env, day, ['chuyen', 'dc', 'xuat', 'vay'].includes(rk) ? list : [], { kind: rk });
   const ts = Date.now();
   await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     r.grp
@@ -161,6 +161,9 @@ export async function duyetReceipt(env, user, id) {
         .bind(day, ts, user.id, user.name, r.grp)
       : env.DB.prepare('UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE id = ?')
         .bind(day, ts, user.id, user.name, id),
+    // phiếu kho của sổ vay mượn: duyệt phiếu là duyệt luôn lần ghi sổ đi kèm (cùng grp)
+    ...(rk === 'vay' && r.grp ? [env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_ts IS NULL')
+      .bind(ts, user.id, user.name, r.grp)] : []),
     auditStmt(env, user, 'receipt_duyet', { id, grp: r.grp, kind: r.kind || 'nhap', day: r.day, duyet_day: day,
       lines: list.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
@@ -337,6 +340,8 @@ export async function voidReceipt(env, user, id) {
     r.grp
       ? env.DB.prepare('UPDATE receipts SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)
       : env.DB.prepare('UPDATE receipts SET voided = 1, voided_ts = ? WHERE id = ?').bind(Date.now(), id),
+    // phiếu kho của sổ vay mượn: huỷ phiếu là huỷ luôn lần ghi sổ đi kèm, không để sổ và kho lệch nhau
+    ...(r.kind === 'vay' && r.grp ? [env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)] : []),
     auditStmt(env, user, pending ? 'receipt_reject' : 'receipt_void', { id, kind: r.kind || 'nhap',
       lines: rows.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),

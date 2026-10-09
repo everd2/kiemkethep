@@ -31,7 +31,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -83,6 +83,16 @@ export async function computeReview(env, day, opt = {}) {
     db.prepare(SETTINGS_SQL),
     // các lần khu gửi báo cáo trong ngày đang duyệt: khung giờ nào đã đếm (xem migration 15)
     db.prepare('SELECT khu_id, ts, at FROM khu_report_log WHERE day = ? ORDER BY id').bind(day),
+    /* Sổ vay mượn chờ duyệt, để admin duyệt ngay ở màn Duyệt thay vì phải nhớ sang màn khác.
+       Lần ghi có kèm phiếu kho thì KHÔNG lấy ở đây: phiếu đó đã nằm trong danh sách phiếu chờ
+       duyệt, duyệt phiếu là duyệt luôn sổ — bày cả hai là một việc hiện thành hai. */
+    db.prepare(`SELECT l.id, l.grp, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.ts, l.user_id, ${UNAME}
+                FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
+                WHERE l.voided = 0 AND l.duyet_ts IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay')
+                ORDER BY l.id`),
+    // ai vừa đổi khung giờ đếm (xem settingsUpdate): tên để màn Duyệt nói ra
+    db.prepare("SELECT name FROM users WHERE id = (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'slot_changed_by')"),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -99,7 +109,7 @@ export async function computeReview(env, day, opt = {}) {
   }
   const due = nSlot > 1 ? slotsDue(day, slotSt, Date.now(), !!opt.cuoiNgay) : [];
 
-  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, rcTs = {};
+  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, vc = {}, rcTs = {};
   effR.results.forEach((r) => (eff[r.khu_id + '|' + r.phi_id] = r.v));
   subR.results.forEach((r) => (sub[r.khu_id + '|' + r.phi_id] = r));
   baseR.results.forEach((r) => (base[r.khu_id + '|' + r.phi_id] = r.v));
@@ -112,6 +122,9 @@ export async function computeReview(env, day, opt = {}) {
     inn[key] = (inn[key] || 0) + r.q;
     if (r.kind === 'dc') dcc[key] = (dcc[key] || 0) + r.q;
     if (r.kind === 'xuat') xc[key] = (xc[key] || 0) + r.q;
+    // thép ra/vào theo sổ vay mượn: đổi tồn, nhưng KHÔNG cộng lại vào lượng dùng như xuất —
+    // cho đối tác mượn không phải là dùng thép, đi vay về cũng không phải thép mua về
+    if (r.kind === 'vay') vc[key] = (vc[key] || 0) + r.q;
   });
   mvTsR.results.forEach((r) => (rcTs[r.khu_id] = Math.max(r.a || 0, r.b || 0)));
   const khuAct = khuR.results.filter((k) => k.active);
@@ -137,13 +150,13 @@ export async function computeReview(env, day, opt = {}) {
 
   const rows = phiR.results.map((p) => {
     const phiOff = p.active === 0;
-    let old = 0, innT = 0, dcT = 0, xT = 0, cn = 0, topKhu = null, topNet = 0;
+    let old = 0, innT = 0, dcT = 0, xT = 0, vT = 0, cn = 0, topKhu = null, topNet = 0;
     for (const k of khuR.results) {
       const key = k.id + '|' + p.id;
       const b = base[key] || 0;
       const i = inn[key] || 0;
       const e = eff[key] !== undefined ? eff[key] : b;
-      old += b; innT += i; dcT += dcc[key] || 0; xT += xc[key] || 0; cn += e;
+      old += b; innT += i; dcT += dcc[key] || 0; xT += xc[key] || 0; vT += vc[key] || 0; cn += e;
       const net = e - (b + i);
       if (Math.abs(net) > Math.abs(topNet)) { topNet = net; topKhu = k.id; }
     }
@@ -173,7 +186,8 @@ export async function computeReview(env, day, opt = {}) {
     return {
       // inn = tổng (dùng cho mọi phép tính), dc = riêng phần điều chỉnh, nhap = inn − dc (chỉ hiển thị)
       // xuat: phần đã dùng CÓ PHIẾU (số dương); used − xuat là phần không rõ
-      phi: p.id, kg: p.kg_per_cay, old, inn: innT, dc: dcT, xuat: -xT, cnt: cn, used,
+      // vay: thép ra/vào theo sổ vay mượn (có dấu). Nằm trong inn nên tồn đúng, mà used thì không gồm nó
+      phi: p.id, kg: p.kg_per_cay, old, inn: innT, dc: dcT, xuat: -xT, vay: vT, cnt: cn, used,
       avg: rt === null ? null : Math.round(rt * 10) / 10,
       peak: Math.round(peak * 10) / 10,
       rateDays: rtDays,
@@ -302,7 +316,16 @@ export async function computeReview(env, day, opt = {}) {
   })).size;
   return {
     day, last: last || null, span, rev, closed: closedR.results.length > 0,
-    rows, khus, phieu, exceptions, pending, slot: { n: nSlot, defs: slotDefs(slotSt) },
+    rows, khus, phieu, exceptions, pending,
+    /* changed: khung giờ (số lần, giờ làm) bị đổi NGAY HÔM NAY. Đổi giữa ngày thì các lần đếm hôm
+       nay được xếp lại theo khung mới, tức việc "thiếu khung" có thể tự biến mất trước lúc chốt —
+       không chặn, nhưng phải để người chốt thấy. */
+    slot: {
+      n: nSlot, defs: slotDefs(slotSt),
+      changed: slotSt.slot_changed_at && vnDay(slotSt.slot_changed_at) === day
+        ? { at: slotSt.slot_changed_at, by: (slotByR.results[0] || {}).name || null } : null,
+    },
+    loans: loanR.results,
     reports: repR.results.filter((r) => r.day === day), khu: khuR.results,
   };
 }
@@ -331,9 +354,11 @@ export async function doClose(env, user, rv, note, action) {
       /* nhap = inn − dc: cột này mang nghĩa THÉP THẬT VỀ, nên phải trừ phần điều chỉnh ra.
          dung thì vẫn tính từ TỔNG (rv.rows[].used đã dùng inn đầy đủ), nhờ vậy đẳng thức của
          báo cáo kỳ là `Tồn đầu + Nhập + Điều chỉnh − Dùng = Tồn cuối` và vẫn khép kín. */
-      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat)
-       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')} FROM json_each(?3) j`
-    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, used: r.used })))),
+      /* nhap còn trừ thêm phần vay mượn (thép đi vay về không phải thép mua về); kg là kg/cây LÚC
+         CHỐT, để sửa kg/cây sau này không viết lại số tấn của ngày đã khoá. */
+      `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat, vay, kg)
+       SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')} FROM json_each(?3) j`
+    ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, used: r.used, kg: r.kg })))),
     env.DB.prepare(RATE_SQL).bind(day),
     /* Tồn chuẩn chốt theo số ĐÃ DUYỆT (EFF_JOIN đã lọc duyet_v IS NOT NULL): báo cáo chưa duyệt
        không bao giờ thành tồn chuẩn. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
@@ -486,11 +511,16 @@ export async function reviewDuyet(req, env, user) {
      phiếu không duyệt được, vì lúc đó admin không biết nửa nào đã vào. */
   for (const v of phieu) {
     // mọi loại phiếu RÚT thép khỏi khu đều phải qua cùng một chốt chặn âm tồn
-    if (v.kind === 'chuyen' || v.kind === 'dc' || v.kind === 'xuat') {
+    if (v.kind === 'chuyen' || v.kind === 'dc' || v.kind === 'xuat' || v.kind === 'vay') {
       await checkTransferStock(env, day, v.lines.map((l) => ({ phi_id: l.phi, khu_id: l.khu, qty: l.qty })), { kind: v.kind });
     }
   }
   for (const v of phieu) {
+    // phiếu kho của sổ vay mượn: duyệt phiếu là duyệt luôn lần ghi sổ đi kèm (cùng grp)
+    if (v.kind === 'vay' && v.grp) {
+      stmts.push(env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_ts IS NULL')
+        .bind(ts, user.id, user.name, v.grp));
+    }
     stmts.push(v.grp
       ? env.DB.prepare('UPDATE receipts SET duyet_day = ?1, duyet_ts = ?2, duyet_by = ?3, duyet_name = ?4 WHERE grp = ?5 AND voided = 0 AND duyet_day IS NULL')
         .bind(day, ts, user.id, user.name, v.grp)

@@ -343,13 +343,22 @@ export async function settingsUpdate(req, env, admin) {
   if (sau.work_to - sau.work_from < sau.report_slots_per_day) {
     throw bad(`Giờ làm ${sau.work_to - sau.work_from} tiếng không đủ cho ${sau.report_slots_per_day} lần đếm (mỗi lần cần ít nhất 1 tiếng)`);
   }
+  /* Đổi số lần đếm hoặc giờ làm thì ghi lại LÚC NÀO, AI đổi: màn Duyệt hôm đó phải nói ra, vì đổi
+     giữa ngày là xếp lại các lần đếm theo khung mới (có thể làm việc "thiếu khung" biến mất). */
+  const truoc = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
+  if (['report_slots_per_day', 'work_from', 'work_to'].some((k) => b[k] !== undefined && sau[k] !== truoc[k])) {
+    stmts.push(
+      env.DB.prepare("INSERT INTO settings (key, value) VALUES ('slot_changed_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(String(Date.now())),
+      env.DB.prepare("INSERT INTO settings (key, value) VALUES ('slot_changed_by', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(String(admin.id)),
+    );
+  }
   for (const key of Object.keys(SETTING_RANGE)) {
     if (b[key] !== undefined) {
       const v = sau[key];
       stmts.push(env.DB.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, String(v)));
     }
   }
-  if (!stmts.length) throw bad('Không có gì để lưu');
+  if (!Object.keys(SETTING_RANGE).some((k) => b[k] !== undefined)) throw bad('Không có gì để lưu');
   stmts.push(auditStmt(env, admin, 'settings_update', Object.fromEntries(Object.keys(SETTING_RANGE).filter((k) => b[k] !== undefined).map((k) => [k, b[k]]))), bump(env));
   await env.DB.batch(stmts);
   return json({ ok: true });

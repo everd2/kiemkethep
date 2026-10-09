@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -187,6 +187,18 @@ export const MIGRATIONS = {
        voided_ts INTEGER, duyet_ts INTEGER, duyet_by INTEGER, duyet_name TEXT)`,
     'CREATE INDEX IF NOT EXISTS idx_loans_doitac ON loans(doitac_id)',
     'CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp)',
+  ],
+  /* KHOÁ SỐ TẤN NGÀY ĐÃ CHỐT + PHIẾU KHO CỦA SỔ VAY MƯỢN.
+     - kg: kg/cây của phi TẠI LÚC CHỐT. Báo cáo, xem lại ngày cũ, thống kê nhân với số này chứ không
+       với kg/cây hiện tại — không thì sửa kg/cây hôm nay là viết lại số tấn của mọi ngày cũ mà
+       không chỗ nào báo. Ngày chốt trước bản này không biết kg lúc đó là bao nhiêu, nên điền bằng
+       số hiện tại: đúng như cách chúng vẫn đang hiện, chỉ là từ nay không trôi theo nữa.
+     - vay: thép ra/vào bãi theo sổ vay mượn (phiếu kho kind 'vay'), số có dấu. Tách khỏi cột nhap
+       như dc và xuat, vì thép cho vay/đi vay không phải thép về và cũng không phải thép dùng. */
+  17: [
+    'ALTER TABLE daily_summary ADD COLUMN kg REAL',
+    'ALTER TABLE daily_summary ADD COLUMN vay INTEGER NOT NULL DEFAULT 0',
+    'UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

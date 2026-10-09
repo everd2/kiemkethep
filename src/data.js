@@ -121,9 +121,9 @@ export async function resetData(req, env, user) {
         .bind(day, user.id, ts, note, '{}', '[]', 1, undo),
       env.DB.prepare(
         // như lúc chốt thường: nhap là thép thật về, phần điều chỉnh đứng riêng ở cột dc
-        `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat)
-         SELECT ?1, ${J('phi')}, 0, ${J('inn')} - ${J('dc')} + ${J('xuat')}, NULL, 1, ${J('dc')}, ${J('xuat')} FROM json_each(?2) j`
-      ).bind(day, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0 })))),
+        `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat, vay, kg)
+         SELECT ?1, ${J('phi')}, 0, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, NULL, 1, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')} FROM json_each(?2) j`
+      ).bind(day, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, kg: r.kg })))),
       env.DB.prepare(RATE_SQL).bind(day),
       // tồn chuẩn hôm nay = 0 ở MỌI ô từng có số, kể cả ô thuộc khu/phi đã bị ẩn mà còn thép
       env.DB.prepare(
@@ -161,7 +161,7 @@ export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts',
    (dấu khung giờ đã đếm); bản 16 chỉ thêm doitac/loans (sổ vay mượn, tách khỏi tồn kho).
    Đổi cột hay đổi nghĩa bảng cũ thì KHÔNG được thêm vào đây. */
 export const BK_GIU_NEU_THIEU = ['doitac', 'loans'];
-export const BK_COMPAT = { 15: [14], 16: [15] };
+export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
@@ -258,6 +258,9 @@ export async function restoreData(req, env, user) {
       `INSERT INTO ${t} (${use.join(', ')}) SELECT ${sel} FROM json_each(?1) j`
     ).bind(JSON.stringify(rows)));
   }
+  /* Bản sao trước bản 17 không có kg lúc chốt: điền bằng kg/cây hiện tại (đúng như cách các ngày đó
+     vẫn đang hiện), để từ lúc nạp chúng cũng được khoá, không trôi theo lần sửa kg/cây sau này. */
+  stmts.push(env.DB.prepare('UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL'));
   stmts.push(
     auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),
     bump(env)

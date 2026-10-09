@@ -89,6 +89,8 @@ const boot = {
        giảm hiện ra tiêu đề "Nhập vào undefined" và phần mô tả rỗng. */
     { id: 14, phi_id: 'D12', khu_id: 'C', qty: -30, note: 'Đếm sai kỳ trước', kind: 'dc', grp: 'g3', ts, user_id: 1, uname: 'Nguyễn Văn A' },
     { id: 15, phi_id: 'D16', khu_id: 'A', qty: 25, note: 'Ghi nhầm phiếu: thiếu một bó', kind: 'dc', grp: 'g4', ts, user_id: 1, uname: 'Nguyễn Văn A', duyet_day: today, duyet_ts: ts, duyet_name: 'Nguyễn Văn A' },
+    // phiếu kho của sổ vay mượn: thép cho đối tác mượn rời khu A, chờ duyệt
+    { id: 16, phi_id: 'D10', khu_id: 'A', qty: -40, note: 'Vay mượn · Cho Cty Đông Á vay: xe 15C', kind: 'vay', grp: 'g5', ts, user_id: 3, uname: 'Thủ kho' },
   ],
   innKhu: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }, { khu_id: 'B', phi_id: 'D10', q: 50 }],
   // khu B đã đếm D10 hôm nay; phần còn lại chưa đếm nên vẫn là "chưa được đếm"
@@ -101,6 +103,8 @@ const review = {
   day: today, last: yday, span: 2, closed: false,
   rows: [
     { phi: 'D8', old: 220, inn: 110, dc: 0, cnt: 180, used: 150, neg: false, high: true, avg: 33, topKhu: 'A', topNet: -40 },
+    // điều chỉnh và vay mượn cùng lúc: thẻ đỏ dùng lưới 6 ô, phép tính gọn có cả "(đc)" lẫn "(vay)"
+    { phi: 'D14', old: 500, inn: -30, dc: 20, vay: -50, xuat: 0, cnt: 400, used: 70, neg: false, high: true, avg: 10, topKhu: 'A', topNet: -70 },
     /* inn là TỔNG, gồm cả phần điều chỉnh: ở đây nhập thật 20, sửa sổ −20, nên phép tính trên màn
        Duyệt phải tách ra thành "+ 20" và "− 20(đc)" mà tổng vẫn khớp. Phi này còn là phi bị gắn cờ
        "dùng âm", tức nó đi qua cả thẻ đỏ (lưới .eq 5 ô) lẫn dòng gọn. */
@@ -146,24 +150,33 @@ const review = {
     // phiếu điều chỉnh chờ duyệt, chỉ có dòng âm: thẻ trên màn Duyệt phải nói rõ nó sửa sổ
     { key: 'g3', grp: 'g3', id: 73, day: today, ts, uname: 'Thủ kho', kind: 'dc', note: 'Đếm sai kỳ trước',
       lines: [{ phi: 'D12', khu: 'C', qty: -30 }] },
+    // phiếu kho của sổ vay mượn: thép cho đối tác mượn rời khu A
+    { key: 'g5', grp: 'g5', id: 75, day: today, ts, uname: 'Thủ kho', kind: 'vay', note: 'Vay mượn · Cho Cty Đông Á vay',
+      lines: [{ phi: 'D10', khu: 'A', qty: -40 }] },
   ],
   pending: 7,
   reports: boot.reports, khu,
+  loans: [
+    { id: 31, grp: 'L1', doitac_id: 5, doitac_name: 'Cty Đông Á', phi_id: 'D8', kind: 'vay', qty: 22, note: 'hẹn trả T6', ts, user_id: 2, uname: 'An' },
+    { id: 32, grp: 'L1', doitac_id: 5, doitac_name: 'Cty Đông Á', phi_id: 'D10', kind: 'vay', qty: 30, note: 'hẹn trả T6', ts, user_id: 2, uname: 'An' },
+  ],
 };
+review.slot.changed = { at: ts, by: 'Admin' };
 const dayData = {
-  day: yday, close: { uname: 'Nguyễn Văn A', ts, note: 'bình thường', span: 1 },
+  day: yday, close: { uname: 'Nguyễn Văn A', ts, note: 'An nghỉ chiều', span: 1,
+    exc_json: JSON.stringify([{ type: 'slot_missing', khu: 'A', name: 'Khu A', missing: ['buổi chiều (12h–18h)'] }, { type: 'khu_missing', khu: 'B' }]) },
   counts: [{ khu_id: 'A', phi_id: 'D8', v: 220 }], baseline: boot.baseline, prevBaseline: boot.baseline,
-  summary: [{ phi_id: 'D8', nhap: 110, dung: 55, dc: 0, xuat: 22 }, { phi_id: 'D10', nhap: 0, dung: 120, dc: -30, xuat: 0 }],
+  summary: [{ phi_id: 'D8', nhap: 110, dung: 55, dc: 0, xuat: 22, vay: 0, kg: 0.4 }, { phi_id: 'D10', nhap: 0, dung: 120, dc: -30, xuat: 0, vay: -40, kg: 0.62 }],
   reports: boot.reports, receipts: boot.receipts.map((r) => ({ ...r, voided: 0 })),
   lastClose: yday, // là lần chốt gần nhất, nên màn hình bày nút mở lại
 };
 const repData = {
   rows: [
-    { phi: 'D8', dau: 220, nhap: 110, dc: 0, dung: 55, cuoi: 275 },
-    { phi: 'D10', dau: null, nhap: 0, dc: -30, dung: 120, cuoi: null },
+    { phi: 'D8', dau: 220, nhap: 110, dc: 0, vay: 0, dung: 55, cuoi: 275, dau_kg: 88, nhap_kg: 44, dc_kg: 0, vay_kg: 0, dung_kg: 22, xuat_kg: 0, cuoi_kg: 110 },
+    { phi: 'D10', dau: null, nhap: 0, dc: -30, vay: -40, dung: 120, cuoi: null, dau_kg: null, nhap_kg: 0, dc_kg: -18.6, vay_kg: -24.8, dung_kg: 74.4, xuat_kg: 0, cuoi_kg: null },
   ],
-  days: [{ day: yday, span: 2, nhap_kg: 4345, dc_kg: -555, dung_kg: 7421, ton_kg: 23450 }],
-  closedDays: 1, openDay: yday, closeDay: yday, hasDc: true,
+  days: [{ day: yday, span: 2, nhap_kg: 4345, dc_kg: -555, vay_kg: -24.8, dung_kg: 7421, ton_kg: 23450 }],
+  closedDays: 1, openDay: yday, closeDay: yday, hasDc: true, hasVay: true,
 };
 
 /* ---------- chạy ---------- */
@@ -190,7 +203,7 @@ S.users = [
   { id: 4, name: 'Lê C', phone: '0904444444', role: 'nguoidem', locked: 0, deleted: 1, must_change: 0 },
 ];
 S.uFirst = 1;
-S.usage = [{ day: '${yday}', span: 1, used: { D8: 55, D10: 120 } }];
+S.usage = [{ day: '${yday}', span: 1, used: { D8: 55, D10: 120 }, kg: { D8: 0.4, D10: 0.62 }, xuat: { D10: 30 } }];
 S.hist = { date: '${yday}', data: ${JSON.stringify(dayData)} };
 S.bc = { from: '${yday}', to: '${today}', data: ${JSON.stringify(repData)} };
 S.subs = { B: [
@@ -238,6 +251,14 @@ S.boot.closed = true; S.screen = 'duyet'; S.review.closed = true; one('duyet+da-
 S.boot.closed = false; S.review.closed = false;
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
+// các phần mới phải THẬT SỰ hiện ra, không chỉ "không lỗi"
+S.screen = 'duyet'; render();
+{ const h = $app.innerHTML; const thieu = ['Sổ vay mượn chờ duyệt', 'Vay của Cty Đông Á', 'Khung giờ đếm vừa đổi hôm nay', 'Vay mượn · ', 'Phiếu kho của sổ vay mượn'].filter((x) => !h.includes(x));
+  out.push(['duyet+vay-muon', h.length, thieu.length ? 'BAD:thiếu ' + thieu.join(' | ') : 'ok']); }
+S.screen = 'lichsu'; render();
+{ const h = $app.innerHTML; out.push(['lichsu+treo', h.length, h.includes('Lúc chốt còn: Khu A thiếu lần đếm buổi chiều') && h.includes('Vay mượn −') ? 'ok' : 'BAD:không nói việc còn treo / vay mượn']); }
+S.screen = 'baocao'; render();
+{ const h = $app.innerHTML; out.push(['baocao+vay', h.length, h.includes('<th>Vay mượn</th>') ? 'ok' : 'BAD:thiếu cột Vay mượn']); }
 // bảng so sánh hai người báo: số theo đúng đơn vị (D8 là cuộn, không phải số phần)
 S.screen = 'duyet'; S.cmp = { khu: 'B', pick: {}, data: { a: { uname: 'An', ts: Date.now() }, b: { uname: 'Bình', ts: Date.now() }, diffs: [{ phi: 'D8', a: 22, b: 33 }] } }; render();
 { const h = $app.innerHTML; out.push(['duyet+so-sanh', h.length, h.split('data-a="cpick"').slice(1).filter((x) => x.split('</button>')[0].includes('cuộn')).length === 2 && !h.includes('>22</button>') ? 'ok' : 'BAD:so sánh hai người báo hiện số thô']); }

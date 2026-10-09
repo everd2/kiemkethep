@@ -133,7 +133,15 @@ const run = async () => {
      Hai cái đều ra số 0 nhưng mang nghĩa trái nhau, và màn Duyệt dựa vào kind để nói
      "khu để trống phi này" hay "khu đã đếm, phi này hết thật". Ghi sai kind là người duyệt
      bị bày sai thông tin ở đúng chỗ dễ mất thép nhất. */
+  /* D10 khu A đang có thép (tồn chuẩn 300), nên "Hết (0)" phải HỎI LẠI trước: nút này nằm sát TIẾP,
+     bấm nhầm là ghi 0 cho phi đang có thép. Chưa trả lời thì chưa ghi gì. */
   r(`S.khu = 'A'; loadDraft(true); S.sel = 'D10'; S.bo = ''; S.le = ''; ACTIONS.zero();`);
+  ok('"Hết (0)" trên phi đang có thép: hỏi lại', /D10: ghi HẾT \(0\)/.test(r('S.ask ? S.ask.msg : ""')), r('S.ask ? S.ask.msg : ""'));
+  ok('chưa trả lời thì chưa ghi gì', r("S.draft.cells['D10'] === undefined"));
+  r(`ACTIONS.askyes()`);
+  await new Promise((res) => setImmediate(res));
+  // nhường lượt là để start() của app chạy tiếp và ghi đè S.me bằng /api/me giả: đặt lại
+  r(`S.me = ${JSON.stringify(boot.user)};`);
   ok('bấm "Hết (0)": ghi kind dem với v = 0 (đã đếm, xác nhận hết)',
     r("JSON.stringify(S.draft.cells['D10'])") === JSON.stringify({ v: 0, kind: 'dem', bo: 0, le: 0 }),
     r("JSON.stringify(S.draft.cells['D10'])"));
@@ -806,7 +814,7 @@ const run = async () => {
   ok('vay mượn: một lần ghi hai phi gom thành MỘT dòng chờ duyệt', /Chờ duyệt \(1\)/.test(VM));
   ok('admin thấy nút duyệt', /data-a="lduyet"/.test(VM));
   ok('đối tác đã ẩn không có trong ô chọn để ghi', !/data-a="ldt" data-v="6"/.test(VM) && /data-a="ldt" data-v="5"/.test(VM));
-  ok('nói rõ không tính vào tồn', /không<\/b> cộng trừ vào tồn bãi/.test(VM));
+  ok('thủ kho/admin: chọn được "thép qua bãi" (lập phiếu kho)', /data-a="lkho" data-v="1"/.test(VM) && /không<\/b> tính là nhập hay dùng/.test(VM));
   r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
   const VM2 = r('vVayMuon()');
   ok('người đếm: không có nút duyệt', !/data-a="lduyet"/.test(VM2));
@@ -834,7 +842,7 @@ const run = async () => {
   ok('Nhập hôm nay: bỏ phiếu chờ duyệt, chỉ tính phiếu đã duyệt', Math.abs(r('totals().inKg') - 50 * 0.617) < 1e-6, r('totals().inKg'));
   // B3: người đếm không bị dẫn vào màn Nhập kho
   r(`S.me = { id: 9, name: 'B', role: 'nguoidem' };`);
-  ok('người đếm: thẻ phiếu chờ không dẫn vào màn Nhập', !/data-s="nhap"/.test(r('vHome()')) && /2 phiếu chờ duyệt/.test(r('vHome()')), (r('vHome()').match(/phiếu chờ duyệt.{0,80}/) || [''])[0]);
+  ok('người đếm: không thấy thẻ phiếu chờ (không lập, không duyệt phiếu)', !/data-s="nhap"/.test(r('vHome()')) && !/phiếu chờ duyệt/.test(r('vHome()')), (r('vHome()').match(/phiếu chờ duyệt.{0,80}/) || [''])[0]);
   ok('người đếm vào màn Nhập (Back, link cũ): chỉ thấy lời nhắc, không có form', /Chỉ thủ kho và admin/.test(r('vNhap()')) && !/data-a="nconfirm"/.test(r('vNhap()')));
   // B5: phiếu chờ duyệt của người KHÁC không phải "quá 10 phút"
   r(`S.me = { id: 7, name: 'Kho 2', role: 'thukho' };`);
@@ -896,6 +904,68 @@ const run = async () => {
   ok('màn Duyệt không nhắc nút Duyệt tất cả khi nó không hiện', code.includes(`.length > 1 ? ', hoặc "Duyệt tất cả"' : ''`));
   // B7: ngưỡng dự phòng khớp server
   ok('ngưỡng điều chỉnh lớn dự phòng = 20 tấn như server', !code.includes("LIM('dcBigKg', 5000)"));
+
+  // ---- 1d6. Nhắc đúng người, đúng lúc; sổ vay kèm phiếu kho; số liệu theo lúc chốt ----
+  // khung ĐANG DIỄN RA (13h, buổi chiều) mà khu đã báo sáng chưa đếm chiều: nhắc, bấm mở thẳng khu đó
+  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00");')} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  const HN = r('vHome()');
+  ok('người đếm: nhắc khung đang diễn ra', /Khu A chưa đếm buổi chiều \(12h–18h\)/.test(HN) && /Còn tới 18h/.test(HN), (HN.match(/chưa đếm.{0,60}/) || [''])[0]);
+  ok('thẻ nhắc mở thẳng khu đó', /data-s="dem" data-k="A"/.test(HN));
+  r(`ACTIONS.nav({ s: 'dem', k: 'A' })`);
+  ok('bấm thẻ: mở màn Đếm của đúng khu', r('S.khu') === 'A' && r('S.screen') === 'dem');
+  ok('màn Đếm nói khu này chưa đếm khung đang diễn ra', /khu này chưa đếm/.test(r('demView()')));
+  // khung ĐÃ HẾT mà thiếu: người đếm không làm gì được, nên không thấy thẻ đỏ; admin thì thấy
+  r(`${slotBoot({ A: [0] })} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('người đếm: không thấy thẻ đỏ thiếu khung đã qua', !/thiếu lần đếm/.test(r('vHome()')));
+  r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('admin: vẫn thấy thẻ thiếu khung', /Khu A thiếu lần đếm/.test(r('vHome()')));
+  r(`S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
+
+  // Cài đặt: 1 lần/ngày thì không bày ô giờ làm; khi đó lưu không gửi giờ làm
+  r(`S.form.sslots = '1';`);
+  ok('1 lần/ngày: không có ô giờ làm', !/id="s-from"/.test(r('vSettings()')));
+  r(`S.form.sslots = '2';`);
+  ok('2 lần/ngày: có ô giờ làm', /id="s-from"/.test(r('vSettings()')));
+  r(`delete S.form.sslots;`);
+
+  // sổ vay: thủ kho chọn "thép qua bãi" + khu, gửi kèm khu; người đếm thì chỉ ghi sổ
+  r(`S.me = { id: 7, name: 'Kho', role: 'thukho' }; S.screen = 'vaymuon';
+    S.loan = { doitac: 5, kind: 'cho_vay', phi: 'D10', qty: 0, done: null, lines: [], kho: true, khu: 'A' };
+    S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [] };`);
+  const VK = r('vVayMuon()');
+  ok('thủ kho: có lựa chọn thép qua bãi và chọn khu', /data-a="lkho"/.test(VK) && /data-a="lkhu" data-v="A"/.test(VK));
+  ok('cho vay qua bãi: nói còn lấy được bao nhiêu', /còn lấy được 300 cây D10/.test(VK), (VK.match(/còn lấy được.{0,30}/) || [''])[0]);
+  ctx._mk('lqty', '30'); ctx._mk('lnote', '');
+  calls.length = 0;
+  r(`ACTIONS.lsave()`);
+  ok('hộp xác nhận nói kèm phiếu kho', /Kèm phiếu kho: thép rời Khu A/.test(r('S.ask ? S.ask.msg : ""')));
+  r(`ACTIONS.askyes()`);
+  await new Promise((res) => setImmediate(res));
+  r(`S.me = { id: 7, name: 'Kho', role: 'thukho' };`);
+  const pl = calls.find((c) => c.url === '/api/loans' && c.method === 'POST');
+  ok('gửi kèm khu', pl && pl.body.khu === 'A' && pl.body.kind === 'cho_vay', JSON.stringify(pl && pl.body));
+  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('người đếm: không có lựa chọn phiếu kho', !/data-a="lkho"/.test(r('vVayMuon()')));
+  // dư nợ âm (trả dư) nói đúng nghĩa
+  r(`S.loans.agg = [{ doitac_id: 5, phi_id: 'D10', kind: 'tra_vay', q: 10 }];`);
+  ok('trả dư: nói là trả dư, không nói "mình nợ họ" số âm', /mình trả dư/.test(r('vVayMuon()')) && !/mình nợ họ/.test(r('vVayMuon()')));
+  // quá 7 ngày sau duyệt: admin không còn nút huỷ, có lời giải thích
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loans.items = [{ id: 3, doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 5, grp: 'g9', user_id: 2, uname: 'An', ts: Date.now() - 9 * 864e5, duyet_ts: Date.now() - 8 * 864e5, kho: 'A' }];`);
+  const V7 = r('vVayMuon()');
+  ok('quá 7 ngày: không còn nút huỷ', !/data-a="lvoid" data-id="3"/.test(V7) && /quá 7 ngày/.test(V7));
+  ok('thẻ lần ghi nói kèm phiếu kho', /kèm phiếu kho Khu A/.test(V7));
+  r(`S.loans = null; S.screen = 'home'; S.loan = { doitac: null, kind: 'vay', phi: null, qty: 0, done: null };`);
+
+  // màn Nhập có lối tắt sang sổ vay
+  ok('màn Nhập: lối tắt sang Vay mượn', /data-s="vaymuon"/.test(r('vNhap()')));
+  // Xem lại ngày cũ: ngày chốt kèm việc còn treo thì nói ra
+  ok('xem lại ngày cũ: nói việc còn treo lúc chốt', /Lúc chốt còn: Khu A thiếu lần đếm buổi chiều/.test(r(`treoTxt(JSON.stringify([{ type: 'slot_missing', khu: 'A', missing: ['buổi chiều (12h–18h)'] }]))`)));
+  // Thống kê: số tấn theo kg lúc chốt, và tách phần có phiếu xuất
+  r(`S.usage = [{ day: '${yday}', span: 1, used: { D10: 100 }, kg: { D10: 1 }, xuat: { D10: 40 } }]; S.screen = 'stats';`);
+  const ST = r('vStats()');
+  ok('thống kê: tấn theo kg lúc chốt (100 cây × 1 kg)', /Tổng dùng<\/b><b>0,10 tấn/.test(ST), (ST.match(/Tổng dùng.{0,40}/) || [''])[0]);
+  ok('thống kê: tách phần có phiếu xuất', /trong đó 40 cây có phiếu xuất/.test(ST));
+  r(`S.usage = null; S.screen = 'home';`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

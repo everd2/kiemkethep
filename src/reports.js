@@ -10,7 +10,8 @@ export async function dayView(env, url) {
   if (!DAY_RE.test(day) || day > vnDay()) throw bad('Ngày không hợp lệ');
   const db = env.DB;
   const [closeR, cntR, baseR, prevR, rcR, sumR, mvR, repR, lastR] = await db.batch([
-    db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
+    // exc_json: những việc còn treo LÚC CHỐT (khu chưa báo, thiếu lần đếm...), để xem lại biết ngày đó chốt kèm gì
+    db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, dc.exc_json, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
     /* Xem lại một ngày là xem số ĐÃ DUYỆT của ngày đó: đó mới là số liệu chính thức.
        Lần báo chưa duyệt (nếu còn) không phải số liệu của ngày, nên không lấy ra đây. */
     db.prepare(`SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c.duyet_at ts, ${DUYET_NAME.replace('duyet_uname', 'uname')}
@@ -22,7 +23,7 @@ export async function dayView(env, url) {
                 FROM receipts r LEFT JOIN users u ON u.id = r.user_id
                 WHERE (r.duyet_day = ?1 OR (r.duyet_day IS NULL AND r.day = ?1)) ORDER BY r.id`).bind(day),
     // dc đi kèm nhap: màn Lịch sử phải nói được "ngày đó sổ bị sửa bao nhiêu", y như báo cáo kỳ
-    db.prepare('SELECT phi_id, ton, nhap, dung, span, dc, xuat FROM daily_summary WHERE day = ?').bind(day),
+    db.prepare('SELECT phi_id, ton, nhap, dung, span, dc, xuat, vay, kg FROM daily_summary WHERE day = ?').bind(day),
     // ngày CHƯA chốt thì tồn còn phải cộng phần thép đã duyệt mà khu chưa kịp đếm, y như Tồn bãi
     db.prepare(MV_CHUA_DEM).bind(day),
     db.prepare(`SELECT r.khu_id, r.ts, ${UNAME} FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
@@ -38,6 +39,8 @@ export async function dayView(env, url) {
 
 /* ========================= BÁO CÁO THEO KỲ =========================
    Đọc bảng tổng hợp daily_summary (12 dòng/ngày) nên cả năm cũng chỉ vài nghìn dòng. */
+// kg/cây của dòng tổng hợp: lấy số lưu LÚC CHỐT, chỉ khi thiếu mới lấy số hiện tại của phi
+const KGD = 'COALESCE(d.kg, p.kg_per_cay)';
 export async function report(env, url) {
   const today = vnDay();
   let from = url.searchParams.get('from') || today.slice(0, 8) + '01';
@@ -67,11 +70,18 @@ export async function report(env, url) {
   const openStock = !before && !!firstIn; // mốc là buổi kiểm kê mở sổ nằm trong kỳ
   const [phiR, openR, sumR, closeR, daysR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, bo_size, unit FROM phi ORDER BY sort'),
-    db.prepare('SELECT day, phi_id, ton FROM daily_summary WHERE day = ?').bind(baseDay),
-    db.prepare('SELECT phi_id, SUM(nhap) nhap, SUM(dung) dung, SUM(dc) dc, SUM(xuat) xuat FROM daily_summary WHERE day > ? AND day <= ? GROUP BY phi_id').bind(baseDay, to),
-    db.prepare('SELECT day, phi_id, ton FROM daily_summary WHERE day = (SELECT MAX(day) FROM daily_summary WHERE day >= ? AND day <= ?)').bind(from, to),
+    /* Số tấn nhân với kg/cây LÚC CHỐT của từng ngày (d.kg), không phải kg/cây hiện tại: sửa kg/cây
+       hôm nay không được viết lại số tấn của ngày đã khoá. Thiếu kg (không thể có sau migration 17,
+       nhưng phòng hờ) thì mới lấy kg hiện tại. */
+    db.prepare(`SELECT d.day, d.phi_id, d.ton, d.ton * ${KGD} ton_kg FROM daily_summary d JOIN phi p ON p.id = d.phi_id WHERE d.day = ?`).bind(baseDay),
+    db.prepare(`SELECT d.phi_id, SUM(d.nhap) nhap, SUM(d.dung) dung, SUM(d.dc) dc, SUM(d.xuat) xuat, SUM(d.vay) vay,
+                  SUM(d.nhap * ${KGD}) nhap_kg, SUM(COALESCE(d.dung, 0) * ${KGD}) dung_kg, SUM(d.dc * ${KGD}) dc_kg,
+                  SUM(d.xuat * ${KGD}) xuat_kg, SUM(d.vay * ${KGD}) vay_kg
+                FROM daily_summary d JOIN phi p ON p.id = d.phi_id WHERE d.day > ? AND d.day <= ? GROUP BY d.phi_id`).bind(baseDay, to),
+    db.prepare(`SELECT d.day, d.phi_id, d.ton, d.ton * ${KGD} ton_kg FROM daily_summary d JOIN phi p ON p.id = d.phi_id
+                WHERE d.day = (SELECT MAX(day) FROM daily_summary WHERE day >= ? AND day <= ?)`).bind(from, to),
     db.prepare(
-      `SELECT d.day, MAX(d.span) span, SUM(d.nhap * p.kg_per_cay) nhap_kg, SUM(COALESCE(d.dung, 0) * p.kg_per_cay) dung_kg, SUM(d.ton * p.kg_per_cay) ton_kg, SUM(d.dc * p.kg_per_cay) dc_kg, SUM(d.xuat * p.kg_per_cay) xuat_kg
+      `SELECT d.day, MAX(d.span) span, SUM(d.nhap * ${KGD}) nhap_kg, SUM(COALESCE(d.dung, 0) * ${KGD}) dung_kg, SUM(d.ton * ${KGD}) ton_kg, SUM(d.dc * ${KGD}) dc_kg, SUM(d.xuat * ${KGD}) xuat_kg, SUM(d.vay * ${KGD}) vay_kg
        FROM daily_summary d JOIN phi p ON p.id = d.phi_id WHERE d.day > ? AND d.day <= ? GROUP BY d.day ORDER BY d.day`
     ).bind(baseDay, to),
   ]);
@@ -79,12 +89,23 @@ export async function report(env, url) {
   const open = by(openR.results, 'ton'), close = by(closeR.results, 'ton');
   const nhap = by(sumR.results, 'nhap'), dung = by(sumR.results, 'dung'), dcs = by(sumR.results, 'dc');
   // xuat: phần lượng dùng CÓ PHIẾU. Nằm trong 'dung' chứ không cộng thêm, nên không phá đẳng thức.
-  const xus = by(sumR.results, 'xuat');
+  const xus = by(sumR.results, 'xuat'), vays = by(sumR.results, 'vay');
   const hasOpen = openR.results.length > 0, hasClose = closeR.results.length > 0;
+  const kgOpen = by(openR.results, 'ton_kg'), kgClose = by(closeR.results, 'ton_kg');
+  const kgSum = Object.fromEntries(sumR.results.map((r) => [r.phi_id, r]));
   const rows = phiR.results.map((p) => {
     const o = hasOpen ? open[p.id] || 0 : null;
     const c = hasClose ? close[p.id] || 0 : o;
-    return { phi: p.id, kg: p.kg_per_cay, dau: o, nhap: nhap[p.id] || 0, dc: dcs[p.id] || 0, xuat: xus[p.id] || 0, dung: dung[p.id] == null ? 0 : dung[p.id], cuoi: c };
+    const ks = kgSum[p.id] || {};
+    /* *_kg: số tấn (theo kg) tính theo kg/cây LÚC CHỐT của từng ngày. Máy khách và tệp CSV cộng
+       các số này, không tự nhân lại với kg/cây hiện tại. */
+    const cKg = hasClose ? kgClose[p.id] || 0 : hasOpen ? kgOpen[p.id] || 0 : null;
+    return {
+      phi: p.id, kg: p.kg_per_cay, dau: o, nhap: nhap[p.id] || 0, dc: dcs[p.id] || 0, xuat: xus[p.id] || 0, vay: vays[p.id] || 0,
+      dung: dung[p.id] == null ? 0 : dung[p.id], cuoi: c,
+      dau_kg: hasOpen ? kgOpen[p.id] || 0 : null, nhap_kg: ks.nhap_kg || 0, dc_kg: ks.dc_kg || 0, xuat_kg: ks.xuat_kg || 0,
+      vay_kg: ks.vay_kg || 0, dung_kg: ks.dung_kg || 0, cuoi_kg: cKg,
+    };
   });
   const out = {
     from, to, openDay: hasOpen ? baseDay : null, closeDay: hasClose ? closeR.results[0].day : null,
@@ -95,31 +116,33 @@ export async function report(env, url) {
     hasDc: rows.some((r) => r.dc),
     // cột "có phiếu xuất" cũng theo lệ đó: kỳ nào không ai ghi phiếu xuất thì không bày cột rỗng
     hasXuat: rows.some((r) => r.xuat),
+    // cột "Vay mượn": thép ra/vào theo sổ vay mượn — không phải nhập, không phải dùng
+    hasVay: rows.some((r) => r.vay),
   };
   if (url.searchParams.get('format') !== 'csv') return json(out);
 
   const esc = (x) => '"' + String(x).replace(/"/g, '""') + '"';
-  const t = (x, kg) => (x == null ? '' : csvDec((x * kg) / 1000, 3));
+  const t = (kg) => (kg == null ? '' : csvDec(kg / 1000, 3));
   const pBy = Object.fromEntries(phiR.results.map((p) => [p.id, p]));
   const lines = [
     esc(`Báo cáo Nhập - Dùng - Tồn từ ${fmtDay(from)} đến ${fmtDay(to)} (${out.closedDays} ngày đã chốt)`),
-    csvRow(['Phi', 'Đơn vị', 'Tồn đầu', 'Nhập', 'Điều chỉnh', 'Dùng', 'Có phiếu xuất', 'Tồn cuối', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối (tấn)'].map(esc)),
+    csvRow(['Phi', 'Đơn vị', 'Tồn đầu', 'Nhập', 'Điều chỉnh', 'Vay mượn', 'Dùng', 'Có phiếu xuất', 'Tồn cuối', 'Tồn đầu (tấn)', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Vay mượn (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối (tấn)'].map(esc)),
   ];
-  const tot = { dau: 0, nhap: 0, dc: 0, xuat: 0, dung: 0, cuoi: 0 };
+  const tot = { dau: 0, nhap: 0, dc: 0, vay: 0, xuat: 0, dung: 0, cuoi: 0 };
   for (const r of rows) {
     const p = pBy[r.phi], n = (x) => (x == null ? '' : csvQty(x, p));
-    lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dc), n(r.dung), n(r.xuat), n(r.cuoi),
-      t(r.dau, r.kg), t(r.nhap, r.kg), t(r.dc, r.kg), t(r.dung, r.kg), t(r.xuat, r.kg), t(r.cuoi, r.kg)]));
-    tot.dau += (r.dau || 0) * r.kg; tot.nhap += r.nhap * r.kg; tot.dc += r.dc * r.kg;
-    tot.xuat += r.xuat * r.kg; tot.dung += r.dung * r.kg; tot.cuoi += (r.cuoi || 0) * r.kg;
+    lines.push(csvRow([esc(r.phi), esc(csvUnit(p)), n(r.dau), n(r.nhap), n(r.dc), n(r.vay), n(r.dung), n(r.xuat), n(r.cuoi),
+      t(r.dau_kg), t(r.nhap_kg), t(r.dc_kg), t(r.vay_kg), t(r.dung_kg), t(r.xuat_kg), t(r.cuoi_kg)]));
+    tot.dau += r.dau_kg || 0; tot.nhap += r.nhap_kg; tot.dc += r.dc_kg; tot.vay += r.vay_kg;
+    tot.xuat += r.xuat_kg; tot.dung += r.dung_kg; tot.cuoi += r.cuoi_kg || 0;
   }
-  /* Đúng 14 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả khối số tấn tụt sang trái một
+  /* Đúng 16 ô, khớp từng cột với dòng tiêu đề: thiếu một ô rỗng là cả khối số tấn tụt sang trái một
      cột và Excel đọc "tồn đầu" thành "tồn cuối" — sai ngay trên tệp mang đi đối chiếu. Thêm một cột là
-     thêm MỘT ô rỗng ở đây nữa: 7 ô rỗng (đứng sau nhãn TỔNG) rồi 6 số tấn, đếm lại chứ đừng đoán. */
-  const totCells = ['', '', '', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dc, tot.dung, tot.xuat, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
+     thêm MỘT ô rỗng ở đây nữa: 8 ô rỗng (đứng sau nhãn TỔNG) rồi 7 số tấn, đếm lại chứ đừng đoán. */
+  const totCells = ['', '', '', '', '', '', '', ''].concat([tot.dau, tot.nhap, tot.dc, tot.vay, tot.dung, tot.xuat, tot.cuoi].map((x) => csvDec(x / 1000, 3)));
   lines.push(csvRow([esc('TỔNG (tấn)'), ...totCells]));
-  lines.push('', csvRow(['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối ngày (tấn)'].map(esc)));
-  for (const d of out.days) lines.push(csvRow([esc(fmtDay(d.day)), d.span, csvDec(d.nhap_kg / 1000, 3), csvDec((d.dc_kg || 0) / 1000, 3), csvDec(d.dung_kg / 1000, 3), csvDec((d.xuat_kg || 0) / 1000, 3), csvDec(d.ton_kg / 1000, 3)]));
+  lines.push('', csvRow(['Ngày', 'Số ngày gộp', 'Nhập (tấn)', 'Điều chỉnh (tấn)', 'Vay mượn (tấn)', 'Dùng (tấn)', 'Có phiếu xuất (tấn)', 'Tồn cuối ngày (tấn)'].map(esc)));
+  for (const d of out.days) lines.push(csvRow([esc(fmtDay(d.day)), d.span, csvDec(d.nhap_kg / 1000, 3), csvDec((d.dc_kg || 0) / 1000, 3), csvDec((d.vay_kg || 0) / 1000, 3), csvDec(d.dung_kg / 1000, 3), csvDec((d.xuat_kg || 0) / 1000, 3), csvDec(d.ton_kg / 1000, 3)]));
   return new Response(CSV_HEAD + lines.join('\r\n'), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
@@ -158,18 +181,28 @@ export async function auditList(env, url) {
 export async function usage(env, url) {
   const days = Math.min(Number(url.searchParams.get('days')) || 30, 180);
   const { results } = await env.DB.prepare('SELECT day, used_json, span FROM day_close ORDER BY day DESC LIMIT ?').bind(days).all();
-  return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used }; }) });
+  /* kg: kg/cây LÚC CHỐT của từng ngày (số tấn không trôi theo kg/cây hiện tại); xuat: phần dùng
+     có phiếu xuất, để Thống kê tách được "có phiếu" và "không rõ" như màn Duyệt và báo cáo kỳ. */
+  const sumR = results.length ? await env.DB.prepare(`SELECT d.day, d.phi_id, d.xuat, ${KGD} kg FROM daily_summary d JOIN phi p ON p.id = d.phi_id
+    WHERE d.day >= ? AND d.day <= ?`).bind(results[results.length - 1].day, results[0].day).all() : { results: [] };
+  const kgBy = {}, xBy = {};
+  sumR.results.forEach((r) => { (kgBy[r.day] = kgBy[r.day] || {})[r.phi_id] = r.kg; if (r.xuat) (xBy[r.day] = xBy[r.day] || {})[r.phi_id] = r.xuat; });
+  return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used, kg: kgBy[r.day] || {}, xuat: xBy[r.day] || {} }; }) });
 }
 
 export async function exportCsv(env, url) {
   const day = DAY_RE.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : vnDay();
-  const [phiR, khuR, cntR, baseR, mvR] = await env.DB.batch([
+  const [phiR, khuR, cntR, baseR, mvR, kgR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, active, bo_size, unit FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare(EFF_BY_BASELINE).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT MAX(day) FROM baseline WHERE day <= ?)').bind(day),
     env.DB.prepare(MV_CHUA_DEM).bind(day),
+    // ngày đã chốt: số tấn theo kg/cây LÚC CHỐT, khớp với báo cáo kỳ và màn Xem lại ngày cũ
+    env.DB.prepare('SELECT phi_id, kg FROM daily_summary WHERE day = ? AND kg IS NOT NULL').bind(day),
   ]);
+  const kgLuc = Object.fromEntries(kgR.results.map((r) => [r.phi_id, r.kg]));
+  const kgOf = (p) => (kgLuc[p.id] != null ? kgLuc[p.id] : p.kg_per_cay);
   const c = {}, b = {}, mv = {};
   cntR.results.forEach((r) => (c[r.khu_id + '|' + r.phi_id] = r.v));
   baseR.results.forEach((r) => (b[r.khu_id + '|' + r.phi_id] = r.v));
@@ -191,7 +224,7 @@ export async function exportCsv(env, url) {
       const key = k.id + '|' + p.id;
       const v = (c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0);
       if (!isCuon(p)) sum += v;
-      kg += v * p.kg_per_cay; colV[i] += v;
+      kg += v * kgOf(p); colV[i] += v;
       return csvQty(v, p);
     });
     allKg += kg;

@@ -146,6 +146,8 @@ a{color:var(--pri)}
 .eq{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;text-align:center}
 .eq.eq5{grid-template-columns:repeat(5,minmax(0,1fr))}
 .eq.eq5 b{font-size:17px}
+.eq.eq6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.eq.eq6 b{font-size:15px}
 .eq span{display:block;font-size:13px;color:#5F6670}
 .eq b{font-size:20px}
 .li{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #E4E0D6;gap:8px}
