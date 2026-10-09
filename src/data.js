@@ -50,6 +50,7 @@ export async function resetData(req, env, user) {
       env.DB.prepare('DELETE FROM counts'),
       env.DB.prepare('DELETE FROM khu_report'),
       env.DB.prepare('DELETE FROM khu_report_log'),
+      env.DB.prepare('DELETE FROM bao_sau_chot'),
       env.DB.prepare('DELETE FROM receipts'),
       env.DB.prepare('DELETE FROM day_close'),
       env.DB.prepare('DELETE FROM baseline'),
@@ -117,6 +118,8 @@ export async function resetData(req, env, user) {
          FROM (${KHU_X_PHI}
                UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?4) kx`
       ).bind(day, user.id, ts, last),
+      // báo cáo gửi sau chốt tính trên tồn trước lúc kiểm kê: không còn nghĩa gì nữa
+      env.DB.prepare('DELETE FROM bao_sau_chot WHERE day = ?').bind(day),
       env.DB.prepare("INSERT INTO day_close (day, closed_by, ts, note, used_json, exc_json, span, kind, undo_json) VALUES (?,?,?,?,?,?,?,'reset',?)")
         .bind(day, user.id, ts, note, '{}', '[]', 1, undo),
       env.DB.prepare(
@@ -161,7 +164,8 @@ export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts',
    (dấu khung giờ đã đếm); bản 16 chỉ thêm doitac/loans (sổ vay mượn, tách khỏi tồn kho).
    Đổi cột hay đổi nghĩa bảng cũ thì KHÔNG được thêm vào đây. */
 export const BK_GIU_NEU_THIEU = ['doitac', 'loans'];
-export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16] };
+// bản 18 chỉ thêm bao_sau_chot, bảng tạm KHÔNG nằm trong bản sao: tệp của bản 18 giống hệt bản 17
+export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
@@ -261,6 +265,8 @@ export async function restoreData(req, env, user) {
   /* Bản sao trước bản 17 không có kg lúc chốt: điền bằng kg/cây hiện tại (đúng như cách các ngày đó
      vẫn đang hiện), để từ lúc nạp chúng cũng được khoá, không trôi theo lần sửa kg/cây sau này. */
   stmts.push(env.DB.prepare('UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL'));
+  // báo cáo gửi sau chốt không có trong bản sao, và tính trên số liệu vừa bị thay: bỏ
+  stmts.push(env.DB.prepare('DELETE FROM bao_sau_chot'));
   stmts.push(
     auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),
     bump(env)

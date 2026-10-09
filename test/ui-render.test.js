@@ -223,7 +223,12 @@ S.loans = { doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để t
 S.loan.doitac = 5; S.loan.lines = [{ phi: 'D10', qty: 30 }];
 S.boot.loanPending = 1;
 
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon'];
+// chi tiết công nợ một đối tác: có cả lần chờ, lần đã huỷ, hai chiều nợ
+S.loanDt = 5;
+S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }],
+  agg: [{ phi_id: 'D8', kind: 'vay', q: 330 }, { phi_id: 'D8', kind: 'tra_vay', q: 110 }, { phi_id: 'D10', kind: 'cho_vay', q: 20 }, { phi_id: 'D10', kind: 'tra_no', q: 30 }],
+  items: S.loans.items.map((x) => ({ ...x, voided: 0 })).concat([{ id: 8, doitac_id: 5, doitac_name: 'X', phi_id: 'D8', kind: 'vay', qty: 11, grp: 'g8', user_id: 2, uname: 'An', ts: Date.now() - 864e5, duyet_ts: null, voided: 1 }]) };
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet'];
 const out = [];
 function one(label) {
   render();
@@ -248,6 +253,19 @@ S.stale = Date.now() - 6e5; one('home+mat-ket-noi'); S.stale = null;
 navigator.onLine = false; one('home+offline'); navigator.onLine = true;
 S.netBad = true; one('home+chua-cap-nhat'); S.netBad = false;
 S.boot.closed = true; S.screen = 'duyet'; S.review.closed = true; one('duyet+da-chot');
+// báo cáo gửi sau khi chốt: thẻ Duyệt có hai nút, Tổng quan nhắc, màn Đếm vẫn gửi được
+S.boot.late = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now() }];
+S.review.late = [{ khu: 'A', name: 'Khu A', uname: 'An', ts: Date.now(), diffs: [{ phi: 'D8', from: 300, to: 280 }] }];
+render();
+{ const h = $app.innerHTML; const thieu = ['gửi báo cáo sau khi chốt', 'NHẬN SỐ', 'data-a="lxoa"', '→ <b>'].filter((x) => !h.includes(x));
+  out.push(['duyet+bao-sau-chot', h.length, thieu.length ? 'BAD:thiếu ' + thieu.join(' | ') : 'ok']); }
+S.screen = 'home'; render();
+{ const h = $app.innerHTML; out.push(['home+bao-sau-chot', h.length, h.includes('Khu A gửi báo cáo sau khi chốt') && h.includes('Chờ nhận') ? 'ok' : 'BAD:Tổng quan không nhắc']); }
+S.boot.late[0].data = JSON.stringify([{ phi: 'D8', v: 777, kind: 'dem', bo: 0, le: 777 }]);
+S.screen = 'dem'; loadDraft(true); render();
+out.push(['dem+nhap-tu-bao-sau-chot', 0, S.draft.cells.D8 && S.draft.cells.D8.v === 777 ? 'ok' : 'BAD:không lấy số đã gửi sau chốt']);
+{ const h = $app.innerHTML; out.push(['dem+bao-sau-chot', h.length, h.includes('GỬI SAU CHỐT') && h.includes('đang chờ admin nhận') && !h.includes('btn full dis" data-a="send"') ? 'ok' : 'BAD:màn Đếm sau chốt']); }
+S.boot.late = []; S.review.late = [];
 S.boot.closed = false; S.review.closed = false;
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
@@ -272,7 +290,7 @@ S.screen = 'duyet'; render();
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }
 
 // trạng thái đang tải và tải lỗi
-for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans']]) {
+for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail']]) {
   S.screen = sc; const bak = S[k]; S[k] = null;
   one(sc + '+dang-tai');
   S.loadErr[sc] = 'Không có kết nối mạng'; one(sc + '+loi-tai'); delete S.loadErr[sc];

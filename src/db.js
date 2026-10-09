@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -199,6 +199,13 @@ export const MIGRATIONS = {
     'ALTER TABLE daily_summary ADD COLUMN kg REAL',
     'ALTER TABLE daily_summary ADD COLUMN vay INTEGER NOT NULL DEFAULT 0',
     'UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL',
+  ],
+  /* BÁO CÁO GỬI SAU KHI CHỐT: ngày đã chốt mà khu vẫn gửi số thì số đó nằm riêng ở đây, không đụng
+     counts. Admin nhận thì mới thành số đếm; không nhận thì xoá hẳn dòng (không giữ rác). */
+  18: [
+    `CREATE TABLE IF NOT EXISTS bao_sau_chot (
+       day TEXT NOT NULL, khu_id TEXT NOT NULL, user_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+       at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (day, khu_id))`,
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

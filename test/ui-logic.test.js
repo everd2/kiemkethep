@@ -479,10 +479,11 @@ const run = async () => {
   ok('duyệt xong thì chi tiết hiện số mới', /250 cây/.test(r('CT3')), (r('CT3').match(/\d+ cây/g) || []).join(','));
   ok('và không còn cột Khu báo', !/Khu báo/.test(r('CT3')));
 
-  // khu không có thép: nói thẳng, đừng để bảng trống
+  /* khu không có thép: vẫn bày ĐỦ mọi đường kính, mỗi phi ghi 0 — người xem đối chiếu được từng
+     dòng, không phải đoán "không thấy phi này là hết hay là quên" */
   r(`ACTIONS.khumo({ k: 'A' }); ACTIONS.khumo({ k: 'B' });
-     S.boot.counts = []; S.boot.eff = []; S.boot.bm = {}; var H4 = vHome();`);
-  ok('khu không có thép thì nói thẳng', /không có thép/.test(r('H4')));
+     S.boot.counts = []; S.boot.eff = []; S.boot.bm = {}; S.boot.mvn = {}; var H4 = vHome();`);
+  ok('khu không có thép: vẫn bày đủ phi, ghi 0', /0\/3 phi có thép/.test(r('H4')) && (r('H4').match(/<span class="f1 sm">0<\/span>/g) || []).length >= 3, (r('H4').match(/\d+\/\d+ phi có thép/) || [''])[0]);
   r(`S.khuMo = {}; S.boot = _boot(); indexBoot(S.boot);`);
 
   /* ---- 1d-dc. ĐIỀU CHỈNH TỒN ----
@@ -809,8 +810,10 @@ const run = async () => {
       agg: [{ doitac_id: 5, phi_id: 'D10', kind: 'vay', q: 100 }, { doitac_id: 5, phi_id: 'D10', kind: 'tra_vay', q: 40 }, { doitac_id: 5, phi_id: 'D10', kind: 'cho_vay', q: 20 }],
     }; S.screen = 'vaymuon';`);
   const VM = r('vVayMuon()');
-  ok('vay mượn: dư nợ tính theo cặp (100 − 40 = 60 cây mình nợ)', /mình nợ họ<\/span><b[^>]*>60 cây/.test(VM), VM.slice(0, 0));
-  ok('vay mượn: họ nợ mình tính riêng', /họ nợ mình<\/span><b[^>]*>20 cây/.test(VM));
+  ok('vay mượn: dư nợ tính theo cặp (100 − 40 = 60 cây mình nợ)', /Mình nợ họ/.test(VM) && /D10 60 cây/.test(VM), (VM.match(/Mình nợ họ.{0,200}/) || [''])[0]);
+  ok('vay mượn: họ nợ mình tính riêng', /Họ nợ mình/.test(VM) && /D10 20 cây/.test(VM));
+  ok('vay mượn: ô tổng bãi đang nợ / đối tác đang giữ', /Bãi đang nợ đối tác/.test(VM) && /Đối tác đang giữ của bãi/.test(VM));
+  ok('vay mượn: thẻ đối tác bấm được để xem chi tiết', /data-a="ldtview" data-id="5"/.test(VM));
   ok('vay mượn: một lần ghi hai phi gom thành MỘT dòng chờ duyệt', /Chờ duyệt \(1\)/.test(VM));
   ok('admin thấy nút duyệt', /data-a="lduyet"/.test(VM));
   ok('đối tác đã ẩn không có trong ô chọn để ghi', !/data-a="ldt" data-v="6"/.test(VM) && /data-a="ldt" data-v="5"/.test(VM));
@@ -821,7 +824,13 @@ const run = async () => {
   ok('người đếm: rút lại được lần ghi của mình', /data-a="lvoid" data-id="11">Rút lại/.test(VM2));
   ok('người đếm: không thấy danh bạ sửa/ẩn đối tác', !/data-a="ldthide"/.test(VM2));
   // ghi sổ: thép cuộn gõ theo cuộn, sổ lưu theo phần (bo_size phần = 1 cuộn)
-  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loan.doitac = 5; S.loan.kind = 'tra_vay'; S.loan.phi = 'D8';`);
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loan.doitac = 5; S.loan.kind = 'tra_vay'; S.loan.phi = 'D8'; S.loan.kho = false;`);
+  // chưa tick hai ô xác nhận chứng từ: không cho ghi
+  ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C');
+  r(`S.ask = null; S.toast = ''; ACTIONS.lsave()`);
+  ok('chưa tick biên bản + Zalo: không ghi, nhắc tick', !r('S.ask') && /biên bản giao nhận/.test(r('S.toast')), r('S.toast'));
+  r(`ACTIONS.ltick({ v: 'bb' }); ACTIONS.ltick({ v: 'zl' });`);
+  ok('tick đủ: nút ghi sổ sáng lên', /btn pri full" style="min-height:56px;font-size:18px" data-a="lsave"/.test(r('vVayMuon()')));
   ctx._mk('lqty', '2'); ctx._mk('lnote', 'xe 15C');
   calls.length = 0;
   r(`ACTIONS.lsave()`);
@@ -830,6 +839,8 @@ const run = async () => {
   await new Promise((res) => setImmediate(res));
   const post = calls.find((c) => c.url === '/api/loans' && c.method === 'POST');
   ok('gửi đúng đối tác, loại và đổi cuộn sang phần', post && post.body.doitac === 5 && post.body.kind === 'tra_vay' && JSON.stringify(post.body.lines) === JSON.stringify([{ phi: 'D8', qty: 22 }]) && post.body.note === 'xe 15C', JSON.stringify(post && post.body));
+  ok('gửi kèm hai xác nhận chứng từ', post && post.body.bienban === true && post.body.zalo === true);
+  ok('ghi xong: hai ô xác nhận về chưa tick (lần sau tick lại cho biên bản mới)', !r('S.loan.bb') && !r('S.loan.zl'));
   ok('nhật ký: dòng vay mượn có chữ, không hiện mã', /vay của Cty Hoà Bình: D10/.test(r(`fmtAudit({ action: 'loan_vay', detail: JSON.stringify({ doitac: 'Cty Hoà Bình', lines: [{ phi: 'D10', qty: 30 }] }) }).text`)));
   ok('nhật ký: có chip lọc Vay mượn', /data-v="vay">Vay mượn/.test(r('vNhatKy()')));
   r(`S.loans = null; S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);
@@ -930,7 +941,7 @@ const run = async () => {
 
   // sổ vay: thủ kho chọn "thép qua bãi" + khu, gửi kèm khu; người đếm thì chỉ ghi sổ
   r(`S.me = { id: 7, name: 'Kho', role: 'thukho' }; S.screen = 'vaymuon';
-    S.loan = { doitac: 5, kind: 'cho_vay', phi: 'D10', qty: 0, done: null, lines: [], kho: true, khu: 'A' };
+    S.loan = { doitac: 5, kind: 'cho_vay', phi: 'D10', qty: 0, done: null, lines: [], kho: true, khu: 'A', bb: true, zl: true };
     S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [] };`);
   const VK = r('vVayMuon()');
   ok('thủ kho: có lựa chọn thép qua bãi và chọn khu', /data-a="lkho"/.test(VK) && /data-a="lkhu" data-v="A"/.test(VK));
@@ -947,8 +958,8 @@ const run = async () => {
   r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
   ok('người đếm: không có lựa chọn phiếu kho', !/data-a="lkho"/.test(r('vVayMuon()')));
   // dư nợ âm (trả dư) nói đúng nghĩa
-  r(`S.loans.agg = [{ doitac_id: 5, phi_id: 'D10', kind: 'tra_vay', q: 10 }];`);
-  ok('trả dư: nói là trả dư, không nói "mình nợ họ" số âm', /mình trả dư/.test(r('vVayMuon()')) && !/mình nợ họ/.test(r('vVayMuon()')));
+  r(`S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [{ doitac_id: 5, phi_id: 'D10', kind: 'tra_vay', q: 10 }] };`);
+  ok('trả dư: nói là trả dư, không nói "mình nợ họ" số âm', /Mình trả dư/.test(r('vVayMuon()')) && !/Mình nợ họ/.test(r('vVayMuon()')), (r('vVayMuon()').match(/.{0,80}(Mình nợ họ|trả dư).{0,80}/g) || []).join(' || '));
   // quá 7 ngày sau duyệt: admin không còn nút huỷ, có lời giải thích
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loans.items = [{ id: 3, doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 5, grp: 'g9', user_id: 2, uname: 'An', ts: Date.now() - 9 * 864e5, duyet_ts: Date.now() - 8 * 864e5, kho: 'A' }];`);
   const V7 = r('vVayMuon()');
@@ -1026,6 +1037,42 @@ const run = async () => {
   const KP = r('vSettings()');
   ok('gán khu: không có tài khoản đang khoá', /data-a="kupick" data-v="2"/.test(KP) && !/data-a="kupick" data-v="4"/.test(KP));
   r(`S.kuEdit = null; S.users = null; S.screen = 'home';`);
+
+  // ---- 1d8. Thẻ khu ở Tổng quan; chi tiết công nợ một đối tác ----
+  // thẻ khu: đủ mọi đường kính (kể cả 0), và nút đếm/báo cáo cho người đếm được khu đó
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 2, name: 'An', role: 'nguoidem' }; S.khuMo = { A: true }; S.screen = 'home';`);
+  const HKA = r('vHome()');
+  ok('thẻ khu: bày đủ mọi phi', ['D8', 'D10', 'D12'].every((ph) => new RegExp('<b style="width:44px">' + ph + '</b>').test(HKA)));
+  ok('thẻ khu: có nút đếm / báo cáo, mở thẳng khu đó', /data-s="dem" data-k="A">ĐẾM/.test(HKA));
+  r(`S.boot.closed = true;`);
+  ok('ngày đã chốt: không có nút đếm', !/data-s="dem" data-k="A">ĐẾM/.test(r('vHome()')));
+  r(`S.boot.closed = false; S.boot.ku = { A: [99] };`);
+  ok('khu người khác phụ trách: không có nút đếm', !/data-s="dem" data-k="A">ĐẾM/.test(r('vHome()')));
+  r(`S.boot = _boot(); indexBoot(S.boot); S.khuMo = {};`);
+
+  // chi tiết một đối tác
+  calls.length = 0;
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; ACTIONS.ldtview({ id: '5' });`);
+  ok('bấm thẻ đối tác: mở màn chi tiết và tải đúng đối tác', r('S.screen') === 'vaychitiet' && r('S.loanDt') === 5 && calls.some((c) => c.url === '/api/loans?doitac=5'), calls.map((c) => c.url).join(' '));
+  await new Promise((res) => setImmediate(res));
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'vaychitiet'; S.loanDt = 5;
+    S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Cty Hoà Bình', active: 1 }],
+      agg: [{ phi_id: 'D10', kind: 'vay', q: 100 }, { phi_id: 'D10', kind: 'tra_vay', q: 40 }, { phi_id: 'D12', kind: 'cho_vay', q: 16 }],
+      items: [
+        { id: 21, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'tra_vay', qty: 40, grp: 'b2', user_id: 2, uname: 'An', ts: Date.now(), duyet_ts: null, voided: 0 },
+        { id: 20, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 5, grp: 'b1', user_id: 2, uname: 'An', ts: Date.now() - 864e5, duyet_ts: null, voided: 1 },
+        { id: 19, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 100, grp: 'b0', user_id: 2, uname: 'An', ts: Date.now() - 2 * 864e5, duyet_ts: Date.now() - 2 * 864e5, voided: 0 },
+      ] };`);
+  const CT = r('vVayChiTiet()');
+  ok('chi tiết: bảng mình vay (đã vay / đã trả / còn nợ)', /Mình vay của họ/.test(CT) && /<td>100 cây<\/td><td>40 cây<\/td><td><b[^>]*>60 cây/.test(CT), (CT.match(/Mình vay của họ.{0,300}/) || [''])[0]);
+  ok('chi tiết: bảng họ mượn của mình', /Họ mượn của mình/.test(CT) && /D12/.test(CT));
+  ok('chi tiết: lần ghi chờ duyệt có nút duyệt', /Chờ duyệt \(1\)/.test(CT) && /data-a="lduyet" data-id="21"/.test(CT));
+  ok('chi tiết: lịch sử có cả lần đã huỷ, gạch ngang, không có nút', /Đã huỷ/.test(CT) && /1 đã huỷ/.test(CT) && !/data-id="20"/.test(CT));
+  ok('chi tiết: nút ghi sổ với đối tác này', /data-a="ldtghi" data-id="5"/.test(CT));
+  r(`ACTIONS.ldtghi({ id: '5' });`);
+  ok('ghi sổ với đối tác này: về form, chọn sẵn đối tác', r('S.screen') === 'vaymuon' && r('S.loan.doitac') === 5);
+  await new Promise((res) => setImmediate(res));
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loans = null; S.loanDetail = null; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

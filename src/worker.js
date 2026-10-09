@@ -9,7 +9,7 @@ import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, putCounts, recountAfterClose, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansView, postLoan, voidLoan } from './loans.js';
-import { closeDay, computeReview, nightly, reopenDay, reviewDuyet } from './review.js';
+import { closeDay, computeReview, lateAccept, lateDelete, nightly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
   settingsUpdate, userAction } from './admin.js';
@@ -81,7 +81,7 @@ async function handle(req, env, url) {
      tự voidLoan kiểm quyền bên trong (người ghi hoặc admin), giống voidReceipt. */
   if (r0 === 'loans') {
     need(ALL);
-    if (method === 'GET' && p.length === 1) return loansView(env);
+    if (method === 'GET' && p.length === 1) return loansView(env, url);
     if (method === 'POST' && p.length === 1) return postLoan(req, env, user);
     if (method === 'DELETE' && p.length === 2) return voidLoan(env, user, Number(p[1]));
     if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { need(['admin']); return duyetLoan(env, user, Number(p[1])); }
@@ -99,6 +99,9 @@ async function handle(req, env, url) {
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
   if (r0 === 'close' && method === 'POST') return closeDay(req, env, user);
   if (r0 === 'reopen' && method === 'POST') return reopenDay(req, env, user);
+  // báo cáo khu gửi sau khi chốt: nhận (mở lại, duyệt, chốt lại) hoặc xoá hẳn
+  if (r0 === 'late' && method === 'POST' && p.length === 1) return lateAccept(req, env, user);
+  if (r0 === 'late' && method === 'DELETE' && p.length === 2) return lateDelete(env, user, p[1], url.searchParams.get('ts'));
   // đặt lại số liệu thép: chỉ admin đầu tiên (chốt chặn thật nằm trong resetData)
   if (r0 === 'reset' && method === 'POST') return resetData(req, env, user);
   // sao lưu / nạp lại: chốt chặn thật nằm trong backupData / restoreData
@@ -107,8 +110,14 @@ async function handle(req, env, url) {
   if (r0 === 'recount' && method === 'POST') {
     const b = await readJson(req);
     const day = vnDay();
-    const res = await env.DB.prepare('UPDATE khu_report SET recount = 1 WHERE day = ? AND khu_id = ?').bind(day, String(b.khu || '')).run();
-    if (!res.meta.changes) throw bad('Khu này chưa có báo cáo để yêu cầu đếm lại');
+    // ngày đã chốt thì người đếm không gửi số thường được nữa: cờ này chỉ treo một lời nhắc không làm được
+    const res = await env.DB.prepare('UPDATE khu_report SET recount = 1 WHERE day = ? AND khu_id = ? AND NOT EXISTS (SELECT 1 FROM day_close WHERE day = ?1)')
+      .bind(day, String(b.khu || '')).run();
+    if (!res.meta.changes) {
+      const closed = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
+      if (closed) throw new HttpError(409, 'Ngày đã chốt. Tải lại màn Duyệt rồi dùng "Yêu cầu đếm lại" (mở lại ngày).', 'closed');
+      throw bad('Khu này chưa có báo cáo để yêu cầu đếm lại');
+    }
     await env.DB.batch([bump(env), auditStmt(env, user, 'recount', { khu: b.khu })]);
     return json({ ok: true });
   }

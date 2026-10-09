@@ -4,6 +4,7 @@
 
 ## Cách hệ thống tính
 
+- **Tổng quan**: chạm vào thẻ một khu để xem thép của khu đó với **đủ mọi đường kính** (phi không có thép ghi 0), và bấm **Đếm / báo cáo** ngay ở đó (chỉ hiện với người đếm được khu đó, khi ngày chưa chốt).
 - Mỗi ô **(ngày × khu × phi)** là đơn vị gốc. Mọi thống kê (toàn bãi, theo khu, theo phi) tính từ các ô này.
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.
 - **Chưa duyệt thì không vào tồn.** Đây là quy tắc trung tâm, áp cho cả báo cáo đếm lẫn phiếu nhập/chuyển: tồn của một khu luôn bằng **báo cáo mới nhất ĐƯỢC DUYỆT** của khu đó, không liên quan khu khác. Khu báo lại số mới mà chưa ai duyệt thì tồn vẫn là số đã duyệt trước đó.
@@ -71,6 +72,8 @@ Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Ngườ
 - Báo cáo kỳ có **cột "Vay mượn"** riêng (có dấu: − là cho mượn đi, + là đi vay về), cả trong app lẫn trong CSV. Đẳng thức: **Tồn đầu + Nhập + Điều chỉnh + Vay mượn − Dùng = Tồn cuối**.
 - Bốn loại ghi, tính thành **hai cặp riêng**: *Mình vay* / *Mình trả* là **mình nợ đối tác**; *Cho họ vay* / *Họ trả* là **đối tác nợ mình**. Cùng một đối tác có thể vừa cho mình vay D16 vừa đang mượn của mình D18.
 - **Ai cũng ghi được** (cả người đếm), vì người thấy xe thép thường là người ngoài bãi. Một lần ghi được nhiều phi.
+- **Bắt buộc xác nhận chứng từ**: trước khi ghi sổ phải tick hai ô *"Đã có biên bản giao nhận"* và *"Đã gửi biên bản lên nhóm Zalo"* (server cũng kiểm, lần xác nhận nằm trong nhật ký). Biên bản là chứng từ gốc, sổ này chỉ là bản ghi nhớ. Ghi xong hai ô tự bỏ tick, lần sau phải tick lại cho biên bản của lần đó.
+- **Công nợ dễ nhìn**: đầu màn có ô tổng *bãi đang nợ đối tác* và *đối tác đang giữ của bãi* (tấn, số đối tác). Mỗi đối tác là một thẻ tóm tắt hai chiều theo từng phi; **bấm vào** mở màn chi tiết: bảng *Mình vay của họ* (đã vay / đã trả / còn nợ), bảng *Họ mượn của mình*, lần ghi đang chờ duyệt, **toàn bộ lịch sử kể cả lần đã huỷ**, và nút *Ghi sổ với đối tác này*.
 - **Admin duyệt** từng lần ghi; chưa duyệt thì chưa vào dư nợ. Lần ghi chỉ ghi sổ hiện ngay ở **màn Duyệt** (mục *Sổ vay mượn chờ duyệt*); lần ghi có phiếu kho thì nằm trong *Phiếu chờ duyệt*. Tổng quan cũng nhắc admin.
 - Hoàn tác: người ghi **rút lại** khi chưa duyệt, hoặc **huỷ** trong 10 phút sau khi duyệt; sau đó nhờ admin. Admin huỷ được lần ghi đã duyệt trong **7 ngày**; quá hạn thì ghi một lần **ngược lại** (trả, hoặc vay) để sửa, sổ giữ được cả hai dấu vết. Lần ghi có phiếu kho mà ngày duyệt phiếu đã chốt thì không huỷ được (luật của mọi phiếu kho).
 - Ghi *trả* nhiều hơn số đang nợ thì app **nhắc** (có thể một lần vay cũ chưa ai ghi) nhưng không chặn; dư nợ khi đó hiện là **"trả dư"** để không đọc ngược nghĩa.

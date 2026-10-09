@@ -154,6 +154,19 @@ CREATE TABLE IF NOT EXISTS khu_report_log (
 );
 CREATE INDEX IF NOT EXISTS idx_khu_report_log_dk ON khu_report_log(day, khu_id);
 
+-- Báo cáo khu gửi SAU KHI ngày đã chốt: mỗi khu mỗi ngày một dòng, gửi lại thì thay.
+-- Chưa phải số đếm: admin "nhận" thì mới ghi vào counts (mở lại, duyệt, chốt lại); không nhận thì
+-- xoá hẳn dòng. data: các dòng số đã kiểm như một lần báo thường (phi, kind, v, bo, le, keep).
+CREATE TABLE IF NOT EXISTS bao_sau_chot (
+  day TEXT NOT NULL,
+  khu_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  at INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (day, khu_id)
+);
+
 -- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến),
 --            'dc' điều chỉnh tồn do admin khai — MỘT dòng có dấu, KHÔNG có dòng đối ứng.
 --            Vì không đối ứng nên 'dc' là loại phiếu duy nhất có thể chỉ gồm dòng âm: mọi chỗ

@@ -31,7 +31,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, lateR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -93,6 +93,9 @@ export async function computeReview(env, day, opt = {}) {
                 ORDER BY l.id`),
     // ai vừa đổi khung giờ đếm (xem settingsUpdate): tên để màn Duyệt nói ra
     db.prepare("SELECT name FROM users WHERE id = (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'slot_changed_by')"),
+    // báo cáo khu gửi sau khi ngày đã chốt, chờ admin nhận hoặc xoá (xem lateAccept)
+    db.prepare(`SELECT b.khu_id, ${UNAME}, b.ts, b.data FROM bao_sau_chot b LEFT JOIN users u ON u.id = b.user_id
+                WHERE b.day = ? ORDER BY b.ts`).bind(day),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -228,7 +231,7 @@ export async function computeReview(env, day, opt = {}) {
   const khus = khuAct.map((k) => {
     const r = reps[k.id];
     const items = [];
-    let waiting = 0, blank = 0, lastDuyet = 0;
+    let waiting = 0, blank = 0, lastDuyet = 0, subTs = 0;
     for (const p of phiR.results) {
       const key = k.id + '|' + p.id;
       const sr = sub[key];
@@ -242,6 +245,7 @@ export async function computeReview(env, day, opt = {}) {
       }
       const ok = sr.duyet_ts != null && sr.duyet_ts === sr.ts;
       if (!ok) waiting++;
+      subTs = Math.max(subTs, sr.ts || 0);
       if (sr.duyet_at) lastDuyet = Math.max(lastDuyet, sr.duyet_at);
       const d = sr.v - exp;
       const kg = Math.abs(d) * kgBy[p.id];
@@ -266,6 +270,10 @@ export async function computeReview(env, day, opt = {}) {
          đường nào xoá nó, ngày đó bắt buộc chốt kèm ghi chú. */
       recheck: !!(lastDuyet && rcTs[k.id] && rcTs[k.id] > lastDuyet),
       phieu: pendKhu[k.id] || [],
+      /* Dấu của ĐÚNG những gì admin đang nhìn: lần báo mới nhất, mốc phiếu đã duyệt/hủy gần nhất và
+         danh sách phiếu chờ. Máy khách gửi lại dấu này khi bấm Duyệt; khác là có thứ mới tới sau lúc
+         admin tải màn hình (khu báo lại, phiếu mới), duyệt lúc đó là duyệt một con số chưa ai xem. */
+      mark: [subTs, rcTs[k.id] || 0, (pendKhu[k.id] || []).join(',')].join('|'),
       duyet: r && !waiting && lastDuyet ? { by: lastDuyetBy(subR.results, k.id), ts: lastDuyet } : null,
       slots: nSlot > 1 ? {
         done: [...(slotDone[k.id] || [])].sort(),
@@ -275,7 +283,23 @@ export async function computeReview(env, day, opt = {}) {
     };
   });
 
+  /* Báo cáo gửi sau chốt: chỉ bày PHI KHÁC số đang làm tồn (số đã duyệt, hoặc tồn chuẩn nếu khu chưa
+     có số duyệt nào), vì đó đúng là cái admin đang quyết — nhận thì tồn đổi đúng bằng chừng đó. */
+  const khuName = Object.fromEntries(khuR.results.map((k) => [k.id, k.name]));
+  const late = lateR.results.map((r) => {
+    let rows = [];
+    try { rows = JSON.parse(r.data) || []; } catch (e) { rows = []; }
+    const diffs = rows.map((x) => {
+      const key = r.khu_id + '|' + x.phi;
+      const from = eff[key] !== undefined ? eff[key] : base[key] || 0;
+      return { phi: x.phi, from, to: x.v };
+    }).filter((x) => x.from !== x.to);
+    return { khu: r.khu_id, name: khuName[r.khu_id] || r.khu_id, uname: r.uname, ts: r.ts, diffs };
+  });
+
   const exceptions = [];
+  // ngày đang mở (admin tự mở lại) mà còn báo cáo gửi sau chốt: chốt mà quên nó là nó mất
+  if (!closedR.results.length) late.forEach((l) => exceptions.push({ type: 'late', khu: l.khu, name: l.name }));
   for (const k of khus) {
     /* "Chưa báo" chỉ tính khu CÓ GÌ ĐỂ ĐẾM: còn tồn chuẩn, hoặc vừa có phiếu đã duyệt, hoặc đã
        từng báo (items rỗng nghĩa là mọi phi đều dự kiến 0 và chưa báo gì). Khu trống trơn thì
@@ -325,7 +349,7 @@ export async function computeReview(env, day, opt = {}) {
       changed: slotSt.slot_changed_at && vnDay(slotSt.slot_changed_at) === day
         ? { at: slotSt.slot_changed_at, by: (slotByR.results[0] || {}).name || null } : null,
     },
-    loans: loanR.results,
+    loans: loanR.results, late,
     reports: repR.results.filter((r) => r.day === day), khu: khuR.results,
   };
 }
@@ -470,8 +494,10 @@ export async function reopenDay(req, env, user) {
      duyệt phiếu sau, giữa hai cái đó số dự kiến của khu đã đổi mà số vừa duyệt thì không —
      đúng cái tình huống mà cảnh báo 'recheck' phải bắt. Gộp lại thì không có khe hở nào.
 
-   Không còn tham số sig: duyệt gắn vào đúng lần báo qua mốc ts, nên khu báo lại trong lúc admin
-   đang xem thì ô đó tự thành chờ duyệt lại, không cần đối chiếu dấu số liệu. */
+   marks: { khu: mark } — dấu của từng khu lúc admin tải màn Duyệt (xem mark ở computeReview). Câu
+   UPDATE bên dưới duyệt lần báo MỚI NHẤT, nên khu báo lại trong lúc admin đang xem thì không có dấu
+   này là admin duyệt luôn con số chưa từng thấy. Lệch dấu thì từ chối cả lần bấm. Duyệt tất cả mà
+   có khu mới thành chờ duyệt (không có trong marks) cũng bị từ chối, cùng lý do. */
 export async function reviewDuyet(req, env, user) {
   const b = await readJson(req);
   const day = vnDay();
@@ -485,6 +511,11 @@ export async function reviewDuyet(req, env, user) {
   const list = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length || k.recheck));
   if (!list.length) {
     throw bad(all ? 'Không còn khu nào chờ duyệt' : rv.khus.some((k) => k.khu === khu) ? 'Khu này không có gì chờ duyệt' : 'Khu không hợp lệ');
+  }
+  const marks = b.marks && typeof b.marks === 'object' ? b.marks : null;
+  const moi = marks ? list.filter((k) => marks[k.khu] !== k.mark) : [];
+  if (moi.length) {
+    throw new HttpError(409, moi.map((k) => k.name).join(', ') + ' vừa có số hoặc phiếu mới. Màn Duyệt đã tải lại, hãy xem rồi duyệt.', 'changed');
   }
   const last = rv.last || '';
   const ts = Date.now();
@@ -540,6 +571,117 @@ export async function reviewDuyet(req, env, user) {
   return json({ ok: true, khu: list.length, phieu: phieu.length });
 }
 
+/* ========================= BÁO CÁO GỬI SAU KHI CHỐT =========================
+   Một nút cho admin: NHẬN = mở lại ngày, ghi số của khu thành số đếm ĐÃ DUYỆT, rồi chốt lại ngay
+   (ghi chú cũ của lần chốt được giữ, nối thêm dòng "nhận số khu X"). Số đã duyệt của các khu
+   khác không đụng tới, nên ngày chốt lại chỉ khác lần trước đúng ở khu này.
+   Admin đã tự mở lại ngày trước đó thì chỉ ghi và duyệt số, không tự chốt: ngày đang mở là ý của admin.
+   Không nhận thì lateDelete xoá hẳn dòng, không để lại rác. */
+export async function lateAccept(req, env, user) {
+  const b = await readJson(req);
+  const khu = String(b.khu || '');
+  const day = vnDay();
+  const [lateR, dcR, lastR, curR, khuR, phiR] = await env.DB.batch([
+    env.DB.prepare('SELECT user_id, ts, at, data FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khu),
+    env.DB.prepare('SELECT kind, note FROM day_close WHERE day = ?').bind(day),
+    env.DB.prepare('SELECT MAX(day) d FROM day_close WHERE day < ?').bind(day),
+    env.DB.prepare('SELECT phi_id, v, ts, duyet_at FROM counts WHERE day = ? AND khu_id = ?').bind(day, khu),
+    env.DB.prepare('SELECT name, active FROM khu WHERE id = ?').bind(khu),
+    env.DB.prepare('SELECT id FROM phi WHERE active = 1'),
+  ]);
+  const late = lateR.results[0];
+  if (!late) throw bad('Báo cáo này không còn (đã được nhận hoặc đã xoá)');
+  /* ts = lần gửi mà admin ĐANG XEM. Người đếm gửi lại trong lúc admin xem thì số đã khác: nhận lúc
+     đó là nhận một con số chưa ai thấy (cùng lỗi với duyệt khu, xem mark ở computeReview). */
+  if (Number(b.ts) !== late.ts) throw new HttpError(409, 'Khu vừa gửi lại báo cáo khác. Màn Duyệt đã tải lại, hãy xem rồi nhận.', 'changed');
+  const k = khuR.results[0];
+  if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
+  const dc = dcR.results[0] || null;
+  // mốc kiểm kê lại: mở lại phải dựng lại từ ảnh chụp (reopenDay), không bỏ mốc chốt trơn được
+  if (dc && dc.kind === 'reset') throw bad('Hôm nay là ngày đặt lại số liệu. Hãy xoá báo cáo này và cho khu đếm lại.');
+  const last = (lastR.results[0] || {}).d || '';
+  let rows;
+  try { rows = JSON.parse(late.data); } catch (e) { rows = null; }
+  if (!Array.isArray(rows) || !rows.length) throw bad('Báo cáo hỏng, hãy xoá và cho khu gửi lại');
+  /* Phi bị ẩn SAU lúc gửi: chốt chặn ẩn phi chỉ thấy thép đã vào tồn, không thấy báo cáo đang chờ.
+     Nhận nguyên thì thép hiện ra ở phi đã ẩn. Phi đó báo 0 thì bỏ dòng là xong; khác 0 thì từ chối. */
+  const act = new Set(phiR.results.map((r) => r.id));
+  const an = rows.filter((r) => !act.has(r.phi) && r.v !== 0).map((r) => r.phi);
+  if (an.length) throw bad('Phi ' + an.join(', ') + ' đã bị ẩn sau lúc gửi. Hãy xoá báo cáo này và cho khu gửi lại.');
+  rows = rows.filter((r) => act.has(r.phi));
+  const cur = Object.fromEntries(curR.results.map((r) => [r.phi_id, r]));
+  const data = JSON.stringify(rows.map((r) => ({ ...r, prev: cur[r.phi] ? cur[r.phi].v : null })));
+  // mốc phải vượt mọi mốc cũ của khu, cùng lý do như putCounts
+  const ts = Math.max(Date.now(), curR.results.reduce((m, r) => Math.max(m, r.ts || 0, r.duyet_at || 0), 0) + 1);
+  const changes = rows.filter((r) => !cur[r.phi] || cur[r.phi].v !== r.v).map((r) => ({ phi: r.phi, from: cur[r.phi] ? cur[r.phi].v : null, to: r.v }));
+  /* Chặn khi báo cáo vừa bị gửi lại (ts đổi) — admin phải nhận đúng số mình đang xem — hoặc trạng
+     thái chốt vừa đổi giữa lúc đọc và lúc ghi. */
+  const guard = guardStmt(env,
+    `NOT EXISTS (SELECT 1 FROM bao_sau_chot WHERE day = ?1 AND khu_id = ?2 AND ts = ?3)
+     OR (SELECT COUNT(*) FROM day_close WHERE day = ?1) <> ?4`, day, khu, late.ts, dc ? 1 : 0);
+  const stmts = [];
+  if (dc) {
+    stmts.push(
+      env.DB.prepare('DELETE FROM day_close WHERE day = ?').bind(day),
+      env.DB.prepare('DELETE FROM baseline WHERE day = ?').bind(day),
+      env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
+      env.DB.prepare(RATE_SQL).bind(day)
+    );
+  }
+  stmts.push(
+    env.DB.prepare(
+      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
+       SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4 FROM json_each(?5) j WHERE 1
+       ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET v=excluded.v, kind=excluded.kind, bo=excluded.bo, le=excluded.le, user_id=excluded.user_id, ts=excluded.ts`
+    ).bind(day, khu, late.user_id, ts, data),
+    env.DB.prepare(
+      `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
+       SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
+    ).bind(day, khu, late.user_id, ts, data),
+    // lần đếm này là có thật (khu ra bãi lúc `at`), nên cũng tính vào khung giờ đã đếm
+    env.DB.prepare('INSERT INTO khu_report_log (day, khu_id, ts, at, user_id) VALUES (?,?,?,?,?)').bind(day, khu, ts, late.at, late.user_id),
+    env.DB.prepare(
+      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
+       SELECT ?1, ${J('phi')}, 1, 0, ${J('keep')} FROM json_each(?2) j WHERE 1
+       ON CONFLICT(khu_id, phi_id) DO UPDATE SET keep_streak = excluded.keep_streak`
+    ).bind(khu, data),
+    // admin đã xem và chọn số này: không còn xung đột hay yêu cầu đếm lại nào treo trên khu
+    env.DB.prepare(
+      `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount) VALUES (?,?,?,?,0,0,0)
+       ON CONFLICT(day, khu_id) DO UPDATE SET user_id = excluded.user_id, ts = excluded.ts, conflict = 0, resolved = 0, recount = 0`
+    ).bind(day, khu, late.user_id, ts),
+    // duyệt như reviewDuyet: mọi ô của khu từ sau lần chốt trước
+    env.DB.prepare(
+      `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
+       WHERE khu_id = ?4 AND day > ?5 AND day <= ?6`
+    ).bind(ts, user.id, user.name, khu, last, day),
+    env.DB.prepare('DELETE FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khu),
+    auditStmt(env, user, 'late_accept', { day, khu, changes: changes.slice(0, 30) }),
+    bump(env)
+  );
+  await batchGuarded(env, guard, stmts,
+    new HttpError(409, 'Báo cáo vừa được gửi lại hoặc ngày vừa đổi trạng thái chốt. Hãy xem lại rồi nhận.', 'changed'));
+  if (!dc) return json({ ok: true, reclosed: false });
+  // chốt lại ngay; hỏng (vừa có người ghi số khác) thì ngày để mở, admin chốt tay ở màn Duyệt
+  const note = ((dc.note ? dc.note + ' · ' : '') + 'Nhận số ' + k.name + ' gửi sau chốt').slice(0, 500);
+  try { await doClose(env, user, await computeReview(env, day), note, 'close_day'); }
+  catch (e) { if (!(e instanceof HttpError)) throw e; return json({ ok: true, reclosed: false }); }
+  return json({ ok: true, reclosed: true });
+}
+
+// ts: lần gửi admin đang xem, như lateAccept — không xoá mất lần gửi mới hơn mà admin chưa thấy
+export async function lateDelete(env, user, khu, ts) {
+  const day = vnDay();
+  const res = await env.DB.prepare('DELETE FROM bao_sau_chot WHERE day = ? AND khu_id = ? AND ts = ?').bind(day, khu, Number(ts)).run();
+  if (!res.meta.changes) {
+    const con = await env.DB.prepare('SELECT 1 x FROM bao_sau_chot WHERE day = ? AND khu_id = ?').bind(day, khu).first();
+    if (con) throw new HttpError(409, 'Khu vừa gửi lại báo cáo khác. Màn Duyệt đã tải lại, hãy xem rồi quyết.', 'changed');
+    throw bad('Báo cáo này không còn (đã được nhận hoặc đã xoá)');
+  }
+  await env.DB.batch([auditStmt(env, user, 'late_delete', { day, khu }), bump(env)]);
+  return json({ ok: true });
+}
+
 /* ========================= VIỆC TỰ ĐỘNG (CRON) =========================
    Một Cron mỗi ngày lúc 23:50 giờ VN (16:50 UTC), chỉ dùng 1/5 Cron của gói Free. */
 export async function nightly(env) {
@@ -566,5 +708,7 @@ export async function nightly(env) {
   await env.DB.batch([
     env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Date.now()),
     env.DB.prepare('DELETE FROM login_fail WHERE day < ?').bind(day),
+    // báo cáo gửi sau chốt chỉ nhận được trong đúng ngày đó: sang ngày là rác
+    env.DB.prepare('DELETE FROM bao_sau_chot WHERE day < ?').bind(day),
   ]);
 }

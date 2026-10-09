@@ -85,6 +85,12 @@ export async function postLoan(req, env, user) {
   if (!d.active) throw bad('Đối tác này đã ẩn, không ghi thêm được. Hãy hiện lại ở màn Vay mượn trước');
   const phiBy = Object.fromEntries(phiR.results.map((r) => [r.id, r]));
   const lines = parseLoanLines(b, phiBy);
+  /* Mỗi lần thép đi/về với đối tác phải có biên bản giao nhận, và biên bản phải được gửi lên nhóm
+     Zalo của bãi — sổ này chỉ là bản ghi nhớ, chứng từ gốc là biên bản. Bắt xác nhận ở đây (cả trên
+     máy lẫn server) để người ghi không quên, và lần xác nhận nằm lại trong nhật ký. */
+  if (b.bienban !== true || b.zalo !== true) {
+    throw bad('Hãy xác nhận đã có biên bản giao nhận và đã gửi biên bản lên nhóm Zalo trước khi ghi sổ');
+  }
   const note = String(b.note || '').trim().slice(0, 200);
   const grp = rand(8);
   const ts = Date.now();
@@ -118,7 +124,7 @@ export async function postLoan(req, env, user) {
     ).bind(day, ghi, user.id, ts, grp, JSON.stringify(rows)));
   }
   stmts.push(
-    auditStmt(env, user, LOAN_ACTION[kind], { doitac: d.name, lines, note, grp, ...(khuId ? { khu: khuId } : {}) }),
+    auditStmt(env, user, LOAN_ACTION[kind], { doitac: d.name, lines, note, grp, bienban: true, zalo: true, ...(khuId ? { khu: khuId } : {}) }),
     bump(env),
     env.DB.prepare('SELECT id FROM loans WHERE grp = ?').bind(grp),
   );
@@ -213,7 +219,26 @@ export async function voidLoan(env, user, id) {
    tính trên MỌI dòng ĐÃ DUYỆT từ trước tới nay bằng SUM ở database, không phụ thuộc `items` có
    tải đủ hay không. agg trả về thô theo kind; cộng/trừ đúng cặp (vay/tra_vay, cho_vay/tra_no)
    làm ở app.js, để server khỏi phải biết màn hình trình bày thế nào. */
-export async function loansView(env) {
+export async function loansView(env, url) {
+  /* ?doitac=id: màn chi tiết MỘT đối tác — đủ lịch sử (cả lần đã huỷ, để thấy sổ từng bị sửa gì) và
+     số cộng dồn theo phi của riêng đối tác đó. Trần 2000 dòng chỉ để chặn trường hợp bất thường. */
+  const dtId = url ? Number(url.searchParams.get('doitac')) : 0;
+  if (dtId > 0) {
+    const [dR, itemR, aggR] = await env.DB.batch([
+      env.DB.prepare('SELECT id, name, active FROM doitac WHERE id = ?').bind(dtId),
+      env.DB.prepare(
+        `SELECT l.id, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.grp, l.voided, l.voided_ts,
+           l.user_id, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
+           (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' LIMIT 1) kho
+         FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
+           ${DUYET_JOIN_LOAN}
+         WHERE l.doitac_id = ? ORDER BY l.id DESC LIMIT 2000`
+      ).bind(dtId),
+      env.DB.prepare('SELECT doitac_id, phi_id, kind, SUM(qty) q FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL AND doitac_id = ? GROUP BY phi_id, kind').bind(dtId),
+    ]);
+    if (!dR.results[0]) throw new HttpError(404, 'Không tìm thấy đối tác');
+    return json({ doitac: dR.results, items: itemR.results, agg: aggR.results, chiTiet: true });
+  }
   const [dR, itemR, aggR] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, active FROM doitac ORDER BY name'),
     env.DB.prepare(

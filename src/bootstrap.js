@@ -11,7 +11,7 @@ export async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, late] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -60,6 +60,8 @@ export async function bootstrap(env, user) {
     // đếm nhanh để nhắc ở Tổng quan; chi tiết nạp khi vào đúng màn Vay mượn, như /users
     // đếm theo LẦN GHI (grp) chứ không theo dòng: ghi một lần ba phi là MỘT việc admin phải duyệt
     env.DB.prepare('SELECT COUNT(DISTINCT COALESCE(grp, id)) n FROM loans WHERE voided = 0 AND duyet_ts IS NULL'),
+    // báo cáo khu gửi sau khi chốt, chờ admin nhận: để Tổng quan nhắc admin và người gửi
+    env.DB.prepare(`SELECT b.khu_id, b.user_id, ${UNAME}, b.ts, b.data FROM bao_sau_chot b LEFT JOIN users u ON u.id = b.user_id WHERE b.day = ?`).bind(day),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -91,5 +93,6 @@ export async function bootstrap(env, user) {
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
     doitacAct: doitacAct.results,
     loanPending: loanPending.results[0] ? loanPending.results[0].n : 0,
+    late: late.results,
   };
 }

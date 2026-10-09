@@ -92,8 +92,8 @@ const hasFlexNone = (cls) => {
   return !!m && /flex\s*:\s*none/.test(m[4]);
 };
 
-vm.runInContext("S.loans = { doitac: [{ id: 1, name: 'Cty A', active: 1 }], items: [], agg: [] };", ctx);
-const SCREENS = ['home', 'khu', 'dem', 'nhap', 'ton', 'duyet', 'nhatky', 'lichsu', 'baocao', 'stats', 'more', 'pin', 'users', 'settings', 'vaymuon'];
+vm.runInContext("S.loans = { doitac: [{ id: 1, name: 'Cty A', active: 1 }], items: [], agg: [] }; S.loanDt = 1; S.loanDetail = { chiTiet: true, doitac: [{ id: 1, name: 'Cty A', active: 1 }], items: [], agg: [] };", ctx);
+const SCREENS = ['home', 'khu', 'dem', 'nhap', 'ton', 'duyet', 'nhatky', 'lichsu', 'baocao', 'stats', 'more', 'pin', 'users', 'settings', 'vaymuon', 'vaychitiet'];
 for (const sc of SCREENS) {
   vm.runInContext(`S.screen = '${sc}'; S.sel = null;`, ctx);
   const kids = topLevel(vm.runInContext('vMain()', ctx));
