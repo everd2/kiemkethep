@@ -286,4 +286,4 @@ public/              giao diện: index.html, app.js, style.css, sw.js, manifest
 - *"Mã thiết lập sai"*: SETUP_TOKEN nhập không khớp với giá trị đã đặt.
 - *Đăng nhập báo sai dù đúng PIN sau khi đổi PEPPER*: PEPPER đã bị đổi, cần đặt lại PIN từng người.
 - *Lỗi khi chạy `d1 execute --remote`*: kiểm tra `database_id` trong wrangler.toml đã đúng chưa.
-- *Giao diện không cập nhật sau khi deploy*: đóng hẳn app rồi mở lại (service worker lấy bản mới từ mạng). Khi sửa giao diện, tăng số `CACHE` trong `public/sw.js`.
+- *Giao diện không cập nhật sau khi deploy*: app tự phát hiện bản mới (so dấu ETag của `/app.js` mỗi 5 phút và mỗi lần mở lại từ nền) rồi hiện dải **"Có bản mới của app. Bấm vào đây để cập nhật"**. Bấm vào là xong. Máy còn chạy bản cũ mà gửi kiểu cũ lên thì server báo thẳng "bản app trên máy đã cũ". Khi sửa giao diện vẫn nên tăng số `CACHE` trong `public/sw.js`.

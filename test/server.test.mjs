@@ -2285,7 +2285,10 @@ async function main() {
     eq('người đếm không sửa/ẩn được đối tác', (await S.call('PATCH', '/doitac/' + dtA, { active: 0 }, 'An')).status, 403);
 
     // chưa xác nhận biên bản giao nhận và gửi nhóm Zalo thì không ghi sổ được
-    eq('thiếu xác nhận biên bản: từ chối', (await S.call('POST', '/loans', { doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'An')).status, 400);
+    // KHÔNG CÓ hai trường xác nhận = máy đang chạy bản app cũ: nói thẳng là app cũ (mã old_app)
+    const cu = await S.call('POST', '/loans', { doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'An');
+    eq('bản app cũ (không gửi trường xác nhận): báo app cũ', [cu.status, cu.data.code], [409, 'old_app']);
+    eq('có trường nhưng chưa tick: từ chối', (await S.call('POST', '/loans', { bienban: false, zalo: false, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'An')).status, 400);
     eq('chỉ có biên bản, chưa gửi Zalo: từ chối', (await S.call('POST', '/loans', { bienban: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'An')).status, 400);
     const tonTruoc = (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]);
     const g1 = await S.call('POST', '/loans', { bienban: true, zalo: true, doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 180 }, { phi: 'D18', qty: 100 }], note: 'xe 29C' }, 'An');

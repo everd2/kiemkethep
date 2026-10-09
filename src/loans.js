@@ -88,6 +88,12 @@ export async function postLoan(req, env, user) {
   /* Mỗi lần thép đi/về với đối tác phải có biên bản giao nhận, và biên bản phải được gửi lên nhóm
      Zalo của bãi — sổ này chỉ là bản ghi nhớ, chứng từ gốc là biên bản. Bắt xác nhận ở đây (cả trên
      máy lẫn server) để người ghi không quên, và lần xác nhận nằm lại trong nhật ký. */
+  /* Yêu cầu KHÔNG CÓ hai trường này (khác với có mà chưa tick) là máy đang chạy bản app cũ, chưa có
+     hai ô xác nhận. Đòi "hãy xác nhận" thì người dùng đi tìm một ô không có trên màn hình — nói
+     thẳng là app cũ, kèm mã để máy khách bật dải "có bản mới". */
+  if (b.bienban === undefined && b.zalo === undefined) {
+    throw new HttpError(409, 'Bản app trên máy đã cũ (chưa có ô xác nhận biên bản). Hãy tắt hẳn app rồi mở lại để cập nhật.', 'old_app');
+  }
   if (b.bienban !== true || b.zalo !== true) {
     throw bad('Hãy xác nhận đã có biên bản giao nhận và đã gửi biên bản lên nhóm Zalo trước khi ghi sổ');
   }

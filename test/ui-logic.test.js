@@ -1043,6 +1043,62 @@ const run = async () => {
   await new Promise((res) => setImmediate(res));
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.loans = null; S.loanDetail = null; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
+  // ---- 1d9. Biết khi có bản app mới; ô số lượng vay mượn giống màn Nhập ----
+  {
+    // dấu (ETag) của /app.js: lần đầu ghi lại, lần sau khác thì bật dải "có bản mới"
+    const goc = ctx.fetch;
+    let tag = '"a1"';
+    ctx.fetch = (url, opt) => (url === '/app.js' && opt && opt.method === 'HEAD'
+      ? Promise.resolve({ ok: true, headers: { get: (h) => (h === 'ETag' ? tag : null) } })
+      : goc(url, opt));
+    r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home'; S.newVer = false; appTag = null;`);
+    await r('checkVer(0)');
+    ok('lần hỏi đầu: chỉ ghi dấu, không báo', !r('S.newVer'));
+    await r('checkVer(0)');
+    ok('cùng dấu: không báo', !r('S.newVer'));
+    tag = '"b2"';
+    await r('checkVer()');
+    ok('chưa đủ 5 phút: không hỏi lại', !r('S.newVer'));
+    await r('checkVer(0)');
+    ok('dấu khác: bật dải có bản mới', r('S.newVer') === true);
+    r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
+    ok('dải có bản mới hiện trên mọi màn, bấm để tải lại', /data-a="reloadapp"[^>]*>Có bản mới của app/.test(r('vMain()')), r('vMain()').slice(0, 300));
+    ctx.fetch = goc;
+    r(`S.newVer = false; appTag = null;`);
+  }
+  // server báo máy đang dùng bản cũ (old_app): bật dải ngay
+  {
+    const goc = ctx.fetch;
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/loans') === 0
+      ? Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'Bản app trên máy đã cũ', code: 'old_app' }) })
+      : goc(url, opt));
+    r(`S.newVer = false;`);
+    await r(`api('POST', '/loans', {}).catch(() => {})`);
+    ok('server trả old_app: bật dải có bản mới', r('S.newVer') === true);
+    ctx.fetch = goc;
+    r(`S.newVer = false;`);
+  }
+  // ô số lượng ở màn Vay mượn: bộ nút giống màn Nhập kho, có dòng quy đổi kg/tấn
+  r(`S.me = { id: 7, name: 'Kho', role: 'thukho' }; S.screen = 'vaymuon'; S.form.lqty = '';
+    S.loan = { doitac: 5, kind: 'vay', phi: 'D10', qty: 0, done: null, lines: [], kho: false };
+    S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }, { id: 6, name: 'Cty Đã Xong', active: 1 }], items: [], agg: [{ doitac_id: 5, phi_id: 'D10', kind: 'vay', q: 10 }] };`);
+  const VQ = r('vVayMuon()');
+  ok('vay mượn: có đủ −10 −1 +1 +10 như màn Nhập', ['-10', '-1', '1', '10'].every((v) => VQ.includes(`data-a="lq" data-v="${v}"`)));
+  ok('vay mượn: có +1 bó và dòng quy đổi kg', /data-a="lq" data-v="bo">\+1 bó \(10\)/.test(VQ) && /id="lkg"/.test(VQ));
+  ctx._mk('lqty', '5');
+  r(`ACTIONS.lq({ v: '10' })`);
+  ok('+10: cộng vào số đang gõ', r('S.form.lqty') === '15', r('S.form.lqty'));
+  ctx._mk('lqty', r('S.form.lqty'));
+  r(`ACTIONS.lq({ v: 'bo' })`);
+  ok('+1 bó: cộng đúng số cây một bó', r('S.form.lqty') === '25', r('S.form.lqty'));
+  ctx._mk('lqty', '3');
+  r(`ACTIONS.lq({ v: '-10' })`);
+  ok('−10 khi đang 3: về 0, không âm', r('S.form.lqty') === '', r('S.form.lqty'));
+  r(`S.form.lqty = '';`);
+  // đối tác đã tất toán: vẫn là dòng bấm được, ghi rõ "Xem chi tiết"
+  ok('đối tác đã tất toán: dòng có "Xem chi tiết"', /data-a="ldtview" data-id="6"><span>Cty Đã Xong<\/span><span[^>]*>Xem chi tiết ›/.test(VQ), (VQ.match(/data-id="6".{0,160}/) || [''])[0]);
+  r(`S.loans = null; S.screen = 'home'; S.loan = { doitac: null, kind: 'vay', phi: null, qty: 0, done: null };`);
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

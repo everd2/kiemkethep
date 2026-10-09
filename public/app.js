@@ -179,6 +179,8 @@ async function api(method, path, body) {
     const quota = r.status === 429 && !d.error;
     const er = new Error(d.error || (quota ? 'Hệ thống tạm quá tải hoặc hết hạn mức trong ngày, sẽ tự hoạt động lại (muộn nhất 7:00 sáng)' : 'Lỗi ' + r.status));
     er.status = r.status; er.code = d.code; er.retry = quota || r.status >= 500;
+    // server nhận ra máy đang chạy bản app cũ: bật dải "có bản mới" ngay, khỏi đợi lần hỏi định kỳ
+    if (d.code === 'old_app') S.newVer = true;
     if (r.status === 401 && S.me) { S.me = null; S.boot = null; S.screen = 'login'; S.err = 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại'; forgetBoot(); render(); }
     throw er;
   }
@@ -194,6 +196,28 @@ function netBar() {
   if (S.netBad) return `<div class="toast err" data-net="1" role="status" ${top}>Chưa cập nhật được số mới${at ? ', đang xem số lúc ' + at : ''}. Đang thử lại.</div>`;
   return '';
 }
+/* ===== Bản app mới =====
+   App cài trên màn hình chính giữ trang chạy ngầm cả ngày: code đã nạp từ trước lần deploy cứ thế
+   chạy tiếp, vì vòng tự làm mới chỉ tải lại SỐ LIỆU chứ không tải lại GIAO DIỆN. Máy đó thiếu nút,
+   thiếu màn hình mới, và gửi lên kiểu cũ thì server mới từ chối — người dùng tưởng app hỏng.
+   Nên hỏi định kỳ dấu nhận dạng (ETag) của /app.js: nội dung file đổi là ETag đổi. Hỏi HEAD tới
+   file tĩnh không chạy Worker nên không tốn hạn mức. Không tự tải lại (đang gõ dở thì mất), chỉ
+   bày dải để người dùng bấm khi tiện. */
+let appTag = null, lastVerCheck = 0;
+async function checkVer(cachMs) {
+  if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
+  lastVerCheck = Date.now();
+  try {
+    const r = await fetch('/app.js', { method: 'HEAD', cache: 'no-store' });
+    const t = r && r.ok && r.headers ? r.headers.get('ETag') || r.headers.get('Last-Modified') : null;
+    if (!t) return;
+    if (!appTag) appTag = t;
+    else if (t !== appTag && !S.newVer) { S.newVer = true; render(); }
+  } catch (e) { /* mất mạng: lần sau hỏi lại */ }
+}
+const verBar = () => (S.newVer
+  ? `<button class="toast" data-a="reloadapp" style="margin-top:calc(8px + env(safe-area-inset-top));display:block;width:calc(100% - 24px);text-align:left;border:0;font:inherit;font-weight:700">Có bản mới của app. Bấm vào đây để cập nhật.</button>`
+  : '');
 const busyHtml = () => (S.busy ? `<div class="busy" role="status" aria-live="polite" aria-busy="true"><span>${esc(S.busyMsg || 'Đang lưu...')}</span></div>` : '');
 // Màn chờ dữ liệu: tải lỗi thì nói rõ và cho bấm thử lại, không treo mãi ở "Đang tải..."
 function panelWait(screen) {
@@ -1939,7 +1963,7 @@ function vVayMuon() {
   const dsDt = (L.doitac || []).filter((d) => coSo(d.id));
   const khacDt = (L.doitac || []).filter((d) => !coSo(d.id));
   const duNo = tong + (dsDt.length ? dsDt.map(theDt).join('') : '<div class="muted">Chưa có khoản vay mượn nào đang mở.</div>')
-    + (khacDt.length ? `<div class="sm muted">Đối tác khác (đã tất toán hoặc chưa có khoản nào):</div><div class="wrap">${khacDt.map((d) => `<button class="chip s" data-a="ldtview" data-id="${d.id}">${esc(d.name)}</button>`).join('')}</div>` : '');
+    + (khacDt.length ? `<div class="sm muted">Đối tác đã tất toán hoặc chưa có khoản nào:</div><div class="card" style="padding:0;overflow:hidden">${khacDt.map((d) => `<button class="li" style="width:100%;background:#fff;border:0;border-bottom:1px solid var(--line);text-align:left" data-a="ldtview" data-id="${d.id}"><span>${esc(d.name)}${d.active ? '' : ' <span class="sm muted">(đã ẩn)</span>'}</span><span class="sm" style="color:var(--pri);text-decoration:underline;white-space:nowrap">Xem chi tiết ›</span></button>`).join('')}</div>` : '');
 
   /* --- Form ghi sổ --- */
   const dtChips = dtAct.length
@@ -1971,8 +1995,9 @@ function vVayMuon() {
     <b class="sm">3. Phi</b><div class="grid4">${b.phiAct.map((x) => `<button class="chip ${x.id === F.phi ? 'on' : ''}" data-a="lphi" data-v="${x.id}">${x.id}</button>`).join('')}</div>
     ${dangNo ? `<span class="sm">${dangNo}</span>` : ''}
     <b class="sm">4. Số ${p ? unitLbl(p) : 'cây'} ${F.phi || ''}</b>
-    <div class="row gap6"><input class="inp s f1" id="lqty" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="0" data-model="lqty" value="${esc(S.form.lqty || '')}" style="min-width:0;font-size:22px;text-align:center">
-      ${p && !isCuon(p) ? `<button class="btn s" data-a="lbo">+1 bó</button>` : ''}<button class="btn s" data-a="ladd">+ Phi khác</button></div>
+    ${p ? `<div class="row gap6"><button class="btn s" data-a="lq" data-v="-10">−10</button><button class="btn s" data-a="lq" data-v="-1">−1</button><input class="f1" id="lqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số ${unitLbl(p)} ${F.phi}" placeholder="0" data-model="lqty" value="${esc(S.form.lqty || '')}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="lq" data-v="1">+1</button><button class="btn s pri" data-a="lq" data-v="10">+10</button></div>
+      <span class="muted" id="lkg">${nkgText((parseInt(S.form.lqty, 10) || 0) * uStepOf(p), p)}</span>
+      <div class="row gap6">${isCuon(p) ? '' : `<button class="btn s f1" data-a="lq" data-v="bo">+1 bó (${p.bo_size})</button>`}<button class="btn s f1" data-a="ladd">+ Thêm phi khác</button></div>` : ''}
     ${lines}
     ${khoBox}
     <input class="inp s" id="lnote" maxlength="200" placeholder="Ghi chú: số phiếu, biển số xe, hẹn trả…" data-model="lnote" value="${esc(S.form.lnote || '')}">
@@ -2244,7 +2269,7 @@ function vMain() {
   }
   const showToast = S.toast && S.screen !== 'dem';
   const noTabs = S.screen === 'dem' && S.sel;
-  return `${busyHtml()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}`;
+  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}`;
 }
 
 function render() {
@@ -2788,6 +2813,8 @@ const ACTIONS = {
       say(`Đã xoá sạch dữ liệu thép (trước đó ${r.tan} tấn). Bãi như mới dựng.`);
     });
   },
+  // tải lại cả trang để nhận app.js mới (service worker "mạng trước" lấy bản mới từ server)
+  reloadapp() { try { window.location.reload(); } catch (e) { /* môi trường không có trang */ } },
   logf(d) { S.logFilter = d.v; render(); },
   logfind() { S.auditF.q = String(val('logq')).trim(); delete S.form.logq; go('nhatky', true); },
   logclear() { S.auditF = { ngay: '', q: '' }; delete S.form.logq; go('nhatky', true); },
@@ -2986,7 +3013,15 @@ const ACTIONS = {
     if (o && nw && isCuon(o) !== isCuon(nw)) S.form.lqty = ''; // cuộn và cây không cùng đơn vị
     S.loan.phi = d.v; S.loan.done = null; render();
   },
-  lbo() { const p = S.boot.phiBy[S.loan.phi]; S.form.lqty = String((parseInt(val('lqty'), 10) || 0) + p.bo_size); render(); },
+  /* Bộ nút số lượng giống hệt màn Nhập kho (−10 −1 +1 +10, +1 bó): cùng một thao tác ở hai màn thì
+     phải bấm giống nhau. Số tính theo đơn vị người dùng thấy (cuộn với thép cuộn), trần như server. */
+  lq(d) {
+    const p = S.boot.phiBy[S.loan.phi]; if (!p) return;
+    let q = parseInt(String(val('lqty')).replace(/\D/g, '') || '0', 10);
+    q = d.v === 'bo' ? q + p.bo_size : Math.max(0, q + Number(d.v));
+    q = Math.min(q, Math.floor(99999 / uStepOf(p)));
+    S.form.lqty = q ? String(q) : ''; S.loan.done = null; render();
+  },
   // số gõ theo đơn vị người dùng (cuộn với thép cuộn), đổi sang cây/phần như sổ lưu
   ladd() {
     const q = parseInt(String(val('lqty')).replace(/\D/g, '') || '0', 10);
@@ -3106,6 +3141,17 @@ document.addEventListener('input', (e) => {
   }
   const pm = m && /^(bo|kg|kgc|mn)-(.+)$/.exec(m); // Cài đặt phi: cập nhật dòng quy đổi ngay khi gõ
   if (pm && S.boot && S.boot.phiBy[pm[2]]) { const h = document.getElementById('ph-' + pm[2]); if (h) h.textContent = phiHint(S.boot.phiBy[pm[2]]); }
+  // ô số lượng ở màn Vay mượn: lọc chữ, chặn trần, và cập nhật dòng quy đổi kg/tấn ngay khi gõ
+  if (e.target.id === 'lqty' && S.boot && S.loan.phi) {
+    const p = S.boot.phiBy[S.loan.phi];
+    const raw = e.target.value.replace(/\D/g, '');
+    const q = Math.min(parseInt(raw || '0', 10), Math.floor(99999 / uStepOf(p)));
+    const v = q ? String(q) : '';
+    if (e.target.value !== v) e.target.value = v;
+    S.form.lqty = v;
+    const k = document.getElementById('lkg');
+    if (k && p) k.textContent = nkgText(q * uStepOf(p), p);
+  }
   if (e.target.id === 'nqty' && S.boot) { // cập nhật số kg ngay, không vẽ lại cả màn hình khi đang gõ
     const raw = e.target.value.replace(/\D/g, '');
     syncQty(); S.nhap.done = null;
@@ -3164,6 +3210,7 @@ async function refresh() {
     // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ
     const r = await api('GET', '/rev');
     const healed = S.netBad; S.netBad = false; S.netOk = Date.now();
+    checkVer();
     if (readPending().some((j) => !j.err && ofMe(j))) flushPending();
     if (S.boot && r.today !== S.boot.today && S.screen === 'dem') {
       // nháp đang đếm thuộc ngày cũ: không để lẫn sang ngày mới
@@ -3215,8 +3262,11 @@ async function start() {
   }
   render();
   lastPoll = Date.now();
+  checkVer(0); // ghi dấu của bản đang chạy
   setTimeout(tick, 15000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastPoll > 30e3) refresh(); });
+  /* Mở app lên lại từ nền là lúc hay có bản mới nhất (app nằm ngầm qua đêm, qua lần deploy), nên
+     hỏi luôn lúc đó, không đợi đủ 5 phút. */
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkVer(60e3); if (Date.now() - lastPoll > 30e3) refresh(); } });
   window.addEventListener('online', () => { render(); refresh(); flushPending(); });
   window.addEventListener('offline', () => render());
   try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
