@@ -253,7 +253,20 @@ Nếu Cloudflare chặn do hết hạn mức trong ngày, app vẫn mở đượ
 ```
 wrangler.toml        cấu hình Cloudflare (nhớ điền database_id)
 schema.sql           cấu trúc database + dữ liệu mặc định
-src/worker.js        toàn bộ API
+src/worker.js        điểm vào: định tuyến /api/* và Cron 23:50
+src/core.js          tiện ích, giờ Việt Nam, hằng số, phi mặc định
+src/db.js            tự nâng cấp database (migration, SCHEMA_VERSION)
+src/helpers.js       hàm dùng chung: đọc request, CSV, nhật ký, phiên, cài đặt
+src/slots.js         khung giờ đếm (đếm nhiều lần/ngày)
+src/auth.js          đăng nhập, PIN, thiết lập
+src/bootstrap.js     dữ liệu chung cho máy khách
+src/counts.js        báo cáo đếm, hai người báo khác số, nhật ký, tệp CSV ngày
+src/phieu.js         nhập, chuyển, xuất, điều chỉnh tồn
+src/loans.js         sổ vay mượn ngoài bãi
+src/review.js        màn Duyệt, chốt / mở lại ngày, tự chốt
+src/data.js          đặt lại số liệu, sao lưu, nạp lại
+src/admin.js         người dùng, khu, phi, cài đặt
+src/reports.js       xem ngày cũ, báo cáo theo kỳ
 public/              giao diện: index.html, app.js, style.css, sw.js, manifest, biểu tượng, setup.html
 ```
 

@@ -31,7 +31,7 @@ async function setup() {
 
 /* Phiên bản cấu trúc hiện tại, đọc từ chính worker: ba mục dưới đây chỉ cần biết "migration đã
    chạy tới bản mới nhất", nên không phải sửa số bằng tay mỗi lần thêm một migration. */
-const SCHEMA_NOW = Number(readFileSync(path.join(ROOT, 'src/worker.js'), 'utf8').match(/SCHEMA_VERSION = (\d+)/)[1]);
+const SCHEMA_NOW = Number(readFileSync(path.join(ROOT, 'src/db.js'), 'utf8').match(/SCHEMA_VERSION = (\d+)/)[1]);
 
 const PHI = ['D6', 'D8', 'D10', 'D12', 'D14', 'D16', 'D18', 'D20', 'D22', 'D25', 'D28', 'D32', 'D36'];
 /* Một báo cáo gồm ĐỦ mọi phi đang bật, đúng như máy khách gửi: phi người đếm gõ số thì kind 'dem',
