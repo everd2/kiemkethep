@@ -92,11 +92,25 @@ export async function postLoan(req, env, user) {
   return json({ ok: true, grp, ids });
 }
 
+/* Đối tác và các dòng của CẢ lần ghi, để dòng nhật ký duyệt/huỷ tự đọc được: "duyệt sổ vay mượn"
+   mà không nói của ai, bao nhiêu thì đọc lại nhật ký không biết vừa duyệt khoản nào — và nhật ký
+   thì không sửa lại được. */
+async function loanGroupInfo(env, r) {
+  const [dR, lR] = await env.DB.batch([
+    env.DB.prepare('SELECT name FROM doitac WHERE id = ?').bind(r.doitac_id),
+    r.grp
+      ? env.DB.prepare('SELECT phi_id phi, qty FROM loans WHERE grp = ? AND voided = 0 ORDER BY id').bind(r.grp)
+      : env.DB.prepare('SELECT phi_id phi, qty FROM loans WHERE id = ?').bind(r.id),
+  ]);
+  return { doitac: (dR.results[0] || {}).name || null, lines: lR.results };
+}
+
 export async function duyetLoan(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ?').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
   if (r.voided) throw bad('Dòng này đã bị hủy, không duyệt được');
   if (r.duyet_ts) throw bad('Dòng này đã được duyệt');
+  const info = await loanGroupInfo(env, r);
   const ts = Date.now();
   await env.DB.batch([
     r.grp
@@ -104,7 +118,7 @@ export async function duyetLoan(env, user, id) {
         .bind(ts, user.id, user.name, r.grp)
       : env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE id = ?')
         .bind(ts, user.id, user.name, id),
-    auditStmt(env, user, 'loan_duyet', { id, grp: r.grp, kind: r.kind, doitac_id: r.doitac_id }),
+    auditStmt(env, user, 'loan_duyet', { id, grp: r.grp, kind: r.kind, doitac_id: r.doitac_id, ...info }),
     bump(env),
   ]);
   return json({ ok: true });
@@ -123,11 +137,12 @@ export async function voidLoan(env, user, id) {
       throw new HttpError(403, 'Dòng đã duyệt quá 10 phút, nhờ admin hủy');
     }
   }
+  const info = await loanGroupInfo(env, r);
   await env.DB.batch([
     r.grp
       ? env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)
       : env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE id = ?').bind(Date.now(), id),
-    auditStmt(env, user, pending ? 'loan_reject' : 'loan_void', { id, kind: r.kind, doitac_id: r.doitac_id, grp: r.grp }),
+    auditStmt(env, user, pending ? 'loan_reject' : 'loan_void', { id, kind: r.kind, doitac_id: r.doitac_id, grp: r.grp, ...info }),
     bump(env),
   ]);
   return json({ ok: true, pending });
@@ -146,7 +161,11 @@ export async function loansView(env) {
          l.user_id, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN}
        FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
          ${DUYET_JOIN_LOAN}
-       WHERE l.voided = 0 ORDER BY l.id DESC LIMIT 300`
+       WHERE l.voided = 0
+         /* 300 dòng gần nhất, CỘNG mọi dòng còn chờ duyệt dù cũ tới đâu: số "chờ duyệt" ở Tổng quan
+            đếm trên toàn bộ, nên lần ghi chờ duyệt nào cũng phải tìm thấy được để duyệt. */
+         AND (l.duyet_ts IS NULL OR l.id >= COALESCE((SELECT MIN(id) FROM (SELECT id FROM loans WHERE voided = 0 ORDER BY id DESC LIMIT 300)), 0))
+       ORDER BY l.id DESC`
     ),
     env.DB.prepare('SELECT doitac_id, phi_id, kind, SUM(qty) q FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL GROUP BY doitac_id, phi_id, kind'),
   ]);

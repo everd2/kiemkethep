@@ -144,7 +144,7 @@ const S = {
   khuMo: {}, // thẻ khu nào ở Tổng quan đang mở chi tiết
   draft: { cells: {} }, sel: null, bo: '', le: '', field: 'bo', rep: { bo: false, le: false }, zoomK: null,
   toast: '', toastErr: false, form: {}, err: '',
-  review: null, showNormal: false, audit: null, logFilter: 'all', users: null, pinShown: null,
+  review: null, showNormal: false, audit: null, logFilter: 'all', auditF: { ngay: '', q: '' }, auditMore: false, users: null, pinShown: null,
   usage: null, usageDays: 30, statScope: 'all', expand: {},
   // chú thích màu của bảng đếm: mở sẵn cho người mới, đóng một lần rồi thì nhớ luôn
   legendSeen: (() => { try { return !!localStorage.getItem('kt:legendSeen'); } catch (e) { return false; } })(),
@@ -1030,12 +1030,15 @@ function vNhap() {
      nên nó đứng riêng một bước có chữ giải thích, không nhét vào cùng chỗ gõ số. */
   const stepDc = dc ? 1 : 0;
   // đang có bao nhiêu ở đúng ô này: con số người lập phiếu cần để biết mình sửa TỪ ĐÂU về đâu
-  const dangCo = dc || xuat ? conLay(N.khu, N.phi) : 0;
-  const giu = dc || xuat ? choRut(N.khu, N.phi) : 0;
+  /* Giảm và xuất thì mốc là "còn lấy được" (đã trừ phiếu rút khác đang chờ); điều chỉnh TĂNG
+     không rút gì nên mốc là thép đang có, và không có gì để trừ. */
+  const tang = dc && N.dir === 'tang';
+  const dangCo = dc || xuat ? (tang ? tonOf(N.khu, N.phi) : conLay(N.khu, N.phi)) : 0;
+  const giu = (dc || xuat) && !tang ? choRut(N.khu, N.phi) : 0;
   const sau = dangCo + (N.dir === 'tang' ? 1 : -1) * N.qty * uStep;
   // tổng khối lượng cả phiếu, gồm cả số đang gõ dở, vì nút lưu cũng tính số đó vào phiếu
   const dcKg = Math.abs(N.lines.reduce((a, l) => a + l.qty * b.phiBy[l.phi].kg_per_cay, 0) + N.qty * uStep * p.kg_per_cay);
-  const bigKg = LIM('dcBigKg', 5000);
+  const bigKg = LIM('dcBigKg', 20000);
   const dcWord = (b.limits && b.limits.dcWord) || 'DONG Y';
   const reasons = reasons0(b);
   return `${head(tieu[0], tieu[1], 'home')}
@@ -1054,7 +1057,7 @@ function vNhap() {
       <div class="row gap6"><button class="chip f1 ${N.dir === 'tang' ? 'on' : ''}" data-a="ndir" data-v="tang">Tăng tồn (+)</button><button class="chip f1 ${N.dir === 'giam' ? 'on' : ''}" data-a="ndir" data-v="giam">Giảm tồn (−)</button></div>
       <span class="sm muted">${N.dir === 'tang' ? 'Máy đang ghi THIẾU so với thực tế ngoài bãi.' : 'Máy đang ghi THỪA so với thực tế ngoài bãi.'}</span></div>` : ''}
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 3 : 2 + stepDc + (xuat ? 1 : 0)}. Chọn phi</b><div class="grid4">${b.phiAct.map((x) => `<button class="chip ${x.id === N.phi ? 'on' : ''}" data-a="nphi" data-v="${x.id}">${x.id}</button>`).join('')}</div>
-      ${dc || xuat ? `<span class="sm">${esc(kName(N.khu))} còn lấy được <b>${fmtQs(dangCo, p)}</b> ${N.phi}${giu ? ` <span class="muted">(đã trừ ${fmtQs(giu, p)} phiếu khác đang chờ duyệt)</span>` : ''}</span>` : ''}</div>
+      ${dc || xuat ? `<span class="sm">${esc(kName(N.khu))} ${tang ? 'đang có' : 'còn lấy được'} <b>${fmtQs(dangCo, p)}</b> ${N.phi}${giu ? ` <span class="muted">(đã trừ ${fmtQs(giu, p)} phiếu khác đang chờ duyệt)</span>` : ''}</span>` : ''}</div>
     <div class="col gap8"><b style="font-size:18px">${chuyen ? 4 : 3 + stepDc + (xuat ? 1 : 0)}. Số ${isCuon(p) ? 'cuộn' : 'cây'}${dc ? (N.dir === 'tang' ? ' cộng thêm' : ' bớt đi') : xuat ? ' xuất đi' : ''} ${N.phi}</b>
       <div class="row gap6"><button class="btn s" data-a="nq" data-v="-10">−10</button><button class="btn s" data-a="nq" data-v="-1">−1</button><input class="f1" id="nqty" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="Số ${unitLbl(p)} ${N.phi}" placeholder="0" value="${N.qty || ''}" style="min-width:0;width:100%;height:60px;border-radius:14px;border:2px solid #8C8678;background:#fff;text-align:center;font-size:32px;font-weight:700"><button class="btn s pri" data-a="nq" data-v="1">+1</button><button class="btn s pri" data-a="nq" data-v="10">+10</button></div>
       <span class="muted" id="nkg">${nkgText(N.qty * uStep, p)}</span>
@@ -1099,7 +1102,7 @@ function vTon() {
       : !b.rate[p.id] ? 'Chưa có số liệu dùng' : 'Chưa đủ dữ liệu để dự báo';
     return `<button class="tonrow ${low ? 'low' : ''}" data-a="expand" data-p="${p.id}"><span class="col" style="gap:2px"><b style="font-size:24px">${p.id}</b><span class="sm" style="${low ? 'color:var(--bad);font-weight:700' : short ? 'color:var(--warn);font-weight:700' : 'color:#5F6670'}">${sub}</span></span><span class="col" style="align-items:flex-end;text-align:right;min-width:0"><b style="font-size:24px;line-height:1.15;white-space:nowrap">${curTxt}</b><span class="sm muted">${qSub(v, p)}</span></span></button>${det}`;
   }).join('');
-  return `${head('Tồn bãi', b.lastClosed ? 'Tồn chuẩn chốt ngày ' + fmtDay(b.lastClosed) + ' · chạm phi để xem từng khu' : 'Chưa có ngày nào được chốt', 'home')}
+  return `${head('Tồn bãi', 'Tồn hiện tại (số đã duyệt)' + (b.lastClosed ? ' · chốt gần nhất ' + fmtDay(b.lastClosed) : ' · chưa chốt ngày nào') + ' · chạm phi để xem từng khu', 'home')}
     <div class="hero tbar" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:15px">Tổng toàn bãi</span><span style="font-size:30px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px">${cayTxt(T.cay)}</span></div></div>
     <div class="f1 scroll pad col gap8" id="body">${rows}</div>`;
 }
@@ -1201,7 +1204,7 @@ function vDuyet() {
       const A = C.data.a, B = C.data.b;
       cmp = `<div class="card" style="padding:0;overflow:hidden;color:var(--ink)"><div class="li sm b"><span style="width:44px">ɸ</span><span class="f1" style="text-align:center">${esc(A.uname)} ${hhmm(A.ts)}</span><span class="f1" style="text-align:center">${esc(B.uname)} ${hhmm(B.ts)}</span></div>${C.data.diffs.map((x) => {
         const pickB = C.pick[x.phi] !== 'a';
-        return `<div class="li"><b style="width:44px">${x.phi}</b><button class="chip s f1 ${pickB ? '' : 'on'}" data-a="cpick" data-p="${x.phi}" data-v="a">${x.a == null ? '—' : x.a}</button><button class="chip s f1 ${pickB ? 'on' : ''}" data-a="cpick" data-p="${x.phi}" data-v="b">${x.b == null ? '—' : x.b}</button></div>`;
+        return `<div class="li"><b style="width:44px">${x.phi}</b><button class="chip s f1 ${pickB ? '' : 'on'}" data-a="cpick" data-p="${x.phi}" data-v="a">${x.a == null ? '—' : fmtQs(x.a, x.phi)}</button><button class="chip s f1 ${pickB ? 'on' : ''}" data-a="cpick" data-p="${x.phi}" data-v="b">${x.b == null ? '—' : fmtQs(x.b, x.phi)}</button></div>`;
       }).join('')}</div><span class="sm">Chạm số đúng cho từng phi (đang chọn: ô đậm), rồi lưu. Chọn số xong vẫn phải bấm Duyệt khu.</span>
       <div class="row gap8"><button class="btn s warnb f1" data-a="cresolve" data-k="${esc(e.khu)}">LƯU LỰA CHỌN</button><button class="btn s warnb f1" data-a="${recountA}" data-k="${esc(e.khu)}">ĐẾM LẠI</button></div>`;
     } else if (C && C.data) cmp = '<span class="sm">Không tìm thấy khác biệt trong lịch sử, có thể giữ số báo sau.</span>';
@@ -1233,7 +1236,7 @@ function vDuyet() {
   const allOk = pend === 0;
   const verdict = allOk
     ? `<div class="card ok col" style="gap:4px"><b style="font-size:19px">Đã duyệt hết, đề xuất chốt</b><span style="font-size:16px;line-height:1.4">Mọi khu đã báo đều đã duyệt và không còn phiếu nào chờ. Khu nào báo lại số khác sẽ phải duyệt lại.</span></div>`
-    : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Có ${pend} việc cần xử lý trước khi chốt</b><span class="sm" style="line-height:1.4">Duyệt từng khu, hoặc "Duyệt tất cả". Việc không duyệt được (khu chưa báo, hai người báo khác số, khu thiếu lần đếm) thì xử lý, hoặc ghi chú lý do rồi chốt.</span></div>`;
+    : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Có ${pend} việc cần xử lý trước khi chốt</b><span class="sm" style="line-height:1.4">Duyệt từng khu${khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length > 1 ? ', hoặc "Duyệt tất cả"' : ''}. Việc không duyệt được (khu chưa báo, hai người báo khác số, khu thiếu lần đếm) thì xử lý, hoặc ghi chú lý do rồi chốt.</span></div>`;
   const gap = R.span > 1 && !R.closed ? `<div class="card warn col" style="gap:4px"><b>Có ${R.span - 1} ngày chưa chốt</b><span class="sm" style="line-height:1.4">Lượng dùng dưới đây gộp ${R.span} ngày kể từ ngày chốt ${esc(fmtDay(R.last))}. Cảnh báo "dùng nhiều" đã chia theo số ngày.</span></div>` : '';
   const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Chốt ngày này để số đã duyệt hôm nay trở thành tồn chuẩn đầu tiên.</span></div>` : '';
 
@@ -1401,6 +1404,11 @@ function vLichSu() {
      đi tìm cái nút không tồn tại. */
   const moNote = closed && !laCuoi && isAdmin()
     ? `<div class="card sm" style="line-height:1.45">Ngày này không mở lại được vì sau nó đã có lần chốt khác (gần nhất: ${esc(fmtDay(D.lastClose || ''))}). Sổ đã chốt mà sai thì lập <b>phiếu Điều chỉnh tồn</b> ở màn Nhập.</div>`
+    /* Lần chốt gần nhất nhưng là ngày ĐÃ QUA, mà người xem không phải admin đầu tiên: nút bị ẩn
+       đúng luật (ngày đã qua dời mốc cả bãi đang dựa vào), nhưng phải nói ra, không thì admin đi
+       tìm cái nút không có. */
+    : laCuoi && !laHomNay && isAdmin() && !isOwner()
+    ? `<div class="card sm" style="line-height:1.45">Đây là lần chốt gần nhất, nhưng là ngày đã qua: chỉ <b>admin đầu tiên</b> (người thiết lập hệ thống) mới mở lại được, vì nó dời mốc cả bãi đang dựa vào. Nhờ người đó, hoặc lập <b>phiếu Điều chỉnh tồn</b> nếu chỉ cần sửa số.</div>`
     : '';
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${status}${moBox}${moNote}
@@ -1490,6 +1498,9 @@ const phieuWord = (d) => ({ chuyen: 'chuyển khu', dc: 'điều chỉnh tồn',
    phiếu giảm hiện ra "hủy phiếu điều chỉnh tồn đã duyệt: " rồi hết — dòng nhật ký không nói được
    nó vừa hoàn tác cái gì, mà nhật ký thì không sửa lại được. */
 const dcLines = (d) => (d.kind === 'dc' || d.kind === 'xuat' ? d : { ...d, lines: (d.lines || []).filter((l) => l.qty > 0) });
+// "Vay của Cty A: D16 180 cây"; dòng nhật ký cũ (trước khi ghi kèm đối tác) chỉ còn loại ghi
+const loanAuditTxt = (d) => (d.doitac ? loanTitle(d.kind, d.doitac) : ((LOAN_KIND[d.kind] || {}).ten || d.kind))
+  + (d.lines && d.lines.length ? ': ' + lineTxt(d) : '');
 function fmtAudit(a) {
   let d = {};
   try { d = a.detail ? JSON.parse(a.detail) : {}; } catch (e) { d = {}; }
@@ -1538,9 +1549,9 @@ function fmtAudit(a) {
     loan_tra_vay: ['ghi sổ: trả ' + (d.doitac || '?') + ': ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'vay'],
     loan_cho_vay: ['ghi sổ: cho ' + (d.doitac || '?') + ' vay: ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'vay'],
     loan_tra_no: ['ghi sổ: ' + (d.doitac || '?') + ' trả lại: ' + lineTxt(d) + (d.note ? ' (' + d.note + ')' : ''), 'vay'],
-    loan_duyet: ['duyệt sổ vay mượn (' + ((LOAN_KIND[d.kind] || {}).ten || d.kind) + ')', 'vay'],
-    loan_reject: ['bỏ lần ghi sổ vay mượn chưa duyệt (' + ((LOAN_KIND[d.kind] || {}).ten || d.kind) + ')', 'vay'],
-    loan_void: ['huỷ lần ghi sổ vay mượn đã duyệt (' + ((LOAN_KIND[d.kind] || {}).ten || d.kind) + ')', 'flag'],
+    loan_duyet: ['duyệt sổ vay mượn: ' + loanAuditTxt(d), 'vay'],
+    loan_reject: ['bỏ lần ghi sổ vay mượn chưa duyệt: ' + loanAuditTxt(d), 'vay'],
+    loan_void: ['huỷ lần ghi sổ vay mượn đã duyệt: ' + loanAuditTxt(d), 'flag'],
     doitac_create: ['thêm đối tác ' + d.name, 'vay'],
     doitac_update: ['sửa đối tác ' + d.name + (d.active ? '' : ' (ẩn)'), 'vay'],
     khu_create: ['thêm ' + d.name, 'admin'], khu_update: ['sửa ' + d.name + (d.active ? '' : ' (ẩn)'), 'admin'],
@@ -1558,9 +1569,29 @@ function vNhatKy() {
   // "Điều chỉnh" đứng riêng, KHÔNG gộp vào "Nhập kho": đây là nhóm việc người ta sẽ phải soi lại
   const F = [['all', 'Tất cả'], ['dem', 'Báo đếm'], ['nhap', 'Nhập kho'], ['dc', 'Điều chỉnh'], ['vay', 'Vay mượn'], ['admin', 'Admin'], ['flag', 'Cần chú ý']];
   const rows = (S.audit || []).map((a) => ({ a, f: fmtAudit(a) })).filter((x) => S.logFilter === 'all' || (S.logFilter === 'flag' ? x.f.flag : x.f.type === S.logFilter));
+  const AF = S.auditF;
+  const loc = AF.ngay || AF.q ? `<span class="sm muted">Đang lọc${AF.ngay ? ' ngày ' + esc(fmtDay(AF.ngay)) : ''}${AF.q ? ' chữ "' + esc(AF.q) + '"' : ''} · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="logclear">bỏ lọc</button></span>` : '';
+  const them = S.audit && S.auditMore ? `<button class="btn s full" data-a="logmore">Tải thêm dòng cũ hơn</button>` : '';
   return `${head('Nhật ký hoạt động', 'Không ai xóa hoặc sửa được', 'more')}
-  <div class="wrap tbar" style="padding:6px 16px">${F.map((f) => `<button class="chip s ${S.logFilter === f[0] ? 'on' : ''}" data-a="logf" data-v="${f[0]}">${f[1]}</button>`).join('')}</div>
-  <div class="f1 scroll ${S.audit ? 'pad ' : ''}col gap8" id="body">${S.audit ? (rows.map((x) => `<div class="logrow ${x.f.flag ? 'flag' : ''}"><div class="row" style="justify-content:space-between"><b>${esc(x.a.user_name || 'Hệ thống')}</b><span class="sm muted">${dmy(x.a.ts)}</span></div><div style="font-size:16px;line-height:1.4">${esc(x.f.text)}</div>${x.f.flag ? '<span class="badge bad" style="align-self:flex-start">Cần chú ý</span>' : ''}</div>`).join('') || '<div class="muted">Chưa có dữ liệu</div>') : panelWait('nhatky')}</div>`;
+  <div class="col gap6 tbar" style="padding:6px 16px">
+    <div class="row gap6"><input class="inp s" style="flex:0 0 150px" type="date" id="logday" max="${S.boot.today}" value="${esc(AF.ngay)}" data-change="logday">
+      <input class="inp s f1" id="logq" style="min-width:0" placeholder="Tìm: tên, khu, phi, đối tác…" data-model="logq" data-enter="logfind" value="${esc(fv('logq', AF.q))}"><button class="btn s" data-a="logfind">Tìm</button></div>
+    ${loc}
+    <div class="wrap">${F.map((f) => `<button class="chip s ${S.logFilter === f[0] ? 'on' : ''}" data-a="logf" data-v="${f[0]}">${f[1]}</button>`).join('')}</div></div>
+  <div class="f1 scroll ${S.audit ? 'pad ' : ''}col gap8" id="body">${S.audit ? (rows.map((x) => `<div class="logrow ${x.f.flag ? 'flag' : ''}"><div class="row" style="justify-content:space-between"><b>${esc(x.a.user_name || 'Hệ thống')}</b><span class="sm muted">${dmy(x.a.ts)}</span></div><div style="font-size:16px;line-height:1.4">${esc(x.f.text)}</div>${x.f.flag ? '<span class="badge bad" style="align-self:flex-start">Cần chú ý</span>' : ''}</div>`).join('') || '<div class="muted">Không có dòng nào</div>') + them : panelWait('nhatky')}</div>`;
+}
+
+/* Nạp nhật ký theo bộ lọc ngày/chữ. more = nối thêm trang cũ hơn (before = id nhỏ nhất đang có).
+   Chip loại (Báo đếm, Vay mượn...) vẫn lọc trên máy, trên những dòng đã tải. */
+async function loadAudit(more) {
+  const AF = S.auditF, qs = ['limit=300'];
+  if (AF.ngay) qs.push('ngay=' + AF.ngay);
+  if (AF.q) qs.push('q=' + encodeURIComponent(AF.q));
+  if (more && S.audit && S.audit.length) qs.push('before=' + S.audit[S.audit.length - 1].id);
+  if (!more) { S.audit = null; render(); }
+  const r = await api('GET', '/audit?' + qs.join('&'));
+  S.audit = more ? (S.audit || []).concat(r.items) : r.items;
+  S.auditMore = !!r.more;
 }
 
 /* --- Thống kê --- */
@@ -1942,7 +1973,7 @@ function vReset() {
   <div class="card col gap8"><b style="font-size:17px">Đang có trong bãi: ${dangCo} tấn</b>
     <span class="sm muted" style="line-height:1.45">Nên tải một bản sao trước khi đặt lại. Nhật ký và lịch sử đếm thì không bao giờ xoá được (database chặn), nên con số cũ vẫn còn một chỗ đọc lại.</span>
     <div class="row gap6"><button class="btn s f1" data-a="exportday" data-d="${esc(b.today)}">Tải tồn theo khu (CSV)</button>
-      <button class="btn s f1" data-a="dlall">Tải cả kỳ (CSV)</button></div>
+      <button class="btn s f1" data-a="dlall">Tải báo cáo từ ngày đầu (CSV)</button></div>
   </div>
   <div class="card col gap8"><b style="font-size:17px">Sao lưu toàn bộ</b>
     <span class="sm" style="line-height:1.45">Một tệp chứa <b>tất cả</b>: phi, khu, tài khoản, số đếm, phiếu, các ngày đã chốt, tồn chuẩn và nhật ký. Khác hai tệp CSV ở trên — tệp này <b>nạp lại được</b>, nên nó mới là đường lùi thật nếu lỡ tay. Nên tải định kỳ và cất ra ngoài máy.</span>
@@ -2049,6 +2080,8 @@ function syncQty() {
 async function go(screen, noPush) {
   S.err = ''; S.sel = null;
   delete S.loadErr[screen];
+  // lựa chọn khung giờ chọn dở mà không lưu: vào lại Cài đặt phải thấy số ĐANG LƯU, không phải số chọn dở
+  if (screen === 'settings') ['sslots', 'sfrom', 'sto'].forEach((k) => delete S.form[k]);
   if (screen === 'dem') {
     const ok = (id) => id && S.boot.khuBy[id] && S.boot.khuBy[id].active && canCount(id);
     if (!S.boot.khuAct.length) { say('Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.', true); S.screen = 'home'; return render(); }
@@ -2064,7 +2097,7 @@ async function go(screen, noPush) {
   render();
   try {
     if (screen === 'duyet') { S.review = null; S.subs = {}; render(); S.review = await api('GET', '/review'); }
-    else if (screen === 'nhatky') { S.audit = null; render(); S.audit = (await api('GET', '/audit?limit=300')).items; }
+    else if (screen === 'nhatky') { await loadAudit(false); }
     else if (screen === 'users') { await loadUsers(); }
     else if (screen === 'lichsu') { await loadHist(S.hist.date || ydayOf(S.boot.today)); }
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
@@ -2340,7 +2373,7 @@ const ACTIONS = {
       if (!N.reason) return say('Chọn lý do điều chỉnh.', true), render();
       if (N.reason === 'khac' && !note) return say('Chọn "Lý do khác" thì phải ghi rõ lý do.', true), render();
       const dcWord = (b.limits && b.limits.dcWord) || 'DONG Y';
-      if (kg > LIM('dcBigKg', 5000) && confirmWord.toUpperCase() !== dcWord) {
+      if (kg > LIM('dcBigKg', 20000) && confirmWord.toUpperCase() !== dcWord) {
         return say(`Điều chỉnh ${fmtT(kg)} tấn là rất lớn, hãy gõ đúng "${dcWord}" để xác nhận.`, true), render();
       }
     }
@@ -2472,7 +2505,9 @@ const ACTIONS = {
   rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
   exportday(d) { const day = d.d || val('exday') || S.boot.today; download('/export?date=' + day, `kho-thep_${day}.csv`); },
   // bản sao cả kỳ: từ ngày chốt đầu tiên tới hôm nay, để trước khi xoá còn giữ được số cũ
-  dlall() { const z = S.boot.today, a = z.slice(0, 8) + '01'; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
+  // from=dau: server lấy từ ngày chốt ĐẦU TIÊN. Đây là bản sao được khuyên tải trước khi xoá sạch,
+  // nên phải đủ mọi tháng chứ không chỉ tháng này.
+  dlall() { const z = S.boot.today; download(`/report?format=csv&from=dau&to=${z}`, `bao-cao_tu-dau_${z}.csv`); },
   // tải bản sao: dùng chung đường download như các tệp CSV khác
   dlbackup() { download('/backup', `kho-thep_sao-luu_${S.boot.today}.json`); },
   /* Chọn tệp thì ĐỌC NGAY và kiểm sơ bộ, chứ không đợi tới lúc bấm nạp: chọn nhầm tệp mà mãi
@@ -2547,6 +2582,15 @@ const ACTIONS = {
     });
   },
   logf(d) { S.logFilter = d.v; render(); },
+  logfind() { S.auditF.q = String(val('logq')).trim(); delete S.form.logq; go('nhatky', true); },
+  logclear() { S.auditF = { ngay: '', q: '' }; delete S.form.logq; go('nhatky', true); },
+  async logmore() {
+    if (S.busy) return;
+    S.busy = true; S.busyMsg = 'Đang tải...'; render();
+    try { await loadAudit(true); } catch (e) { say(e.message, true); }
+    finally { S.busy = false; S.busyMsg = ''; }
+    render();
+  },
   sscope(d) { S.statScope = d.v; render(); },
   sdays(d) { S.usageDays = Number(d.v); go('stats'); },
 
@@ -2850,7 +2894,8 @@ document.addEventListener('input', (e) => {
     if (sv && p) {
       const N = S.nhap;
       const xuat = N.mode === 'xuat';
-      sv.textContent = dcSauText(xuat ? nhapRut(N) : N.qty * uStepOf(p), conLay(N.khu, N.phi), xuat ? 'giam' : N.dir, p, N.phi);
+      const goc = N.mode === 'dc' && N.dir === 'tang' ? tonOf(N.khu, N.phi) : conLay(N.khu, N.phi);
+      sv.textContent = dcSauText(xuat ? nhapRut(N) : N.qty * uStepOf(p), goc, xuat ? 'giam' : N.dir, p, N.phi);
     }
   }
 });
@@ -2858,6 +2903,7 @@ document.addEventListener('change', async (e) => {
   const t = e.target;
   // ô chọn tệp bản sao: đọc ngay khi chọn, xem thử có phải bản sao của app không
   if (t.dataset && t.dataset.change === 'bkfile') { ACTIONS.pickbackup(t.files && t.files[0]); return; }
+  if (t.dataset && t.dataset.change === 'logday') { S.auditF.ngay = t.value || ''; go('nhatky', true); return; }
   if (t.dataset && t.dataset.change === 'hdate') { if (t.value) loadHist(t.value > S.boot.today ? S.boot.today : t.value); return; }
   if (t.dataset && t.dataset.change === 'role') {
     const id = t.dataset.id, role = t.value;
@@ -2901,7 +2947,11 @@ async function refresh() {
     const changed = !S.boot || S.stale || r.rev !== S.boot.rev || r.today !== S.boot.today;
     // đang nhập số ở màn Đếm thì không vẽ lại giữa chừng (trừ khi sang ngày mới)
     const busy = S.screen === 'dem' && S.sel && S.boot && r.today === S.boot.today;
-    if (changed && !busy && ['home', 'ton', 'khu', 'nhap', 'dem', 'stats'].includes(S.screen)) { await loadBoot(); render(); }
+    if (changed && !busy && ['home', 'ton', 'khu', 'nhap', 'dem', 'stats', 'vaymuon'].includes(S.screen)) {
+      await loadBoot();
+      if (S.screen === 'vaymuon') S.loans = await api('GET', '/loans');
+      render();
+    }
     else if (healed) render();
   } catch (e) {
     // mất mạng khi làm mới ngầm: chỉ hiện dải thông báo, không làm gián đoạn việc đang làm

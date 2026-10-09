@@ -238,6 +238,10 @@ S.boot.closed = true; S.screen = 'duyet'; S.review.closed = true; one('duyet+da-
 S.boot.closed = false; S.review.closed = false;
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
+// bảng so sánh hai người báo: số theo đúng đơn vị (D8 là cuộn, không phải số phần)
+S.screen = 'duyet'; S.cmp = { khu: 'B', pick: {}, data: { a: { uname: 'An', ts: Date.now() }, b: { uname: 'Bình', ts: Date.now() }, diffs: [{ phi: 'D8', a: 22, b: 33 }] } }; render();
+{ const h = $app.innerHTML; out.push(['duyet+so-sanh', h.length, h.split('data-a="cpick"').slice(1).filter((x) => x.split('</button>')[0].includes('cuộn')).length === 2 && !h.includes('>22</button>') ? 'ok' : 'BAD:so sánh hai người báo hiện số thô']); }
+S.cmp = null;
 // khu thiếu khung đếm: thẻ khu phải nói khung nào thiếu, khung nào đã đếm, và lần gửi muộn
 S.screen = 'duyet'; render();
 { const h = $app.innerHTML; out.push(['duyet+nut-chot', h.length,

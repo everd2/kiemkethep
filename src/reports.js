@@ -2,7 +2,6 @@
 import { DAY_RE, bad, daysBetween, fmtDay, json, vnDay } from './core.js';
 import { CSV_HEAD, DUYET_JOIN, DUYET_NAME, UNAME, csvDec, csvQty, csvRow, csvUnit, isCuon } from './helpers.js';
 import { EFF_BY_BASELINE, MV_CHUA_DEM } from './counts.js';
-import { closeDay } from './review.js';
 
 /* ========================= XEM NGÀY CŨ ========================= */
 
@@ -41,10 +40,18 @@ export async function dayView(env, url) {
    Đọc bảng tổng hợp daily_summary (12 dòng/ngày) nên cả năm cũng chỉ vài nghìn dòng. */
 export async function report(env, url) {
   const today = vnDay();
-  const from = url.searchParams.get('from') || today.slice(0, 8) + '01';
+  let from = url.searchParams.get('from') || today.slice(0, 8) + '01';
   const to = url.searchParams.get('to') || today;
+  /* from=dau: từ ngày chốt ĐẦU TIÊN của hệ thống — bản sao CSV "cả kỳ" trước khi xoá sạch. Trước
+     đây nút đó gửi từ đầu tháng, tức bản sao được khuyên tải trước khi xoá lại thiếu mọi tháng cũ. */
+  const tuDau = from === 'dau';
+  if (tuDau) {
+    const f0 = await env.DB.prepare('SELECT MIN(day) d FROM daily_summary').first();
+    from = (f0 && f0.d) || today;
+  }
   if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) throw bad('Khoảng ngày không hợp lệ');
-  if (daysBetween(from, to) > 366) throw bad('Chỉ xem tối đa 1 năm mỗi lần');
+  // xem trên màn hình thì tối đa 1 năm; bản sao "từ ngày đầu" thì lấy đủ, kể cả nhiều năm
+  if (!tuDau && daysBetween(from, to) > 366) throw bad('Chỉ xem tối đa 1 năm mỗi lần');
   const db = env.DB;
   /* Mốc tồn đầu kỳ: lần chốt gần nhất TRƯỚC kỳ. Nếu kỳ bao gồm cả lần chốt đầu tiên của hệ thống
      thì lấy chính ngày đó làm mốc (nó là buổi kiểm kê mở sổ: lượng nhập/dùng trước nó không thể
@@ -122,10 +129,30 @@ export async function report(env, url) {
   });
 }
 
+/* Nhật ký: trang 300 dòng, mới nhất trước. Lọc được theo NGÀY (giờ Việt Nam) và theo CHỮ (tên
+   người làm hoặc nội dung: tên khu, phi, đối tác, nơi xuất...), và tải tiếp trang cũ hơn bằng
+   before = id nhỏ nhất của trang trước. Không lọc thì "tháng này xuất cho công trình nào" chỉ tra
+   được nếu nó nằm trong 300 dòng gần nhất. */
 export async function auditList(env, url) {
-  const limit = Math.min(Number(url.searchParams.get('limit')) || 150, 500);
-  const { results } = await env.DB.prepare('SELECT id, ts, user_name, action, detail FROM audit ORDER BY id DESC LIMIT ?').bind(limit).all();
-  return json({ items: results });
+  const q = url.searchParams;
+  const limit = Math.min(Number(q.get('limit')) || 150, 500);
+  const where = [], bind = [];
+  const before = Number(q.get('before'));
+  if (before > 0) { where.push('id < ?'); bind.push(before); }
+  const ngay = q.get('ngay') || '';
+  if (DAY_RE.test(ngay)) {
+    const t0 = Date.parse(ngay + 'T00:00:00+07:00');
+    where.push('ts >= ? AND ts < ?'); bind.push(t0, t0 + 86400e3);
+  }
+  const chu = String(q.get('q') || '').trim().slice(0, 60);
+  if (chu) {
+    const like = '%' + chu.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+    where.push("(user_name LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')"); bind.push(like, like);
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT id, ts, user_name, action, detail FROM audit ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ?`
+  ).bind(...bind, limit).all();
+  return json({ items: results, more: results.length === limit });
 }
 
 export async function usage(env, url) {

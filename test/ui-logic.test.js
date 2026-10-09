@@ -854,6 +854,49 @@ const run = async () => {
   // C1: số phiên bản
   ok('phiên bản 1.3', /phiên bản 1\.3/.test(r('vMore()')));
 
+  // ---- 1d5. Rà soát sau bản 1.3 ----
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
+  // A1: điều chỉnh TĂNG nói "đang có", giảm/xuất nói "còn lấy được"
+  r(`S.nhap.mode = 'dc'; S.nhap.dir = 'tang'; S.nhap.khu = 'A'; S.nhap.phi = 'D10'; S.nhap.lines = []; S.nhap.qty = 0;`);
+  ok('điều chỉnh tăng: nói "đang có", không nói "còn lấy được"', /A đang có <b>|Khu A đang có <b>/.test(r('vNhap()')) && !/còn lấy được/.test(r('vNhap()')));
+  r(`S.nhap.dir = 'giam';`);
+  ok('điều chỉnh giảm: "còn lấy được"', /còn lấy được/.test(r('vNhap()')));
+  r(`S.nhap.mode = 'nhap';`);
+  // A3: nhật ký duyệt sổ vay nói của ai, bao nhiêu; dòng cũ (chưa có đối tác) vẫn đọc được
+  ok('nhật ký duyệt sổ vay: có đối tác và dòng', /duyệt sổ vay mượn: Cho Cty A vay: D10/.test(r(`fmtAudit({ action: 'loan_duyet', detail: JSON.stringify({ kind: 'cho_vay', doitac: 'Cty A', lines: [{ phi: 'D10', qty: 20 }] }) }).text`)));
+  ok('dòng nhật ký cũ không có đối tác: vẫn đọc được', /duyệt sổ vay mượn: Mình vay$/.test(r(`fmtAudit({ action: 'loan_duyet', detail: JSON.stringify({ kind: 'vay' }) }).text`)));
+  // A4: vào lại Cài đặt thì bỏ lựa chọn khung giờ chưa lưu
+  r(`S.form.sslots = '3'; S.form.sfrom = '7';`);
+  r(`go('settings')`);
+  ok('vào lại Cài đặt: bỏ lựa chọn khung giờ chưa lưu', r('S.form.sslots') === undefined && r('S.form.sfrom') === undefined);
+  // A5: màn Vay mượn tự cập nhật khi có thay đổi (rev khác)
+  r(`S.screen = 'vaymuon'; S.loans = { doitac: [], items: [], agg: [] };`);
+  calls.length = 0;
+  await r('refresh()');
+  ok('màn Vay mượn tự tải lại khi số liệu đổi', calls.some((c) => c.url === '/api/loans'), calls.map((c) => c.url).join(' '));
+  r(`S.screen = 'home'; S.loans = null;`);
+  // B2 (bảng so sánh hai người báo theo đơn vị) kiểm ở ui-render: duyet+so-sanh
+  // B3: phụ đề Tồn bãi nói đúng con số đang hiện
+  ok('Tồn bãi: phụ đề là tồn hiện tại, không phải tồn chuẩn', /Tồn hiện tại \(số đã duyệt\)/.test(r('vTon()')) && !/Tồn chuẩn chốt ngày/.test(r('vTon()')));
+  // B4: bản sao CSV từ ngày đầu
+  calls.length = 0;
+  await r('ACTIONS.dlall()');
+  ok('tải báo cáo từ ngày đầu: gửi from=dau', calls.some((c) => /\/api\/report\?format=csv&from=dau&to=/.test(c.url)), calls.map((c) => c.url).join(' '));
+  // B5: nhật ký lọc theo ngày/chữ và tải thêm
+  r(`S.auditF = { ngay: '${today}', q: 'Cty Á' }; S.audit = [{ id: 50 }, { id: 40 }];`);
+  calls.length = 0;
+  await r('loadAudit(true)');
+  const au = calls.find((c) => c.url.indexOf('/api/audit?') === 0);
+  ok('nhật ký: gửi ngày, chữ và trang cũ hơn', au && au.url.includes('ngay=${today}') === false && au.url.includes('ngay=' + today) && au.url.includes('q=' + encodeURIComponent('Cty Á')) && au.url.includes('before=40'), au && au.url);
+  r(`S.audit = []; S.auditMore = false; S.screen = 'nhatky';`);
+  ok('nhật ký: có ô ngày và ô tìm', /id="logday"/.test(r('vNhatKy()')) && /id="logq"/.test(r('vNhatKy()')));
+  ok('nhật ký: nói đang lọc và cho bỏ lọc', /Đang lọc/.test(r('vNhatKy()')) && /data-a="logclear"/.test(r('vNhatKy()')));
+  r(`S.auditF = { ngay: '', q: '' }; S.audit = null; S.screen = 'home';`);
+  // B6: chỉ nhắc "Duyệt tất cả" khi nút đó có mặt (từ 2 khu chờ trở lên)
+  ok('màn Duyệt không nhắc nút Duyệt tất cả khi nó không hiện', code.includes(`.length > 1 ? ', hoặc "Duyệt tất cả"' : ''`));
+  // B7: ngưỡng dự phòng khớp server
+  ok('ngưỡng điều chỉnh lớn dự phòng = 20 tấn như server', !code.includes("LIM('dcBigKg', 5000)"));
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');

@@ -2400,6 +2400,55 @@ async function main() {
     eq('bản sao có sổ vay: không giữ bảng nào', kq2.data.giu, []);
   }
 
+  /* ================= 51. Rà soát sau bản 1.3 =================
+     - nhật ký duyệt/huỷ sổ vay ghi đủ đối tác và các dòng
+     - lần ghi CHỜ DUYỆT luôn hiện ở màn Vay mượn, dù cũ hơn 300 dòng gần nhất
+     - bản sao CSV "từ ngày đầu" lấy từ lần chốt đầu tiên, kể cả hơn một năm
+     - nhật ký lọc được theo ngày, theo chữ, và tải tiếp trang cũ hơn */
+  {
+    const S = await setup();
+    const dt = (await S.call('POST', '/doitac', { name: 'Cty Bình Minh' })).data.id;
+    const g = (await S.call('POST', '/loans', { doitac: dt, kind: 'cho_vay', lines: [{ phi: 'D16', qty: 90 }] }, 'An')).data;
+    await S.call('POST', '/loans/' + g.ids[0] + '/duyet', {});
+    const d1 = JSON.parse(S.one("SELECT detail FROM audit WHERE action='loan_duyet' ORDER BY id DESC LIMIT 1").detail);
+    eq('nhật ký duyệt sổ vay: có tên đối tác và dòng', [d1.doitac, d1.lines], ['Cty Bình Minh', [{ phi: 'D16', qty: 90 }]]);
+    const g2 = (await S.call('POST', '/loans', { doitac: dt, kind: 'vay', lines: [{ phi: 'D18', qty: 5 }] }, 'An')).data;
+    await S.call('DELETE', '/loans/' + g2.ids[0], undefined, 'An');
+    eq('nhật ký rút lại: cũng có đối tác', JSON.parse(S.one("SELECT detail FROM audit WHERE action='loan_reject' ORDER BY id DESC LIMIT 1").detail).doitac, 'Cty Bình Minh');
+
+    // một lần ghi chờ duyệt rồi 320 dòng đã duyệt mới hơn: lần ghi cũ vẫn phải hiện để duyệt
+    const cu = (await S.call('POST', '/loans', { doitac: dt, kind: 'vay', lines: [{ phi: 'D20', qty: 7 }] }, 'An')).data.ids[0];
+    const ins = S.raw.prepare("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, duyet_ts) VALUES (?, 'D16', 'vay', 1, 1, ?, ?)");
+    for (let i = 0; i < 320; i++) ins.run(dt, Date.now(), Date.now());
+    const L = (await S.call('GET', '/loans')).data;
+    ok('lần ghi chờ duyệt cũ hơn 300 dòng vẫn hiện', L.items.some((x) => x.id === cu), L.items.length);
+    eq('dòng đã duyệt vẫn chỉ lấy 300 gần nhất (cộng dòng chờ)', L.items.length, 301);
+
+    // báo cáo từ ngày đầu: chốt một ngày, rồi nhảy hơn một năm
+    await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 10 }) }, 'An');
+    const dau = vnDay();
+    await chot(S, { note: '' });
+    addDays(400);
+    await S.login('admin', '0900000001', '2468'); // phiên 30 ngày đã hết sau khi nhảy 400 ngày
+    eq('xem trên màn hình quá 1 năm: từ chối', (await S.call('GET', `/report?from=${dau}&to=${vnDay()}`)).status, 400);
+    const r = await S.call('GET', `/report?format=csv&from=dau&to=${vnDay()}`);
+    eq('bản sao từ ngày đầu: lấy được dù hơn 1 năm', r.status, 200);
+    ok('và bắt đầu đúng từ lần chốt đầu tiên', String(r.data).includes(dau.split('-').reverse().join('/')) || String(r.data).includes(dau), String(r.data).slice(0, 200));
+
+    // nhật ký: lọc theo chữ, theo ngày, và trang cũ hơn
+    const tim = (await S.call('GET', '/audit?q=' + encodeURIComponent('Bình Minh'))).data.items;
+    ok('lọc theo chữ trong nội dung', tim.length >= 2 && tim.every((x) => /Bình Minh/.test(x.detail || '') || /Bình Minh/.test(x.user_name || '')), tim.length);
+    eq('chữ có ký tự đặc biệt % không làm khớp mọi dòng', (await S.call('GET', '/audit?q=%25')).data.items.length, 0);
+    // hôm nay chỉ có lần đăng nhập lại ở trên; mọi dòng trả về phải nằm đúng trong ngày đó (giờ VN)
+    const homNay = (await S.call('GET', '/audit?ngay=' + vnDay())).data.items;
+    eq('lọc theo ngày: chỉ dòng của đúng ngày đó', homNay.map((x) => [x.action, vnDay(x.ts)]), [['login', vnDay()]]);
+    ok('lọc theo ngày đầu: có dòng', (await S.call('GET', '/audit?ngay=' + dau)).data.items.length > 0);
+    const p1 = (await S.call('GET', '/audit?limit=5')).data;
+    eq('trang đầu báo còn trang sau', p1.more, true);
+    const p2 = (await S.call('GET', '/audit?limit=5&before=' + p1.items[4].id)).data;
+    ok('trang sau toàn dòng cũ hơn, không trùng', p2.items.every((x) => x.id < p1.items[4].id) && p2.items.length === 5);
+  }
+
   /* ================= kết quả ================= */
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] ? '  [' + x[2] + ']' : '')).join('\n'));
