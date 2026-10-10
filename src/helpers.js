@@ -65,6 +65,18 @@ export async function batchGuarded(env, guard, stmts, err) {
 }
 export const IS_CLOSED = 'EXISTS (SELECT 1 FROM day_close WHERE day = ?)';
 export const closedErr = (msg) => new HttpError(409, msg || 'Ngày hôm nay vừa được chốt, không ghi được nữa', 'closed');
+/* Ghi một quyết định của admin (duyệt khu, huỷ báo cáo) CHỈ KHI số liệu chưa đổi từ lúc tính màn
+   Duyệt (rev) và ngày chưa chốt. Quyết định đó dựa trên dữ liệu đọc trước; có ai ghi chen vào giữa
+   là quyết trên một con số chưa ai xem, nên từ chối và để admin tải lại. */
+export async function batchNeuChuaDoi(env, day, rev, stmts) {
+  try {
+    return await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR (SELECT value FROM meta WHERE key = 'rev') <> ?2`, day, rev), stmts, closedErr());
+  } catch (e) {
+    if (!(e instanceof HttpError) || e.code !== 'closed') throw e;
+    if (await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
+    throw new HttpError(409, 'Vừa có số liệu mới. Màn Duyệt đã tải lại, hãy xem rồi quyết định.', 'changed');
+  }
+}
 
 export function auditStmt(env, user, action, detail) {
   return env.DB.prepare('INSERT INTO audit (ts, user_id, user_name, action, detail) VALUES (?,?,?,?,?)')
@@ -111,9 +123,9 @@ export const SETTINGS_SQL = 'SELECT key, value FROM settings';
    Mỗi số chỉ kiểm được phạm vi riêng ở đây; điều kiện giữa hai số (bắt đầu trước kết thúc, đủ
    chỗ cho số lần đếm) kiểm trong settingsUpdate vì phải xét cả số đang lưu. */
 export const WORK_DEFAULT = [6, 18];
-export const SETTING_RANGE = { max_keep_streak: [1, 30], auto_close: [0, 1], report_slots_per_day: [1, 4], work_from: [0, 23], work_to: [1, 24] };
+export const SETTING_RANGE = { max_keep_streak: [1, 30], report_slots_per_day: [1, 4], work_from: [0, 23], work_to: [1, 24] };
 export function parseSettings(rows) {
-  const o = { max_keep_streak: 3, auto_close: 0, report_slots_per_day: 1, work_from: WORK_DEFAULT[0], work_to: WORK_DEFAULT[1] };
+  const o = { max_keep_streak: 3, report_slots_per_day: 1, work_from: WORK_DEFAULT[0], work_to: WORK_DEFAULT[1] };
   for (const r of rows) o[r.key] = Number(r.value);
   return o;
 }

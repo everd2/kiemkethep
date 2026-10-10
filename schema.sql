@@ -390,7 +390,6 @@ INSERT OR IGNORE INTO khu (id, name, sort, active) VALUES
 
 INSERT OR IGNORE INTO settings (key, value) VALUES
  ('max_keep_streak','3'),
- ('auto_close','0'),
  ('report_slots_per_day','1'),
  ('work_from','6'),
  ('work_to','18');

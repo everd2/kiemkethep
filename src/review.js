@@ -3,9 +3,9 @@ import { HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS
   PEAK_K, RATE_K, SYSTEM, bad, daysBetween, json, vnDay, vnHour } from './core.js';
 import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { RATE_SQL } from './db.js';
-import { DUYET_JOIN, DUYET_NAME, IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, bump,
-  closedErr, guardStmt, parseSettings, readJson } from './helpers.js';
-import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI } from './counts.js';
+import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
+  guardStmt, parseSettings, readJson } from './helpers.js';
+import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
 import { checkTransferStock } from './phieu.js';
 
 /* ========================= DUYỆT / CHỐT NGÀY =========================
@@ -36,7 +36,7 @@ export async function computeReview(env, day, opt = {}) {
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
        nay nên gặp ngày quên chốt là mù: khu báo sai ngày 2, ngày 3 không báo thì cảnh báo lệch
        biến mất sạch, trong khi số sai của ngày 2 vẫn đang là tồn và sẽ thành tồn chuẩn lúc chốt. */
-    db.prepare(`SELECT r.day, r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved, r.recount
+    db.prepare(`SELECT r.day, r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved
                 FROM khu_report r LEFT JOIN users u ON u.id = r.user_id
                 WHERE r.day > ? AND r.day <= ? ORDER BY r.day`).bind(last, day),
     // số ĐÃ DUYỆT đang được dùng làm tồn (có thể là của một ngày trước đó)
@@ -95,13 +95,7 @@ export async function computeReview(env, day, opt = {}) {
     /* Phiếu được duyệt SAU lần duyệt báo cáo của ô (ô chưa có báo cáo đã duyệt thì là mọi phiếu đã
        duyệt trong kỳ): phần thép chưa nằm trong số báo cáo. Cùng câu với mvNew của bootstrap, để
        "tồn" ở màn Duyệt và lúc chốt là đúng con số Tổng quan đang hiện. */
-    db.prepare(
-      `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
-       LEFT JOIN (${EFF_SELECT}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
-       WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_day <= ?2
-         AND (e.ts IS NULL OR r.duyet_ts > e.ts)
-       GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`
-    ).bind(last, day),
+    db.prepare(MV_NEW).bind(last, day),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -278,7 +272,7 @@ export async function computeReview(env, day, opt = {}) {
     }
     return {
       khu: k.id, name: k.name, items, waiting, blank,
-      rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved, recount: r.recount } : null,
+      rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved } : null,
       /* Phiếu của khu được duyệt SAU số của khu: số đếm không gồm phần thép đó nên dự kiến vừa
          đổi, số đã duyệt của khu không còn khớp. Thay cho cảnh báo 'late' cũ, và quan trọng là
          GỠ ĐƯỢC: admin duyệt lại khu là lastDuyet nhảy lên, cảnh báo tự hết. Bản cũ không có
@@ -311,7 +305,6 @@ export async function computeReview(env, day, opt = {}) {
     }
     if (k.waiting) exceptions.push({ type: 'khu_pending', khu: k.khu, name: k.name, n: k.waiting, blank: k.blank });
     if (k.rep.conflict && !k.rep.resolved) exceptions.push({ type: 'conflict', khu: k.khu, name: k.name });
-    if (k.rep.recount) exceptions.push({ type: 'recount', khu: k.khu, name: k.name });
     if (k.recheck) exceptions.push({ type: 'recheck', khu: k.khu, name: k.name });
     /* Thiếu khung đếm. Khu chưa báo lần nào đã nằm ở khu_missing phía trên (nhánh continue), nên
        không bị tính hai việc. Khu trống trơn (items rỗng) không bị đòi, như với khu_missing. */
@@ -547,13 +540,7 @@ export async function reviewDuyet(req, env, user) {
   /* Chặn thêm "số liệu vừa đổi": dấu (mark) so ở trên là so trên dữ liệu ĐỌC TRƯỚC, mà câu UPDATE
      duyệt lần báo MỚI NHẤT lúc ghi. Khu báo lại đúng giữa hai bước đó là duyệt một con số chưa ai
      xem. rev tăng ở mọi lần ghi số liệu, nên lệch rev là từ chối, admin tải lại rồi duyệt. */
-  try {
-    await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR (SELECT value FROM meta WHERE key = 'rev') <> ?2`, day, rv.rev), stmts, closedErr());
-  } catch (e) {
-    if (!(e instanceof HttpError) || e.code !== 'closed') throw e;
-    if (await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
-    throw new HttpError(409, 'Vừa có số liệu mới. Màn Duyệt đã tải lại, hãy xem rồi duyệt.', 'changed');
-  }
+  await batchNeuChuaDoi(env, day, rv.rev, stmts);
   return json({ ok: true, khu: list.length, phieu: phieu.length });
 }
 
@@ -576,7 +563,6 @@ export function autoNote(rv) {
   const cho = rv.khus.filter((k) => k.waiting);
   if (cho.length) parts.push('chưa duyệt (chuyển sang ngày sau): ' + cho.map((k) => k.name).join(', '));
   if (by('conflict').length) parts.push('hai người báo khác số: ' + ten(by('conflict')));
-  if (by('recount').length) parts.push('chờ đếm lại: ' + ten(by('recount')));
   if (by('recheck').length) parts.push('cần xem lại: ' + ten(by('recheck')));
   if (by('slot_missing').length) parts.push('thiếu lần đếm: ' + by('slot_missing').map((e) => e.name + ' ' + e.missing.join(', ')).join('; '));
   if (by('receipt_pending').length) parts.push(by('receipt_pending').length + ' phiếu chờ duyệt');

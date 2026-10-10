@@ -1,9 +1,9 @@
 // Kho Thép Bãi - Cloudflare Worker (API) + D1
 // Giao diện tĩnh nằm trong /public, mọi đường dẫn /api/* chạy qua file này.
 // Điểm vào: định tuyến /api/* và việc Cron. Logic nghiệp vụ nằm ở các module cùng thư mục.
-import { HttpError, bad, json, vnDay } from './core.js';
+import { HttpError, json, vnDay } from './core.js';
 import { migrate } from './db.js';
-import { auditStmt, auth, bump, readJson } from './helpers.js';
+import { auth } from './helpers.js';
 import { changePin, login, logout, recoverAdmin, setup } from './auth.js';
 import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';

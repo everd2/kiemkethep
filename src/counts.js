@@ -2,7 +2,7 @@
 import { HttpError, KINDS, bad, fmtDay, json, vnDay } from './core.js';
 import { computeReview } from './review.js';
 import { slotDefs, slotOf } from './slots.js';
-import { IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, boWord, bump, closedErr,
+import { IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, boWord, bump, closedErr,
   guardStmt, intIn, parseSettings, readJson, unitWord } from './helpers.js';
 
 /* ========================= BÁO CÁO ĐẾM ========================= */
@@ -51,11 +51,14 @@ export const MV_CHUA_DEM = `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipt
 /* Mọi (khu x phi) đang dùng. Thay cho khu_phi làm bảng liệt kê: từ bản 1.3 khu nào cũng có đủ phi,
    nên tồn chuẩn thành đặc (8 khu x 13 phi) và bỏ được trường hợp "khu hôm qua không có phi đó". */
 export const KHU_X_PHI = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p WHERE k.active = 1 AND p.active = 1`;
-/* Như trên nhưng KHÔNG lọc theo cờ đang dùng. Dùng cho CHỐT CHẶN (đếm thép trước khi cho ẩn khu
-   hoặc ẩn phi): chốt chặn phải thấy cả thép nằm ở ô đã bị ẩn, nếu không thì ẩn khu rồi ẩn phi là
-   lọt qua cả hai lần kiểm. Hệ thống không cho ẩn khu/phi còn thép, nhưng dữ liệu cũ bị ẩn bằng
-   tay trong DB thì vẫn còn (xem mục 9 của bộ test), nên chỗ kiểm phải dè dặt hơn chỗ hiển thị. */
-export const KHU_X_PHI_ALL = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p`;
+/* Phiếu được duyệt SAU lần duyệt báo cáo của ô (ô chưa có báo cáo đã duyệt: mọi phiếu đã duyệt trong
+   kỳ) — phần thép chưa nằm trong số báo cáo. ?1 = ngày chốt trước, ?2 = ngày đang xét. Bootstrap và
+   màn Duyệt dùng CHUNG câu này, nên "tồn" ở Tổng quan và ở màn Duyệt không thể lệch nhau. */
+export const MV_NEW = `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
+  LEFT JOIN (${EFF_SELECT}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
+  WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_day <= ?2
+    AND (e.ts IS NULL OR r.duyet_ts > e.ts)
+  GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`;
 
 /* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
    So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
@@ -81,7 +84,7 @@ export async function putCounts(req, env, user) {
   if (!items.length) throw bad('Chưa có số liệu nào');
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
-  const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR, rcR, refR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR, refR] = await env.DB.batch([
     env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
@@ -106,7 +109,6 @@ export async function putCounts(req, env, user) {
        GROUP BY r.phi_id HAVING SUM(r.qty) <> 0`
     ).bind(khuId, day),
     env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(khuId),
-    env.DB.prepare('SELECT recount FROM khu_report WHERE day = ? AND khu_id = ?').bind(day, khuId),
     /* Số MỐC của từng phi, đúng con số máy khách gọi là "số hôm qua" (refOf ở app.js): lần đếm đã
        duyệt gần nhất kể từ lần chốt trước (eff = 1), chưa có thì tồn chuẩn của lần chốt đó. Dùng để
        kiểm ô "giữ nguyên" — xem chỗ dùng refBy bên dưới. */
@@ -124,9 +126,6 @@ export async function putCounts(req, env, user) {
   ]);
   const refBy = {};
   refR.results.forEach((r) => { if (r.eff || !(r.phi_id in refBy)) refBy[r.phi_id] = r.v; });
-  /* Admin đã yêu cầu đếm lại: lần báo này là để THAY số cũ, nên khác số người trước không phải là
-     xung đột — không thì mọi lần đếm lại sau một xung đột đều tự bật ra xung đột mới. */
-  const demLai = !!(rcR.results[0] && rcR.results[0].recount);
   const moved = Object.fromEntries(innR.results.map((r) => [r.phi_id, r.q]));
   /* Sổ ngày tự chốt sau nửa đêm, nên ngày HÔM NAY chỉ bị khoá khi admin vừa đặt lại số liệu (mốc
      kiểm kê khoá luôn hôm đó) — hoặc ngày deploy bản này mà admin đã lỡ chốt tay từ trước. */
@@ -233,7 +232,7 @@ export async function putCounts(req, env, user) {
         ? `Phi ${it.phi} chưa có số đã duyệt nào để giữ nguyên, hãy đếm thực tế`
         : `Phi ${it.phi}: số đã duyệt gần nhất nay là ${refBy[it.phi]}, không còn là ${it.v} như lúc bạn bấm "Giữ nguyên". Hãy xem lại phi này rồi gửi lại.`, 'giu_lech');
     }
-    if (!demLai && p && p.ts >= tXd && p.user_id !== user.id && p.v !== it.v) conflict = 1;
+    if (p && p.ts >= tXd && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
     const keep = it.kind === 'giu' ? keep0 + 1 : 0;
     return { ...it, prev: p ? p.v : null, keep };
@@ -242,15 +241,14 @@ export async function putCounts(req, env, user) {
 
   const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
     // chạy TRƯỚC khi ghi counts: cờ này nói "lần gửi NÀY lệch với người khác", để trả lời người gửi
-    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4, 5)} AND NOT EXISTS (SELECT 1 FROM khu_report WHERE day = ?1 AND khu_id = ?2 AND recount = 1) conflict`).bind(day, khuId, user.id, data, tXd),
+    env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4, 5)} conflict`).bind(day, khuId, user.id, data, tXd),
     env.DB.prepare(
       `INSERT INTO khu_report (day, khu_id, user_id, ts, conflict, resolved, recount)
        SELECT ?1, ?2, ?3, ?4, CASE WHEN ${conflictCond(1, 2, 3, 5, 6)} THEN 1 ELSE 0 END, 0, 0
        WHERE 1
        ON CONFLICT(day, khu_id) DO UPDATE SET user_id = excluded.user_id, ts = excluded.ts,
-         conflict = CASE WHEN khu_report.recount = 1 THEN 0 WHEN excluded.conflict = 1 THEN 1 ELSE khu_report.conflict END,
-         resolved = CASE WHEN khu_report.recount = 1 THEN 0 WHEN excluded.conflict = 1 THEN 0 ELSE khu_report.resolved END,
-         recount = 0`
+         conflict = CASE WHEN excluded.conflict = 1 THEN 1 ELSE khu_report.conflict END,
+         resolved = CASE WHEN excluded.conflict = 1 THEN 0 ELSE khu_report.resolved END`
     ).bind(day, khuId, user.id, ts, data, tXd),
     /* Ghi LẦN BÁO MỚI, cố ý KHÔNG chạm tới duyet_*: số mới ở trạng thái chờ duyệt, còn số đã
        duyệt trước đó vẫn nguyên và vẫn là số mà tồn đang dùng. Ô thành chờ duyệt một cách tự
@@ -281,19 +279,24 @@ export async function putCounts(req, env, user) {
 
 /* ========================= HAI NGƯỜI BÁO KHÁC SỐ ========================= */
 
-// So sánh lần báo mới nhất với lần báo gần nhất của NGƯỜI KHÁC trong ngày (lấy từ lịch sử đếm)
-export async function conflictView(env, url) {
-  const khu = String(url.searchParams.get('khu') || '');
-  const day = vnDay();
+// Mọi lần báo của một khu trong hôm nay, lấy từ lịch sử đếm, gom theo (người báo, lúc báo)
+async function lanBao(env, khu) {
   const { results } = await env.DB.prepare(
-    `SELECT l.phi_id, l.v, l.kind, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id`
-  ).bind(day, khu).all();
+    `SELECT l.phi_id, l.v, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id`
+  ).bind(vnDay(), khu).all();
   const subs = [];
   for (const r of results) {
     let s = subs[subs.length - 1];
     if (!s || s.user_id !== r.user_id || s.ts !== r.ts) { s = { user_id: r.user_id, uname: r.uname, ts: r.ts, vals: {} }; subs.push(s); }
     s.vals[r.phi_id] = r.v;
   }
+  return subs;
+}
+
+// So sánh lần báo mới nhất với lần báo gần nhất của NGƯỜI KHÁC trong ngày
+export async function conflictView(env, url) {
+  const khu = String(url.searchParams.get('khu') || '');
+  const subs = await lanBao(env, khu);
   const b = subs[subs.length - 1];
   let a = null;
   for (let i = subs.length - 2; i >= 0; i--) if (b && subs[i].user_id !== b.user_id) { a = subs[i]; break; }
@@ -381,19 +384,10 @@ export async function conflictResolve(req, env, user) {
   return json({ ok: true, changed: changes.length });
 }
 
-// Tất cả lần báo của một khu trong ngày hôm nay (gom theo user + ts)
+// Tất cả lần báo của một khu trong ngày hôm nay
 export async function submissionsView(env, url) {
   const khu = String(url.searchParams.get('khu') || '');
-  const day = vnDay();
-  const { results } = await env.DB.prepare(
-    `SELECT l.phi_id, l.v, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id`
-  ).bind(day, khu).all();
-  const subs = [];
-  for (const r of results) {
-    let s = subs[subs.length - 1];
-    if (!s || s.user_id !== r.user_id || s.ts !== r.ts) { s = { user_id: r.user_id, uname: r.uname, ts: r.ts, vals: {} }; subs.push(s); }
-    s.vals[r.phi_id] = r.v;
-  }
+  const subs = await lanBao(env, khu);
   return json({ khu, subs: subs.map((s) => ({ uname: s.uname, ts: s.ts, vals: s.vals })) });
 }
 
@@ -437,8 +431,7 @@ export async function huyBaoCao(req, env, user) {
   const t0 = dayStart(day);
   const ts = Date.now();
   const so = cho.filter((r) => r.v !== 0).map((r) => ({ phi: r.phi_id, v: r.v })).slice(0, 30);
-  try {
-    await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR (SELECT value FROM meta WHERE key = 'rev') <> ?2`, day, rv.rev), [
+  await batchNeuChuaDoi(env, day, rv.rev, [
       /* Chuỗi "giữ nguyên" đã cộng lúc GỬI báo cáo này: huỷ thì trả lại, không thì người đếm bị bắt
          đếm thật sớm một ngày vì một lần bấm đã bị huỷ. Không trừ khi lần đã duyệt mà ô quay về
          cũng là "giữ nguyên" của hôm nay (chuỗi hôm nay vốn đã tính một lần cho lần đó). */
@@ -472,11 +465,6 @@ export async function huyBaoCao(req, env, user) {
         .bind(day, khu, moi.user_id, moi.ts, lyDo, user.id, user.name, ts),
       auditStmt(env, user, 'report_cancel', { khu, ly_do: lyDo, nguoi_bao: moi.uname, luc_bao: moi.ts, so }),
       bump(env),
-    ], closedErr());
-  } catch (e) {
-    if (!(e instanceof HttpError) || e.code !== 'closed') throw e;
-    if (await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
-    throw new HttpError(409, 'Vừa có số liệu mới. Màn Duyệt đã tải lại, hãy xem rồi quyết định.', 'changed');
-  }
+    ]);
   return json({ ok: true, nguoi_bao: moi.uname });
 }

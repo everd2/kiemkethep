@@ -2,7 +2,7 @@
 import { HIGH_KG, MIN_RATE_DAYS, NEG_KG, PHI_DEFAULTS, vnDay } from './core.js';
 import { slotInfo } from './slots.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './helpers.js';
-import { EFF_SELECT } from './counts.js';
+import { EFF_SELECT, MV_NEW } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
 import { LOAN_LOT_SQL, loanLots } from './loans.js';
 
@@ -20,7 +20,7 @@ export async function bootstrap(env, user) {
                       c.duyet_v, c.duyet_ts, c.duyet_at, ${DUYET_NAME}
                     FROM counts c LEFT JOIN users u ON u.id = c.user_id ${DUYET_JOIN} WHERE c.day = ?`).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
-    env.DB.prepare(`SELECT r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved, r.recount FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
+    env.DB.prepare(`SELECT r.khu_id, r.user_id, ${UNAME}, r.ts, r.conflict, r.resolved FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
     /* Mọi lần khu GỬI báo cáo hôm nay (khu_report chỉ giữ lần mới nhất), để biết khu đã đếm
        khung giờ nào khi admin bắt đếm nhiều lần/ngày. Xem khu_report_log ở migration 15. */
     env.DB.prepare('SELECT khu_id, at FROM khu_report_log WHERE day = ?').bind(day),
@@ -42,13 +42,7 @@ export async function bootstrap(env, user) {
     // không được quay về tồn chuẩn cũ (xem EFF_SELECT)
     env.DB.prepare(EFF_SELECT).bind(last, day),
     // lượng nhập/chuyển xảy ra SAU lần đếm hiệu lực: đây mới là phần chưa nằm trong số đếm
-    env.DB.prepare(
-      `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
-       LEFT JOIN (${EFF_SELECT}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
-       WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_day <= ?2
-         AND (e.ts IS NULL OR r.duyet_ts > e.ts)
-       GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`
-    ).bind(last, day),
+    env.DB.prepare(MV_NEW).bind(last, day),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
     // kèm tên: Tổng quan của admin nói được khu chưa báo là của ai, để biết nhắc ai

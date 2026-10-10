@@ -333,8 +333,9 @@ export const SETTING_NAME = { work_from: 'Giờ bắt đầu làm việc', work_
 export async function settingsUpdate(req, env, admin) {
   const b = await readJson(req);
   const stmts = [];
-  // số sau khi lưu = số đang lưu, đè bằng những gì vừa gửi: để kiểm điều kiện giữa các số
-  const sau = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
+  // số sau khi lưu = số đang lưu (truoc), đè bằng những gì vừa gửi: để kiểm điều kiện giữa các số
+  const truoc = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
+  const sau = { ...truoc };
   for (const key of Object.keys(SETTING_RANGE)) {
     if (b[key] !== undefined) sau[key] = intIn(b[key], SETTING_RANGE[key][0], SETTING_RANGE[key][1], SETTING_NAME[key] || key);
   }
@@ -346,7 +347,6 @@ export async function settingsUpdate(req, env, admin) {
   }
   /* Đổi số lần đếm hoặc giờ làm thì ghi lại LÚC NÀO, AI đổi: màn Duyệt hôm đó phải nói ra, vì đổi
      giữa ngày là xếp lại các lần đếm theo khung mới (có thể làm việc "thiếu khung" biến mất). */
-  const truoc = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
   if (['report_slots_per_day', 'work_from', 'work_to'].some((k) => b[k] !== undefined && sau[k] !== truoc[k])) {
     stmts.push(
       env.DB.prepare("INSERT INTO settings (key, value) VALUES ('slot_changed_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(String(Date.now())),

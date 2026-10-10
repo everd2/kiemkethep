@@ -2623,7 +2623,7 @@ async function main() {
   {
     const S = await setup();
     eq('chưa đổi gì: không báo', (await S.call('GET', '/review')).data.slot.changed, null);
-    await S.call('PUT', '/settings', { auto_close: 1 });
+    await S.call('PUT', '/settings', { max_keep_streak: 5 });
     eq('đổi cài đặt khác: không tính là đổi khung giờ', (await S.call('GET', '/review')).data.slot.changed, null);
     await S.call('PUT', '/settings', { report_slots_per_day: 2 });
     const ch = (await S.call('GET', '/review')).data.slot.changed;
