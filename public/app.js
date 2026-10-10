@@ -146,7 +146,7 @@ const S = {
   toast: '', toastErr: false, form: {}, err: '',
   review: null, showNormal: false, audit: null, logFilter: 'all', auditF: { ngay: '', q: '' }, auditMore: false, users: null, pinShown: null,
   usage: null, usageDays: 30, statScope: 'all', expand: {},
-  cc: { days: 7, data: null, mo: {} },
+  cc: { days: 7, data: null, mo: {} }, logTab: 'log',
   // chú thích màu của bảng đếm: mở sẵn cho người mới, đóng một lần rồi thì nhớ luôn
   legendSeen: (() => { try { return !!localStorage.getItem('kt:legendSeen'); } catch (e) { return false; } })(),
   // dir/reason chỉ dùng cho chế độ điều chỉnh tồn; mặc định 'giam' vì đó là chiều hay phải sửa nhất
@@ -1870,8 +1870,18 @@ function vNhatKy() {
   const AF = S.auditF;
   const loc = AF.ngay || AF.q ? `<span class="sm muted">Đang lọc${AF.ngay ? ' ngày ' + esc(fmtDay(AF.ngay)) : ''}${AF.q ? ' chữ "' + esc(AF.q) + '"' : ''} · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="logclear">bỏ lọc</button></span>` : '';
   const them = S.audit && S.auditMore ? `<button class="btn s full" data-a="logmore">Tải thêm dòng cũ hơn</button>` : '';
+  /* Hai mục trong MỘT màn: dòng nhật ký, và thống kê báo cáo (ai báo, ai không báo). Cả hai trả
+     lời cùng một câu hỏi "ai đã làm gì", nên không tách thành hai lối vào ở màn Thêm nữa. */
+  const tk = S.logTab === 'tk';
+  const muc = `<div class="row gap6">${[['log', 'Nhật ký'], ['tk', 'Thống kê báo cáo']].map((m) => `<button class="chip s f1 ${(tk ? 'tk' : 'log') === m[0] ? 'on' : ''}" data-a="logtab" data-v="${m[0]}">${m[1]}</button>`).join('')}</div>`;
+  if (tk) {
+    return `${head('Nhật ký hoạt động', 'Ai báo, ai không báo · các ngày đã chốt', 'more')}
+  <div class="col gap6 tbar" style="padding:6px 16px">${muc}
+    <div class="row gap6">${[7, 30, 90].map((n) => `<button class="chip s f1 ${S.cc.days === n ? 'on' : ''}" data-a="ccdays" data-v="${n}">${n} ngày</button>`).join('')}</div></div>
+  <div class="f1 scroll pad col gap12" id="body">${chamCongBody()}</div>`;
+  }
   return `${head('Nhật ký hoạt động', 'Không ai xóa hoặc sửa được', 'more')}
-  <div class="col gap6 tbar" style="padding:6px 16px">
+  <div class="col gap6 tbar" style="padding:6px 16px">${muc}
     <div class="row gap6"><input class="inp s" style="flex:0 0 150px" type="date" id="logday" max="${S.boot.today}" value="${esc(AF.ngay)}" data-change="logday">
       <input class="inp s f1" id="logq" style="min-width:0" placeholder="Tìm: tên, khu, phi, đối tác…" data-model="logq" data-enter="logfind" value="${esc(fv('logq', AF.q))}"><button class="btn s" data-a="logfind">Tìm</button></div>
     ${loc}
@@ -1913,41 +1923,47 @@ async function loadChamCong() {
   try { C.data = await api('GET', `/cham-cong?from=${from}&to=${to}`); } catch (e) { S.loadErr.chamcong = e.message; say(e.message, true); }
   render();
 }
-function vChamCong() {
+/* Thân mục "Thống kê báo cáo" của màn Nhật ký. MỘT kiểu dòng cho cả người lẫn khu: tên + một dòng
+   phụ ở trái, nhãn Đủ / Thiếu N ở phải; dòng có buổi thiếu thì chạm để mở ra từng ngày. Trước đây mỗi
+   người, mỗi khu là một thẻ riêng viền đỏ với nút chữ gạch chân — mười người là mười thẻ. */
+function chamCongBody() {
   const C = S.cc, D = C.data;
-  const chips = `<div class="row gap6">${[7, 30, 90].map((n) => `<button class="chip s f1 ${C.days === n ? 'on' : ''}" data-a="ccdays" data-v="${n}">${n} ngày</button>`).join('')}</div>`;
-  const top = `${head('Chấm công báo cáo', 'Ai báo, ai không báo · các ngày đã chốt', 'more')}`;
-  if (!D) return `${top}<div class="f1 scroll pad col gap12" id="body">${chips}${panelWait('chamcong')}</div>`;
+  if (!D) return panelWait('chamcong');
   const dm = (d) => fmtDay(d).slice(0, 5);
   const kn = (id) => (S.boot.khuBy[id] ? S.boot.khuBy[id].name : id);
-  const khoang = `<span class="sm muted">Từ ${esc(fmtDay(D.from))} tới ${esc(fmtDay(D.to))} · ${D.ngay} ngày đã chốt. Hôm nay chưa tính (sổ tự chốt sau 0h).</span>`;
   if (!D.ngay) {
-    return `${top}<div class="f1 scroll pad col gap12" id="body">${chips}${khoang}
-      <div class="card col gap6"><b>Chưa có ngày nào đã chốt trong khoảng này</b><span class="sm muted" style="line-height:1.4">Mỗi đêm sau 0h, lúc sổ tự chốt, app ghi lại ai phụ trách khu nào và ai đã báo buổi nào. Số liệu bắt đầu có từ ngày chốt đầu tiên.</span></div></div>`;
+    return `<div class="card col gap6"><b>Chưa có ngày nào đã chốt trong khoảng này</b><span class="sm muted" style="line-height:1.4">Từ ${esc(fmtDay(D.from))} tới ${esc(fmtDay(D.to))}. Mỗi đêm sau 0h, lúc sổ tự chốt, app ghi lại ai phụ trách khu nào và ai đã báo buổi nào. Số liệu bắt đầu có từ ngày chốt đầu tiên.</span></div>`;
   }
+  // một dòng: có buổi thiếu thì là nút mở/đóng, không thì chỉ là dòng đọc
+  const dong = (key, ten, phu, nhan, lop, chiTiet) => {
+    const mo = !!C.mo[key];
+    const trong = `<span class="col" style="gap:2px;min-width:0;flex:1;text-align:left"><b>${ten}</b><span class="sm muted" style="line-height:1.35">${phu}</span></span>
+      <span class="badge ${lop}">${nhan}</span>${chiTiet ? `<span class="muted" aria-hidden="true" style="width:14px;text-align:center">${mo ? '▾' : '▸'}</span>` : '<span style="width:14px"></span>'}`;
+    return (chiTiet
+      ? `<button class="li" style="width:100%;border:0;border-bottom:1px solid #E4E0D6;background:#fff;font:inherit;color:inherit" data-a="ccmo" data-k="${key}" aria-expanded="${mo}">${trong}</button>`
+      : `<div class="li">${trong}</div>`) + (mo ? chiTiet : '');
+  };
+  const con = (trai, phai) => `<div class="li sm" style="background:#F7F5F0;padding-left:26px;align-items:flex-start"><span style="white-space:nowrap">${trai}</span><span style="text-align:right;line-height:1.35">${phai}</span></div>`;
   const nguoi = D.nguoi.map((n) => {
-    const key = 'u' + n.id, mo = !!C.mo[key];
-    const ds = n.thieu.map((t) => `<div class="li"><span>${esc(dm(t.day))} · ${esc(kn(t.khu))}</span><span class="sm" style="text-align:right">thiếu ${esc(t.buoi.join(', '))}${t.cung.length ? '<br><span class="muted">cùng phụ trách: ' + esc(t.cung.join(', ')) + '</span>' : ''}</span></div>`).join('');
-    const phai = n.phai ? ` · phải báo ${n.phai} buổi: tự báo ${n.tu}${n.thay ? ', người khác báo thay ' + n.thay : ''}` : ' · không phụ trách khu nào';
-    return `<div class="card col gap6" style="${n.soThieu ? 'border:2px solid var(--bad)' : ''}">
-      <div class="row" style="justify-content:space-between;gap:8px"><b style="font-size:17px;min-width:0">${esc(n.name)}</b>${n.phai ? `<span class="badge ${n.soThieu ? 'bad' : 'ok'}">${n.soThieu ? 'Thiếu ' + n.soThieu + ' buổi' : 'Đủ'}</span>` : ''}</div>
-      <span class="sm" style="line-height:1.4">Báo ${n.lan} lần · ${n.ngay} ngày có báo${phai}</span>
-      ${n.thieu.length ? `<button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:2px 0;text-decoration:underline" data-a="ccmo" data-k="${key}">${mo ? 'Ẩn ngày thiếu' : 'Xem ' + n.thieu.length + ' ngày thiếu'}</button>` : ''}
-      ${mo ? `<div class="card" style="padding:0;overflow:hidden">${ds}</div>` : ''}</div>`;
+    const phu = n.phai
+      ? `Tự báo ${n.tu}/${n.phai} buổi${n.thay ? ' · người khác báo thay ' + n.thay : ''} · gửi ${n.lan} lần`
+      : `Gửi ${n.lan} lần trong ${n.ngay} ngày`;
+    const ct = n.thieu.map((t) => con(esc(dm(t.day)) + ' · ' + esc(kn(t.khu)), 'thiếu ' + esc(t.buoi.join(', ')) + (t.cung.length ? '<br><span class="muted">cùng phụ trách: ' + esc(t.cung.join(', ')) + '</span>' : ''))).join('');
+    return dong('u' + n.id, esc(n.name), phu, !n.phai ? 'Không phụ trách' : n.soThieu ? 'Thiếu ' + n.soThieu + ' buổi' : 'Đủ', !n.phai ? 'idle' : n.soThieu ? 'bad' : 'ok', ct);
   }).join('');
-  const khu = D.khu.filter((k) => k.phai).map((k) => {
-    const key = 'k' + k.khu, mo = !!C.mo[key];
-    const ds = k.thieu.map((t) => `<div class="li"><span>${esc(dm(t.day))}</span><span class="sm" style="text-align:right">thiếu ${esc(t.buoi.join(', '))}<br><span class="muted">${t.pt.length ? 'phụ trách: ' + esc(t.pt.join(', ')) : 'không ai phụ trách'}</span></span></div>`).join('');
-    return `<div class="card col gap6">
-      <div class="row" style="justify-content:space-between;gap:8px"><b style="font-size:17px;min-width:0">${esc(k.name)}</b><span class="badge ${k.soThieu ? 'bad' : 'ok'}">${k.soThieu ? 'Thiếu ' + k.soThieu + ' buổi' : 'Đủ'}</span></div>
-      <span class="sm">Phải báo ${k.phai} buổi${k.khongPt ? ` · <b style="color:var(--warn)">${k.khongPt} ngày không người phụ trách</b>` : ''}</span>
-      ${k.thieu.length ? `<button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:2px 0;text-decoration:underline" data-a="ccmo" data-k="${key}">${mo ? 'Ẩn ngày thiếu' : 'Xem ' + k.thieu.length + ' ngày thiếu'}</button>` : ''}
-      ${mo ? `<div class="card" style="padding:0;overflow:hidden">${ds}</div>` : ''}</div>`;
+  const dsKhu = D.khu.filter((k) => k.phai);
+  const khu = dsKhu.map((k) => {
+    const phu = `Phải báo ${k.phai} buổi` + (k.khongPt ? ` · <b style="color:var(--warn)">${k.khongPt} ngày không người phụ trách</b>` : '');
+    const ct = k.thieu.map((t) => con(esc(dm(t.day)), 'thiếu ' + esc(t.buoi.join(', ')) + '<br><span class="muted">' + (t.pt.length ? 'phụ trách: ' + esc(t.pt.join(', ')) : 'không ai phụ trách') + '</span>')).join('');
+    return dong('k' + k.khu, esc(k.name), phu, k.soThieu ? 'Thiếu ' + k.soThieu + ' buổi' : 'Đủ', k.soThieu ? 'bad' : 'ok', ct);
   }).join('');
-  return `${top}<div class="f1 scroll pad col gap12" id="body">${chips}${khoang}
-    <h2 class="sec">Theo người</h2>${nguoi || '<span class="muted">Không có ai phụ trách hay báo cáo trong khoảng này.</span>'}
-    <h2 class="sec">Theo khu</h2>${khu || '<span class="muted">Không khu nào phải báo trong khoảng này.</span>'}
-  </div>`;
+  const coPt = D.nguoi.filter((n) => n.phai), nThieu = coPt.filter((n) => n.soThieu).length, kThieu = dsKhu.filter((k) => k.soThieu).length;
+  const bang = (h) => `<div class="card" style="padding:0;overflow:hidden">${h}</div>`;
+  return `<div class="card sm" style="line-height:1.45"><b>${esc(dm(D.from))} – ${esc(dm(D.to))} · ${D.ngay} ngày đã chốt</b><br>
+      Người: <b style="color:${nThieu ? 'var(--bad)' : 'var(--ok)'}">${nThieu ? nThieu + '/' + coPt.length + ' người thiếu buổi' : 'đủ cả ' + coPt.length + ' người'}</b> · Khu: <b style="color:${kThieu ? 'var(--bad)' : 'var(--ok)'}">${kThieu ? kThieu + '/' + dsKhu.length + ' khu thiếu buổi' : 'đủ cả ' + dsKhu.length + ' khu'}</b>
+      <br><span class="muted">Hôm nay chưa tính: sổ tự chốt sau 0h.</span></div>
+    <h2 class="sec">Theo người</h2>${nguoi ? bang(nguoi) : '<span class="muted">Không có ai phụ trách hay báo cáo trong khoảng này.</span>'}
+    <h2 class="sec">Theo khu</h2>${khu ? bang(khu) : '<span class="muted">Không khu nào phải báo trong khoảng này.</span>'}`;
 }
 
 function vStats() {
@@ -2016,8 +2032,7 @@ function vMore() {
     <button class="menu" data-a="nav" data-s="lichsu">Xem lại ngày cũ</button>
     ${canIn() ? '<button class="menu" data-a="nav" data-s="baocao">Báo cáo Nhập – Dùng – Tồn theo kỳ</button>' : ''}
     <button class="menu" data-a="nav" data-s="vaymuon">Vay mượn ngoài bãi${S.boot.loanPending ? ` (${S.boot.loanPending} chờ duyệt)` : ''}</button>
-    ${a ? `<button class="menu" data-a="nav" data-s="chamcong">Chấm công báo cáo (ai báo, ai không báo)</button>
-    <button class="menu" data-a="nav" data-s="nhatky">Nhật ký hoạt động</button>
+    ${a ? `<button class="menu" data-a="nav" data-s="nhatky">Nhật ký hoạt động · thống kê ai báo, ai không báo</button>
     <button class="menu" data-a="nav" data-s="users">Người dùng và PIN</button>
     <button class="menu" data-a="nav" data-s="settings">Cài đặt khu, phi, quy tắc</button>
     <div class="card col gap6"><b>Xuất Excel (CSV) bảng khu × phi</b><div class="row gap6"><input class="inp s f1" type="date" id="exday" data-model="exday" max="${S.boot.today}" value="${esc(fv('exday', S.boot.today))}"><button class="btn s" data-a="exportday">Tải về</button></div></div>` : ''}
@@ -2528,7 +2543,7 @@ function vReset() {
 
 /* ===================== KHUNG CHÍNH ===================== */
 function tabsHtml() {
-  const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', chamcong: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more' }[S.screen];
+  const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more' }[S.screen];
   const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Báo cáo', IC.count, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isAdmin()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
   return `<nav class="tabs">${T.map((t) => `<button class="tab ${on === t[0] ? 'on' : ''}" data-a="nav" data-s="${t[0]}">${t[2]}${t[1]}</button>`).join('')}</nav>`;
 }
@@ -2546,7 +2561,6 @@ function vMain() {
     case 'lichsu': body = vLichSu(); break;
     case 'baocao': body = vBaoCao(); break;
     case 'stats': body = vStats(); break;
-    case 'chamcong': body = vChamCong(); break;
     case 'more': body = vMore(); break;
     case 'pin': body = vPin(); break;
     case 'users': body = vUsers(); break;
@@ -2612,6 +2626,8 @@ function syncQty() {
 }
 
 async function go(screen, noPush) {
+  // chấm công nay là một mục của màn Nhật ký; lối cũ (nút THỬ LẠI, lịch sử trình duyệt) dẫn về đó
+  if (screen === 'chamcong') { S.logTab = 'tk'; screen = 'nhatky'; }
   S.err = ''; S.sel = null;
   delete S.loadErr[screen];
   // lựa chọn khung giờ chọn dở mà không lưu: vào lại Cài đặt phải thấy số ĐANG LƯU, không phải số chọn dở
@@ -2631,12 +2647,11 @@ async function go(screen, noPush) {
   render();
   try {
     if (screen === 'duyet') { S.review = null; S.subs = {}; render(); S.review = await api('GET', '/review'); }
-    else if (screen === 'nhatky') { await loadAudit(false); }
+    else if (screen === 'nhatky') { if (S.logTab === 'tk') await loadChamCong(); else await loadAudit(false); }
     else if (screen === 'users') { await loadUsers(); }
     else if (screen === 'lichsu') { await loadHist(S.hist.date || ydayOf(S.boot.today)); }
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
     else if (screen === 'stats') { S.usage = null; render(); S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
-    else if (screen === 'chamcong') { await loadChamCong(); }
     else if (screen === 'settings') { S.kuEdit = null; await loadBoot(); await loadUsers(); }
     else if (screen === 'vaymuon') { S.loans = null; render(); S.loans = await api('GET', '/loans'); }
     else if (screen === 'vaychitiet') { S.loanDetail = null; render(); S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt); }
@@ -3157,7 +3172,7 @@ const ACTIONS = {
   // tải lại cả trang để nhận app.js mới (service worker "mạng trước" lấy bản mới từ server)
   reloadapp() { try { window.location.reload(); } catch (e) { /* môi trường không có trang */ } },
   logf(d) { S.logFilter = d.v; render(); },
-  logfind() { S.auditF.q = String(val('logq')).trim(); delete S.form.logq; go('nhatky', true); },
+  logfind() { S.logTab = 'log'; S.auditF.q = String(val('logq')).trim(); delete S.form.logq; go('nhatky', true); },
   logclear() { S.auditF = { ngay: '', q: '' }; delete S.form.logq; go('nhatky', true); },
   async logmore() {
     if (S.busy) return;
@@ -3168,6 +3183,13 @@ const ACTIONS = {
   },
   sscope(d) { S.statScope = d.v; render(); },
   sdays(d) { S.usageDays = Number(d.v); go('stats'); },
+  // đổi mục trong màn Nhật ký: mục nào chưa có dữ liệu thì nạp, có rồi thì chỉ vẽ lại
+  logtab(d) {
+    S.logTab = d.v === 'tk' ? 'tk' : 'log';
+    if (S.logTab === 'tk' && !S.cc.data) return loadChamCong();
+    if (S.logTab === 'log' && !S.audit) return go('nhatky', true);
+    render();
+  },
   ccdays(d) { S.cc.days = Number(d.v); S.cc.mo = {}; loadChamCong(); },
   ccmo(d) { S.cc.mo[d.k] = !S.cc.mo[d.k]; render(); },
 

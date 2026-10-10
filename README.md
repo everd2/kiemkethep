@@ -32,6 +32,7 @@
 - Không ẩn được khu còn thép (phải chuyển đi hoặc đếm về 0 trước).
 - **Xem lại ngày cũ**, **báo cáo Nhập – Dùng – Tồn theo kỳ** (xuất CSV, có **cột Điều chỉnh** riêng khi kỳ đó có sửa sổ), và **dự báo số ngày còn đủ dùng** từng phi (theo lượng dùng trung bình 28 ngày). Kỳ nào có phiếu xuất thì bảng thêm **cột "Có phiếu"** — phần lượng dùng đã giải thích được.
 - Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xóa).
+- **Thống kê báo cáo (ai báo, ai không báo)** nằm ngay trong màn **Nhật ký hoạt động**, mục *Thống kê báo cáo* (Thêm → Nhật ký hoạt động): chọn 7, 30 hoặc 90 ngày, một dòng tóm tắt bao nhiêu người và bao nhiêu khu thiếu buổi, rồi một bảng theo người và một bảng theo khu. Mỗi dòng có nhãn *Đủ* hoặc *Thiếu N buổi*; chạm dòng thiếu để xem từng ngày. Chỉ tính các ngày đã chốt.
 
 Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Người đếm** (đếm + xem).
 
