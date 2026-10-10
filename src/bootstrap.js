@@ -12,7 +12,7 @@ export async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -64,6 +64,13 @@ export async function bootstrap(env, user) {
     env.DB.prepare('SELECT COUNT(DISTINCT COALESCE(grp, id)) n FROM loans WHERE voided = 0 AND duyet_ts IS NULL'),
     // các dòng vay mượn đã duyệt: tính phần còn nợ theo từng lần vay để biết khoản nào QUÁ HẠN
     env.DB.prepare(LOAN_LOT_SQL),
+    /* Báo cáo bị admin huỷ HÔM NAY: máy khách bày thông báo + lý do cho người đã gửi (và người đếm
+       được khu đó) cho tới khi khu báo lại. Chỉ lấy lần huỷ mới nhất của mỗi khu. */
+    env.DB.prepare(
+      `SELECT h.khu_id, h.user_id, ${UNAME}, h.rep_ts, h.ly_do, h.huy_name, h.ts FROM bao_cao_huy h
+       LEFT JOIN users u ON u.id = h.user_id
+       WHERE h.day = ?1 AND h.id = (SELECT MAX(h2.id) FROM bao_cao_huy h2 WHERE h2.day = ?1 AND h2.khu_id = h.khu_id)`
+    ).bind(day),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -80,6 +87,7 @@ export async function bootstrap(env, user) {
     counts: counts.results,
     baseline: baseline.results,
     reports: reports.results,
+    huy: huyR.results,
     slot: slotInfo(settings.results, reportTimes.results),
     receipts: receipts.results,
     innKhu: innKhu.results,

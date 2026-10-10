@@ -53,27 +53,43 @@ export async function receiptCtx(env, khuIds) {
    2. Chỉ cộng phiếu ĐÃ DUYỆT, vì chỉ phiếu đã duyệt mới vào tồn.
    3. Nhưng phải TRỪ cả phiếu chuyển đi ĐANG CHỜ DUYỆT (qty < 0). Không trừ thì hai phiếu chờ
       duyệt cùng rút một lô thép đều qua được chốt chặn, duyệt cả hai là khu âm. */
-export async function stockOf(env, day, khuId, phis) {
-  const data = JSON.stringify(phis.map((p) => ({ phi: p })));
+/* tonCells: tồn của một DANH SÁCH ô { khu, phi }, trả { 'khu|phi': số }. Đây là MỘT chỗ duy nhất
+   trên server trả lời "ô này đang có bao nhiêu thép", theo đúng quy tắc của cả hệ thống:
+     tồn = báo cáo ĐÃ DUYỆT gần nhất + phiếu được duyệt SAU lần duyệt báo cáo đó
+   (chưa có báo cáo đã duyệt nào kể từ lần chốt trước thì lấy tồn chuẩn + mọi phiếu đã duyệt).
+   choRut = true: trừ thêm phiếu rút đang chờ duyệt (điểm 3 ở trên), dùng cho chốt chặn rút thép.
+   choRut = false: đúng số đang có, dùng cho chỗ chỉ cần biết "còn thép hay không" (ẩn khu, ẩn phi).
+
+   Chú ý .replace(/\?1/g, ...): EFF_SELECT nhắc ?1 và ?2 HAI lần (câu ngoài và câu con). Bản trước
+   dùng .replace('?1', ...) chỉ thay chỗ đầu, câu con giữ nguyên tham số cũ nên không bao giờ tìm
+   thấy báo cáo đã duyệt — chốt chặn lặng lẽ tính bằng tồn chuẩn hôm qua: khu báo còn 60 vẫn rút
+   được 500. */
+export async function tonCells(env, day, cells, choRut = true) {
+  if (!cells.length) return {};
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
+  const K = J('khu'), P = J('phi');
   const { results } = await env.DB.prepare(
-    `SELECT ${J('phi')} phi,
+    `SELECT ${K} khu, ${P} phi,
        CASE WHEN e.v IS NOT NULL
-         THEN e.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ?2
-                               AND rr.phi_id = ${J('phi')} AND rr.duyet_day IS NOT NULL
+         THEN e.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
+                               AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
                                AND rr.duyet_day <= ?1 AND rr.duyet_ts > e.ts), 0)
-         ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ?2
-                               AND rr.phi_id = ${J('phi')} AND rr.duyet_day IS NOT NULL
+         ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
+                               AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
                                AND rr.duyet_day <= ?1 AND rr.duyet_day > ${LAST}), 0)
        END
-       + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.duyet_day IS NULL
-                    AND rr.khu_id = ?2 AND rr.phi_id = ${J('phi')} AND rr.qty < 0), 0) have
-     FROM json_each(?3) j
-     LEFT JOIN (${EFF_SELECT.replace('?1', LAST).replace('?2', '?1')}) e
-       ON e.khu_id = ?2 AND e.phi_id = ${J('phi')}
-     LEFT JOIN baseline b ON b.day = ${LAST} AND b.khu_id = ?2 AND b.phi_id = ${J('phi')}`
-  ).bind(day, khuId, data).all();
-  return Object.fromEntries(results.map((r) => [r.phi, r.have || 0]));
+       + CASE WHEN ?3 = 1 THEN COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.duyet_day IS NULL
+                    AND rr.khu_id = ${K} AND rr.phi_id = ${P} AND rr.qty < 0), 0) ELSE 0 END have
+     FROM json_each(?2) j
+     LEFT JOIN (${EFF_SELECT.replace(/\?1/g, LAST).replace(/\?2/g, '?1')}) e
+       ON e.khu_id = ${K} AND e.phi_id = ${P}
+     LEFT JOIN baseline b ON b.day = ${LAST} AND b.khu_id = ${K} AND b.phi_id = ${P}`
+  ).bind(day, JSON.stringify(cells), choRut ? 1 : 0).all();
+  return Object.fromEntries(results.map((r) => [r.khu + '|' + r.phi, r.have || 0]));
+}
+export async function stockOf(env, day, khuId, phis) {
+  const have = await tonCells(env, day, phis.map((p) => ({ khu: khuId, phi: p })));
+  return Object.fromEntries(phis.map((p) => [p, have[khuId + '|' + p] || 0]));
 }
 
 /* Ghi các dòng (đã có khu và qty có dấu) trong MỘT batch. Phiếu ra đời ở trạng thái CHỜ DUYỆT

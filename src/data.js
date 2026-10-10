@@ -51,6 +51,7 @@ export async function resetData(req, env, user) {
       env.DB.prepare('DELETE FROM khu_report'),
       env.DB.prepare('DELETE FROM khu_report_log'),
       env.DB.prepare('DELETE FROM bao_cao_ngay'),
+      env.DB.prepare('DELETE FROM bao_cao_huy'),
       env.DB.prepare('DELETE FROM receipts'),
       env.DB.prepare('DELETE FROM day_close'),
       env.DB.prepare('DELETE FROM baseline'),
@@ -154,7 +155,7 @@ export async function resetData(req, env, user) {
 
 // Bảng dựng nên TRẠNG THÁI của bãi: nạp lại là thay sạch những bảng này.
 export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts', 'khu_report', 'khu_report_log',
-  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans', 'bao_cao_ngay'];
+  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy'];
 /* Bản sao của cấu trúc cũ vẫn nạp được khi cấu trúc mới CHỈ THÊM BẢNG: nạp lại đã chỉ lấy cột
    bảng hiện tại có, và bảng tệp không có thì để trống. Chỉ lùi ĐÚNG MỘT bản (ngay trước), không
    lùi xa hơn: mỗi bản chỉ được kiểm "chỉ thêm bảng" so với bản liền trước nó lúc viết, lùi hai
@@ -162,10 +163,11 @@ export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts',
    (dấu khung giờ đã đếm); bản 16 chỉ thêm doitac/loans (sổ vay mượn, tách khỏi tồn kho).
    Đổi cột hay đổi nghĩa bảng cũ thì KHÔNG được thêm vào đây. */
 // bao_cao_ngay (chấm công, bản 21): bản sao cũ chưa có thì giữ chấm công đang có, như sổ vay mượn
-export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay'];
+// bao_cao_huy (báo cáo bị huỷ, bản 22): cũng chỉ là một bảng thêm, bản sao cũ chưa có thì giữ cái đang có
+export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy'];
 // bản 18 chỉ thêm một bảng tạm không nằm trong bản sao; bản 19 thêm cột daily_summary.bt có mặc định 0
 // (tệp cũ thiếu cột thì nạp ra 0 = ngày bình thường, đúng như cách các ngày đó đã được tính)
-export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20] };
+export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20], 22: [15, 16, 17, 18, 19, 20, 21] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */

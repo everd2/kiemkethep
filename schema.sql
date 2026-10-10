@@ -347,7 +347,24 @@ CREATE TABLE IF NOT EXISTS bao_cao_ngay (
   PRIMARY KEY (day, khu_id)
 );
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 21);
+-- Báo cáo đếm bị admin HUỶ (thay cho "yêu cầu đếm lại" cũ, vốn chỉ treo một lá cờ). Huỷ là gỡ hẳn
+-- số đang chờ duyệt khỏi counts, khu trở về như chưa báo; bảng này giữ lại ai báo, ai huỷ, vì sao,
+-- để người báo thấy thông báo và lý do. user_id: người đã gửi báo cáo bị huỷ. rep_ts: lúc họ gửi.
+-- Số bị huỷ vẫn đọc lại được ở counts_log (chỉ ghi thêm) và ở nhật ký.
+CREATE TABLE IF NOT EXISTS bao_cao_huy (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  khu_id TEXT NOT NULL,
+  user_id INTEGER,
+  rep_ts INTEGER NOT NULL,
+  ly_do TEXT NOT NULL,
+  huy_by INTEGER,
+  huy_name TEXT,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 22);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

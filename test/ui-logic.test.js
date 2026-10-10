@@ -429,10 +429,10 @@ const run = async () => {
   ok('tổng của riêng khu A cũng vậy', r("Math.round(totals().perKhu.A.kg)") === Math.round(253 * 0.395 + 300 * 0.617 + 40 * 0.888),
     r('totals().perKhu.A.kg'));
 
-  /* Nhưng phép "đã dùng" thì CỐ Ý vẫn lấy số đếm: công thức là "tồn cũ + nhập − đếm", mà phần
-     nhập đã nằm ở vế nhập rồi. Lấy số đang có thì lượng nhập bị cộng hai lần và "đã dùng" ra 0
-     trong khi đúng ra là 33. Server tính y hệt, hai bên không được lệch nhau. */
-  ok('"đã dùng" KHÔNG cộng trùng lượng nhập', r('totals().used.D8') === 33, r('totals().used.D8'));
+  /* "Đã dùng" cũng tính trên thép ĐANG CÓ: 33 phần vừa về, chưa ai đếm lại, thì chưa có gì được
+     dùng. Trước đây vế cuối chỉ lấy số đếm nên 33 phần đó thành "đã dùng 33" — và lúc sổ tự chốt
+     nó rơi khỏi tồn chuẩn. Server tính y hệt, hai bên không được lệch nhau. */
+  ok('thép vừa về chưa ai đếm lại KHÔNG bị tính là đã dùng', r('totals().used.D8') === 0, r('totals().used.D8'));
 
   // khu đã đếm SAU khi thép về: server không còn kể lượng đó nữa, nên không cộng trùng
   r(`S.boot.eff = [{ khu_id: 'A', phi_id: 'D8', v: 250 }]; S.boot.mvNew = []; indexBoot(S.boot);`);
@@ -666,12 +666,15 @@ const run = async () => {
      Hai bên lệch nhau là hai màn hình nói hai con số khác nhau cho cùng một ngày. */
   r(`S.boot = _boot();
      S.boot.innKhu = [{ khu_id: 'A', phi_id: 'D10', kind: 'xuat', q: -50 }];
-     S.boot.mvNew = [{ khu_id: 'A', phi_id: 'D10', q: -50 }];
+     S.boot.mvNew = [];
      S.boot.eff = [{ khu_id: 'A', phi_id: 'D10', v: 250, day: '${today}', ts: Date.now() }];
      indexBoot(S.boot); var TT = totals();`);
-  // tồn chuẩn A+B+Z của D10 = 300+100+70 = 470; đếm còn 250+100+70 = 420; có phiếu xuất 50
+  // tồn chuẩn A+B+Z của D10 = 300+100+70 = 470; báo cáo (duyệt SAU phiếu xuất) còn 250+100+70 = 420
   ok('đã dùng ở Tổng quan là TỔNG lượng dùng (50), không phải phần không rõ (0)',
     r('TT.used.D10') === 50, r('TT.used.D10'));
+  // phiếu xuất duyệt SAU báo cáo: thép đang có còn 200, tức dùng 50 (khu báo hụt) + 50 (xuất) = 100
+  r(`S.boot.mvNew = [{ khu_id: 'A', phi_id: 'D10', q: -50 }]; indexBoot(S.boot); TT = totals();`);
+  ok('phiếu xuất duyệt sau báo cáo: đã dùng cộng thêm phần xuất (100)', r('TT.used.D10') === 100 && r("tonOf('A','D10')") === 200, r('TT.used.D10'));
   ok('và "Nhập hôm nay" không bị phiếu xuất kéo xuống âm', r('TT.inKg') === 0, r('TT.inKg'));
   r(`S.boot = _boot(); indexBoot(S.boot);`);
 
@@ -1126,10 +1129,48 @@ const run = async () => {
 
   // yêu cầu đếm lại / hai người báo khác số: chỉ người liên quan thấy; đếm lại mở thẳng khu
   const repA = (o) => `NB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0, ...${o} }];`;
-  r(`${nhacBoot(repA('{ recount: 1 }'))} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
-  ok('đếm lại khu A: Bình không thấy', !/cần đếm lại/.test(r('vHome()')));
+  /* Báo cáo bị admin HUỶ: khu trở về chưa báo (không còn dòng reports), người gửi thấy thẻ đỏ kèm
+     lý do ở Tổng quan và ở màn đếm; người không liên quan thì không. */
+  const huyA = `NB.reports = []; NB.huy = [{ khu_id: 'A', user_id: 2, uname: 'An', rep_ts: Date.now() - 600e3, ly_do: 'D16 đếm thiếu 2 bó', huy_name: 'Sếp', ts: Date.now() - 60e3 }];`;
+  r(`${nhacBoot(huyA)} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  ok('báo cáo khu A bị huỷ: Bình (không phụ trách A) không bị nhắc', !/bị huỷ/.test(theNhac(r('vHome()'))), theNhac(r('vHome()')));
   r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
-  ok('đếm lại khu A: An thấy, bấm mở thẳng khu A', /Khu A cần đếm lại/.test(r('vHome()')) && /data-s="dem" data-k="A"><span class="f1 col" style="gap:2px"><b style="font-size:17px">Khu A cần đếm lại/.test(r('vHome()')));
+  const HH = r('vHome()');
+  ok('An (người gửi): thẻ đỏ nói báo cáo bị huỷ, kèm lý do, bấm mở thẳng khu A',
+    /class="alertbtn bad" data-a="nav" data-s="dem" data-k="A"><span class="f1 col" style="gap:2px"><b style="font-size:17px">Báo cáo Khu A của bạn đã bị huỷ<\/b><span class="sm">Lý do: D16 đếm thiếu 2 bó/.test(HH), theNhac(HH));
+  ok('khu trở về như chưa báo', r("khuStatus(S.boot.khuBy.A).label") === 'Bị huỷ' && !r("daBaoHomNay('A')") && /chưa báo/.test(theNhac(HH)), r("JSON.stringify(khuStatus(S.boot.khuBy.A))"));
+  r(`S.khu = 'A'; loadDraft(true); S.sel = null; S.screen = 'dem';`);
+  const DH = r('demView()').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  ok('màn đếm: nói bị huỷ, ai huỷ, lý do, và phải báo lại', /Báo cáo Khu A của bạn đã bị huỷ/.test(DH) && /Sếp huỷ lúc/.test(DH) && /Lý do: D16 đếm thiếu 2 bó/.test(DH) && /đếm thực tế rồi gửi lại/.test(DH), (DH.match(/Báo cáo Khu A của bạn.{0,220}/) || [''])[0]);
+  ok('màn đếm: không còn câu "đang chờ admin duyệt", bảng không có sẵn số', !/đang chờ admin duyệt/.test(DH) && r('Object.keys(S.draft.cells).length') === 0);
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home';`);
+  ok('admin: thấy khu đang chờ báo lại sau khi huỷ', /Khu A: đã huỷ báo cáo, chờ báo lại<\/b><span class="sm">Của An · lý do: D16 đếm thiếu 2 bó/.test(r('vHome()')), theNhac(r('vHome()')));
+  // khu đã báo lại (lần báo mới hơn lúc huỷ): thông báo hết việc
+  r(`${nhacBoot(huyA + " NB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];")} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  ok('đã báo lại sau khi bị huỷ: không nhắc nữa', !/bị huỷ/.test(r('vHome()')) && r("huyOf('A')") === null);
+  // hộp huỷ của admin: bắt gõ lý do, không gõ thì không gửi gì
+  {
+    r(`${nhacBoot()} S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'duyet'; S.ask = null; S.form = {};
+       S.review = { day: S.boot.today, closed: false, rows: [], exceptions: [], phieu: [], reports: [], loans: [], pending: 0, slot: { n: 1, defs: [] },
+         khus: [{ khu: 'A', name: 'Khu A', items: [{ phi: 'D10', ref: 300, mv: 0, exp: 300, cnt: 100, d: -200, kind: 'dem', big: true, blank: false, duyet: false }],
+           waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today, conflict: 0, resolved: 0, recount: 0 }, recheck: false, phieu: [], mark: 'm1', duyet: null, slots: null }] };`);
+    const VD = r('vDuyet()');
+    ok('màn Duyệt: báo cáo chờ duyệt có nút "Huỷ báo cáo", không còn "Yêu cầu đếm lại"', /data-a="recount" data-k="A">Huỷ báo cáo</.test(VD) && !/Yêu cầu đếm lại/.test(VD));
+    r(`S.review.khus[0].waiting = 0; S.review.khus[0].duyet = { by: 'A', ts: Date.now() };`);
+    ok('báo cáo đã duyệt: không có nút Huỷ (số đã là tồn)', !/data-a="recount"/.test(r('vDuyet()')));
+    r(`S.review.khus[0].waiting = 1; S.review.khus[0].duyet = null;`);
+    const n0 = calls.length;
+    r(`ACTIONS.recount({ k: 'A' })`);
+    await new Promise((res) => setImmediate(res));
+    ok('bấm Huỷ: mở hộp bắt gõ lý do', !!r('S.ask && S.ask.input') && /id="askin"/.test(r('askHtml()')) && /KHÔNG vào tồn/.test(r('S.ask.msg')), r('S.ask && S.ask.msg'));
+    r(`ACTIONS.askyes()`);
+    ok('chưa gõ lý do: hộp đứng lại, nhắc phải ghi', !!r('S.ask') && /Phải ghi lý do/.test(r('askHtml()')));
+    r(`S.screen = 'home'; S.form.askin = '  D10 đếm thiếu  '; ACTIONS.askyes()`);
+    await new Promise((res) => setImmediate(res)); await new Promise((res) => setImmediate(res));
+    const c = calls.slice(n0).find((x) => /\/api\/recount/.test(x.url));
+    ok('gõ lý do rồi đồng ý: gửi khu, lý do và dấu của khu', !!c && JSON.stringify(c.body) === '{"khu":"A","ly_do":"D10 đếm thiếu","mark":"m1"}', c && JSON.stringify(c.body));
+    r(`S.review = null; S.ask = null; S.form = {}; S.screen = 'home';`);
+  }
   r(`${nhacBoot(repA('{ conflict: 1 }'))} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
   // (thẻ KHU bên dưới vẫn ghi trạng thái cho mọi người xem — đó là thông tin; ở đây chỉ xét THẺ NHẮC)
   ok('hai người báo khác số ở A: Bình không bị nhắc', !/2 người báo số khác nhau/.test(theNhac(r('vHome()'))), theNhac(r('vHome()')));
@@ -1228,6 +1269,85 @@ const run = async () => {
   r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: Date.parse(S.boot.today + 'T00:00:10+07:00') }];
      S.boot.nSlot = 2; S.boot.slotDefs = [{ i: 0, from: 0, to: 0.0167 }, { i: 1, from: 0.0167, to: 24 }]; loadDraft(true);`);
   ok('đếm 2 lần/ngày: số của khung trước không điền sẵn', r('Object.keys(S.draft.cells).length') === 0, r('JSON.stringify(S.draft.cells)'));
+  /* Nháp điền sẵn ở khung 1 bị ghi xuống máy (chạm một ô rồi TIẾP là đủ), sang khung 2 mở lại:
+     số khung trước không được quay lại qua đường nháp lưu. Đồng hồ chỉnh bằng skew như server gửi. */
+  const gio = (hms) => `Date.parse(S.boot.today + 'T${hms}+07:00') - Date.now()`;
+  r(`localStorage.removeItem(draftKey()); S.boot.skew = ${gio('00:00:30')}; openDem('A'); ACTIONS.cell({ p: 'D10' }); ACTIONS.next(); ACTIONS.closesel();`);
+  ok('khung 1: số vừa báo điền sẵn và nháp đã ghi xuống máy', /"v":290/.test(r('localStorage.getItem(draftKey())') || ''), r('localStorage.getItem(draftKey())'));
+  r(`S.boot.skew = ${gio('13:00:00')}; openDem('A');`);
+  ok('sang khung 2, mở lại: nháp lưu không mang số khung trước theo', r('Object.keys(S.draft.cells).length') === 0, r('JSON.stringify(S.draft.cells)'));
+  // ô người đếm TỰ GÕ ở khung 1 thì vẫn giữ: đó là số họ đếm, không phải số điền sẵn
+  r(`localStorage.removeItem(draftKey()); S.boot.skew = ${gio('00:00:30')}; openDem('A'); ACTIONS.cell({ p: 'D12' }); ACTIONS.key({ d: 1 }); ACTIONS.closesel(); S.boot.skew = ${gio('13:00:00')}; openDem('A');`);
+  ok('ô tự gõ ở khung trước vẫn giữ, chỉ ô điền sẵn bị gỡ', r("JSON.stringify(Object.keys(S.draft.cells))") === '["D12"]', r('JSON.stringify(S.draft.cells)'));
+  // màn đếm để mở qua mốc khung giờ rồi bấm GỬI: không gửi, gỡ số cũ và nói rõ
+  r(`localStorage.removeItem(draftKey()); S.boot.skew = ${gio('00:00:30')}; openDem('A'); S.boot.skew = ${gio('13:00:00')}; S.toast = ''; S.ask = null;`);
+  const nPut = () => calls.filter((c) => c.method === 'PUT' && /counts/.test(c.url)).length;
+  const nPut0 = nPut();
+  await r('ACTIONS.send()');
+  ok('màn mở qua mốc khung giờ, bấm GỬI: không gửi số khung trước', nPut() === nPut0 && r('Object.keys(S.draft.cells).length') === 0 && /lần đếm trước \(D10\)/.test(r('S.toast')), r('S.toast'));
+  /* Boot còn là của HÔM QUA (app nằm nền qua đêm) mà bấm vào Báo cáo: nháp dựng từ boot cũ coi số
+     hôm qua là "hôm nay". Có boot mới thì phải dựng lại, không để số hôm qua nằm sẵn trong bảng. */
+  {
+    const yts2 = Date.now() - 864e5, tday = r('vnDayOf(Date.now())');
+    r(`S.boot = _boot(); S.boot.today = vnDayOf(${yts2}); S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: ${yts2} }]; indexBoot(S.boot); S.screen = 'home'; S.khu = 'A';`);
+    const cu = ctx._boot;
+    ctx._boot = () => ({ ...cu(), today: tday, counts: [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: yts2 }], reports: [{ khu_id: 'A', user_id: 1, uname: 'A', ts: yts2 }] });
+    await r(`go('dem')`);
+    ok('boot cũ của hôm qua: có boot mới thì nháp dựng lại, không điền số hôm qua', r('S.boot.today') === tday && r('Object.keys(S.draft.cells).length') === 0, r('JSON.stringify(S.draft.cells)'));
+    ctx._boot = cu;
+  }
+  // server báo số mốc đã đổi (giu_lech): ô giữ nguyên đã lệch trở về chưa đếm, ô khác giữ nguyên
+  {
+    const f0 = ctx.fetch;
+    r(`S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.khu = 'A'; S.screen = 'dem'; loadDraft(true);
+       S.draft.cells = { D10: { v: 250, kind: 'giu' }, D12: { v: 16, kind: 'dem', bo: 2, le: 0 } }; S.toast = '';`);
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/counts') === 0
+      ? Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'Phi D10: số đã duyệt gần nhất nay là 300', code: 'giu_lech' }) })
+      : f0(url, opt));
+    await r('sendCounts()');
+    ctx.fetch = f0;
+    ok('giu_lech: ô giữ nguyên lệch số mốc trở về chưa đếm, ô đã đếm còn nguyên', r("JSON.stringify(Object.keys(S.draft.cells))") === '["D12"]' && r('S.screen') === 'dem' && /D10/.test(r('S.toast')), r('JSON.stringify(S.draft.cells)') + ' | ' + r('S.toast'));
+  }
+  /* ---- 1g. Hàng chờ gửi bù ----
+     Gửi lỗi (5xx) thì báo cáo vào hàng chờ. Người đếm sửa số, gửi lại thành công: bản cũ phải rời
+     hàng chờ, không thì nó tự gửi sau và đè số cũ lên số mới. */
+  {
+    const f0 = ctx.fetch;
+    let hong = true;
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/counts') === 0 && hong
+      ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'lỗi máy chủ' }) }) : f0(url, opt));
+    const putV = () => calls.filter((c) => c.method === 'PUT' && /counts/.test(c.url)).map((c) => c.body.items.find((x) => x.phi === 'D10').v);
+    const dung = `S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.khu = 'A'; S.screen = 'dem'; localStorage.removeItem('kt:pending'); localStorage.removeItem(draftKey()); loadDraft(true); S.toast = '';`;
+    r(dung + ` S.draft.cells = { D10: { v: 100, kind: 'dem', bo: 10, le: 0 } }; saveDraft();`);
+    calls.length = 0;
+    await r('sendCounts()');
+    ok('gửi lỗi 5xx: báo cáo vào hàng chờ', r('readPending().length') === 1, r('S.toast'));
+    r(`S.draft.cells.D10 = { v: 120, kind: 'dem', bo: 12, le: 0 }; saveDraft();`);
+    hong = false;
+    await r('sendCounts()');
+    ok('gửi lại thành công: bản cũ rời hàng chờ', r('readPending().length') === 0, r('JSON.stringify(readPending())'));
+    await r('flushPending()');
+    ok('hàng chờ không gửi đè số cũ lên số mới', JSON.stringify(putV()) === '[120]', JSON.stringify(putV()));
+    // gửi bù từ hàng chờ thành công: nháp của báo cáo đó cũng xong, không nằm lại chờ lần mở sau
+    r(dung + ` S.draft.cells = { D10: { v: 100, kind: 'dem', bo: 10, le: 0 } }; saveDraft();`);
+    hong = true; await r('sendCounts()');
+    hong = false; r(`S.screen = 'home'`); await r('flushPending()');
+    ok('gửi bù xong: nháp trên máy được xoá', r('readPending().length') === 0 && r('localStorage.getItem(draftKey())') === null, r('localStorage.getItem(draftKey())'));
+    // nhưng nháp đã sửa thêm sau lúc xếp hàng là việc đang làm dở: giữ
+    r(dung + ` S.draft.cells = { D10: { v: 100, kind: 'dem', bo: 10, le: 0 } }; saveDraft();`);
+    hong = true; await r('sendCounts()');
+    r(`S.draft.cells.D12 = { v: 8, kind: 'dem', bo: 1, le: 0 }; saveDraft();`);
+    hong = false; await r('flushPending()');
+    ok('nháp sửa thêm sau lúc xếp hàng: gửi bù xong vẫn giữ', /"D12"/.test(r('localStorage.getItem(draftKey())') || ''), r('localStorage.getItem(draftKey())'));
+    ctx.fetch = f0;
+    r(`localStorage.removeItem('kt:pending'); localStorage.removeItem(draftKey());`);
+  }
+  // chuỗi "giữ nguyên": sáng đã giữ (chuỗi chạm trần) thì chiều vẫn giữ tiếp được, như server
+  r(`S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.boot.kp['A|D10'].keep_streak = 3;
+     S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 300, kind: 'giu', ts: Date.now() }];`);
+  ok('đã giữ nguyên sáng nay (chuỗi chạm trần): chiều không bị chặn oan', r("keepBlock('A','D10')") === '', r("keepBlock('A','D10')"));
+  r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 300, kind: 'giu', ts: Date.now() - 864e5 }];`);
+  ok('lần giữ nguyên là của hôm qua (chuyển sang): vẫn chặn khi chạm trần', /quá nhiều ngày/.test(r("keepBlock('A','D10')")), r("keepBlock('A','D10')"));
   r(`S.form = {}; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----

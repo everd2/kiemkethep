@@ -81,7 +81,7 @@ export async function putCounts(req, env, user) {
   if (!items.length) throw bad('Chưa có số liệu nào');
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
-  const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR, rcR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR, rcR, refR] = await env.DB.batch([
     env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
@@ -107,7 +107,23 @@ export async function putCounts(req, env, user) {
     ).bind(khuId, day),
     env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(khuId),
     env.DB.prepare('SELECT recount FROM khu_report WHERE day = ? AND khu_id = ?').bind(day, khuId),
+    /* Số MỐC của từng phi, đúng con số máy khách gọi là "số hôm qua" (refOf ở app.js): lần đếm đã
+       duyệt gần nhất kể từ lần chốt trước (eff = 1), chưa có thì tồn chuẩn của lần chốt đó. Dùng để
+       kiểm ô "giữ nguyên" — xem chỗ dùng refBy bên dưới. */
+    env.DB.prepare(
+      `SELECT c.phi_id, c.duyet_v v, 1 eff FROM counts c
+       WHERE c.khu_id = ?1 AND c.duyet_v IS NOT NULL
+         AND c.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND c.day <= ?2
+         AND c.day = (SELECT MAX(c2.day) FROM counts c2 WHERE c2.khu_id = ?1 AND c2.phi_id = c.phi_id
+                      AND c2.duyet_v IS NOT NULL
+                      AND c2.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND c2.day <= ?2)
+       UNION ALL
+       SELECT b.phi_id, b.v, 0 eff FROM baseline b
+       WHERE b.khu_id = ?1 AND b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2)`
+    ).bind(khuId, day),
   ]);
+  const refBy = {};
+  refR.results.forEach((r) => { if (r.eff || !(r.phi_id in refBy)) refBy[r.phi_id] = r.v; });
   /* Admin đã yêu cầu đếm lại: lần báo này là để THAY số cũ, nên khác số người trước không phải là
      xung đột — không thì mọi lần đếm lại sau một xung đột đều tự bật ra xung đột mới. */
   const demLai = !!(rcR.results[0] && rcR.results[0].recount);
@@ -207,6 +223,15 @@ export async function putCounts(req, env, user) {
          nhắc phải nói đúng việc, chứ bảo "có thép chuyển đi" khi thực ra là sổ vừa được sửa thì
          người đếm đi tìm một chuyến xe không tồn tại. */
       throw bad(`Phi ${it.phi} có thay đổi tồn (nhập, chuyển khu hoặc điều chỉnh) ở khu này từ lần chốt trước, không giữ nguyên được, hãy đếm thực tế`);
+    }
+    /* "Giữ nguyên" là LẤY LẠI số mốc, nên con số đi kèm phải đúng là số mốc. Máy khách chép số mốc
+       vào nháp lúc bấm nút; nháp nằm trên máy cả buổi, trong lúc đó admin duyệt một báo cáo khác là
+       số mốc đổi mà nháp thì không. Nhận nguyên con số cũ đó là ghi vào sổ một ô mang nhãn "giữ
+       nguyên" với số không phải số đang giữ. Từ chối kèm mã riêng để máy tải lại số mốc mới. */
+    if (it.kind === 'giu' && refBy[it.phi] !== it.v) {
+      throw new HttpError(409, refBy[it.phi] === undefined
+        ? `Phi ${it.phi} chưa có số đã duyệt nào để giữ nguyên, hãy đếm thực tế`
+        : `Phi ${it.phi}: số đã duyệt gần nhất nay là ${refBy[it.phi]}, không còn là ${it.v} như lúc bạn bấm "Giữ nguyên". Hãy xem lại phi này rồi gửi lại.`, 'giu_lech');
     }
     if (!demLai && p && p.ts >= tXd && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
@@ -370,4 +395,88 @@ export async function submissionsView(env, url) {
     s.vals[r.phi_id] = r.v;
   }
   return json({ khu, subs: subs.map((s) => ({ uname: s.uname, ts: s.ts, vals: s.vals })) });
+}
+
+/* ========================= HUỶ BÁO CÁO =========================
+   Admin thấy báo cáo của khu sai thì HUỶ nó, kèm lý do. Huỷ là gỡ hẳn số đang chờ duyệt:
+   - ô chưa từng được duyệt trong kỳ: xoá dòng, khu trở về "chưa báo";
+   - ô đã có một lần báo ĐƯỢC DUYỆT trước đó (báo sáng đã duyệt, báo lại chiều bị huỷ): trả ô về
+     đúng lần đã duyệt — số đã duyệt vẫn là tồn, huỷ không đụng tới nó.
+   Tồn không đổi: báo cáo bị huỷ chưa bao giờ vào tồn (chưa duyệt thì không vào tồn).
+   Chỉ huỷ được báo cáo ĐANG CHỜ DUYỆT. Báo cáo đã duyệt thì số đã là tồn; muốn sửa thì khu báo
+   lại, hoặc lập phiếu Điều chỉnh tồn — không có đường "huỷ" làm tồn lặng lẽ lùi về số cũ.
+
+   Người gửi báo cáo thấy thông báo "báo cáo bị huỷ" kèm lý do (bảng bao_cao_huy, gửi xuống qua
+   bootstrap) cho tới khi khu báo lại. Dấu khung giờ đã đếm của lần báo bị huỷ cũng gỡ: báo cáo bị
+   huỷ không tính là đã đếm buổi đó.
+   mark: dấu của khu lúc admin tải màn Duyệt (xem computeReview) — khu vừa báo lại thì không huỷ
+   nhầm một báo cáo admin chưa nhìn thấy. */
+export async function huyBaoCao(req, env, user) {
+  const b = await readJson(req);
+  const khu = String(b.khu || '');
+  const lyDo = String(b.ly_do || '').trim().slice(0, 300);
+  if (!lyDo) throw bad('Phải ghi lý do huỷ báo cáo, để người đếm biết cần đếm lại chỗ nào');
+  const day = vnDay();
+  const rv = await computeReview(env, day);
+  if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
+  const k = rv.khus.find((x) => x.khu === khu);
+  if (!k) throw bad('Khu không hợp lệ');
+  if (b.mark !== undefined && k.mark !== b.mark) {
+    throw new HttpError(409, k.name + ' vừa có số hoặc phiếu mới. Màn Duyệt đã tải lại, hãy xem rồi quyết định.', 'changed');
+  }
+  if (!k.waiting) throw bad(k.rep ? 'Báo cáo của khu này đã duyệt, số đã vào tồn. Muốn sửa thì để khu báo lại, hoặc lập phiếu Điều chỉnh tồn.' : 'Khu này chưa có báo cáo nào để huỷ');
+  const last = rv.last || '';
+  const CHO = 'NOT (duyet_ts IS NOT NULL AND duyet_ts = ts)';
+  const { results: cho } = await env.DB.prepare(
+    `SELECT c.phi_id, c.v, c.kind, c.user_id, c.ts, ${UNAME} FROM counts c LEFT JOIN users u ON u.id = c.user_id
+     WHERE c.khu_id = ?1 AND c.day > ?2 AND c.day <= ?3 AND NOT (c.duyet_ts IS NOT NULL AND c.duyet_ts = c.ts)`
+  ).bind(khu, last, day).all();
+  if (!cho.length) throw new HttpError(409, 'Báo cáo vừa đổi. Màn Duyệt đã tải lại, hãy xem rồi quyết định.', 'changed');
+  const moi = cho.reduce((m, r) => (r.ts > m.ts ? r : m), cho[0]); // lần gửi mới nhất = báo cáo bị huỷ
+  const tsList = JSON.stringify([...new Set(cho.map((r) => r.ts))]);
+  const t0 = dayStart(day);
+  const ts = Date.now();
+  const so = cho.filter((r) => r.v !== 0).map((r) => ({ phi: r.phi_id, v: r.v })).slice(0, 30);
+  try {
+    await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR (SELECT value FROM meta WHERE key = 'rev') <> ?2`, day, rv.rev), [
+      /* Chuỗi "giữ nguyên" đã cộng lúc GỬI báo cáo này: huỷ thì trả lại, không thì người đếm bị bắt
+         đếm thật sớm một ngày vì một lần bấm đã bị huỷ. Không trừ khi lần đã duyệt mà ô quay về
+         cũng là "giữ nguyên" của hôm nay (chuỗi hôm nay vốn đã tính một lần cho lần đó). */
+      env.DB.prepare(
+        `UPDATE khu_phi SET keep_streak = MAX(0, keep_streak - 1)
+         WHERE khu_id = ?1 AND phi_id IN (SELECT phi_id FROM counts WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND ${CHO}
+           AND kind = 'giu' AND ts >= ?4 AND NOT (duyet_v IS NOT NULL AND duyet_kind = 'giu' AND duyet_ts >= ?4))`
+      ).bind(khu, last, day, t0),
+      env.DB.prepare('DELETE FROM khu_report_log WHERE day = ?1 AND khu_id = ?2 AND ts IN (SELECT value FROM json_each(?3))').bind(day, khu, tsList),
+      // ô có lần báo đã duyệt trước đó: quay về đúng lần đó (người báo lấy lại từ lịch sử đếm)
+      env.DB.prepare(
+        `UPDATE counts SET v = duyet_v, kind = duyet_kind, ts = duyet_ts, bo = NULL, le = NULL,
+           user_id = COALESCE((SELECT l.user_id FROM counts_log l WHERE l.day = counts.day AND l.khu_id = counts.khu_id
+                               AND l.phi_id = counts.phi_id AND l.ts = counts.duyet_ts ORDER BY l.id DESC LIMIT 1), user_id)
+         WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND ${CHO} AND duyet_v IS NOT NULL`
+      ).bind(khu, last, day),
+      // ô chưa từng được duyệt: sau câu trên, mọi ô còn duyet_v NULL đều là ô đang chờ
+      env.DB.prepare('DELETE FROM counts WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND duyet_v IS NULL').bind(khu, last, day),
+      // dấu "khu đã báo": không còn ô nào thì khu là CHƯA BÁO; còn (lần đã duyệt) thì trỏ lại lần đó
+      env.DB.prepare(
+        `DELETE FROM khu_report WHERE khu_id = ?1 AND day > ?2 AND day <= ?3
+           AND NOT EXISTS (SELECT 1 FROM counts c WHERE c.day = khu_report.day AND c.khu_id = khu_report.khu_id)`
+      ).bind(khu, last, day),
+      env.DB.prepare(
+        `UPDATE khu_report SET conflict = 0, resolved = 0, recount = 0,
+           ts = (SELECT MAX(c.ts) FROM counts c WHERE c.day = khu_report.day AND c.khu_id = khu_report.khu_id),
+           user_id = (SELECT c.user_id FROM counts c WHERE c.day = khu_report.day AND c.khu_id = khu_report.khu_id ORDER BY c.ts DESC LIMIT 1)
+         WHERE khu_id = ?1 AND day > ?2 AND day <= ?3`
+      ).bind(khu, last, day),
+      env.DB.prepare('INSERT INTO bao_cao_huy (day, khu_id, user_id, rep_ts, ly_do, huy_by, huy_name, ts) VALUES (?,?,?,?,?,?,?,?)')
+        .bind(day, khu, moi.user_id, moi.ts, lyDo, user.id, user.name, ts),
+      auditStmt(env, user, 'report_cancel', { khu, ly_do: lyDo, nguoi_bao: moi.uname, luc_bao: moi.ts, so }),
+      bump(env),
+    ], closedErr());
+  } catch (e) {
+    if (!(e instanceof HttpError) || e.code !== 'closed') throw e;
+    if (await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
+    throw new HttpError(409, 'Vừa có số liệu mới. Màn Duyệt đã tải lại, hãy xem rồi quyết định.', 'changed');
+  }
+  return json({ ok: true, nguoi_bao: moi.uname });
 }

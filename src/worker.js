@@ -6,7 +6,7 @@ import { migrate } from './db.js';
 import { auditStmt, auth, bump, readJson } from './helpers.js';
 import { changePin, login, logout, recoverAdmin, setup } from './auth.js';
 import { bootstrap } from './bootstrap.js';
-import { conflictResolve, conflictView, putCounts, submissionsView } from './counts.js';
+import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansView, postLoan, voidLoan } from './loans.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
@@ -104,20 +104,9 @@ async function handle(req, env, url) {
   // sao lưu / nạp lại: chốt chặn thật nằm trong backupData / restoreData
   if (r0 === 'backup' && method === 'GET') return backupData(env, user);
   if (r0 === 'restore' && method === 'POST') return restoreData(req, env, user);
-  if (r0 === 'recount' && method === 'POST') {
-    const b = await readJson(req);
-    const day = vnDay();
-    // ngày đã chốt thì người đếm không gửi số thường được nữa: cờ này chỉ treo một lời nhắc không làm được
-    const res = await env.DB.prepare('UPDATE khu_report SET recount = 1 WHERE day = ? AND khu_id = ? AND NOT EXISTS (SELECT 1 FROM day_close WHERE day = ?1)')
-      .bind(day, String(b.khu || '')).run();
-    if (!res.meta.changes) {
-      const closed = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
-      if (closed) throw new HttpError(409, 'Ngày đã chốt. Tải lại màn Duyệt rồi dùng "Yêu cầu đếm lại" (mở lại ngày).', 'closed');
-      throw bad('Khu này chưa có báo cáo để yêu cầu đếm lại');
-    }
-    await env.DB.batch([bump(env), auditStmt(env, user, 'recount', { khu: b.khu })]);
-    return json({ ok: true });
-  }
+  // huỷ báo cáo đang chờ duyệt của một khu, kèm lý do. Giữ đường dẫn /recount: bản app cũ còn trong
+  // cache gọi tới sẽ bị đòi lý do (400) thay vì lặng lẽ treo một lá cờ không còn ai đọc.
+  if (r0 === 'recount' && method === 'POST') return huyBaoCao(req, env, user);
   if (r0 === 'conflict' && !p[1] && method === 'GET') return conflictView(env, url);
   if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') return conflictResolve(req, env, user);
   if (r0 === 'submissions' && method === 'GET') return submissionsView(env, url);

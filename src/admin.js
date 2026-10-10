@@ -3,7 +3,7 @@ import { HttpError, PHI_DEFAULTS, ROLES, bad, hashPin, json, rand, seedPhi, vnDa
 import { SETTINGS_SQL, SETTING_RANGE, auditStmt, boWord, bump, genPin, intIn, normPhone,
   parseSettings, qtyWord, readJson, unitWord } from './helpers.js';
 import { logout } from './auth.js';
-import { KHU_X_PHI_ALL } from './counts.js';
+import { tonCells } from './phieu.js';
 
 /* ========================= QUẢN TRỊ ========================= */
 
@@ -251,12 +251,12 @@ export async function khuUpdate(req, env, admin, id) {
   if (k.active && !active) {
     // khu ẩn thì không ai đếm được nữa: còn thép mà ẩn sẽ làm số tồn "đóng băng"
     const day = vnDay();
-    const st = await env.DB.prepare(
-      `SELECT COALESCE(SUM(COALESCE(c.duyet_v, b.v, 0)), 0) n FROM (${KHU_X_PHI_ALL}) kx
-       LEFT JOIN counts c ON c.day = ?2 AND c.khu_id = kx.khu_id AND c.phi_id = kx.phi_id
-       LEFT JOIN baseline b ON b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id
-       WHERE kx.khu_id = ?1`
-    ).bind(id, day).first();
+    /* Đọc tồn qua tonCells như mọi chỗ khác (báo cáo đã duyệt + phiếu duyệt sau đó). Trước đây chỗ
+       này chỉ cộng số đếm, nên khu vừa nhận thép đã duyệt mà chưa đếm vẫn ẩn được. Hỏi MỌI phi, kể
+       cả phi đã tắt: chốt chặn phải thấy cả thép nằm ở ô đã bị ẩn. */
+    const phis = (await env.DB.prepare('SELECT id FROM phi').all()).results;
+    const have = await tonCells(env, day, phis.map((p) => ({ khu: id, phi: p.id })), false);
+    const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
     if (st && st.n > 0) throw bad(`${k.name} còn ${st.n} cây. Hãy chuyển thép sang khu khác (Nhập → Chuyển khu) hoặc đếm về 0 trước khi ẩn`);
   }
   await env.DB.batch([
@@ -280,12 +280,10 @@ export async function phiUpdate(req, env, admin, id) {
   if (p.active && !active) {
     // ẩn phi còn thép sẽ làm số tồn "đóng băng" đúng như trường hợp ẩn khu
     const day = vnDay();
-    const st = await env.DB.prepare(
-      `SELECT COALESCE(SUM(COALESCE(c.duyet_v, b.v, 0)), 0) n FROM (${KHU_X_PHI_ALL}) kx
-       LEFT JOIN counts c ON c.day = ?2 AND c.khu_id = kx.khu_id AND c.phi_id = kx.phi_id
-       LEFT JOIN baseline b ON b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id
-       WHERE kx.phi_id = ?1`
-    ).bind(id, day).first();
+    // như lúc ẩn khu: tồn đọc qua tonCells, hỏi MỌI khu kể cả khu đã ẩn
+    const khus = (await env.DB.prepare('SELECT id FROM khu').all()).results;
+    const have = await tonCells(env, day, khus.map((k) => ({ khu: k.id, phi: id })), false);
+    const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
     if (st && st.n > 0) throw bad(`Phi ${id} còn ${qtyWord(st.n, p)} trong bãi. Hãy đếm về 0 hoặc dùng hết trước khi ẩn`);
   }
   /* Không còn gì phải làm với khu_phi khi bật/tắt một phi: từ bản 1.3 khu nào cũng hiện đủ phi

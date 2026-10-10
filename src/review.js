@@ -30,7 +30,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, mvnR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -92,6 +92,16 @@ export async function computeReview(env, day, opt = {}) {
                 ORDER BY l.id`),
     // ai vừa đổi khung giờ đếm (xem settingsUpdate): tên để màn Duyệt nói ra
     db.prepare("SELECT name FROM users WHERE id = (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'slot_changed_by')"),
+    /* Phiếu được duyệt SAU lần duyệt báo cáo của ô (ô chưa có báo cáo đã duyệt thì là mọi phiếu đã
+       duyệt trong kỳ): phần thép chưa nằm trong số báo cáo. Cùng câu với mvNew của bootstrap, để
+       "tồn" ở màn Duyệt và lúc chốt là đúng con số Tổng quan đang hiện. */
+    db.prepare(
+      `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
+       LEFT JOIN (${EFF_SELECT}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
+       WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_day <= ?2
+         AND (e.ts IS NULL OR r.duyet_ts > e.ts)
+       GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`
+    ).bind(last, day),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -111,7 +121,8 @@ export async function computeReview(env, day, opt = {}) {
   }
   const due = nSlot > 1 ? slotsDue(day, slotSt, Date.now(), !!opt.cuoiNgay) : [];
 
-  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, vc = {}, rcTs = {};
+  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, vc = {}, rcTs = {}, mvn = {};
+  mvnR.results.forEach((r) => (mvn[r.khu_id + '|' + r.phi_id] = r.q));
   effR.results.forEach((r) => (eff[r.khu_id + '|' + r.phi_id] = r.v));
   subR.results.forEach((r) => (sub[r.khu_id + '|' + r.phi_id] = r));
   baseR.results.forEach((r) => (base[r.khu_id + '|' + r.phi_id] = r.v));
@@ -157,7 +168,12 @@ export async function computeReview(env, day, opt = {}) {
       const key = k.id + '|' + p.id;
       const b = base[key] || 0;
       const i = inn[key] || 0;
-      const e = eff[key] !== undefined ? eff[key] : b;
+      /* THÉP ĐANG CÓ của ô = báo cáo đã duyệt gần nhất + phiếu duyệt SAU lần duyệt đó (ô chưa có báo
+         cáo đã duyệt: tồn chuẩn + mọi phiếu đã duyệt). Trước đây chỗ này chỉ lấy số báo cáo, nên thép
+         về sau lần duyệt — hoặc về khu chưa báo — bị tính là "đã dùng" và rơi khỏi tồn chuẩn lúc
+         chốt: ban ngày Tổng quan hiện 1.130, qua 0h còn 950. Không cộng trùng: phiếu duyệt trước
+         hoặc cùng lúc với báo cáo thì không nằm trong mvn, vì duyệt báo cáo là lấy tồn theo báo cáo. */
+      const e = (eff[key] !== undefined ? eff[key] : b) + (mvn[key] || 0);
       old += b; innT += i; dcT += dcc[key] || 0; xT += xc[key] || 0; vT += vc[key] || 0; cn += e;
       const net = e - (b + i);
       if (Math.abs(net) > Math.abs(topNet)) { topNet = net; topKhu = k.id; }
@@ -363,8 +379,9 @@ export async function doClose(env, user, rv, note, action, extra = []) {
        SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')}, ${J('bt')} FROM json_each(?3) j`
     ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, used: r.used, kg: r.kg, bt: r.neg || r.high ? 1 : 0 })))),
     env.DB.prepare(RATE_SQL).bind(day),
-    /* Tồn chuẩn chốt theo số ĐÃ DUYỆT (EFF_JOIN đã lọc duyet_v IS NOT NULL): báo cáo chưa duyệt
-       không bao giờ thành tồn chuẩn. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
+    /* Tồn chuẩn chốt theo THÉP ĐANG CÓ: báo cáo ĐÃ DUYỆT gần nhất (EFF_JOIN đã lọc duyet_v IS NOT
+       NULL — báo cáo chưa duyệt không bao giờ thành tồn chuẩn) cộng phiếu được duyệt SAU lần duyệt
+       đó. Thiếu phần phiếu thì thép đã duyệt mà khu chưa kịp báo lại biến mất khỏi sổ đúng lúc 0h. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
        chuẩn thành ĐẶC — mọi ô đều có dòng. Nhờ vậy ngày sau không còn trường hợp "khu này hôm
        qua không có phi đó" phải đoán xem dự kiến là 0 hay là không biết. */
     /* Liệt kê các ô ĐANG DÙNG, CỘNG mọi ô còn số liệu khác 0 dù khu hoặc phi đã bị ẩn.
@@ -375,10 +392,16 @@ export async function doClose(env, user, rv, note, action, extra = []) {
     env.DB.prepare(
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kx.khu_id, kx.phi_id, COALESCE(c.duyet_v, b.v, 0)
+         + COALESCE((SELECT SUM(r.qty) FROM receipts r
+                     WHERE r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
+                       AND r.duyet_day IS NOT NULL AND r.duyet_day > ?2 AND r.duyet_day <= ?1
+                       AND (c.duyet_at IS NULL OR r.duyet_ts > c.duyet_at)), 0)
        FROM (${KHU_X_PHI}
              UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?2 AND v <> 0
              UNION SELECT khu_id, phi_id FROM counts
-                   WHERE duyet_v IS NOT NULL AND duyet_v <> 0 AND day > ?2 AND day <= ?1) kx
+                   WHERE duyet_v IS NOT NULL AND duyet_v <> 0 AND day > ?2 AND day <= ?1
+             UNION SELECT khu_id, phi_id FROM receipts
+                   WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ?2 AND duyet_day <= ?1) kx
        ${EFF_JOIN(2, 1)}
        LEFT JOIN baseline b ON b.day = ?2 AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id`
     ).bind(day, rv.last || ''),
@@ -521,7 +544,16 @@ export async function reviewDuyet(req, env, user) {
     }),
     bump(env)
   );
-  await batchGuarded(env, guardStmt(env, IS_CLOSED, day), stmts, closedErr());
+  /* Chặn thêm "số liệu vừa đổi": dấu (mark) so ở trên là so trên dữ liệu ĐỌC TRƯỚC, mà câu UPDATE
+     duyệt lần báo MỚI NHẤT lúc ghi. Khu báo lại đúng giữa hai bước đó là duyệt một con số chưa ai
+     xem. rev tăng ở mọi lần ghi số liệu, nên lệch rev là từ chối, admin tải lại rồi duyệt. */
+  try {
+    await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR (SELECT value FROM meta WHERE key = 'rev') <> ?2`, day, rv.rev), stmts, closedErr());
+  } catch (e) {
+    if (!(e instanceof HttpError) || e.code !== 'closed') throw e;
+    if (await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
+    throw new HttpError(409, 'Vừa có số liệu mới. Màn Duyệt đã tải lại, hãy xem rồi duyệt.', 'changed');
+  }
   return json({ ok: true, khu: list.length, phieu: phieu.length });
 }
 

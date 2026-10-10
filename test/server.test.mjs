@@ -293,6 +293,120 @@ async function main() {
     eq('lệch 10 cây D36 (935kg): bật cờ âm', rv.rows.find((x) => x.phi === 'D36').neg, true);
   }
 
+  /* ================= 7b. "Giữ nguyên" phải đúng số đã duyệt gần nhất =================
+     Máy khách chép số mốc vào nháp lúc bấm nút; số mốc đổi sau đó (admin duyệt báo cáo khác) thì
+     nháp vẫn mang số cũ. Server không được ghi một ô nhãn "giữ nguyên" với số không phải số mốc. */
+  {
+    const S = await setup();
+    let day = vnDay();
+    const g0 = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An');
+    eq('chưa có số đã duyệt nào: không giữ nguyên được', [g0.status, g0.data.code], [409, 'giu_lech']);
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 900 }] });
+    await bao(S, { khu: 'A', day, items: items({ D16: 900 }) }, 'An');
+    await chot(S);
+    addDays(1); day = vnDay();
+    const g = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 500, kind: 'giu' } }) }, 'An');
+    eq('giữ nguyên với số khác số đã duyệt: từ chối', [g.status, g.data.code], [409, 'giu_lech']);
+    ok('lời nhắc nói số đã duyệt hiện tại', /900/.test(g.data.error || ''), g.data.error);
+    eq('không ghi gì vào sổ', S.sql('SELECT 1 x FROM counts WHERE day = ?', day).length, 0);
+    eq('giữ nguyên đúng tồn chuẩn: nhận',
+      (await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An')).status, 200);
+    // trong ngày, số mốc là lần đếm ĐÃ DUYỆT mới nhất chứ không còn là tồn chuẩn
+    await bao(S, { khu: 'A', day, items: items({ D16: 700 }) }, 'An');
+    eq('sau khi duyệt số mới 700: giữ nguyên 900 bị từ chối',
+      (await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An')).data.code, 'giu_lech');
+    eq('giữ nguyên 700: nhận',
+      (await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 700, kind: 'giu' } }) }, 'An')).status, 200);
+  }
+
+  /* ================= 7c. Duyệt báo cáo = tồn của khu lấy theo báo cáo, ở MỌI chỗ đọc tồn =================
+     Tồn = báo cáo đã duyệt gần nhất + phiếu được duyệt SAU lần duyệt đó. Phiếu duyệt trước hoặc cùng
+     lúc với báo cáo coi như đã nằm trong số báo cáo. Kiểm cùng một ô (A/D16) qua từng cửa: bootstrap
+     (Tổng quan, Tồn bãi), màn Duyệt, chốt chặn rút thép, và tồn chuẩn sau khi sổ tự chốt. */
+  {
+    const PH = await import(pathToFileURL(path.resolve(ROOT, 'src/phieu.js')).href);
+    const mk = async () => {
+      const S = await setup();
+      const day = vnDay();
+      await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 900 }] });
+      await bao(S, { khu: 'A', day, items: items({ D16: 900 }) }, 'An');
+      await chot(S);
+      addDays(1); advance(3600e3);
+      return S;
+    };
+    const gui = (S, v) => S.call('PUT', '/counts', { khu: 'A', day: vnDay(), items: items({ D16: v }) }, 'An');
+    // [tồn app hiện, tồn ở màn Duyệt, đã dùng, tồn theo chốt chặn rút thép]
+    const cua = async (S) => {
+      const bs = (await S.call('GET', '/bootstrap')).data;
+      const f = (arr, fld) => (arr.find((c) => c.khu_id === 'A' && c.phi_id === 'D16') || {})[fld];
+      const eff = f(bs.eff, 'v');
+      const row = (await S.call('GET', '/review')).data.rows.find((x) => x.phi === 'D16');
+      return [(eff === undefined ? f(bs.baseline, 'v') || 0 : eff) + (f(bs.mvNew, 'q') || 0), row.cnt, row.used,
+        (await PH.stockOf(S.env, vnDay(), 'A', ['D16'])).D16];
+    };
+    // tồn chuẩn + sổ của ngày vừa qua, sau khi sổ tự chốt
+    const quaDem = async (S) => {
+      const d = vnDay();
+      addDays(1); await REV.closeDayAuto(S.env, d);
+      const sm = S.one("SELECT ton, nhap, dung FROM daily_summary WHERE day = ? AND phi_id = 'D16'", d);
+      return [S.one("SELECT v FROM baseline WHERE day = ? AND khu_id = 'A' AND phi_id = 'D16'", d).v, sm.ton, sm.nhap, sm.dung];
+    };
+
+    let S = await mk();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
+    eq('phiếu +180 đã duyệt, khu chưa báo: mọi cửa đều 1080, chưa dùng gì', await cua(S), [1080, 1080, 0, 1080]);
+    await gui(S, 950); advance(60e3);
+    eq('khu báo 950 chưa duyệt: tồn vẫn 1080', await cua(S), [1080, 1080, 0, 1080]);
+    await duyet(S, 'A'); advance(60e3);
+    eq('duyệt báo cáo 950: mọi cửa đều lấy theo báo cáo', await cua(S), [950, 950, 130, 950]);
+    eq('qua 0h: tồn chuẩn 950, sổ ghi nhập 180 dùng 130', await quaDem(S), [950, 950, 180, 130]);
+
+    S = await mk();
+    await gui(S, 950); advance(60e3);
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }, 'Kho'); advance(60e3);
+    await duyet(S, 'A'); advance(60e3);
+    eq('duyệt khu kèm phiếu đang chờ: vẫn lấy theo báo cáo', await cua(S), [950, 950, 130, 950]);
+
+    S = await mk();
+    await gui(S, 950); advance(60e3); await duyet(S, 'A'); advance(60e3);
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
+    eq('phiếu duyệt SAU báo cáo: cộng thêm ở mọi cửa, không tính là dùng', await cua(S), [1130, 1130, -50, 1130]);
+    eq('qua 0h: thép đó KHÔNG rơi khỏi tồn chuẩn', await quaDem(S), [1130, 1130, 180, -50]);
+    eq('sang ngày sau: tồn vẫn 1130, không dùng gì', await cua(S), [1130, 1130, 0, 1130]);
+
+    S = await mk();
+    await gui(S, 950); advance(60e3); await duyet(S, 'A'); advance(60e3);
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
+    await duyet(S, 'A'); advance(60e3);
+    eq('admin bấm duyệt lại khu: tồn về lại đúng báo cáo', await cua(S), [950, 950, 130, 950]);
+
+    S = await mk();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
+    eq('khu KHÔNG báo cả ngày: qua 0h thép vừa về vẫn nằm trong tồn chuẩn, dùng 0', await quaDem(S), [1080, 1080, 180, 0]);
+    eq('mức dùng trung bình không dính cú dùng giả', (S.one("SELECT per_day FROM phi_rate WHERE phi_id = 'D16'") || {}).per_day, 0);
+
+    // chốt chặn rút thép phải theo báo cáo đã duyệt, không theo tồn chuẩn hôm qua
+    S = await mk();
+    await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 60 }) }, 'An'); advance(60e3);
+    const rut = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D16', qty: 500 }] });
+    eq('khu báo còn 60 (đã duyệt): không chuyển đi 500 được', rut.status, 400);
+    ok('lời báo nói đúng số đang có', /chỉ còn 60/.test(rut.data.error || ''), rut.data.error);
+    eq('xuất 300 cũng bị chặn', (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 300 }], noi: 'CT1' })).status, 400);
+    eq('chuyển 60 thì được', (await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D16', qty: 60 }] })).status, 200);
+    S = await mk();
+    await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 1500 }) }, 'An'); advance(60e3);
+    eq('khu báo 1500 (đã duyệt): xuất 1200 được, không bị chặn theo tồn chuẩn 900',
+      (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 1200 }], noi: 'CT1' })).status, 200);
+
+    // ẩn khu / ẩn phi: thép đã duyệt mà khu chưa đếm vẫn là thép
+    S = await mk();
+    await nhap(S, { khu: 'C', lines: [{ phi: 'D20', qty: 114 }] }); advance(60e3);
+    const an = await S.call('PATCH', '/khu/C', { active: 0 });
+    eq('khu vừa nhận thép đã duyệt (chưa đếm): không ẩn được', an.status, 400);
+    ok('lời báo nói số cây còn lại', /còn 114/.test(an.data.error || ''), an.data.error);
+    eq('phi đó cũng không ẩn được', (await S.call('PATCH', '/phi/D20', { active: 0 })).status, 400);
+  }
+
   /* ================= 8. Chuỗi "giữ nguyên" không bị cộng hai lần ================= */
   {
     const S = await setup();
@@ -2543,20 +2657,103 @@ async function main() {
     eq('duyệt tất cả khi có khu mới: từ chối', (await S.call('POST', '/review/duyet', { all: true, marks: all })).status, 409);
   }
 
-  /* ================= 57. Đếm lại: không bật lại xung đột cũ; ngày đã khoá thì không treo cờ ================= */
+  /* ================= 57. Huỷ báo cáo: số chờ duyệt rời hẳn, khu về chưa báo, người gửi được báo lý do ================= */
   {
-    const S = await setup();
-    const day = vnDay();
+    const huy = (S, khu, ly_do, extra) => S.call('POST', '/recount', { khu, ly_do, ...extra });
+    const boot = async (S, who) => (await S.call('GET', '/bootstrap', undefined, who)).data;
+    const khuA = async (S) => (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A');
+    const mk = async () => {
+      const S = await setup();
+      await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 900 }] });
+      await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 900 }) }, 'An');
+      await chot(S);
+      addDays(1); advance(3600e3);
+      return S;
+    };
+    const tonA = async (S) => {
+      const bs = await boot(S);
+      const f = (arr, fld) => (arr.find((c) => c.khu_id === 'A' && c.phi_id === 'D16') || {})[fld];
+      const eff = f(bs.eff, 'v');
+      return (eff === undefined ? f(bs.baseline, 'v') || 0 : eff) + (f(bs.mvNew, 'q') || 0);
+    };
+
+    let S = await mk();
+    let day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 500 }) }, 'An'); advance(60e3);
+    eq('không ghi lý do: không huỷ', (await huy(S, 'A', '  ')).status, 400);
+    eq('người đếm không huỷ được báo cáo', (await S.call('POST', '/recount', { khu: 'A', ly_do: 'x' }, 'An')).status, 403);
+    eq('dấu của khu đã cũ (khu vừa báo lại): từ chối', (await huy(S, 'A', 'sai', { mark: 'cu' })).data.code, 'changed');
+    const h = await huy(S, 'A', 'D16 đếm thiếu 2 bó', { mark: (await khuA(S)).mark }); advance(60e3);
+    eq('huỷ báo cáo đang chờ duyệt', [h.status, h.data.nguoi_bao], [200, 'An']);
+    let k = await khuA(S);
+    eq('không còn gì chờ duyệt, khu là chưa báo', [k.waiting, k.rep], [0, null]);
+    eq('việc treo: chỉ còn "chưa báo"', (await S.call('GET', '/review')).data.exceptions.map((e) => e.type), ['khu_missing']);
+    eq('số bị huỷ không còn trong counts', S.sql("SELECT 1 x FROM counts WHERE day = ? AND khu_id = 'A'", day).length, 0);
+    eq('tồn không đổi (báo cáo huỷ chưa từng vào tồn)', await tonA(S), 900);
+    eq('không còn gì để duyệt', (await duyet(S, 'A')).status, 400);
+    let bs = await boot(S, 'An');
+    eq('người gửi: khu về chưa báo', bs.reports.filter((r) => r.khu_id === 'A').length, 0);
+    eq('người gửi: nhận thông báo huỷ kèm lý do và người huỷ',
+      bs.huy.map((x) => [x.khu_id, x.uname, x.ly_do, x.huy_name]), [['A', 'An', 'D16 đếm thiếu 2 bó', 'Admin']]);
+    const au = JSON.parse(S.one("SELECT detail FROM audit WHERE action = 'report_cancel'").detail);
+    eq('nhật ký ghi lý do, người báo và số bị huỷ', [au.khu, au.ly_do, au.nguoi_bao, au.so], ['A', 'D16 đếm thiếu 2 bó', 'An', [{ phi: 'D16', v: 500 }]]);
+    eq('huỷ lần nữa: không còn báo cáo để huỷ', (await huy(S, 'A', 'x')).status, 400);
+    // báo lại y như lần đầu là một báo cáo MỚI, phải được duyệt mới vào tồn
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 860 }) }, 'An'); advance(60e3);
+    k = await khuA(S);
+    eq('báo lại: chờ duyệt như một báo cáo mới', [k.waiting > 0, k.rep.uname], [true, 'An']);
+    await duyet(S, 'A'); advance(60e3);
+    eq('duyệt báo cáo mới: tồn lấy theo nó', await tonA(S), 860);
+    eq('báo cáo đã duyệt: không huỷ được, số đã là tồn', (await huy(S, 'A', 'x')).status, 400);
+    eq('và tồn vẫn nguyên', await tonA(S), 860);
+
+    // báo sáng ĐÃ DUYỆT, báo lại chiều bị huỷ: quay về đúng lần đã duyệt
+    S = await mk(); day = vnDay();
+    await bao(S, { khu: 'A', day, items: items({ D16: 880 }) }, 'An'); advance(60e3);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 300 }) }, 'Binh'); advance(60e3);
+    eq('huỷ lần báo sau', (await huy(S, 'A', 'đếm nhầm khu')).status, 200); advance(60e3);
+    k = await khuA(S);
+    eq('ô quay về lần đã duyệt: không chờ duyệt, người báo là An, vẫn "đã duyệt"', [k.waiting, k.rep.uname, !!k.duyet], [0, 'An', true]);
+    eq('tồn vẫn theo lần đã duyệt', await tonA(S), 880);
+    eq('thông báo huỷ gửi cho đúng người báo lần bị huỷ', (await boot(S, 'Binh')).huy.map((x) => x.uname), ['Binh']);
+
+    // hai người báo khác số -> huỷ -> báo lại: xung đột cũ không bật lại
+    S = await setup(); day = vnDay();
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 80 }) }, 'An'); advance(3000);
-    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 70 }) }, 'Binh');
-    await S.call('POST', '/conflict/resolve', { khu: 'A' });
-    eq('yêu cầu đếm lại', (await S.call('POST', '/recount', { khu: 'A' })).status, 200);
-    advance(3000);
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 70 }) }, 'Binh'); advance(3000);
+    eq('huỷ khi hai người báo khác số', (await huy(S, 'A', 'hai số lệch nhau, đếm lại')).status, 200); advance(3000);
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 75 }) }, 'An');
-    const ex = (await S.call('GET', '/review')).data.exceptions.map((e) => e.type);
-    eq('báo lại xong: chỉ còn chờ duyệt, xung đột cũ không bật lại', ex, ['khu_pending']);
+    eq('báo lại xong: chỉ còn chờ duyệt, xung đột cũ không bật lại', (await S.call('GET', '/review')).data.exceptions.map((e) => e.type), ['khu_pending']);
+
+    // "giữ nguyên" trong báo cáo bị huỷ: chuỗi trả lại như chưa bấm
+    S = await mk(); day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An'); advance(60e3);
+    eq('gửi giữ nguyên: chuỗi = 1', S.one("SELECT keep_streak k FROM khu_phi WHERE khu_id='A' AND phi_id='D16'").k, 1);
+    await huy(S, 'A', 'phải đếm thật'); advance(60e3);
+    eq('huỷ: chuỗi giữ nguyên về lại 0', S.one("SELECT keep_streak k FROM khu_phi WHERE khu_id='A' AND phi_id='D16'").k, 0);
+
+    // đếm nhiều lần/ngày: báo cáo bị huỷ không tính là đã đếm buổi đó
+    S = await mk(); day = vnDay();
+    await S.call('PUT', '/settings', { report_slots_per_day: 2 });
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 500 }) }, 'An'); advance(60e3);
+    const done0 = ((await boot(S)).slot.done.A || []).length;
+    await huy(S, 'A', 'sai'); advance(60e3);
+    eq('dấu "đã đếm buổi này" gỡ theo báo cáo bị huỷ', [done0, ((await boot(S)).slot.done.A || []).length], [1, 0]);
+
+    // qua 0h: báo cáo đã huỷ KHÔNG chuyển sang ngày sau, thông báo của hôm qua cũng hết
+    S = await mk(); day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 500 }) }, 'An'); advance(60e3);
+    await huy(S, 'A', 'sai'); advance(60e3);
+    addDays(1); await REV.closeDayAuto(S.env, day);
+    bs = await boot(S, 'An');
+    eq('qua 0h: không có báo cáo nào chuyển sang, không còn thông báo huỷ của hôm qua', [bs.counts.length, bs.reports.length, bs.huy.length], [0, 0, 0]);
+    ok('nhật ký chốt ghi khu chưa báo', /chưa báo: Khu A/.test(S.one('SELECT note FROM day_close WHERE day = ?', day).note));
+
+    // ngày đã khoá thì không huỷ gì nữa
+    S = await setup(); day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: 80 }) }, 'An');
     await S.call('POST', '/reset', { mode: 'zero' });
-    const rq = await S.call('POST', '/recount', { khu: 'A' });
+    const rq = await huy(S, 'A', 'x');
     eq('/recount khi ngày đã khoá (đặt lại số liệu): từ chối', [rq.status, rq.data.code], [409, 'closed']);
   }
 

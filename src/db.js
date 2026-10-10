@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -237,6 +237,24 @@ export const MIGRATIONS = {
        khung TEXT NOT NULL DEFAULT '[]', phai INTEGER NOT NULL DEFAULT 0,
        bao TEXT NOT NULL DEFAULT '[]', thieu TEXT NOT NULL DEFAULT '[]',
        PRIMARY KEY (day, khu_id))`,
+  ],
+  /* HUỶ BÁO CÁO: admin huỷ một báo cáo đếm đang chờ duyệt, kèm lý do. Trước đây chỉ có "yêu cầu
+     đếm lại" — một lá cờ nhắc: số sai vẫn nằm chờ duyệt (vẫn bấm Duyệt được), người đếm không biết
+     vì sao, gửi lại y nguyên số cũ là cờ tắt, và qua 0h cờ mất. Nay số bị huỷ rời hẳn counts; bảng
+     này giữ thông báo cho người báo. */
+  22: [
+    `CREATE TABLE IF NOT EXISTS bao_cao_huy (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day TEXT NOT NULL,
+      khu_id TEXT NOT NULL,
+      user_id INTEGER,
+      rep_ts INTEGER NOT NULL,
+      ly_do TEXT NOT NULL,
+      huy_by INTEGER,
+      huy_name TEXT,
+      ts INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id)',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
