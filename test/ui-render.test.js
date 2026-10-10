@@ -286,7 +286,7 @@ out.push(['chamcong+trong', 0, $app.innerHTML.includes('Chưa có ngày nào đ�
 S.logTab = 'log'; render();
 out.push(['nhatky+hai-muc', 0, $app.innerHTML.includes('data-a="logtab" data-v="tk"') && $app.innerHTML.includes('id="logq"') && !$app.innerHTML.includes('Theo người') ? 'ok' : 'BAD:mục Nhật ký thiếu nút sang Thống kê hoặc lẫn nội dung']);
 S.screen = 'more'; render();
-out.push(['more+chamcong', 0, !$app.innerHTML.includes('data-s="chamcong"') && $app.innerHTML.includes('thống kê ai báo, ai không báo') ? 'ok' : 'BAD:màn Thêm còn lối Chấm công riêng, hoặc mục Nhật ký không nói có thống kê']);
+out.push(['more+chamcong', 0, !$app.innerHTML.includes('data-s="chamcong"') && $app.innerHTML.includes('data-s="nhatky">Nhật ký hoạt động</button>') ? 'ok' : 'BAD:màn Thêm còn lối Chấm công riêng, hoặc thiếu mục Nhật ký hoạt động']);
 S.screen = 'duyet';
 // bảng "phi bình thường" mở ra: đây là chỗ in phép tính gọn, có cả phi bị sửa sổ
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
