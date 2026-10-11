@@ -1045,7 +1045,7 @@ const run = async () => {
   ok('người sau mở cùng khu: không thấy nháp của người trước', r("S.draft.cells.D10 === undefined"), r('JSON.stringify(S.draft.cells)'));
   r(`S.me = { id: 2, name: 'An', role: 'tieudoi' }; loadDraft();`);
   ok('đúng người mở lại: nháp còn nguyên', r("S.draft.cells.D10 && S.draft.cells.D10.v") === 77);
-  ok('khu mở lần trước cũng nhớ theo người', r('lastKhuKey()') === 'kt:lastKhu:2');
+  ok('nháp đếm dở theo đúng người và đúng khu', r("draftKey('B')").endsWith(':2:B') && r('draftKey()').endsWith(':2:A'));
 
   // thẻ "chưa báo": người đếm chỉ thấy khu mình đếm được; admin thấy cả bãi
   r(`var SK = _boot(); SK.khuUser = [{ khu_id: 'B', user_id: 99 }]; indexBoot(SK); S.boot = SK; S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
@@ -1389,6 +1389,54 @@ const run = async () => {
   const nPut0 = nPut();
   await r('ACTIONS.send()');
   ok('màn mở qua mốc khung giờ, bấm GỬI: không gửi số khung trước', nPut() === nPut0 && r('Object.keys(S.draft.cells).length') === 0 && /lần đếm trước \(D10\)/.test(r('S.toast')), r('S.toast'));
+  /* Tab Báo cáo: CHỌN KHU TRƯỚC, rồi mới tới bảng đếm của khu đó — không tự mở khu lần trước, để
+     không ai báo nhầm khu. Thẻ nhắc / nút "Báo cáo khu X" thì vẫn mở thẳng đúng khu. */
+  {
+    const nap = (extra) => r(`S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); S.boot.khuUser = [{ khu_id: 'B', user_id: 99, name: 'Người khác' }]; ${extra || ''} indexBoot(S.boot); localStorage.removeItem('kt:pending'); S.sel = null; S.toast = '';`);
+    nap(); r(`S.me = { id: 2, name: 'An', role: 'tieudoi' }; S.khu = 'A'; S.screen = 'home';`);
+    await r(`ACTIONS.nav({ s: 'dem' })`);
+    ok('bấm tab Báo cáo: mở màn chọn khu, kể cả khi lần trước đã mở khu A', r('S.screen') === 'khu', r('S.screen'));
+    ok('tab Báo cáo vẫn sáng khi đang ở màn chọn khu', /class="tab on" data-a="nav" data-s="dem"/.test(r('tabsHtml()')));
+    const VK = r('vKhu()');
+    ok('màn chọn khu: Back về Tổng quan', /data-a="nav" data-s="home"/.test(VK));
+    ok('màn chọn khu: khu đã giao người khác không hiện, có nói rõ', !/data-a="khuopen" data-k="B"/.test(VK) && /Còn 1 khu do người khác phụ trách/.test(VK));
+    ok('màn chọn khu: có lời hướng dẫn chọn khu', /Chạm vào khu bạn đang đứng/.test(VK));
+    await r(`ACTIONS.nav({ s: 'dem', k: 'A' })`);
+    ok('thẻ nhắc / nút "Báo cáo khu A": mở thẳng bảng đếm khu A', r('S.screen') === 'dem' && r('S.khu') === 'A');
+    ok('bảng đếm: nút Back về danh sách khu', /aria-label="Về danh sách khu" data-a="nav" data-s="khu"/.test(r('demView()')));
+    await r(`ACTIONS.nav({ s: 'dem', k: 'B' })`);
+    ok('mở thẳng khu không được đếm: về màn chọn khu, không mở bảng', r('S.screen') === 'khu', r('S.screen') + ' ' + r('S.khu'));
+    await r(`ACTIONS.nav({ s: 'dem', k: 'ZZ' })`);
+    ok('mở thẳng khu không tồn tại: về màn chọn khu', r('S.screen') === 'khu');
+    r(`ACTIONS.khuopen({ k: 'A' })`);
+    ok('chạm thẻ khu ở màn chọn khu: mở bảng đếm khu đó', r('S.screen') === 'dem' && r('S.khu') === 'A');
+    r(`ACTIONS.khuopen({ k: 'B' })`);
+    ok('chạm khu không được đếm (link cũ): không mở', r('S.khu') === 'A' && /không phụ trách/.test(r('S.toast')));
+    // việc dở dang của CHÍNH người cầm máy hiện ngay trên thẻ khu
+    r(`S.khu = 'A'; S.screen = 'dem'; loadDraft(true); S.draft.cells = { D10: { v: 10, kind: 'dem', bo: 1, le: 0 }, D12: { v: 5, kind: 'dem', bo: 0, le: 5 }, D14: { v: 7, kind: 'dem', src: 1 } }; saveDraft();`);
+    ok('thẻ khu: "Đang đếm dở 2 phi" (ô điền sẵn không tính)', /Đang đếm dở 2 phi/.test(r('vKhu()')), (r('vKhu()').match(/Đang đếm dở[^<]*/) || [''])[0]);
+    r(`S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
+    ok('người khác cầm máy: không thấy nháp của người trước', !/Đang đếm dở/.test(r('vKhu()')));
+    r(`S.me = { id: 2, name: 'An', role: 'tieudoi' }; localStorage.removeItem(draftKey('A'));`);
+    r(`writePending([{ khu: 'A', day: S.boot.today, items: [], ts: Date.now(), uid: 2, uname: 'An' }]);`);
+    ok('thẻ khu: "Có báo cáo chưa gửi được" (mất mạng)', /data-k="A"[^>]*>[\s\S]*?Có báo cáo chưa gửi được/.test(r('vKhu()')));
+    r(`S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
+    ok('báo cáo chưa gửi của người khác: không hiện trên máy người này', !/Có báo cáo chưa gửi được/.test(r('vKhu()')));
+    r(`localStorage.removeItem('kt:pending');`);
+    // khu đã xong xếp sau khu còn việc
+    nap(`S.boot.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];
+         S.boot.counts = (S.boot.counts || []).filter((c) => c.khu_id !== 'A').concat([{ khu_id: 'A', phi_id: 'D10', v: 1, kind: 'dem', user_id: 2, uname: 'An', ts: Date.now(), duyet_v: 1, duyet_ts: Date.now(), cap: 0 }]);
+         S.boot.counts.forEach((c) => { if (c.khu_id === 'A') c.duyet_ts = c.ts; }); S.boot.khuUser = [];`);
+    r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
+    const thuTu = (r('vKhu()').match(/data-a="khuopen" data-k="([^"]+)"/g) || []).map((x) => x.slice(-2, -1));
+    ok('khu đã duyệt xếp sau khu còn việc', thuTu.length > 1 && thuTu[thuTu.length - 1] === 'A', thuTu.join(','));
+    // CVKTHT: mọi khu, không có dòng "khu do người khác phụ trách"
+    nap(); r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    const VC = r('vKhu()');
+    ok('CVKTHT: màn chọn khu có cả khu đã giao người khác', /data-a="khuopen" data-k="B"/.test(VC) && !/do người khác phụ trách/.test(VC));
+    ok('CVKTHT: dòng tóm tắt nói "khu", không phải "khu của bạn"', !/khu của bạn/.test(VC), (VC.match(/Đã báo [^<]*/) || [''])[0]);
+    r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home';`);
+  }
   /* Boot còn là của HÔM QUA (app nằm nền qua đêm) mà bấm vào Báo cáo: nháp dựng từ boot cũ coi số
      hôm qua là "hôm nay". Có boot mới thì phải dựng lại, không để số hôm qua nằm sẵn trong bảng. */
   {
@@ -1396,7 +1444,7 @@ const run = async () => {
     r(`S.boot = _boot(); S.boot.today = vnDayOf(${yts2}); S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: ${yts2} }]; indexBoot(S.boot); S.screen = 'home'; S.khu = 'A';`);
     const cu = ctx._boot;
     ctx._boot = () => ({ ...cu(), today: tday, counts: [{ khu_id: 'A', phi_id: 'D10', v: 290, kind: 'dem', bo: 29, le: 0, ts: yts2 }], reports: [{ khu_id: 'A', user_id: 1, uname: 'A', ts: yts2 }] });
-    await r(`go('dem')`);
+    await r(`go('dem', false, 'A')`);
     ok('boot cũ của hôm qua: có boot mới thì nháp dựng lại, không điền số hôm qua', r('S.boot.today') === tday && r('Object.keys(S.draft.cells).length') === 0, r('JSON.stringify(S.draft.cells)'));
     ctx._boot = cu;
   }
@@ -1430,6 +1478,8 @@ const run = async () => {
     hong = false;
     await r('sendCounts()');
     ok('gửi lại thành công: bản cũ rời hàng chờ', r('readPending().length') === 0, r('JSON.stringify(readPending())'));
+    ok('gửi thành công: về màn chọn khu (thấy khu vừa gửi đang chờ duyệt, chọn khu tiếp)', r('S.screen') === 'khu' && /Đã gửi báo cáo/.test(r('S.toast')), r('S.screen'));
+    ok('màn chọn khu hiện thông báo vừa gửi', /Đã gửi báo cáo/.test(r('vMain()')));
     await r('flushPending()');
     ok('hàng chờ không gửi đè số cũ lên số mới', JSON.stringify(putV()) === '[120]', JSON.stringify(putV()));
     // gửi bù từ hàng chờ thành công: nháp của báo cáo đó cũng xong, không nằm lại chờ lần mở sau

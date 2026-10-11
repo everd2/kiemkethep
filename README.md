@@ -11,6 +11,7 @@
   - **Admin**: như cấp chỉ huy, cộng việc hệ thống: *N khu chưa giao người phụ trách* (khu chưa giao ai thì Tiểu đội trưởng nào cũng được nhắc đếm), đi giao ở **Cài đặt → Khu bãi**.
   - Ở màn **Duyệt**, con số *Còn N việc cần xử lý* cũng chỉ đếm việc người xem làm được; hết việc của mình mà cấp trên còn việc thì màn hình nói *Không còn việc của bạn*.
   - Khu trống (không có thép, không có phiếu) không bị nhắc. App chỉ nhắc khi người đó **mở app** — chưa có thông báo đẩy.
+- **Báo cáo: chọn khu trước.** Bấm tab **Báo cáo** là ra **màn chọn khu**, không tự mở khu lần trước, để không ai báo nhầm khu. Mỗi thẻ khu ghi trạng thái hôm nay (chưa báo, chờ duyệt, bị huỷ, thiếu buổi…), ai báo lúc nào, và việc dở dang của chính người cầm máy: *đang đếm dở N phi*, *có báo cáo chưa gửi được* (mất mạng). Khu còn việc xếp trước, khu đã xong xếp sau. Chạm khu mới vào bảng đếm của khu đó; nút Back trên bảng đếm về lại danh sách khu, gửi xong cũng về đó để chọn khu tiếp. Thẻ nhắc ở Tổng quan và nút *Báo cáo khu X* vẫn mở thẳng đúng khu.
 - **Tổng quan**: chạm vào thẻ một khu để xem thép của khu đó với **đủ mọi đường kính** (phi không có thép ghi 0), và bấm **Đếm / báo cáo** ngay ở đó (chỉ hiện với người đếm được khu đó, khi ngày chưa chốt).
 - Mỗi ô **(ngày × khu × phi)** là đơn vị gốc. Mọi thống kê (toàn bãi, theo khu, theo phi) tính từ các ô này.
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.

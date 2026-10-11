@@ -574,9 +574,8 @@ const reportedCount = () => S.boot.khuAct.filter((k) => daBaoHomNay(k.id)).lengt
 /* Nháp tách theo NGƯỜI ĐĂNG NHẬP, không chỉ theo ngày + khu. Nhiều người dùng chung một điện thoại
    là chuyện thường ngoài bãi: không tách thì người sau mở cùng khu thấy sẵn số người trước gõ dở,
    bấm gửi là số của người kia mang tên mình — và nhật ký thì không sửa lại được. */
-const draftKey = () => 'kt:' + S.boot.today + ':' + S.me.id + ':' + S.khu;
-// khu mở lần trước cũng nhớ theo từng người: người khác dùng máy thì không mở nhầm khu của người trước
-const lastKhuKey = () => 'kt:lastKhu:' + (S.me ? S.me.id : '');
+// nháp đếm dở: theo ngày, theo NGƯỜI, theo khu — người khác dùng chung máy không thấy nháp của người trước
+const draftKey = (kid = S.khu) => 'kt:' + S.boot.today + ':' + S.me.id + ':' + kid;
 /* Nháp chỉ điền sẵn số đã gửi của HÔM NAY, ĐÚNG KHUNG GIỜ đang diễn ra — tức là để sửa lại lần báo
    vừa rồi. Báo cáo hôm qua chưa duyệt (được chuyển sang hôm nay) và số của khung trước thì KHÔNG:
    điền sẵn chúng thành ô "đã đếm" là chỉ cần bấm GỬI, số cũ thành lần đếm mới với giờ mới, và thép
@@ -619,7 +618,6 @@ const ngayKhoaMsg = () => (S.boot.closedReset ? 'Hôm nay vừa đặt lại s�
 function openDem(k) {
   S.khu = k; S.sel = null; S.bo = ''; S.le = ''; S.zoomK = null;
   if (!S.legendSeen) S.legend = true;
-  try { localStorage.setItem(lastKhuKey(), k); } catch (e) { /* bỏ qua */ }
   loadDraft();
   S.screen = 'dem';
 }
@@ -729,8 +727,8 @@ async function sendCountsInner() {
        trước gửi lỗi) phải bỏ đi, không thì lát nữa nó tự gửi lại và ĐÈ số cũ lên số vừa gửi. */
     writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day && ofMe(x))));
     await loadBoot();
-    S.sel = null; S.screen = 'home';
-    say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, admin sẽ xem.' : '. Cảm ơn bạn!'));
+    S.sel = null; S.screen = 'khu'; pushNav();
+    say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, cấp trên sẽ xem.' : '. Cảm ơn bạn!'));
   } catch (e) {
     if (e.retry) { queuePending(job); say('Chưa gửi được (' + e.message + '). Đã lưu báo cáo, sẽ tự gửi lại.', true); }
     else if (e.code === 'stale_day') {
@@ -1025,26 +1023,46 @@ function khuChiTiet(k) {
 }
 
 /* --- Chọn khu --- */
+/* Số phi người này đã TỰ GÕ trong nháp đếm dở của một khu (ô điền sẵn từ lần gửi trước không tính). */
+function demDo(kid) {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(draftKey(kid)) || 'null'); } catch (e) { d = null; }
+  return d && d.cells ? Object.values(d.cells).filter((c) => c && !c.src).length : 0;
+}
+/* MÀN CHỌN KHU — bước đầu của tab Báo cáo. Mỗi khu một thẻ: trạng thái hôm nay (chưa báo, chờ duyệt,
+   bị huỷ, thiếu buổi...), ai báo lúc nào, và việc dở dang của CHÍNH người đang cầm máy (đang đếm dở,
+   báo cáo chưa gửi được vì mất mạng). Khu cần làm đứng trước, khu đã xong xếp sau. */
 function vKhu() {
   const b = S.boot;
   const mine = myKhu();
-  const cards = mine.map((k) => {
+  const cur = slotNow();
+  const xong = (k) => (cur && b.nSlot > 1 ? (b.slotDone[k.id] || new Set()).has(cur.i) : daBaoHomNay(k.id)) && khuStatus(k).cls === 'ok';
+  const cho = readPending().filter(ofMe);
+  const cards = mine.slice().sort((x, y) => Number(xong(x)) - Number(xong(y))).map((k) => {
     const st = khuStatus(k);
     const cls = st.cls === 'ok' ? 'background:var(--okbg);border:2px solid var(--ok)' : st.cls === 'warn' ? 'background:var(--warnbg);border:2px solid var(--warn)' : 'background:#ECEAE4;border:2px solid #8C8678';
+    const n = demDo(k.id), guiSau = cho.some((j) => j.khu === k.id);
+    const viec = [
+      guiSau ? '<span class="sm b" style="color:var(--bad)">Có báo cáo chưa gửi được</span>' : '',
+      n ? `<span class="sm b" style="color:var(--pri)">Đang đếm dở ${n} phi</span>` : '',
+      cur && b.nSlot > 1 && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(cur.i) && daBaoHomNay(k.id) ? `<span class="sm b" style="color:var(--warn)">Chưa đếm ${esc(slotTen(cur, b.nSlot))}</span>` : '',
+    ].filter(Boolean).join('');
     return `<button class="col gap8" style="${cls};min-height:104px;padding:14px;border-radius:16px;text-align:left;align-items:flex-start" data-a="khuopen" data-k="${esc(k.id)}">
-      <b class="clamp2" style="font-size:20px;line-height:1.2;width:100%">${esc(k.name)}</b><span class="badge ${st.cls}">${st.label}</span><span class="sm">${esc(st.who)}</span></button>`;
+      <b class="clamp2" style="font-size:20px;line-height:1.2;width:100%">${esc(k.name)}</b><span class="badge ${st.cls}">${st.label}</span><span class="sm">${esc(st.who)}</span>${viec}</button>`;
   }).join('');
   const hidden = b.khuAct.length - mine.length;
   /* Đếm nhiều lần/ngày thì "đã báo" phải hiểu theo khung đang diễn ra: khu báo lúc 8h đã xong
      buổi sáng nhưng chưa xong buổi chiều, nói "Đã báo 3/3" lúc 14h là sai. */
-  const cur = slotNow();
+  const cua = isQL() ? 'khu' : 'khu của bạn';
   const sub = !mine.length ? 'Bạn chưa được giao khu nào'
-    : cur ? 'Đang ' + cur.label + ': đã đếm ' + mine.filter((k) => (b.slotDone[k.id] || new Set()).has(cur.i)).length + '/' + mine.length + ' khu của bạn'
-    : 'Đã báo ' + mine.filter((k) => daBaoHomNay(k.id)).length + '/' + mine.length + ' khu của bạn';
+    : cur && b.nSlot > 1 ? 'Đang ' + cur.label + ': đã đếm ' + mine.filter((k) => (b.slotDone[k.id] || new Set()).has(cur.i)).length + '/' + mine.length + ' ' + cua
+    : 'Đã báo ' + mine.filter((k) => daBaoHomNay(k.id)).length + '/' + mine.length + ' ' + cua;
   const body = mine.length
-    ? `<div class="grid2">${cards}</div>${hidden ? `<div class="sm muted" style="padding:10px 2px;line-height:1.4">Còn ${hidden} khu do người khác phụ trách nên không hiện ở đây.</div>` : ''}`
-    : `<div class="card warn col gap6"><b style="font-size:18px">Chưa được giao khu nào</b><span class="sm" style="line-height:1.4">Admin cần vào Thêm → Cài đặt → Khu bãi để gán bạn phụ trách khu. Khi đó khu sẽ hiện ở màn này.</span></div>`;
-  return `${head('Chọn khu để báo cáo', sub, S.khu ? 'dem' : 'home')}
+    ? `<div class="sm muted" style="padding:0 2px 10px;line-height:1.4">Chạm vào khu bạn đang đứng để mở bảng đếm của khu đó.</div>
+      ${b.closed ? `<div class="card warn" style="margin-bottom:10px">${ngayKhoaMsg()}</div>` : ''}
+      <div class="grid2">${cards}</div>${hidden ? `<div class="sm muted" style="padding:10px 2px;line-height:1.4">Còn ${hidden} khu do người khác phụ trách nên không hiện ở đây.</div>` : ''}`
+    : `<div class="card warn col gap6"><b style="font-size:18px">Chưa được giao khu nào</b><span class="sm" style="line-height:1.4">Admin cần vào Thêm → Cài đặt → Khu bãi để giao khu cho bạn. Khi đó khu sẽ hiện ở màn này.</span></div>`;
+  return `${head('Chọn khu để báo cáo', sub, 'home')}
     <div class="f1 scroll pad" id="body">${body}</div>`;
 }
 
@@ -1052,7 +1070,7 @@ function vKhu() {
 function demView() {
   const b = S.boot, k = S.khu, kname = b.khuBy[k].name;
   if (!b.phiAct.length) return `${head('Báo cáo ' + esc(kname), '', 'home')}<div class="pad muted">Chưa có phi thép nào trong hệ thống. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
-  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Khu này đã giao cho người khác. Bấm "Đổi khu" để chọn khu của bạn, hoặc nhờ admin gán quyền.</span><button class="btn s full" data-a="nav" data-s="khu">Đổi khu</button></div></div>`;
+  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Khu này đã giao cho người khác. Hãy chọn khu của bạn, hoặc nhờ admin giao khu.</span><button class="btn s full" data-a="nav" data-s="khu">CHỌN KHU KHÁC</button></div></div>`;
   const zk =S.zoomK && S.zoomK !== k ? S.zoomK : null;
   const others = b.khuAct.filter((x) => x.id !== k);
   const shown = zk ? others.filter((x) => x.id === zk) : others;
@@ -1157,7 +1175,7 @@ function demView() {
   }
   const pendingNote = readPending().filter(ofMe).length;
 
-  return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về tổng quan" data-a="nav" data-s="home">${IC.back}</button><div class="t"><h1>Báo cáo ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" data-a="nav" data-s="khu">Đổi khu</button></div>
+  return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về danh sách khu" data-a="nav" data-s="khu">${IC.back}</button><div class="t"><h1>Báo cáo ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" data-a="nav" data-s="khu">Chọn khu khác</button></div>
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
     ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}
     ${b.closed ? `<div class="toast err">${ngayKhoaMsg()}</div>` : ''}
@@ -2684,7 +2702,10 @@ function syncQty() {
   S.nhap.qty = Math.min(cap, parseInt(e.value.replace(/\D/g, '') || '0', 10));
 }
 
-async function go(screen, noPush) {
+/* khu: chỉ dùng với screen 'dem' — mở THẲNG màn đếm của khu đó (thẻ nhắc ở Tổng quan, nút "Báo cáo
+   khu X", nút Back). Không có khu thì tab Báo cáo mở MÀN CHỌN KHU: người đếm phải tự chọn khu mỗi
+   lần, để không ai báo nhầm sang khu đã mở lần trước. */
+async function go(screen, noPush, khu) {
   // chấm công nay là một mục của màn Nhật ký; lối cũ (nút THỬ LẠI, lịch sử trình duyệt) dẫn về đó
   if (screen === 'chamcong') { S.logTab = 'tk'; screen = 'nhatky'; }
   S.err = ''; S.sel = null;
@@ -2694,13 +2715,9 @@ async function go(screen, noPush) {
   if (screen === 'dem') {
     const ok = (id) => id && S.boot.khuBy[id] && S.boot.khuBy[id].active && canCount(id);
     if (!S.boot.khuAct.length) { say('Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.', true); S.screen = 'home'; return render(); }
-    const mine = myKhu();
-    if (!mine.length) S.screen = 'khu'; // chưa được giao khu nào: về màn chọn khu để thấy lời nhắc
-    else {
-      let last = null;
-      try { last = localStorage.getItem(lastKhuKey()); } catch (e) { /* bỏ qua */ }
-      openDem(ok(S.khu) ? S.khu : ok(last) ? last : mine[0].id);
-    }
+    // khu không hợp lệ / không được đếm, hoặc không chỉ khu nào: về màn chọn khu (có lời nhắc nếu chưa được giao)
+    if (ok(khu)) openDem(khu);
+    else S.screen = 'khu';
   } else S.screen = screen;
   if (!noPush) pushNav();
   render();
@@ -2737,8 +2754,7 @@ window.addEventListener('popstate', (e) => {
   if (S.ask) { const a = S.ask; S.ask = null; a.resolve(false); pushNav(); return render(); } // Back = Để sau
   if (S.sel) { ACTIONS.closesel(); pushNav(); return; } // Back = đóng bảng số
   const st = e.state, sc = st && st.s ? st.s : 'home';
-  if (sc === 'dem' && st.k && S.boot.khuBy[st.k] && S.boot.khuBy[st.k].active) S.khu = st.k;
-  go(sc, true);
+  go(sc, true, sc === 'dem' ? st.k : undefined);
 });
 // Một thao tác ghi tại một thời điểm: bấm đúp hay mạng chậm cũng không gửi trùng (ví dụ 2 phiếu nhập)
 async function act(fn, okMsg, busyMsg) {
@@ -2877,7 +2893,7 @@ const ACTIONS = {
   askno() { const a = S.ask; S.ask = null; delete S.form.askin; render(); if (a) a.resolve(false); },
   retry(d) { S.loadErr = {}; go(d.s); },
   // thẻ nhắc một khu cụ thể (data-k) thì mở thẳng khu đó, không mở khu đếm gần nhất
-  nav(d) { if (d.s === 'dem' && d.k && S.boot && S.boot.khuBy[d.k] && canCount(d.k)) S.khu = d.k; go(d.s); },
+  nav(d) { go(d.s, false, d.s === 'dem' ? d.k : undefined); },
   khuopen(d) { if (!canCount(d.k)) return say('Bạn không phụ trách khu này.', true), render(); openDem(d.k); pushNav(); render(); },
   zoom(d) { S.zoomK = S.zoomK === d.k ? null : d.k; render(); },
   cell(d) {
