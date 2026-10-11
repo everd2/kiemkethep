@@ -1,4 +1,4 @@
-/* Chạy cả ba bộ test: npm test
+/* Chạy mọi bộ test: npm test
    Không cần mạng, không cần wrangler, không thêm thư viện nào (dùng node:sqlite có sẵn trong Node 22+). */
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -13,6 +13,7 @@ const SUITES = [
   ['Giao diện: bố cục cuộn từng màn', 'layout.test.js'],
   ['Giao diện: hành vi các thao tác', 'ui-logic.test.js'],
   ['Mô phỏng bãi nhiều ngày + dữ liệu sai', 'sim.test.mjs'],
+  ['Phân quyền: bảng quyền + mô phỏng ngẫu nhiên đối chiếu máy/server', 'roles.test.mjs'],
 ];
 
 const run = (file) =>

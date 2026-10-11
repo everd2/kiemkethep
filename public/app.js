@@ -459,14 +459,15 @@ const khuWaiting = (id) => S.boot.counts.some((c) => c.khu_id === id && !(c.duye
 /* Người đang xem có DUYỆT ĐƯỢC khu này không — cùng luật với reviewDuyet ở server, tính trên bootstrap
    để Tổng quan chỉ nhắc việc của đúng người: cấp chỉ huy duyệt được mọi khu; CVKTHT chỉ khi mọi ô do
    cấp 0 báo (cap ghi trong dòng), khu không còn phiếu kho chờ, và không có phiếu kho nào được duyệt
-   SAU lần báo của khu. (Phiếu bị huỷ sau lần báo thì bootstrap không có — màn Duyệt và server vẫn
-   chặn đúng; ở đây chỉ là chọn có nhắc hay không.) */
+   hoặc huỷ SAU lần báo mới nhất của khu (phieuTs, cùng mốc với màn Duyệt). */
 const khuDuyetDuoc = (id) => {
   if (isCH()) return true;
   if (capMe() !== 1) return false;
-  const b = S.boot, rp = b.rm[id];
-  if (b.counts.some((c) => c.khu_id === id && (c.cap == null ? 2 : c.cap) !== 0)) return false;
-  return !(b.receipts || []).some((r) => r.khu_id === id && !r.voided && (!r.duyet_day || (rp && r.duyet_ts > rp.ts)));
+  const b = S.boot, cs = b.counts.filter((c) => c.khu_id === id);
+  if (cs.some((c) => (c.cap == null ? 2 : c.cap) !== 0)) return false;
+  if ((b.receipts || []).some((r) => r.khu_id === id && !r.voided && !r.duyet_day)) return false;
+  const subTs = cs.reduce((m, c) => Math.max(m, c.ts || 0), 0);
+  return !(subTs && ((b.phieuTs || {})[id] || 0) > subTs);
 };
 /* ===== Khung giờ đếm (mỗi khu đếm nhiều lần/ngày) =====
    Cùng luật với server (slotOf/slotsDue): khung ĐÃ KẾT THÚC mà khu chưa đếm là thiếu, và lần đếm

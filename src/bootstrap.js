@@ -12,7 +12,7 @@ export async function bootstrap(env, user) {
   const day = vnDay();
   const lc = await env.DB.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -68,6 +68,11 @@ export async function bootstrap(env, user) {
        LEFT JOIN users u ON u.id = h.user_id
        WHERE h.day = ?1 AND h.id = (SELECT MAX(h2.id) FROM bao_cao_huy h2 WHERE h2.day = ?1 AND h2.khu_id = h.khu_id)`
     ).bind(day),
+    /* Lần gần nhất một phiếu kho của khu được duyệt hoặc (đã duyệt rồi) bị huỷ — đúng câu mvTsR của màn
+       Duyệt. Tổng quan dùng nó để biết khu nào đếm TRƯỚC lúc có phiếu kho mới (phieuSau), tức CVKTHT
+       không duyệt được, mà không phải đoán. */
+    env.DB.prepare(`SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b FROM receipts
+                    WHERE duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ? GROUP BY khu_id`).bind(last, day),
   ]);
   return {
     rev: rev.results[0] ? rev.results[0].value : 0,
@@ -85,6 +90,7 @@ export async function bootstrap(env, user) {
     baseline: baseline.results,
     reports: reports.results,
     huy: huyR.results,
+    phieuTs: Object.fromEntries(phieuTsR.results.map((r) => [r.khu_id, Math.max(r.a || 0, r.b || 0)])),
     slot: slotInfo(settings.results, reportTimes.results),
     receipts: receipts.results,
     innKhu: innKhu.results,

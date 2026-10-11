@@ -1209,7 +1209,7 @@ const run = async () => {
     ok('trung đội trưởng: "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
 
     // phiếu kho duyệt SAU lần báo: CVKTHT không duyệt được khu đó nên không bị nhắc
-    r(`${nhacBoot(bao(0, 2) + ` NB.receipts = [${pk({ khu_id: 'A', duyet_day: today, duyet_ts: Date.now() })}];`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    r(`${nhacBoot(bao(0, 2) + ` NB.receipts = [${pk({ khu_id: 'A', duyet_day: today, duyet_ts: Date.now() })}]; NB.phieuTs = { A: Date.now() };`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
     ok('CVKTHT: khu đếm trước lúc phiếu kho vào tồn → không nhắc duyệt', !/chờ bạn duyệt/.test(the()), the());
 
     // phiếu kho chờ duyệt: cấp chỉ huy thấy tất cả, người lập chỉ thấy phiếu của mình
