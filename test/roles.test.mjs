@@ -6,7 +6,7 @@
       - app.js chạy trong máy ảo với đúng bootstrap của người đó (khuDuyetDuoc, thẻ nhắc ở Tổng
         quan, nút trên màn Duyệt).
       Lệch ở đâu là lỗi: máy nhắc việc người ta không làm được, hoặc giấu việc người ta phải làm. */
-import { boot, advance, vnDay } from './harness.mjs';
+import { boot, addDays, advance, vnDay } from './harness.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 const ROOT = process.argv[2] || '.';
 const SEED = Number(process.argv[3] || 20261011);
 const CORE = await import(pathToFileURL(path.resolve(ROOT, 'src/core.js')).href);
+const REV = await import(pathToFileURL(path.resolve(ROOT, 'src/review.js')).href);
 const T = [];
 const ok = (name, cond, extra) => { T.push([cond ? 'PASS' : 'FAIL', name, extra === undefined ? '' : String(extra)]); };
 const eq = (name, a, b) => ok(name + ' = ' + JSON.stringify(b), JSON.stringify(a) === JSON.stringify(b), 'thực tế: ' + JSON.stringify(a));
@@ -114,10 +115,10 @@ async function main() {
   }
 
   /* ================= 2. Mô phỏng ngẫu nhiên, đối chiếu luật / server / máy ================= */
-  const STEPS = 400;
+  const STEPS = Number(process.env.KT_BUOC || 600);
   const KHU = ['A', 'B', 'C', 'D'];
   const log = [];
-  let lech = 0, buoc = 0, thuDuyet = 0, thuDuyetDung = 0;
+  let lech = 0, buoc = 0, thuDuyet = 0, thuDuyetDung = 0, soLanXemLai = 0, soNgay = 0, soDoiVaiTro = 0;
   const loi = (msg) => { lech++; if (lech <= 12) ok(`[hạt giống ${SEED}, bước ${buoc}] ${msg}`, false, log.slice(-6).join(' | ')); };
   const review = async (who) => (await S.call('GET', '/review', undefined, who)).data;
   const canViec = (k) => k.waiting || k.phieu.length || k.recheck;
@@ -125,7 +126,7 @@ async function main() {
   async function doiChieu() {
     const rv = await review('Dai');
     const rvKhuTen = new Set(rv.khus.map((k) => k.name));
-    for (const who of ['Cv', 'Trung', 'An']) {
+    for (const who of ['Cv', 'Trung', 'An', 'Binh']) {
       const u = U[who];
       const bt = (await S.call('GET', '/bootstrap', undefined, who)).data;
       asUser(bt, { id: u.id, name: u.name, role: u.role });
@@ -139,7 +140,7 @@ async function main() {
         else if (rvKhuTen.has(t)) choBan.add(t);
       }
       for (const k of rv.khus) {
-        const luat = CORE.duyetCap(u.role, Math.max(k.capBao, k.capPhieu));
+        const luat = CORE.duyetCuaNguoi(u, Math.max(k.capBao, k.capPhieu), k.nguoiBao);
         // 2a. máy và luật phải khớp với MỌI khu đang có báo cáo chờ duyệt
         const choMay = R(`!!(S.boot.rm[${JSON.stringify(k.khu)}] && khuWaiting(${JSON.stringify(k.khu)}))`);
         if (choMay !== !!(k.waiting && k.rep && k.rep.day === bt.today)) {
@@ -150,8 +151,14 @@ async function main() {
           loi(`${who}: máy tính khu ${k.khu} ${luat ? 'KHÔNG ' : ''}duyệt được, luật nói ${luat ? 'được' : 'không'} (capBao ${k.capBao}, capPhieu ${k.capPhieu}, phieuSau ${k.phieuSau})`);
         }
       }
+      // 2a'. thẻ "cần xem lại": cấp chỉ huy thấy đúng những khu server đánh dấu recheck (và không còn báo cáo chờ)
+      const xl = (home.match(/<b style="font-size:17px">([^<]*) cần xem lại<\/b>/) || [])[1] || '';
+      const nenXl = CORE.capOf(u.role) >= 2 ? rv.khus.filter((k) => k.recheck && !k.waiting) : [];
+      const thayXl = nenXl.length === 0 ? '' : nenXl.length === 1 ? nenXl[0].name : nenXl.length + ' khu';
+      if (xl !== thayXl) loi(`${who}: thẻ "cần xem lại" là "${xl}", đúng phải là "${thayXl}"`);
+      if (nenXl.length) soLanXemLai++;
       // 2b. thẻ "chờ bạn duyệt" ở Tổng quan: đúng những khu chờ duyệt mà người này duyệt được
-      const nen = rv.khus.filter((k) => k.waiting && CORE.capOf(u.role) >= 1 && CORE.duyetCap(u.role, Math.max(k.capBao, k.capPhieu)));
+      const nen = rv.khus.filter((k) => k.waiting && CORE.capOf(u.role) >= 1 && CORE.duyetCuaNguoi(u, Math.max(k.capBao, k.capPhieu), k.nguoiBao));
       const thay = nen.length === 0 ? new Set() : nen.length === 1 ? new Set([nen[0].name]) : new Set(['*' + nen.length + ' khu']);
       if ([...thay].sort().join() !== [...choBan].sort().join()) loi(`${who}: thẻ "chờ bạn duyệt" là [${[...choBan]}], đúng phải là [${[...thay]}]`);
       // 2c. màn Duyệt: nút Duyệt khu đúng ở những khu người này duyệt được
@@ -161,7 +168,7 @@ async function main() {
         const dv = R('vDuyet()');
         for (const k of rvU.khus) {
           const coNut = new RegExp(`data-a="khuduyet" data-k="${k.khu}"`).test(dv);
-          const nen2 = !!canViec(k) && CORE.duyetCap(u.role, Math.max(k.capBao, k.capPhieu));
+          const nen2 = !!canViec(k) && CORE.duyetCuaNguoi(u, Math.max(k.capBao, k.capPhieu), k.nguoiBao);
           if (coNut !== nen2) loi(`${who}: màn Duyệt ${coNut ? 'có' : 'thiếu'} nút duyệt khu ${k.khu} (luật: ${nen2 ? 'được' : 'không'})`);
           const nutHuy = new RegExp(`data-a="recount" data-k="${k.khu}"`).test(dv);
           if (nutHuy && !CORE.duyetCap(u.role, k.capBao)) loi(`${who}: màn Duyệt có nút huỷ báo cáo khu ${k.khu} mà không đủ cấp`);
@@ -182,8 +189,8 @@ async function main() {
       const r = await S.call('PUT', '/counts', { khu, items: items({ D16: Math.floor(rnd() * 300), D20: Math.floor(rnd() * 50) }) }, who);
       log.push(`${who} báo ${khu}: ${r.status}`);
       // quyền đếm: khu đã giao thì tiểu đội trưởng khác bị chặn; CVKTHT trở lên đếm mọi khu
-      const giao = { A: 'An', B: 'Binh' }[khu];
-      const nen = !(U[who].role === 'tieudoi' && giao && giao !== who);
+      const giao = S.sql('SELECT user_id FROM khu_user WHERE khu_id = ?', khu).map((x) => x.user_id);
+      const nen = !(U[who].role === 'tieudoi' && giao.length && !giao.includes(U[who].id));
       if ((r.status === 200) !== nen) loi(`${who} báo khu ${khu}: HTTP ${r.status}, luật nói ${nen ? 'được' : 'bị chặn'}`);
     } else if (x < 0.45) {
       const who = pick(['Cv', 'Trung']);
@@ -206,7 +213,7 @@ async function main() {
       const rv = await review('Cv');
       const k = rv.khus.find((y) => y.khu === khu);
       if (k && canViec(k)) {
-        const du = CORE.duyetCap('cvktht', Math.max(k.capBao, k.capPhieu));
+        const du = CORE.duyetCuaNguoi(U.Cv, Math.max(k.capBao, k.capPhieu), k.nguoiBao);
         const r = await S.call('POST', '/review/duyet', { khu, marks: { [khu]: k.mark } }, 'Cv');
         thuDuyet++;
         log.push(`Cv duyệt ${khu}: ${r.status} (dự đoán ${du ? 200 : 403})`);
@@ -226,14 +233,33 @@ async function main() {
         log.push(`Cv huỷ ${khu}: ${r.status}`);
         if ((r.status === 200) !== du) loi(`CVKTHT huỷ báo cáo khu ${khu}: HTTP ${r.status}, dự đoán ${du ? 200 : 403}`);
       }
-    } else {
+    } else if (x < 0.975) {
       const r = await S.call('POST', '/conflict/resolve', { khu, pick: { D16: Math.floor(rnd() * 300) } }, 'Cv');
       log.push(`Cv chọn số ${khu}: ${r.status}`);
+    } else if (x < 0.99) {
+      /* QUA NGÀY MỚI: sổ hôm nay tự chốt (như lần chạy 0h05), báo cáo chưa duyệt chuyển sang ngày sau
+         kèm cấp người báo. Mọi đối chiếu phải còn đúng trên ngày mới. */
+      const d = vnDay(); addDays(1);
+      const t = Date.parse(vnDay() + 'T07:00:00+07:00'); advance(t - Date.now());
+      await REV.closeDayAuto(S.env, d);
+      soNgay++;
+      log.push(`qua ngày ${vnDay()}`);
+    } else {
+      /* ĐỔI VAI TRÒ Binh giữa tiểu đội trưởng và CVKTHT: số Binh đã báo giữ cấp lúc báo; lên CVKTHT
+         thì thôi phụ trách khu B (khu B thành chưa giao ai). */
+      const moi = U.Binh.role === 'tieudoi' ? 'cvktht' : 'tieudoi';
+      const r = await S.call('POST', `/users/${U.Binh.id}/role`, { role: moi, confirm_khu: true }, 'Admin');
+      if (r.status === 200) { U.Binh.role = moi; soDoiVaiTro++; }
+      if (moi === 'tieudoi' && r.status === 200 && rnd() < 0.5) await S.call('PUT', '/khu/B/users', { users: [U.Binh.id] }, 'Admin');
+      log.push(`Binh thành ${moi}: ${r.status}`);
+      if (moi === 'cvktht' && S.sql('SELECT 1 FROM khu_user WHERE user_id = ?', U.Binh.id).length) loi('lên CVKTHT mà vẫn còn đứng tên khu');
     }
     await doiChieu();
   }
   ok(`mô phỏng ${STEPS} bước (hạt giống ${SEED}): máy, server và luật khớp nhau ở mọi bước`, lech === 0, lech + ' chỗ lệch');
   ok(`đã bấm Duyệt khu thật bằng CVKTHT nhiều lần, đủ cả hai kết quả`, thuDuyet >= 20, thuDuyet + ' lần, ' + thuDuyetDung + ' đúng dự đoán');
+  ok('mô phỏng có đi qua tình huống khu "cần xem lại"', soLanXemLai > 0, soLanXemLai + ' lần');
+  ok('mô phỏng có qua ngày mới và có đổi vai trò giữa chừng', soNgay > 0 && soDoiVaiTro > 0, soNgay + ' ngày, ' + soDoiVaiTro + ' lần đổi vai trò');
   const kq = S.sql("SELECT COUNT(*) n FROM audit WHERE action = 'khu_duyet' AND user_id = ?", U.Cv.id)[0].n;
   ok('trong đó có lần CVKTHT duyệt được thật', kq > 0, kq);
 

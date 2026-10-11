@@ -309,7 +309,8 @@ const isCH = () => capMe() >= 2; // cấp chỉ huy: duyệt được hết, đ�
 /* duyệt được việc mà người báo (cao nhất) ở cấp capBao không. Cấp người báo do server ghi vào dòng số
    liệu lúc báo (cap); thiếu thì coi là 2, tức chỉ cấp chỉ huy duyệt. */
 const duyetCap = (capBao) => capMe() >= 2 || (capMe() === 1 && capBao === 0);
-const duyetDuoc = (r) => duyetCap(r && r.cap != null ? r.cap : 2);
+// một lần ghi sổ vay: theo cấp ghi trong dòng, và dưới cấp chỉ huy thì không tự duyệt lần ghi của mình (như server)
+const duyetDuoc = (r) => duyetCap(r && r.cap != null ? r.cap : 2) && (isCH() || !r || r.user_id !== S.me.id);
 const canIn = () => !!S.me && S.me.role in CAP && S.me.role !== 'tieudoi';
 // Khu chưa phân công ai thì mọi người đếm được; đã phân công thì chỉ Tiểu đội trưởng được gán, và CVKTHT trở lên
 const canCount = (kid) => {
@@ -460,11 +461,17 @@ const khuWaiting = (id) => S.boot.counts.some((c) => c.khu_id === id && !(c.duye
    để Tổng quan chỉ nhắc việc của đúng người: cấp chỉ huy duyệt được mọi khu; CVKTHT chỉ khi mọi ô do
    cấp 0 báo (cap ghi trong dòng), khu không còn phiếu kho chờ, và không có phiếu kho nào được duyệt
    hoặc huỷ SAU lần báo mới nhất của khu (phieuTs, cùng mốc với màn Duyệt). */
+// cùng điều kiện 'recheck' của màn Duyệt: phiếu kho của khu được duyệt/huỷ SAU lần duyệt số gần nhất
+const khuCanXemLai = (id) => {
+  const lastDuyet = S.boot.counts.filter((c) => c.khu_id === id).reduce((m, c) => Math.max(m, c.duyet_at || 0), 0);
+  return !!(lastDuyet && ((S.boot.phieuTs || {})[id] || 0) > lastDuyet);
+};
 const khuDuyetDuoc = (id) => {
   if (isCH()) return true;
   if (capMe() !== 1) return false;
   const b = S.boot, cs = b.counts.filter((c) => c.khu_id === id);
   if (cs.some((c) => (c.cap == null ? 2 : c.cap) !== 0)) return false;
+  if (cs.some((c) => c.user_id === S.me.id)) return false; // không tự duyệt số của mình
   if ((b.receipts || []).some((r) => r.khu_id === id && !r.voided && !r.duyet_day)) return false;
   const subTs = cs.reduce((m, c) => Math.max(m, c.ts || 0), 0);
   return !(subTs && ((b.phieuTs || {})[id] || 0) > subTs);
@@ -862,6 +869,13 @@ function vHome() {
   }
   if (choCuaToi.length) {
     alerts.push({ bad: false, t: 'Báo cáo ' + choCuaToi.map((k) => k.name).join(', ') + ' của bạn chờ duyệt', s: 'Đã gửi, chờ cấp trên duyệt mới tính vào tồn', to: null });
+  }
+  /* Khu CẦN XEM LẠI: số đã duyệt, rồi một phiếu kho của khu được duyệt hoặc huỷ sau đó, nên dự kiến
+     vừa đổi mà số đã duyệt thì không. Duyệt lại là quyết định về phiếu kho → chỉ cấp chỉ huy. Khu có
+     báo cáo mới đang chờ thì thẻ "chờ bạn duyệt" ở trên đã nói, không nhắc hai lần. */
+  if (isCH() && !b.closed) {
+    const xemLai = b.khuAct.filter((k) => !khuWaiting(k.id) && khuCanXemLai(k.id));
+    if (xemLai.length) alerts.push({ bad: false, t: (xemLai.length === 1 ? xemLai[0].name : xemLai.length + ' khu') + ' cần xem lại', s: 'Có phiếu kho duyệt hoặc huỷ sau khi số của khu đã duyệt. Vào Duyệt để duyệt lại', to: 'duyet' });
   }
   /* Khung ĐÃ HẾT mà thiếu: không bù được nữa, việc thiếu ghi vào nhật ký lúc chốt. Người quản lý việc
      đếm (CVKTHT) cần biết để nhắc khu; Tiểu đội trưởng không bù được khung đã qua — thẻ đỏ không bấm
@@ -1486,7 +1500,7 @@ function vDuyet() {
   const khus = R.khus || [];
   const phieu = R.phieu || [];
   // khu mình duyệt được: đủ cấp cho CẢ số đếm lẫn phiếu chờ của khu (duyệt khu là duyệt cả hai)
-  const khuDuoc = (k) => duyetCap(Math.max(k.capBao || 0, k.capPhieu || 0));
+  const khuDuoc = (k) => duyetCap(Math.max(k.capBao || 0, k.capPhieu || 0)) && (isCH() || !(k.nguoiBao || []).includes(S.me.id));
   const huyDuoc = (kid) => { const k = khus.find((x) => x.khu === kid); return !!k && duyetCap(k.capBao || 0); };
   const phieuBy = Object.fromEntries(phieu.map((v) => [v.key, v]));
 
@@ -1663,7 +1677,7 @@ function vDuyet() {
     /* Theo cấp bậc: CVKTHT không duyệt khu có số của CVKTHT trở lên, hoặc còn phiếu kho chờ. Không bày nút mà nói
        rõ đang chờ ai, và vì cái gì (số đếm hay phiếu) — không thì người xem tưởng app hỏng. */
     const duoc = khuDuoc(k), canViec = cho || choP || k.recheck;
-    const vuong = !canViec || duoc ? '' : choCapTren(!duyetCap(k.capBao || 0) ? 'Số của khu do CVKTHT hoặc cấp trên báo' : choP ? 'Khu còn phiếu kho chờ duyệt' : 'Số của khu đếm TRƯỚC lúc có phiếu kho mới duyệt hoặc huỷ (khu đếm lại thì CVKTHT duyệt được)');
+    const vuong = !canViec || duoc ? '' : choCapTren(!duyetCap(k.capBao || 0) ? 'Số của khu do CVKTHT hoặc cấp trên báo' : (k.nguoiBao || []).includes(S.me.id) ? 'Số của khu do chính bạn báo' : choP ? 'Khu còn phiếu kho chờ duyệt' : 'Số của khu đếm TRƯỚC lúc có phiếu kho mới duyệt hoặc huỷ (khu đếm lại thì CVKTHT duyệt được)');
     const btns = R.closed ? '' : `${vuong}<div class="row gap6">${!duoc ? '' : cho || choP
       ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT ${esc(cut(k.name, 14).toUpperCase())}</button>`
       : k.recheck ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT LẠI</button>` : ''}

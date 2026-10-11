@@ -7,7 +7,8 @@ import path from 'node:path';
 
 /* ---------- đồng hồ giả để nhảy ngày ---------- */
 const RealDate = Date;
-export const clock = { offset: 0 };
+// KT_LECH_PHUT: dời đồng hồ giả đi N phút ngay từ đầu, để chạy cả bộ test ở mọi giờ trong ngày (tìm lỗi chỉ hiện ở một giờ nào đó)
+export const clock = { offset: Number(process.env.KT_LECH_PHUT || 0) * 60e3 };
 class FakeDate extends RealDate {
   constructor(...a) {
     if (a.length === 0) super(RealDate.now() + clock.offset);

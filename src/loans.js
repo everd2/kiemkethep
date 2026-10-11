@@ -1,5 +1,5 @@
 // Sổ vay mượn thép với đối tác ngoài bãi (không tính vào tồn).
-import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetCap, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
+import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetCap, duyetCuaNguoi, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
 import { DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, UNAME, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn,
   readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
@@ -206,7 +206,7 @@ export async function duyetLoan(env, user, id) {
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
   if (r.voided) throw bad('Dòng này đã bị hủy, không duyệt được');
   if (r.duyet_ts) throw bad('Dòng này đã được duyệt');
-  if (!duyetCap(user.role, r.cap)) throw new HttpError(403, `Lần ghi do CVKTHT hoặc cấp trên ghi: cần ${CAP_TREN} duyệt.`, 'cap');
+  if (!duyetCuaNguoi(user, r.cap, [r.user_id])) throw new HttpError(403, `Lần ghi do CVKTHT, cấp trên hoặc chính bạn ghi: cần ${CAP_TREN} duyệt.`, 'cap');
   const info = await loanGroupInfo(env, r);
   const ts = Date.now();
   // phiếu kho đi kèm (thép qua bãi): vào tồn hôm nay, nên qua cùng chốt chặn với phiếu thường

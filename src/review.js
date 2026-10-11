@@ -1,6 +1,6 @@
 // Màn Duyệt: tính tồn, lượng dùng, cảnh báo; duyệt khu, chốt và mở lại ngày; việc tự động 23:50.
 import { CAP_TREN, HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
-  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, duyetCap, json, vnDay, vnHour } from './core.js';
+  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, duyetCuaNguoi, json, vnDay, vnHour } from './core.js';
 import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { RATE_SQL } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
@@ -43,7 +43,7 @@ export async function computeReview(env, day, opt = {}) {
     db.prepare(EFF_SELECT).bind(last, day),
     /* Lần báo MỚI NHẤT của từng ô, kèm trạng thái duyệt. Đây là số người duyệt đang phải quyết,
        khác số ở effR khi lần báo mới chưa được duyệt. */
-    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day, c.duyet_v, c.duyet_ts, c.duyet_at, c.cap, ${DUYET_NAME}, ${UNAME}
+    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day, c.duyet_v, c.duyet_ts, c.duyet_at, c.cap, c.user_id, ${DUYET_NAME}, ${UNAME}
                 FROM counts c LEFT JOIN users u ON u.id = c.user_id ${DUYET_JOIN}
                 WHERE c.day > ?1 AND c.day <= ?2
                   AND c.day = (SELECT MAX(c2.day) FROM counts c2
@@ -242,6 +242,7 @@ export async function computeReview(env, day, opt = {}) {
     let phieuSau = false; // tính sau vòng lặp phi, khi đã biết lần báo mới nhất (subTs)
     const items = [];
     let waiting = 0, blank = 0, lastDuyet = 0, subTs = 0, capBao = 0;
+    const nguoiBao = new Set(); // ai đang đứng tên các ô số của khu: không ai dưới cấp chỉ huy tự duyệt số của mình
     for (const p of phiR.results) {
       const key = k.id + '|' + p.id;
       const sr = sub[key];
@@ -256,6 +257,7 @@ export async function computeReview(env, day, opt = {}) {
       const ok = sr.duyet_ts != null && sr.duyet_ts === sr.ts;
       if (!ok) waiting++;
       capBao = Math.max(capBao, sr.cap ?? 2);
+      if (sr.user_id != null) nguoiBao.add(sr.user_id);
       subTs = Math.max(subTs, sr.ts || 0);
       if (sr.duyet_at) lastDuyet = Math.max(lastDuyet, sr.duyet_at);
       const d = sr.v - exp;
@@ -285,7 +287,7 @@ export async function computeReview(env, day, opt = {}) {
              như đã nằm sẵn trong số đếm (hoặc phiếu vừa huỷ bị coi như chưa từng huỷ). Đó là quyết
              định về một phiếu kho, nên CVKTHT không bấm được; khu đếm lại là hết.
          Duyệt khu là duyệt cả số lẫn phiếu trong một lần ghi, nên phải đủ cấp cho cả hai. */
-      capBao, phieuSau, capPhieu: (pendKhu[k.id] || []).length || phieuSau ? 2 : 0,
+      capBao, nguoiBao: [...nguoiBao], phieuSau, capPhieu: (pendKhu[k.id] || []).length || phieuSau ? 2 : 0,
       rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved } : null,
       /* Phiếu của khu được duyệt SAU số của khu: số đếm không gồm phần thép đó nên dự kiến vừa
          đổi, số đã duyệt của khu không còn khớp. Thay cho cảnh báo 'late' cũ, và quan trọng là
@@ -500,9 +502,9 @@ export async function reviewDuyet(req, env, user) {
      Khu có số của CVKTHT trở lên, hoặc còn phiếu kho, thì để nguyên cả khu cho cấp trên — không duyệt nửa khu: duyệt số
      mà bỏ lại phiếu là mở đúng cái khe "số đã duyệt, dự kiến đổi sau" mà việc duyệt gộp sinh ra để
      đóng. "Duyệt tất cả" thì duyệt những khu mình duyệt được, phần còn lại vẫn chờ. */
-  const list = cho.filter((k) => duyetCap(user.role, Math.max(k.capBao, k.capPhieu)));
+  const list = cho.filter((k) => duyetCuaNguoi(user, Math.max(k.capBao, k.capPhieu), k.nguoiBao));
   if (!list.length) {
-    throw new HttpError(403, (all ? 'Các khu đang chờ' : cho[0].name) + ` có số do CVKTHT (hoặc cấp trên) báo, hoặc còn phiếu kho chờ: cần ${CAP_TREN} duyệt.`, 'cap');
+    throw new HttpError(403, (all ? 'Các khu đang chờ' : cho[0].name) + ` có số do CVKTHT (hoặc cấp trên, hoặc chính bạn) báo, hoặc còn phiếu kho chờ: cần ${CAP_TREN} duyệt.`, 'cap');
   }
   const marks = b.marks && typeof b.marks === 'object' ? b.marks : null;
   const moi = marks ? list.filter((k) => marks[k.khu] !== k.mark) : [];

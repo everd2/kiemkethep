@@ -1,5 +1,5 @@
 // Dữ liệu chung một lần tải cho máy khách (/bootstrap).
-import { HIGH_KG, MIN_RATE_DAYS, NEG_KG, PHI_DEFAULTS, duyetCap, duyetPhieuDuoc, vnDay } from './core.js';
+import { HIGH_KG, MIN_RATE_DAYS, NEG_KG, PHI_DEFAULTS, duyetCuaNguoi, duyetPhieuDuoc, vnDay } from './core.js';
 import { slotInfo } from './slots.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './helpers.js';
 import { EFF_SELECT, MV_NEW } from './counts.js';
@@ -56,7 +56,7 @@ export async function bootstrap(env, user) {
     // đếm nhanh để nhắc ở Tổng quan; chi tiết nạp khi vào đúng màn Vay mượn, như /users
     // đếm theo LẦN GHI (grp) chứ không theo dòng: ghi một lần ba phi là MỘT việc admin phải duyệt
     // kèm cấp người ghi và có phiếu kho hay không, để đếm riêng những lần ghi NGƯỜI NÀY duyệt được
-    env.DB.prepare(`SELECT MAX(l.cap) cap,
+    env.DB.prepare(`SELECT MAX(l.cap) cap, MIN(l.user_id) uid,
                       EXISTS (SELECT 1 FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' AND r.voided = 0) kho
                     FROM loans l WHERE l.voided = 0 AND l.duyet_ts IS NULL GROUP BY COALESCE(l.grp, l.id)`),
     // các dòng vay mượn đã duyệt: tính phần còn nợ theo từng lần vay để biết khoản nào QUÁ HẠN
@@ -110,7 +110,7 @@ export async function bootstrap(env, user) {
     loanPending: loanPending.results.length,
     /* Trong đó, số lần ghi người đang xem DUYỆT ĐƯỢC (cùng luật với duyetLoan): thẻ nhắc ở Tổng quan
        dùng số này, không thì CVKTHT bị nhắc cả những lần ghi phải chờ cấp trên. */
-    loanDuyet: loanPending.results.filter((x) => (x.kho ? duyetPhieuDuoc(user.role) : duyetCap(user.role, x.cap))).length,
+    loanDuyet: loanPending.results.filter((x) => (x.kho ? duyetPhieuDuoc(user.role) : duyetCuaNguoi(user, x.cap, [x.uid]))).length,
     // số khoản (lần vay còn nợ) đã quá hạn trả, theo hai chiều: mình nợ đối tác / đối tác nợ mình
     loanQuaHan: (() => { const l = loanLots(loanLotR.results, day).filter((x) => x.quaHan); return { no: l.filter((x) => x.chieu === 'no').length, co: l.filter((x) => x.chieu === 'co').length }; })(),
   };

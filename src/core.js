@@ -61,6 +61,11 @@ export const CAP = { admin: 2, daidoi: 2, trungdoi: 2, cvktht: 1, tieudoi: 0 };
 export const capOf = (role) => CAP[role] ?? 0;
 // người có vai trò `role` duyệt được việc mà người báo (cao nhất) ở cấp `capBao` không
 export const duyetCap = (role, capBao) => capOf(role) >= 2 || (capOf(role) === 1 && capBao === 0);
+/* Như duyetCap, và thêm: dưới cấp chỉ huy thì KHÔNG AI DUYỆT VIỆC CỦA CHÍNH MÌNH. Cấp ghi trong dòng là
+   cấp LÚC BÁO, nên một Tiểu đội trưởng báo số rồi được nâng lên CVKTHT sẽ thấy báo cáo của mình mang
+   cấp 0 — thiếu chốt này là họ tự duyệt được số của mình. nguoiBao: id những người đứng tên việc đó. */
+export const duyetCuaNguoi = (user, capBao, nguoiBao) =>
+  duyetCap(user.role, capBao) && (capOf(user.role) >= 2 || !nguoiBao.includes(user.id));
 // duyệt / từ chối / huỷ PHIẾU KHO: chỉ cấp chỉ huy
 export const duyetPhieuDuoc = (role) => capOf(role) >= 2;
 // lập phiếu kho: từ CVKTHT trở lên

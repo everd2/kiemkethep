@@ -3160,6 +3160,18 @@ async function main() {
     eq('đại đội trưởng huỷ báo cáo đó', (await S.call('POST', '/recount', { khu: 'B', ly_do: 'nhầm khu' }, 'Dai')).status, 200);
     eq('ô quay về lần đã duyệt của tiểu đội trưởng, kèm cấp 0', [(await khuOf('B')).capBao, await ton('B', 'D16')], [0, 30]);
 
+    // --- không tự duyệt việc của mình: tiểu đội trưởng báo số rồi được nâng lên CVKTHT ---
+    await S.call('PUT', '/counts', { khu: 'C', items: items({ D16: 12 }) }, 'Binh');
+    const lB = await ghi('Binh', 2);
+    eq('Bình báo khu C lúc còn là tiểu đội trưởng: cấp 0', (await khuOf('C')).capBao, 0);
+    await S.call('POST', `/users/${idOf('Binh')}/role`, { role: 'cvktht', confirm_khu: true });
+    const tuD = await duyet(S, 'C', 'Binh');
+    eq('lên CVKTHT: không tự duyệt được báo cáo của chính mình', [tuD.status, tuD.data.code], [403, 'cap']);
+    eq('cũng không tự duyệt lần ghi sổ vay của mình', (await S.call('POST', '/loans/' + lB.data.ids[0] + '/duyet', {}, 'Binh')).status, 403);
+    eq('Tổng quan của Bình: không đếm lần ghi đó là việc của mình', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.loanDuyet, 0);
+    eq('CVKTHT khác duyệt được (báo cáo cấp 0 của người khác)', [(await duyet(S, 'C', 'Kho')).status, (await S.call('POST', '/loans/' + lB.data.ids[0] + '/duyet', {}, 'Kho')).status], [200, 200]);
+    await S.call('POST', `/users/${idOf('Binh')}/role`, { role: 'tieudoi' });
+
     // --- thôi là tiểu đội trưởng thì thôi phụ trách khu ---
     await S.call('PUT', '/khu/A/users', { users: [idOf('An'), idOf('Binh')] });
     await S.call('PUT', '/khu/C/users', { users: [idOf('An')] });
