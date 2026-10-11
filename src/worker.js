@@ -80,7 +80,7 @@ async function handle(req, env, url) {
   if (r0 === 'xuat' && method === 'POST') { need(LAP_PHIEU); return postXuat(req, env, user); }
   if (r0 === 'report' && method === 'GET') { need(LAP_PHIEU); return report(env, url); }
   /* Vay mượn ngoài bãi: GHI và XEM mở cho mọi vai trò (kể cả Tiểu đội trưởng), vì mục đích là nhiều
-     người cùng chép lại ngay lúc phát sinh. DUYỆT theo cấp bậc, như mọi phiếu khác. Hủy/rút lại thì
+     người cùng chép lại ngay lúc phát sinh. DUYỆT theo cấp bậc, như mọi phiếu khác. Huỷ/rút lại thì
      tự voidLoan kiểm quyền bên trong (người ghi hoặc người duyệt được), giống voidReceipt. */
   if (r0 === 'loans') {
     need(ALL);

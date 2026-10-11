@@ -27,7 +27,7 @@
 - **Số tấn của ngày đã chốt được khoá.** Lúc chốt, app lưu kg/cây của từng phi; báo cáo kỳ, Xem lại ngày cũ, Thống kê và tệp CSV ngày cũ nhân với số đó. Sửa kg/cây ở Cài đặt chỉ có tác dụng từ ngày chưa chốt trở đi, không viết lại số tấn của quá khứ.
 - Mất mạng khi gửi báo cáo: app lưu báo cáo kèm **ngày đếm** và tự gửi lại khi có mạng. Nếu đã sang ngày mới, báo cáo hiện ở Tổng quan để người dùng chọn *Gửi làm số hôm nay* hoặc *Bỏ*, không tự ghi vào sai ngày.
 - **Nhiều người dùng chung một điện thoại**: báo cáo chờ gửi và nháp đếm dở gắn với **từng người**. App chỉ tự gửi báo cáo của người đang đăng nhập; báo cáo của người khác nằm chờ chính người đó đăng nhập lại, không bị gửi dưới tên người khác và người khác cũng không bỏ được.
-- **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu. Mọi nút lưu đều bị khóa trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
+- **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu. Mọi nút lưu đều bị khoá trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
 - **Mọi phiếu đều chờ cấp chỉ huy duyệt**, kể cả phiếu cấp chỉ huy tự nhập. Phiếu ghi **cả ngày nhập và ngày duyệt**, và tính vào tồn theo **ngày duyệt**: thép về chiều ngày 7 duyệt sáng ngày 8 thì nằm trong số liệu ngày 8, chứng từ vẫn ghi đủ hai mốc. Nhờ vậy phiếu treo qua đêm không cần chặn chốt ngày.
 - Người lập **rút lại** phiếu chưa duyệt bất cứ lúc nào; phiếu đã duyệt thì chỉ hoàn tác được trong 10 phút kể từ **lúc duyệt**, sau đó nhờ cấp chỉ huy. Cấp chỉ huy **từ chối** phiếu chờ duyệt, hoặc **huỷ** phiếu đã duyệt cho tới khi sổ của ngày duyệt tự chốt (sau 0h).
 - **Chuyển khu** (Nhập → Chuyển khu): ghi một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng.
@@ -38,7 +38,7 @@
 - Nếu một phiếu được duyệt **sau khi** số của khu đã duyệt, số dự kiến của khu đổi mà số đã duyệt thì không: màn Duyệt nhắc *xem lại khu đó*. Duyệt lại khu là hết nhắc. Khi 2 người báo khác số, người duyệt xem **hai số cạnh nhau** và chọn từng phi — chọn số xong vẫn phải bấm Duyệt khu, vì chọn số không phải là duyệt số.
 - Không ẩn được khu còn thép (phải chuyển đi hoặc đếm về 0 trước).
 - **Xem lại ngày cũ**, **báo cáo Nhập – Dùng – Tồn theo kỳ** (xuất CSV, có **cột Điều chỉnh** riêng khi kỳ đó có sửa sổ), và **dự báo số ngày còn đủ dùng** từng phi (theo lượng dùng trung bình 28 ngày). Kỳ nào có phiếu xuất thì bảng thêm **cột "Có phiếu"** — phần lượng dùng đã giải thích được.
-- Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xóa).
+- Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xoá).
 - **Thống kê báo cáo (ai báo, ai không báo)** nằm ngay trong màn **Nhật ký hoạt động**, mục *Thống kê báo cáo* (Thêm → Nhật ký hoạt động): chọn 7, 30 hoặc 90 ngày, một dòng tóm tắt bao nhiêu người và bao nhiêu khu thiếu buổi, rồi một bảng theo người và một bảng theo khu. Mỗi dòng có nhãn *Đủ* hoặc *Thiếu N buổi*; chạm dòng thiếu để xem từng ngày. Chỉ tính các ngày đã chốt.
 
 ### Vai trò và cấp duyệt
@@ -69,7 +69,7 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 - **Tên đi theo mọi hoạt động.** Số đếm, phiếu, báo cáo khu và lần chốt ngày đều hiện tên người làm, nên khi tạo tài khoản hãy đặt **đúng họ tên**, đừng đặt theo chức danh — một tài khoản tên "admin" sẽ ghi "admin" lên mọi thứ và sau này không ai biết người thật là ai.
 - **Sửa được tên** nếu đặt sai. Số đếm, phiếu, báo cáo khu và tên người duyệt hiện tên mới **ngay**, kể cả dữ liệu cũ. Riêng **nhật ký** thì các dòng trước khi đổi vẫn mang tên cũ: nhật ký lưu sẵn tên vào từng dòng và database từ chối mọi lệnh sửa, cố ý như vậy để nhật ký không viết lại được. Chính dòng *"đổi tên X thành Y"* trong nhật ký là cái nối hai tên lại.
 - **Xoá tài khoản**: người đó không đăng nhập được nữa, bị đăng xuất khỏi mọi máy và bỏ khỏi phân công khu. **Mọi số đếm, phiếu và báo cáo họ đã làm vẫn giữ nguyên, vẫn mang tên họ** — nên hệ thống không xoá hẳn dòng tài khoản, chỉ đánh dấu đã xoá. Vì vậy cũng **khôi phục lại được** ngay trong app nếu xoá nhầm (khôi phục xong hãy đặt lại PIN cho họ).
-- **Admin đầu tiên** (tài khoản tạo ở màn Thiết lập) là chủ hệ thống: chỉ người này **sửa tên, xoá và khôi phục** tài khoản. Ngược lại, chính tài khoản đó thì **không ai khóa, hạ quyền hay xoá được** — kể cả một admin khác — để cả bãi không bao giờ mất đường quản lý người dùng. Mọi admin đều tạo được tài khoản mới.
+- **Admin đầu tiên** (tài khoản tạo ở màn Thiết lập) là chủ hệ thống: chỉ người này **sửa tên, xoá và khôi phục** tài khoản. Ngược lại, chính tài khoản đó thì **không ai khoá, hạ quyền hay xoá được** — kể cả một admin khác — để cả bãi không bao giờ mất đường quản lý người dùng. Mọi admin đều tạo được tài khoản mới.
 - Số điện thoại của tài khoản đã xoá vẫn bị giữ (mỗi số một tài khoản), nên muốn dùng lại số đó thì **khôi phục** tài khoản cũ thay vì tạo mới.
 
 ### Đếm nhiều lần mỗi ngày
@@ -246,13 +246,13 @@ Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên
 | Việc | Lệnh / cách làm |
 |---|---|
 | Cập nhật code sau khi sửa | `npx wrangler deploy` (chạy từ nhánh `main` sạch, không có thay đổi chưa commit). **Đẩy lên GitHub KHÔNG tự deploy** — dự án chưa nối Cloudflare Workers Builds. Máy đang mở app sẽ tự hiện dải "Có bản mới" |
-| Nâng cấp cấu trúc database | **Tự động**: Worker tự áp dụng thay đổi ở lần chạy đầu sau deploy (số phiên bản lưu ở bảng `meta`, khóa `schema`). Không cần chạy lại `schema.sql` |
+| Nâng cấp cấu trúc database | **Tự động**: Worker tự áp dụng thay đổi ở lần chạy đầu sau deploy (số phiên bản lưu ở bảng `meta`, khoá `schema`). Không cần chạy lại `schema.sql` |
 | Sao lưu dữ liệu ra file | `npx wrangler d1 export kho-thep --remote --output=backup.sql` |
-| Khôi phục về thời điểm cũ | Cloudflare Dashboard → Storage & Databases → D1 → kho-thep → **Time Travel** (khôi phục theo từng phút, thời hạn lưu tùy gói, xem trang giá D1 của Cloudflare) |
+| Khôi phục về thời điểm cũ | Cloudflare Dashboard → Storage & Databases → D1 → kho-thep → **Time Travel** (khôi phục theo từng phút, thời hạn lưu tuỳ gói, xem trang giá D1 của Cloudflare) |
 | Xem lỗi trực tiếp | `npx wrangler tail` |
 | Gắn tên miền riêng | Dashboard → Workers & Pages → kho-thep → Settings → **Domains & Routes** |
 | Quên PIN | Admin vào **Người dùng và PIN → Đặt lại PIN** |
-| Mất điện thoại | Admin **Khóa** tài khoản hoặc **Đăng xuất máy**, thiết bị bị đăng xuất ngay |
+| Mất điện thoại | Admin **Khoá** tài khoản hoặc **Đăng xuất máy**, thiết bị bị đăng xuất ngay |
 | Người nghỉ việc | Admin đầu tiên vào **Người dùng → Xoá tài khoản**. Hoạt động cũ vẫn giữ nguyên tên họ |
 | Đặt sai tên tài khoản | Admin đầu tiên vào **Người dùng → Sửa tên**. Số đếm và phiếu cũ hiện tên mới ngay |
 | Chạy thử xong, muốn dùng thật | Admin đầu tiên vào **Cài đặt → Dữ liệu thép → Xoá sạch**. Tải bản sao CSV trước |
@@ -288,7 +288,7 @@ Mở http://localhost:8787/setup để tạo admin thử.
 Nếu Cloudflare chặn do hết hạn mức trong ngày, app vẫn mở được và hiện số liệu lần tải gần nhất, báo cáo đếm được giữ lại để gửi sau. Nếu sau này thường xuyên vượt hạn mức, gói Workers Paid 5 USD/tháng gỡ các giới hạn này, không cần sửa code.
 
 ## Bảo mật đã có
-- PIN băm kèm PEPPER, không lưu PIN thật. Sai 5 lần khóa 15 phút, tái phạm khóa 1 giờ rồi 24 giờ. Một thiết bị (IP) sai quá 30 lần/ngày bị chặn đến hôm sau. Cookie `HttpOnly`, `Secure`, `SameSite=Strict`.
+- PIN băm kèm PEPPER, không lưu PIN thật. Sai 5 lần khoá 15 phút, tái phạm khoá 1 giờ rồi 24 giờ. Một thiết bị (IP) sai quá 30 lần/ngày bị chặn đến hôm sau. Cookie `HttpOnly`, `Secure`, `SameSite=Strict`.
 - Quyền kiểm tra ở server cho từng thao tác, không chỉ ẩn nút trên giao diện.
 - Chặn gửi yêu cầu từ trang web lạ (kiểm tra Origin).
 - Mọi thao tác ghi vào nhật ký (ai, làm gì, số cũ → số mới, lúc nào).

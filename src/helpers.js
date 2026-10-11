@@ -50,7 +50,7 @@ export async function readJson(req) {
 export const bump = (env) => env.DB.prepare("UPDATE meta SET value = value + 1 WHERE key = 'rev'");
 
 // Kiểm tra rồi mới ghi ở hai lượt khác nhau thì có khe hở (vd. vừa kiểm tra xong thì admin chốt ngày).
-// Câu chặn đặt đầu batch: điều kiện đúng thì vi phạm NOT NULL, D1 hủy cả batch vì batch là một giao dịch.
+// Câu chặn đặt đầu batch: điều kiện đúng thì vi phạm NOT NULL, D1 huỷ cả batch vì batch là một giao dịch.
 export const guardStmt = (env, cond, ...args) =>
   env.DB.prepare(`INSERT INTO meta (key, value) SELECT 'guard', NULL WHERE ${cond}`).bind(...args);
 export async function batchGuarded(env, guard, stmts, err) {

@@ -60,10 +60,10 @@ export const MIGRATIONS = {
        AND NOT EXISTS (SELECT 1 FROM audit WHERE action = 'settings_update' AND detail LIKE '%"auto_close"%')`,
   ],
   9: [
-    // voided_ts: lúc hủy phiếu. Hủy phiếu sau khi khu đã báo làm số dự kiến của khu đổi y như
-    // nhập muộn, nên màn Duyệt phải biết thời điểm hủy mới cảnh báo được (xem exception 'late').
+    // voided_ts: lúc huỷ phiếu. Huỷ phiếu sau khi khu đã báo làm số dự kiến của khu đổi y như
+    // nhập muộn, nên màn Duyệt phải biết thời điểm huỷ mới cảnh báo được (xem exception 'late').
     'ALTER TABLE receipts ADD COLUMN voided_ts INTEGER',
-    // phiếu đã hủy từ trước: lấy ts của phiếu làm mốc, coi như hủy ngay lúc nhập (không cảnh báo lùi)
+    // phiếu đã huỷ từ trước: lấy ts của phiếu làm mốc, coi như huỷ ngay lúc nhập (không cảnh báo lùi)
     'UPDATE receipts SET voided_ts = ts WHERE voided = 1 AND voided_ts IS NULL',
   ],
   /* Bản 1.3 — DUYỆT THEO KHU, và bỏ cơ chế tự ẩn phi khỏi khu.

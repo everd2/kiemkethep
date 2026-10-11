@@ -112,7 +112,7 @@ for (const sc of SCREENS) {
 const appRule = (CSS.match(/#app\{([^}]*)\}/) || ['', ''])[1];
 ok('#app không dùng 100vh (trình duyệt cũ mất phần đáy)', !/height\s*:\s*100vh/.test(appRule), appRule.slice(0, 90));
 ok('#app lấy chiều cao theo khung nhìn', /height\s*:\s*100%/.test(appRule) || /height\s*:\s*100dvh/.test(appRule), appRule.slice(0, 90));
-ok('html/body khóa cuộn trang để khung không trôi', /html,\s*body\{[^}]*overflow\s*:\s*hidden/.test(CSS));
+ok('html/body khoá cuộn trang để khung không trôi', /html,\s*body\{[^}]*overflow\s*:\s*hidden/.test(CSS));
 ok('vùng cuộn không kéo theo cả trang', /\.scroll\{[^}]*overscroll-behavior\s*:\s*contain/.test(CSS));
 ok('bảng đếm cũng vậy', /#mx\{[^}]*overscroll-behavior\s*:\s*contain/.test(CSS));
 ok('hộp xác nhận dài cuộn được trong hộp', /\.modal \.box\{[^}]*max-height[^}]*overflow-y\s*:\s*auto/.test(CSS));

@@ -14,7 +14,7 @@ import { checkTransferStock } from './phieu.js';
    lệch, rồi để người duyệt quyết định. Lệch to hay nhỏ chỉ đổi màu chữ, KHÔNG đổi việc khu có
    duyệt được hay không — mọi khu đã báo đều duyệt được, riêng từng khu, không liên quan khu
    khác. Nhờ vậy biến mất cả ba cơ chế cũ: dấu số liệu (sig), hai loại cảnh báo khu_up/khu_down,
-   và phép tính "nhập muộn" dựa trên giờ nhập/giờ hủy phiếu. */
+   và phép tính "nhập muộn" dựa trên giờ nhập/giờ huỷ phiếu. */
 
 // tên người duyệt gần nhất của một khu (lấy ở ô có duyet_ts lớn nhất)
 export function lastDuyetBy(subRows, khuId) {
@@ -50,7 +50,7 @@ export async function computeReview(env, day, opt = {}) {
                                WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id
                                  AND c2.day > ?1 AND c2.day <= ?2)`).bind(last, day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
-    /* Chỉ phiếu ĐÃ DUYỆT và chưa bị hủy mới vào dự kiến, tính theo NGÀY DUYỆT.
+    /* Chỉ phiếu ĐÃ DUYỆT và chưa bị huỷ mới vào dự kiến, tính theo NGÀY DUYỆT.
        Lấy kèm kind để tách được phần ĐIỀU CHỈNH ra khỏi phần NHẬP THẬT. Tách chỉ để hiển thị:
        mọi phép tính tồn, dự kiến và lượng dùng vẫn dùng TỔNG (xem inn bên dưới), vì điều chỉnh
        cũng là thép vào/ra sổ thật sự. Nhưng cột "Nhập" của báo cáo kỳ thì không được gộp, nếu
@@ -61,8 +61,8 @@ export async function computeReview(env, day, opt = {}) {
                 GROUP BY phi_id, khu_id, kind`).bind(last, day),
     /* Mốc "lần gần nhất dự kiến của khu bị phiếu làm đổi". Phải gồm CẢ HAI chiều:
        - duyet_ts: lúc một phiếu được duyệt (thép cộng vào dự kiến)
-       - voided_ts: lúc một phiếu ĐÃ DUYỆT bị hủy (thép rút khỏi dự kiến)
-       Thiếu chiều thứ hai thì hủy phiếu lại LÀM GIẢM mốc này nên cảnh báo im lặng, trong khi
+       - voided_ts: lúc một phiếu ĐÃ DUYỆT bị huỷ (thép rút khỏi dự kiến)
+       Thiếu chiều thứ hai thì huỷ phiếu lại LÀM GIẢM mốc này nên cảnh báo im lặng, trong khi
        khu vẫn mang nhãn "Đã duyệt" mà số đã duyệt không còn khớp dự kiến — đúng cái bản 1.2 bắt
        được bằng exception 'late' với q < 0. Chỉ xét phiếu từng được duyệt: phiếu lập rồi từ chối
        luôn chưa bao giờ vào tồn nên không làm dự kiến đổi. */
@@ -295,7 +295,7 @@ export async function computeReview(env, day, opt = {}) {
          đường nào xoá nó, ngày đó bắt buộc chốt kèm ghi chú. */
       recheck: !!(lastDuyet && rcTs[k.id] && rcTs[k.id] > lastDuyet),
       phieu: pendKhu[k.id] || [],
-      /* Dấu của ĐÚNG những gì admin đang nhìn: lần báo mới nhất, mốc phiếu đã duyệt/hủy gần nhất và
+      /* Dấu của ĐÚNG những gì admin đang nhìn: lần báo mới nhất, mốc phiếu đã duyệt/huỷ gần nhất và
          danh sách phiếu chờ. Máy khách gửi lại dấu này khi bấm Duyệt; khác là có thứ mới tới sau lúc
          admin tải màn hình (khu báo lại, phiếu mới), duyệt lúc đó là duyệt một con số chưa ai xem. */
       mark: [subTs, rcTs[k.id] || 0, (pendKhu[k.id] || []).join(',')].join('|'),
@@ -491,7 +491,7 @@ export async function reviewDuyet(req, env, user) {
   if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   const all = !!b.all, khu = String(b.khu || '');
   /* Nhận cả khu đang bị nhắc "xem lại" (recheck) dù nó không có ô nào chờ duyệt: khi một phiếu
-     được duyệt hoặc bị hủy SAU lúc số của khu đã duyệt, số dự kiến đổi mà số đã duyệt thì không,
+     được duyệt hoặc bị huỷ SAU lúc số của khu đã duyệt, số dự kiến đổi mà số đã duyệt thì không,
      và đường gỡ chính là admin xem bảng lệch mới rồi DUYỆT LẠI. Không nhận thì nút "Duyệt lại"
      bị từ chối và cảnh báo treo vĩnh viễn — đúng cái bệnh của exception 'late' bản cũ. */
   const cho = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length || k.recheck));

@@ -204,7 +204,7 @@ async function loanGroupInfo(env, r) {
 export async function duyetLoan(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ?').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
-  if (r.voided) throw bad('Dòng này đã bị hủy, không duyệt được');
+  if (r.voided) throw bad('Dòng này đã bị huỷ, không duyệt được');
   if (r.duyet_ts) throw bad('Dòng này đã được duyệt');
   if (!duyetCuaNguoi(user, r.cap, [r.user_id])) throw new HttpError(403, `Lần ghi do CVKTHT, cấp trên hoặc chính bạn ghi: cần ${CAP_TREN} duyệt.`, 'cap');
   const info = await loanGroupInfo(env, r);
@@ -233,20 +233,20 @@ export async function duyetLoan(env, user, id) {
   return json({ ok: true });
 }
 
-// Hủy theo nhóm (grp), giống voidReceipt: chờ duyệt thì người ghi rút lại bất cứ lúc nào, đã
+// Huỷ theo nhóm (grp), giống voidReceipt: chờ duyệt thì người ghi rút lại bất cứ lúc nào, đã
 // duyệt thì chỉ trong 10 phút kể từ lúc duyệt, sau đó nhờ admin. Không có khái niệm "ngày chốt"
 // ở đây nên không cần chốt chặn theo ngày như receipts.
 export async function voidLoan(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ? AND voided = 0').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
   const pending = !r.duyet_ts;
-  // ai DUYỆT được lần ghi này thì cũng từ chối / hủy được nó; kèm phiếu kho thì theo luật phiếu kho
+  // ai DUYỆT được lần ghi này thì cũng từ chối / huỷ được nó; kèm phiếu kho thì theo luật phiếu kho
   const coKho = !!(r.grp && await env.DB.prepare("SELECT 1 x FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0").bind(r.grp).first());
   const quyen = coKho ? duyetPhieuDuoc(user.role) : duyetCap(user.role, r.cap);
   if (!quyen) {
-    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc cấp duyệt được lần ghi này mới hủy được');
+    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc cấp duyệt được lần ghi này mới huỷ được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) {
-      throw new HttpError(403, 'Dòng đã duyệt quá 10 phút, nhờ cấp trên hủy');
+      throw new HttpError(403, 'Dòng đã duyệt quá 10 phút, nhờ cấp trên huỷ');
     }
   }
   if (!pending && quyen && Date.now() - r.duyet_ts > LOAN_VOID_DAYS * 864e5) {

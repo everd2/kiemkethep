@@ -96,11 +96,11 @@ async function sim(seed) {
       const dp = await duyetP(r.data.id);
       if (dp.status !== 200) { bug(seed, 'duyệt phiếu nhập bị từ chối', `${k}/${p} ${q}: ${JSON.stringify(dp.data)}`, log); return; }
       add(k, p, q); bumpMap(nhapTong, p, q); say(`nhập ${k} ${p} +${q} (đã duyệt)`);
-      // thỉnh thoảng hủy ngay phiếu vừa ghi
+      // thỉnh thoảng huỷ ngay phiếu vừa ghi
       if (rnd() < 0.15) {
         const v = await S.call('DELETE', '/receipts/' + r.data.id);
-        if (v.status !== 200) { bug(seed, 'hủy phiếu bị từ chối', JSON.stringify(v.data), log); return; }
-        add(k, p, -q); bumpMap(nhapTong, p, -q); say(`hủy phiếu ${k} ${p} −${q}`);
+        if (v.status !== 200) { bug(seed, 'huỷ phiếu bị từ chối', JSON.stringify(v.data), log); return; }
+        add(k, p, -q); bumpMap(nhapTong, p, -q); say(`huỷ phiếu ${k} ${p} −${q}`);
       }
     }
 

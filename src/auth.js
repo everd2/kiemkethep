@@ -44,7 +44,7 @@ export async function login(req, env, url) {
   /* Tài khoản đã xoá: trả lời y như sai PIN, không nói "tài khoản đã xoá". Nói rõ là tiết lộ
      số điện thoại nào từng có tài khoản cho người đang dò. Người bị xoá thật thì hỏi admin. */
   if (u.deleted) { await ipFail.run(); throw fail(); }
-  if (u.locked) throw new HttpError(403, 'Tài khoản đã bị khóa, liên hệ admin');
+  if (u.locked) throw new HttpError(403, 'Tài khoản đã bị khoá, liên hệ admin');
   if (u.locked_until > Date.now()) {
     const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
     throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`);

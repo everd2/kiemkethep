@@ -103,7 +103,7 @@ export async function userAction(req, env, admin, id, action) {
     throw new HttpError(403, 'PIN của admin đầu tiên chỉ chính người đó đặt lại được — admin khác không làm thay');
   }
   if (PROTECT_FIRST.includes(action) && id === first) {
-    throw bad('Không thể khóa, hạ quyền hay xoá admin đầu tiên — đó là tài khoản quản lý hệ thống');
+    throw bad('Không thể khoá, hạ quyền hay xoá admin đầu tiên — đó là tài khoản quản lý hệ thống');
   }
   /* Tài khoản đã xoá thì chỉ còn khôi phục được. Cho đặt lại PIN hay đổi vai trò một tài khoản
      đã xoá chỉ sinh ra trạng thái nửa vời mà không ai dùng được, và PIN mới hiện ra màn hình
@@ -121,7 +121,7 @@ export async function userAction(req, env, admin, id, action) {
     return json({ ok: true, pin });
   }
   if (action === 'lock') {
-    if (id === admin.id) throw bad('Không thể tự khóa chính mình');
+    if (id === admin.id) throw bad('Không thể tự khoá chính mình');
     const lock = b.locked ? 1 : 0;
     await env.DB.batch([
       env.DB.prepare('UPDATE users SET locked = ? WHERE id = ?').bind(lock, id),

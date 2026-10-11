@@ -162,7 +162,7 @@ export async function duyetReceipt(env, user, id) {
   const day = vnDay();
   const r = await env.DB.prepare('SELECT * FROM receipts WHERE id = ?').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy phiếu');
-  if (r.voided) throw bad('Phiếu đã bị hủy, không duyệt được');
+  if (r.voided) throw bad('Phiếu đã bị huỷ, không duyệt được');
   if (r.duyet_day) throw bad('Phiếu này đã được duyệt');
   // phiếu kho chỉ cấp chỉ huy duyệt, ai lập cũng vậy
   if (!duyetPhieuDuoc(user.role)) throw new HttpError(403, `Phiếu kho cần ${CAP_TREN} duyệt.`, 'cap');
@@ -285,7 +285,7 @@ export async function postXuat(req, env, user) {
      lúc duyệt còn đủ. */
   await checkTransferStock(env, ctx.day, rows.map((r) => ({ phi_id: r.phi, khu_id: r.khu, qty: r.qty })), { kind: 'xuat', duyet: false });
   const note = 'Xuất cho ' + noi + (free ? ': ' + free : '');
-  /* Ghi chú rời để khóa riêng (ghi) chứ không phải note: writeReceipt luôn ghi đè note bằng nội
+  /* Ghi chú rời để khoá riêng (ghi) chứ không phải note: writeReceipt luôn ghi đè note bằng nội
      dung của phiếu, mà nội dung đó đã chứa sẵn nơi đến — để nguyên thì dòng nhật ký nhắc nơi
      đến hai lần trong cùng một câu. */
   return writeReceipt(env, user, ctx, rows, 'xuat', note, { khu: khuId, noi, ghi: free, lines });
@@ -326,11 +326,11 @@ export async function postAdjust(req, env, user) {
   return writeReceipt(env, user, ctx, rows, 'dc', note, { khu: khuId, dir, reason, note: free, lines });
 }
 
-/* Hủy theo phiếu: hủy cả các dòng cùng phiếu (nhiều phi, hoặc cả cặp chuyển khu).
+/* Huỷ theo phiếu: huỷ cả các dòng cùng phiếu (nhiều phi, hoặc cả cặp chuyển khu).
    Cùng một đường dùng cho hai việc, phân biệt bằng nhật ký:
    - TỪ CHỐI phiếu đang chờ duyệt (admin). Phiếu chưa vào tồn nên không có gì phải lùi,
      và người lập cũng rút lại phiếu của mình bất cứ lúc nào trước khi được duyệt.
-   - HỦY phiếu đã duyệt. Phiếu đã nằm trong tồn nên chỉ hủy được khi NGÀY DUYỆT chưa chốt
+   - HUỶ phiếu đã duyệt. Phiếu đã nằm trong tồn nên chỉ huỷ được khi NGÀY DUYỆT chưa chốt
      (không phải ngày nhập: phiếu nhập ngày 7 duyệt ngày 8 thì nó là số liệu của ngày 8). */
 export async function voidReceipt(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM receipts WHERE id = ? AND voided = 0').bind(id).first();
@@ -339,17 +339,17 @@ export async function voidReceipt(env, user, id) {
   const dayOf = pending ? vnDay() : r.duyet_day;
   if (!pending) {
     const closed = await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(r.duyet_day).first();
-    if (closed) throw new HttpError(409, 'Ngày duyệt phiếu đã chốt, không hủy được', 'closed');
+    if (closed) throw new HttpError(409, 'Ngày duyệt phiếu đã chốt, không huỷ được', 'closed');
   }
   /* Phiếu chờ duyệt: người lập rút lại được không giới hạn thời gian, vì chưa ảnh hưởng số liệu.
      Phiếu đã duyệt: người lập chỉ hoàn tác trong 10 phút kể từ LÚC DUYỆT (lúc nó vào tồn),
      sau đó phải nhờ admin. Mốc trước đây là lúc nhập, nay phiếu có thể được duyệt sau hàng giờ
      nên lấy mốc nhập sẽ làm người lập không bao giờ kịp hoàn tác. */
-  // ai DUYỆT được phiếu kho (cấp chỉ huy) thì cũng từ chối / hủy được nó
+  // ai DUYỆT được phiếu kho (cấp chỉ huy) thì cũng từ chối / huỷ được nó
   if (!duyetPhieuDuoc(user.role)) {
-    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người lập phiếu hoặc cấp duyệt được phiếu này mới hủy được');
+    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người lập phiếu hoặc cấp duyệt được phiếu này mới huỷ được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) {
-      throw new HttpError(403, 'Phiếu đã duyệt quá 10 phút, nhờ cấp trên hủy');
+      throw new HttpError(403, 'Phiếu đã duyệt quá 10 phút, nhờ cấp trên huỷ');
     }
   }
   const rows = r.grp
@@ -364,6 +364,6 @@ export async function voidReceipt(env, user, id) {
     auditStmt(env, user, pending ? 'receipt_reject' : 'receipt_void', { id, kind: r.kind || 'nhap',
       lines: rows.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
-  ], closedErr(pending ? 'Ngày hôm nay đã chốt' : 'Ngày duyệt phiếu đã chốt, không hủy được'));
+  ], closedErr(pending ? 'Ngày hôm nay đã chốt' : 'Ngày duyệt phiếu đã chốt, không huỷ được'));
   return json({ ok: true, pending });
 }

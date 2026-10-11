@@ -246,7 +246,7 @@ const run = async () => {
   ok('ask(): hiện hộp xác nhận trong app', !!r('S.ask') && /Bỏ báo cáo/.test(r('S.ask.msg')));
   r(`if (S.ask) { const a = S.ask; S.ask = null; a.resolve(false); }`);
   await new Promise((res) => setImmediate(res));
-  ok('ask(): bấm "Để sau" thì giữ nguyên dữ liệu', r('readPending().length') === 1);
+  ok('ask(): bấm "Quay lại" thì giữ nguyên dữ liệu', r('readPending().length') === 1);
   r(`writePending([]);`);
 
   // ---- 1c. Cài đặt phi: đổi cây/cuộn và tối thiểu cùng lúc ----
@@ -393,7 +393,7 @@ const run = async () => {
   ok('chủ hệ thống sửa được tên CHÍNH MÌNH (tài khoản hay đặt theo chức danh)', /data-a="urename" data-id="1"/.test(r('HU')),
     (r('HU').match(/data-a="urename" data-id="\d+"/g) || []).join(','));
   ok('và vẫn sửa được tên người khác', /data-a="urename" data-id="2"/.test(r('HU')));
-  ok('tài khoản đã xoá mà đang khoá: nói rõ khôi phục xong vẫn còn khoá', /vẫn còn khóa/.test(r('HU')));
+  ok('tài khoản đã xoá mà đang khoá: nói rõ khôi phục xong vẫn còn khoá', /vẫn còn khoá/.test(r('HU')));
 
   r(`S.me = { id: 2, name: 'Admin Hai', role: 'admin' }; S.users[1].role = 'admin'; var HU2 = vUsers();`);
   ok('admin khác KHÔNG thấy nút đặt lại PIN của admin đầu tiên', !/data-a="ureset" data-id="1"/.test(r('HU2')),
@@ -545,7 +545,7 @@ const run = async () => {
        days: [], closedDays: 1, openDay: '${yday}', closeDay: '${today}', hasDc: true } }; var R1 = vBaoCao();`);
   ok('kỳ có điều chỉnh: hiện cột Điều chỉnh', /Điều chỉnh/.test(r('R1')));
   ok('và số âm hiện kèm dấu trừ', /−30/.test(r('R1')), (r('R1').match(/.{0,20}30.{0,20}/) || [''])[0]);
-  ok('nói rõ điều chỉnh không nằm trong Nhập và không tính vào Dùng', /không nằm trong cột Nhập/.test(r('R1')));
+  ok('nói rõ điều chỉnh không nằm trong Nhập và không tính vào Dùng', /Điều chỉnh: sửa sổ, không tính vào Nhập hay Dùng/.test(r('R1')));
   r(`S.bc.data.hasDc = false; S.bc.data.rows[0].dc = 0; var R2 = vBaoCao();`);
   ok('kỳ không có điều chỉnh: bỏ hẳn cột cho đỡ chật', !/Điều chỉnh/.test(r('R2')));
 
@@ -577,12 +577,12 @@ const run = async () => {
   ok('nhật ký nói rõ GIẢM', /GIẢM/.test(r('A1.text')), r('A1.text'));
   ok('và kèm lý do', /kiểm kê lại/.test(r('A1.text')), r('A1.text'));
   ok('xếp vào nhóm riêng "dc"', r('A1.type') === 'dc', r('A1.type'));
-  /* Hủy phiếu điều chỉnh: dòng nhật ký phải kể ĐỦ CẢ DẤU. Lọc qty > 0 như phiếu nhập/chuyển là
-     dòng ghi "hủy phiếu điều chỉnh tồn đã duyệt: " rồi hết — không nói được nó hoàn tác cái gì,
+  /* Huỷ phiếu điều chỉnh: dòng nhật ký phải kể ĐỦ CẢ DẤU. Lọc qty > 0 như phiếu nhập/chuyển là
+     dòng ghi "huỷ phiếu điều chỉnh tồn đã duyệt: " rồi hết — không nói được nó hoàn tác cái gì,
      mà nhật ký thì không ai sửa lại được. */
   r(`var A2 = fmtAudit({ action: 'receipt_void', ts: Date.now(), user_name: 'A',
        detail: JSON.stringify({ id: 9, kind: 'dc', lines: [{ phi: 'D12', khu: 'A', qty: -30 }] }) });`);
-  ok('hủy phiếu điều chỉnh: gọi đúng tên', /điều chỉnh tồn/.test(r('A2.text')), r('A2.text'));
+  ok('huỷ phiếu điều chỉnh: gọi đúng tên', /điều chỉnh tồn/.test(r('A2.text')), r('A2.text'));
   ok('và vẫn kể được dòng âm', /D12/.test(r('A2.text')), r('A2.text'));
   r(`var A3 = fmtAudit({ action: 'receipt_void', ts: Date.now(), user_name: 'A',
        detail: JSON.stringify({ id: 9, kind: 'chuyen', lines: [{ phi: 'D12', khu: 'A', qty: -30 }, { phi: 'D12', khu: 'B', qty: 30 }] }) });`);
@@ -696,7 +696,7 @@ const run = async () => {
     (r('AX.text').match(/Nam Hà/g) || []).length === 1, r('AX.text'));
   r(`var AX2 = fmtAudit({ action: 'receipt_void', ts: Date.now(), user_name: 'A',
        detail: JSON.stringify({ id: 31, kind: 'xuat', lines: [{ phi: 'D12', khu: 'A', qty: -30 }] }) });`);
-  ok('hủy phiếu xuất: gọi đúng tên', /xuất kho/.test(r('AX2.text')), r('AX2.text'));
+  ok('huỷ phiếu xuất: gọi đúng tên', /xuất kho/.test(r('AX2.text')), r('AX2.text'));
   ok('và vẫn kể được dòng âm', /D12/.test(r('AX2.text')), r('AX2.text'));
   r(`S.boot = _boot(); indexBoot(S.boot); S.nhap.mode = 'nhap'; S.nhap.lines = []; S.form.nnoi = '';`);
 
@@ -1244,7 +1244,7 @@ const run = async () => {
   r(`S.khu = 'A'; loadDraft(true); S.sel = null; S.screen = 'dem';`);
   const DH = r('demView()').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
   ok('màn đếm: nói bị huỷ, ai huỷ, lý do, và phải báo lại', /Báo cáo Khu A của bạn đã bị huỷ/.test(DH) && /Sếp huỷ lúc/.test(DH) && /Lý do: D16 đếm thiếu 2 bó/.test(DH) && /đếm thực tế rồi gửi lại/.test(DH), (DH.match(/Báo cáo Khu A của bạn.{0,220}/) || [''])[0]);
-  ok('màn đếm: không còn câu "đang chờ admin duyệt", bảng không có sẵn số', !/đang chờ admin duyệt/.test(DH) && r('Object.keys(S.draft.cells).length') === 0);
+  ok('màn đếm: không còn câu "đang chờ cấp trên duyệt", bảng không có sẵn số', !/đang chờ cấp trên duyệt/.test(DH) && r('Object.keys(S.draft.cells).length') === 0);
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home';`);
   ok('admin: không có thẻ huỷ báo cáo (không phải việc của admin)', !/đã huỷ báo cáo|đã bị huỷ/.test(r('vHome()')), theNhac(r('vHome()')));
   r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);

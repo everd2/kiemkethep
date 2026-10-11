@@ -75,7 +75,7 @@ export const GIAO_KHU = 'tieudoi';
 export const CAP_TREN = 'Trung đội trưởng, Đại đội trưởng hoặc admin';
 export const SESSION_MS = 30 * 24 * 3600e3;
 export const LOCK_AFTER = 5;
-export const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khóa lâu dần
+export const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khoá lâu dần
 // số lần sai PIN tối đa mỗi ngày từ một địa chỉ IP; cả bãi dùng chung Wi-Fi/4G (chung IP) nên để cao,
 // việc chặn dò PIN từng tài khoản đã do LOCK_AFTER/LOCK_STEPS đảm nhận
 export const IP_FAIL_MAX = 300;

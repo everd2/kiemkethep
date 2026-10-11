@@ -913,10 +913,10 @@ async function main() {
     eq('không còn phiếu nào chờ', (await S.call('GET', '/review')).data.phieu.length, 0);
   }
 
-  /* ================= 33. Hủy phiếu ĐÃ DUYỆT sau khi số của khu đã duyệt =================
-     Hủy một phiếu đã duyệt làm số dự kiến của khu đổi y như duyệt thêm một phiếu, nên phải nhắc
+  /* ================= 33. Huỷ phiếu ĐÃ DUYỆT sau khi số của khu đã duyệt =================
+     Huỷ một phiếu đã duyệt làm số dự kiến của khu đổi y như duyệt thêm một phiếu, nên phải nhắc
      xem lại khu y như vậy. Bản 1.2 bắt được chuyện này (exception 'late' với q < 0, dựa vào
-     voided_ts). Nếu chỉ so "lần duyệt phiếu gần nhất" thì hủy phiếu lại LÀM GIẢM mốc đó, cảnh
+     voided_ts). Nếu chỉ so "lần duyệt phiếu gần nhất" thì huỷ phiếu lại LÀM GIẢM mốc đó, cảnh
      báo im lặng, và khu vẫn mang nhãn "Đã duyệt" trong khi số đã duyệt không còn khớp dự kiến. */
   {
     const S = await setup();
@@ -934,18 +934,18 @@ async function main() {
     ok('đúng trình tự: chưa nhắc xem lại', !rv.khus.find((k) => k.khu === 'A').recheck);
     eq('và hết việc chờ', rv.pending, 0);
 
-    // giờ hủy phiếu đã duyệt đó: dự kiến tụt về 1800 mà số đã duyệt vẫn 1980
+    // giờ huỷ phiếu đã duyệt đó: dự kiến tụt về 1800 mà số đã duyệt vẫn 1980
     advance(5000);
-    eq('hủy phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
+    eq('huỷ phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
     rv = (await S.call('GET', '/review')).data;
     const kA = rv.khus.find((k) => k.khu === 'A');
     eq('dự kiến tụt đúng 180', kA.items.find((x) => x.phi === 'D16').exp, 1800);
     eq('và lệch hiện ra +180', kA.items.find((x) => x.phi === 'D16').d, 180);
-    ok('hủy phiếu sau khi khu đã duyệt: nhắc xem lại khu', kA.recheck, JSON.stringify(kA));
+    ok('huỷ phiếu sau khi khu đã duyệt: nhắc xem lại khu', kA.recheck, JSON.stringify(kA));
     ok('và nó là một việc chặn chốt', rv.exceptions.some((e) => e.type === 'recheck' && e.khu === 'A'),
       JSON.stringify(rv.exceptions.map((e) => e.type + ':' + (e.khu || e.phi))));
     /* Gỡ được bằng cách admin DUYỆT LẠI, không cần khu đếm lại: người duyệt xem bảng lệch mới
-       rồi chấp nhận. Đây là đường gỡ chính, vì thường hủy phiếu chính là để sửa cho đúng số khu
+       rồi chấp nhận. Đây là đường gỡ chính, vì thường huỷ phiếu chính là để sửa cho đúng số khu
        đã đếm. Khu lúc này KHÔNG có gì "chờ duyệt" (mọi ô đã duyệt), nên nếu reviewDuyet chỉ nhận
        khu đang chờ thì nút DUYỆT LẠI bị từ chối và cảnh báo treo vĩnh viễn. */
     advance(1000);
@@ -1013,7 +1013,7 @@ async function main() {
      số khu thực có.
 
      Cảnh dựng ra đây là cảnh xảy ra thật: nhập sai một xe, đã lập phiếu chuyển dựa trên số đó,
-     rồi mới hủy phiếu nhập. Lúc lập phiếu chuyển thì còn đủ thép, lúc duyệt thì không. */
+     rồi mới huỷ phiếu nhập. Lúc lập phiếu chuyển thì còn đủ thép, lúc duyệt thì không. */
   {
     const S = await setup();
     const day = vnDay();
@@ -1022,9 +1022,9 @@ async function main() {
     const t = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D10', qty: 400 }] });
     eq('lập phiếu chuyển 400/440: được', t.status, 200);
 
-    // hủy phiếu nhập đã duyệt: khu A không còn thép, phiếu chuyển 400 thành vô căn cứ
+    // huỷ phiếu nhập đã duyệt: khu A không còn thép, phiếu chuyển 400 thành vô căn cứ
     advance(2000);
-    eq('hủy phiếu nhập đã duyệt', (await S.call('DELETE', '/receipts/' + rin.data.id)).status, 200);
+    eq('huỷ phiếu nhập đã duyệt', (await S.call('DELETE', '/receipts/' + rin.data.id)).status, 200);
 
     const d1 = await S.call('POST', '/receipts/' + t.data.id + '/duyet', {});
     eq('ĐƯỜNG 1 — duyệt riêng phiếu: bị từ chối', d1.status, 400);
@@ -1512,11 +1512,11 @@ async function main() {
     const r = S.one('SELECT kind, qty, khu_id, note, duyet_day FROM receipts WHERE id=?', px.data.id);
     eq('lưu đúng loại, dấu âm, và chờ duyệt', [r.kind, r.qty, r.khu_id, r.duyet_day], ['xuat', -1100, 'A', null]);
     ok('ghi rõ xuất cho đâu', /Nam Hà/.test(r.note) && /29C/.test(r.note), r.note);
-    /* Nhật ký phải giữ NơI ĐẾN thành một khóa riêng, và ghi chú rời thành khóa 'ghi': writeReceipt
-       luôn ghi đè khóa note bằng nội dung phiếu, mà nội dung đó đã chứa sẵn nơi đến — dùng note
+    /* Nhật ký phải giữ NơI ĐẾN thành một khoá riêng, và ghi chú rời thành khoá 'ghi': writeReceipt
+       luôn ghi đè khoá note bằng nội dung phiếu, mà nội dung đó đã chứa sẵn nơi đến — dùng note
        để làm ghi chú là dòng nhật ký nhắc nơi đến hai lần. Nhật ký thì không sửa lại được. */
     const nkx = JSON.parse(S.one("SELECT detail FROM audit WHERE action='issue' ORDER BY id DESC").detail);
-    eq('nhật ký giữ nơi đến riêng một khóa', nkx.noi, 'Công trình Nam Hà');
+    eq('nhật ký giữ nơi đến riêng một khoá', nkx.noi, 'Công trình Nam Hà');
     eq('và ghi chú rời không bị nội dung phiếu ghi đè', nkx.ghi, 'xe 29C');
 
     // chưa duyệt thì chưa đổi gì
@@ -1711,7 +1711,7 @@ async function main() {
 
   /* ================= 23. Phiếu được duyệt SAU khi số của khu đã duyệt =================
      Số đếm của khu không gồm lô thép đó, nên dự kiến vừa đổi mà số đã duyệt thì không: phải nhắc
-     admin xem lại khu. Bản cũ tính theo giờ NHẬP và giờ HỦY phiếu so với giờ khu báo, và cảnh báo
+     admin xem lại khu. Bản cũ tính theo giờ NHẬP và giờ HUỶ phiếu so với giờ khu báo, và cảnh báo
      đó không có đường nào xoá — ngày đó bắt buộc chốt kèm ghi chú. Nay chỉ là so hai mốc DUYỆT,
      và admin duyệt lại khu là hết. */
   {
@@ -1751,15 +1751,15 @@ async function main() {
     ok('duyệt lại khu là hết nhắc', !rv.khus.find((k) => k.khu === 'A').recheck, JSON.stringify(rv.khus.find((k) => k.khu === 'A')));
     eq('hết việc chờ', rv.pending, 0);
 
-    // hủy phiếu đã duyệt thì lượng đó rút khỏi tồn ngay
+    // huỷ phiếu đã duyệt thì lượng đó rút khỏi tồn ngay
     advance(1000);
-    eq('hủy phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
-    ok('ghi lại mốc hủy', S.one('SELECT voided, voided_ts FROM receipts WHERE id=?', rc.data.id).voided_ts > 0);
+    eq('huỷ phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
+    ok('ghi lại mốc huỷ', S.one('SELECT voided, voided_ts FROM receipts WHERE id=?', rc.data.id).voided_ts > 0);
     eq('dự kiến của khu tụt đúng 180', (await S.call('GET', '/review')).data
       .khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 1980);
   }
 
-  /* ================= 24. Phi bị xoá khỏi bảng phi không được khóa cả khu =================
+  /* ================= 24. Phi bị xoá khỏi bảng phi không được khoá cả khu =================
      Bản cũ: khu_phi còn dòng active=1 cho một phi đã bị xoá thì khu kẹt cứng — không gửi phi đó
      thì "Còn phi chưa nhập", gửi thì "Phi không hợp lệ". Nay bảng đếm dựng từ chính bảng phi nên
      phi đã xoá đơn giản là không còn được hỏi. */
@@ -2171,7 +2171,7 @@ async function main() {
     }
   }
 
-  /* ================= 46. ĐIỀU CHỈNH TỒN: bắt khu đếm lại, và hủy được =================
+  /* ================= 46. ĐIỀU CHỈNH TỒN: bắt khu đếm lại, và huỷ được =================
      Một phiếu sửa sổ phải kéo theo hai thứ: khu không được "giữ nguyên" lấy lại số cũ nữa (phải ra
      đếm thật để xác minh), và phiếu phải hoàn tác được như mọi chứng từ khác. */
   {
@@ -2192,13 +2192,13 @@ async function main() {
     eq('điều chỉnh rồi thì KHÔNG giữ nguyên được nữa, phải đếm thật', giu.status, 400);
     ok('và lời nhắc không bịa ra chuyến xe nào', /thay đổi tồn/.test(giu.data.error || ''), giu.data.error);
 
-    // hủy phiếu đã duyệt: thép quay lại tồn
+    // huỷ phiếu đã duyệt: thép quay lại tồn
     let rv = (await S.call('GET', '/review')).data;
     eq('đang là 800 sau điều chỉnh', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 800);
-    eq('hủy phiếu điều chỉnh đã duyệt', (await S.call('DELETE', '/receipts/' + p)).status, 200);
+    eq('huỷ phiếu điều chỉnh đã duyệt', (await S.call('DELETE', '/receipts/' + p)).status, 200);
     rv = (await S.call('GET', '/review')).data;
-    eq('hủy xong dự kiến trở lại 900', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 900);
-    ok('nhật ký ghi lại đủ dòng âm của phiếu điều chỉnh bị hủy',
+    eq('huỷ xong dự kiến trở lại 900', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 900);
+    ok('nhật ký ghi lại đủ dòng âm của phiếu điều chỉnh bị huỷ',
       /"qty":-100/.test(S.one("SELECT detail FROM audit WHERE action = 'receipt_void' ORDER BY id DESC LIMIT 1").detail || ''),
       S.one("SELECT detail FROM audit WHERE action = 'receipt_void' ORDER BY id DESC LIMIT 1").detail);
     eq('nhật ký có dòng riêng cho lần lập điều chỉnh', S.sql("SELECT 1 FROM audit WHERE action = 'adjust'").length, 1);

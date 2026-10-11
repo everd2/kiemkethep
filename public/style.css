@@ -180,3 +180,8 @@ a{color:var(--pri)}
   .modal { position: fixed; }
   .busy { position: fixed; }
 }
+
+/* phản hồi khi bấm và viền focus: nút nào cũng phải cho thấy mình vừa được chạm */
+.btn:active,.chip:active,.key:active,.tab:active,.menu:active,button.alertbtn:active,.tonrow:active,.iconbtn:active,.boxn:active,.own:active{filter:brightness(.9)}
+.btn.dis:active,button:disabled:active{filter:none}
+:focus-visible{outline:3px solid #6FA0DB;outline-offset:2px}
