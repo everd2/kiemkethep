@@ -851,16 +851,19 @@ const run = async () => {
      S.review = { day: S.boot.today, last: null, span: 1, rev: 1, closed: false, rows: [], phieu: [], exceptions: [], pending: 2, loans: [], reports: [], khu: [], slot: { n: 1, defs: [] },
        khus: [{ khu: 'A', name: 'Khu A', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'a', duyet: null, slots: null, capBao: 0, capPhieu: 0 },
               { khu: 'B', name: 'Khu B', items: [], waiting: 1, blank: 0, rep: { uname: 'Cv', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'b', duyet: null, slots: null, capBao: 1, capPhieu: 0 },
-              { khu: 'C', name: 'Khu C', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'c', duyet: null, slots: null, capBao: 0, capPhieu: 2 }] };
+              { khu: 'C', name: 'Khu C', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: ['g9'], mark: 'c', duyet: null, slots: null, capBao: 0, capPhieu: 2 },
+              { khu: 'D', name: 'Khu D', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'd', duyet: null, slots: null, capBao: 0, phieuSau: true, capPhieu: 2 }] };
      S.me = { id: 8, name: 'Cv', role: 'cvktht' }; var DC = vDuyet();`);
   ok('CVKTHT ở màn Duyệt: có nút duyệt khu của tiểu đội trưởng, không có nút cho khu CVKTHT báo',
     /data-a="khuduyet" data-k="A"/.test(r('DC')) && !/data-a="khuduyet" data-k="B"/.test(r('DC')) && /chờ Trung đội trưởng, Đại đội trưởng hoặc admin duyệt/.test(r('DC')));
   ok('CVKTHT: khu còn phiếu kho chờ thì không có nút duyệt, nhưng huỷ được báo cáo của tiểu đội trưởng',
     !/data-a="khuduyet" data-k="C"/.test(r('DC')) && /Khu còn phiếu kho chờ duyệt/.test(r('DC')) && /data-a="recount" data-k="C"/.test(r('DC')));
+  ok('CVKTHT: khu đếm trước lúc có phiếu kho mới thì không có nút duyệt, có lời nói phải đếm lại',
+    !/data-a="khuduyet" data-k="D"/.test(r('DC')) && /đếm TRƯỚC lúc có phiếu kho mới/.test(r('DC')));
   ok('CVKTHT: không có nút "Duyệt tất cả" khi chỉ duyệt được một khu', !/data-a="khuduyetall"/.test(r('DC')));
   r(`S.me = { id: 9, name: 'Trung', role: 'trungdoi' }; var DT = vDuyet();`);
-  ok('trung đội trưởng: duyệt được cả ba khu và có "Duyệt tất cả"',
-    /data-a="khuduyet" data-k="A"/.test(r('DT')) && /data-a="khuduyet" data-k="B"/.test(r('DT')) && /data-a="khuduyet" data-k="C"/.test(r('DT')) && /DUYỆT TẤT CẢ 3 KHU</.test(r('DT')));
+  ok('trung đội trưởng: duyệt được cả bốn khu và có "Duyệt tất cả"',
+    /data-a="khuduyet" data-k="A"/.test(r('DT')) && /data-a="khuduyet" data-k="B"/.test(r('DT')) && /data-a="khuduyet" data-k="C"/.test(r('DT')) && /data-a="khuduyet" data-k="D"/.test(r('DT')) && /DUYỆT TẤT CẢ 4 KHU</.test(r('DT')));
   // sổ vay mượn chờ duyệt: nút theo cấp GHI TRONG DÒNG (cap), thiếu thì coi là việc cấp 2
   r(`S.review.loans = [{ id: 31, grp: 'l1', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 5, ts: Date.now(), user_id: 2, uname: 'An', cap: 0 },
        { id: 32, grp: 'l2', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 6, ts: Date.now(), user_id: 8, uname: 'Cv', cap: 1 },

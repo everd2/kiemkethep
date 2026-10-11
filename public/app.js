@@ -937,7 +937,7 @@ function vHome() {
     + (T.hidKg > 0 ? ` · gồm ${fmtT(T.hidKg)} tấn ở khu đã ẩn (không có trong danh sách dưới)` : '');
   return `<div class="f1 scroll" id="body">
     <div class="hero">
-      <div class="row" style="justify-content:space-between"><span>Tổng quan · ${esc(b.today.split('-').reverse().join('/'))}</span><span class="badge" style="background:#fff;color:var(--pri)">${ROLE[S.me.role]}</span></div>
+      <div class="row" style="justify-content:space-between"><span>Tổng quan · ${esc(b.today.split('-').reverse().join('/'))}</span><span class="badge" style="background:#fff;color:var(--pri)">${esc(roleTen(S.me.role))}</span></div>
       <div class="row" style="justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:15px">Tồn toàn bãi</span><span class="big">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;padding-bottom:6px">${cayTxt(T.cay)}</span></div>
       <div class="sm" style="color:#D6E0EE">${note}</div>
       <div class="mini"><div><span>Nhập hôm nay</span><b>${fmtT(T.inKg)} tấn</b></div><div><span>${usedLabel}</span><b>${usedTxt}</b></div></div>
@@ -1611,7 +1611,7 @@ function vDuyet() {
     /* Theo cấp bậc: CVKTHT không duyệt khu có số của CVKTHT trở lên, hoặc còn phiếu kho chờ. Không bày nút mà nói
        rõ đang chờ ai, và vì cái gì (số đếm hay phiếu) — không thì người xem tưởng app hỏng. */
     const duoc = khuDuoc(k), canViec = cho || choP || k.recheck;
-    const vuong = !canViec || duoc ? '' : choCapTren(duyetCap(k.capBao || 0) ? 'Khu còn phiếu kho chờ duyệt' : 'Số của khu do CVKTHT hoặc cấp trên báo');
+    const vuong = !canViec || duoc ? '' : choCapTren(!duyetCap(k.capBao || 0) ? 'Số của khu do CVKTHT hoặc cấp trên báo' : choP ? 'Khu còn phiếu kho chờ duyệt' : 'Số của khu đếm TRƯỚC lúc có phiếu kho mới duyệt hoặc huỷ (khu đếm lại thì CVKTHT duyệt được)');
     const btns = R.closed ? '' : `${vuong}<div class="row gap6">${!duoc ? '' : cho || choP
       ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT ${esc(cut(k.name, 14).toUpperCase())}</button>`
       : k.recheck ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT LẠI</button>` : ''}
@@ -2043,7 +2043,7 @@ function uDemo() {
 }
 function vMore() {
   const a = isAdmin();
-  return `${head('Thêm', esc(S.me.name) + ' · ' + ROLE[S.me.role])}
+  return `${head('Thêm', esc(S.me.name) + ' · ' + esc(roleTen(S.me.role)))}
   <div class="f1 scroll pad col gap8" id="body">
     <button class="menu" data-a="nav" data-s="stats">Thống kê theo khu / toàn bãi</button>
     <button class="menu" data-a="nav" data-s="ton">Tồn bãi theo đường kính</button>

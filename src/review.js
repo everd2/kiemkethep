@@ -239,6 +239,7 @@ export async function computeReview(env, day, opt = {}) {
   const kgBy = Object.fromEntries(phiR.results.map((p) => [p.id, p.kg_per_cay]));
   const khus = khuAct.map((k) => {
     const r = reps[k.id];
+    let phieuSau = false; // tính sau vòng lặp phi, khi đã biết lần báo mới nhất (subTs)
     const items = [];
     let waiting = 0, blank = 0, lastDuyet = 0, subTs = 0, capBao = 0;
     for (const p of phiR.results) {
@@ -271,14 +272,20 @@ export async function computeReview(env, day, opt = {}) {
         items.push({ phi: p.id, ref, mv, exp, cnt: sr.v, d, kind: sr.kind, big: !!big, blank: left, duyet: ok });
       }
     }
+    phieuSau = !!(r && subTs && rcTs[k.id] && rcTs[k.id] > subTs);
     return {
       khu: k.id, name: k.name, items, waiting, blank,
       /* CẤP CỦA NGƯỜI BÁO, để biết ai duyệt được (xem CAP ở core.js). capBao: cấp cao nhất ghi trong
          các ô số của khu (counts.cap, ghi lúc báo) — ô do CVKTHT báo, hoặc do CVKTHT/chỉ huy CHỌN SỐ khi
-         hai người báo khác nhau, là số của người đó. capPhieu: 2 khi khu còn phiếu kho chờ duyệt (phiếu
-         kho chỉ cấp chỉ huy duyệt, ai lập cũng vậy), không thì 0. Duyệt khu là duyệt cả số lẫn phiếu
-         trong một lần ghi, nên phải đủ cấp cho cả hai. */
-      capBao, capPhieu: (pendKhu[k.id] || []).length ? 2 : 0,
+         hai người báo khác nhau, là số của người đó. capPhieu: 2 khi việc duyệt khu quyết luôn cả một
+         phiếu kho — mà phiếu kho chỉ cấp chỉ huy quyết, ai lập cũng vậy:
+           - khu còn phiếu kho CHỜ duyệt: duyệt khu là duyệt luôn phiếu đó;
+           - phieuSau: có phiếu kho được duyệt hoặc huỷ SAU lần báo mới nhất của khu. Số đó đếm trước
+             khi phiếu vào tồn, mà duyệt báo cáo là lấy tồn theo báo cáo, tức phiếu vừa duyệt bị coi
+             như đã nằm sẵn trong số đếm (hoặc phiếu vừa huỷ bị coi như chưa từng huỷ). Đó là quyết
+             định về một phiếu kho, nên CVKTHT không bấm được; khu đếm lại là hết.
+         Duyệt khu là duyệt cả số lẫn phiếu trong một lần ghi, nên phải đủ cấp cho cả hai. */
+      capBao, phieuSau, capPhieu: (pendKhu[k.id] || []).length || phieuSau ? 2 : 0,
       rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved } : null,
       /* Phiếu của khu được duyệt SAU số của khu: số đếm không gồm phần thép đó nên dự kiến vừa
          đổi, số đã duyệt của khu không còn khớp. Thay cho cảnh báo 'late' cũ, và quan trọng là

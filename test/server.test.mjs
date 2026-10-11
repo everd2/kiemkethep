@@ -3173,6 +3173,40 @@ async function main() {
     eq('đổi vai trò người không phụ trách khu nào: không phải hỏi', (await S.call('POST', `/users/${idOf('Cv')}/role`, { role: 'cvktht' })).status, 200);
   }
 
+  /* ================= 64. CVKTHT không quyết thay phiếu kho qua đường duyệt báo cáo =================
+     Duyệt báo cáo là lấy tồn theo báo cáo. Số đếm TRƯỚC lúc một phiếu kho được duyệt (hoặc huỷ) mà
+     được duyệt là phiếu đó bị coi như đã nằm sẵn trong số đếm — một quyết định về phiếu kho, nên
+     chỉ cấp chỉ huy làm được. */
+  {
+    const S = await setup();
+    await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 100 }) }, 'An');
+    eq('CVKTHT duyệt báo cáo bình thường', (await duyet(S, 'A', 'Kho')).status, 200);
+    advance(1000);
+    // báo cáo mới của khu, rồi cấp chỉ huy duyệt một phiếu nhập SAU lúc khu đếm
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 100 }) }, 'An');
+    advance(1000);
+    const p = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 50 }] }, 'Kho');
+    await duyetP(S, p.data.id);
+    const k = (await S.call('GET', '/review')).data.khus.find((x) => x.khu === 'A');
+    eq('khu A: số đếm trước lúc phiếu vào tồn', [k.phieuSau, k.capPhieu], [true, 2]);
+    eq('CVKTHT không duyệt được (sẽ xoá mất 50 cây vừa nhập khỏi tồn)', (await duyet(S, 'A', 'Kho')).status, 403);
+    const ton = async () => ((await S.call('GET', '/bootstrap')).data.mvNew.find((x) => x.khu_id === 'A' && x.phi_id === 'D16') || {}).q;
+    eq('phiếu vẫn được cộng vào tồn', await ton(), 50);
+    // khu đếm lại sau phiếu: CVKTHT duyệt được
+    advance(1000);
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 150 }) }, 'An');
+    eq('đếm lại sau phiếu: CVKTHT duyệt được', (await duyet(S, 'A', 'Kho')).status, 200);
+    // "cần xem lại" (phiếu duyệt sau khi khu đã duyệt) cũng vậy: chỉ cấp chỉ huy duyệt lại
+    advance(1000);
+    const p2 = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 10 }] }, 'Kho');
+    await duyetP(S, p2.data.id);
+    const k2 = (await S.call('GET', '/review')).data.khus.find((x) => x.khu === 'A');
+    eq('khu cần xem lại', [k2.recheck, k2.capPhieu], [true, 2]);
+    eq('CVKTHT không duyệt lại được', (await duyet(S, 'A', 'Kho')).status, 403);
+    eq('cấp chỉ huy duyệt lại được', (await duyet(S, 'A')).status, 200);
+  }
+
   /* ================= 63. Nâng cấp từ bản 22 =================
      Bảng users nhận bộ vai trò mới và đổi hai mã cũ; cột cap được thêm và điền; phân công khu chỉ
      còn Tiểu đội trưởng. Không mất tài khoản nào, bộ đếm id không lùi. */
