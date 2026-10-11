@@ -1,5 +1,5 @@
 // Báo cáo đếm của khu, và xử lý khi hai người báo khác số.
-import { HttpError, KINDS, bad, fmtDay, json, vnDay } from './core.js';
+import { CAP_TREN, HttpError, KINDS, bad, capOf, duyetCap, fmtDay, json, vnDay } from './core.js';
 import { computeReview } from './review.js';
 import { slotDefs, slotOf } from './slots.js';
 import { IS_CLOSED, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, boWord, bump, closedErr,
@@ -136,9 +136,11 @@ export async function putCounts(req, env, user) {
   const t0 = dayStart(day);
   const k = khuR.results[0];
   if (!k || !k.active) throw bad('Khu không tồn tại hoặc đã ẩn');
-  // Khu đã phân công thì chỉ người phụ trách mới đếm được; admin luôn đếm được để xử lý khi có người nghỉ
+  /* Giao khu là để các Tiểu đội trưởng không báo nhầm khu của nhau: khu đã giao thì trong hàng Tiểu
+     đội trưởng chỉ người được giao đếm được. CVKTHT trở lên quản lý chung cả bãi nên đếm được mọi khu,
+     không cần giao (cũng là đường xử lý khi người phụ trách nghỉ). */
   const asg = asgR.results;
-  if (asg.length && user.role !== 'admin' && !asg.some((r) => r.user_id === user.id)) {
+  if (asg.length && capOf(user.role) < 1 && !asg.some((r) => r.user_id === user.id)) {
     throw new HttpError(403, `Bạn không phụ trách ${k.name}. Nhờ admin gán quyền nếu cần đếm khu này.`, 'not_assigned');
   }
   const settings = parseSettings(setR.results);
@@ -254,14 +256,15 @@ export async function putCounts(req, env, user) {
        duyệt trước đó vẫn nguyên và vẫn là số mà tồn đang dùng. Ô thành chờ duyệt một cách tự
        nhiên vì ts vừa nhảy lên lớn hơn duyet_ts — không cần cờ, không cần dấu số liệu. */
     env.DB.prepare(
-      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
-       SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4 FROM json_each(?5) j WHERE 1
-       ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET v=excluded.v, kind=excluded.kind, bo=excluded.bo, le=excluded.le, user_id=excluded.user_id, ts=excluded.ts`
-    ).bind(day, khuId, user.id, ts, data),
+      // cap: cấp của người báo LÚC NÀY, ghi vào dòng — xem lời giải thích ở CAP (core.js)
+      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, cap)
+       SELECT ?1, ?2, ${J('phi')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ?3, ?4, ?6 FROM json_each(?5) j WHERE 1
+       ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET v=excluded.v, kind=excluded.kind, bo=excluded.bo, le=excluded.le, user_id=excluded.user_id, ts=excluded.ts, cap=excluded.cap`
+    ).bind(day, khuId, user.id, ts, data, capOf(user.role)),
     env.DB.prepare(
-      `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
-       SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
-    ).bind(day, khuId, user.id, ts, data),
+      `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts, cap)
+       SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4, ?6 FROM json_each(?5) j`
+    ).bind(day, khuId, user.id, ts, data, capOf(user.role)),
     // một dòng cho mỗi lần GỬI: dùng để biết khu đã đếm khung giờ nào (xem migration 15)
     env.DB.prepare('INSERT INTO khu_report_log (day, khu_id, ts, at, user_id) VALUES (?,?,?,?,?)').bind(day, khuId, ts, at, user.id),
     env.DB.prepare(
@@ -361,13 +364,13 @@ export async function conflictResolve(req, env, user) {
       env.DB.prepare(
         `UPDATE counts SET v = (SELECT ${J('v')} FROM json_each(?3) j WHERE ${J('phi')} = counts.phi_id),
            kind = (SELECT ${J('kind')} FROM json_each(?3) j WHERE ${J('phi')} = counts.phi_id),
-           bo = NULL, le = NULL, user_id = ?4, ts = ?5
+           bo = NULL, le = NULL, user_id = ?4, ts = ?5, cap = ?6
          WHERE day = ?1 AND khu_id = ?2 AND phi_id IN (SELECT ${J('phi')} FROM json_each(?3) j)`
-      ).bind(day, khu, data, user.id, ts),
+      ).bind(day, khu, data, user.id, ts, capOf(user.role)),
       env.DB.prepare(
-        `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
-         SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4 FROM json_each(?5) j`
-      ).bind(day, khu, user.id, ts, data),
+        `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts, cap)
+         SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4, ?6 FROM json_each(?5) j`
+      ).bind(day, khu, user.id, ts, data, capOf(user.role)),
       env.DB.prepare(
         `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
          SELECT ?1, ${J('phi')}, 1, 0, 0 FROM json_each(?2) j WHERE 1
@@ -409,7 +412,7 @@ export async function huyBaoCao(req, env, user) {
   const b = await readJson(req);
   const khu = String(b.khu || '');
   const lyDo = String(b.ly_do || '').trim().slice(0, 300);
-  if (!lyDo) throw bad('Phải ghi lý do huỷ báo cáo, để người đếm biết cần đếm lại chỗ nào');
+  if (!lyDo) throw bad('Phải ghi lý do huỷ báo cáo, để người báo biết cần đếm lại chỗ nào');
   const day = vnDay();
   const rv = await computeReview(env, day);
   if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
@@ -417,6 +420,10 @@ export async function huyBaoCao(req, env, user) {
   if (!k) throw bad('Khu không hợp lệ');
   if (b.mark !== undefined && k.mark !== b.mark) {
     throw new HttpError(409, k.name + ' vừa có số hoặc phiếu mới. Màn Duyệt đã tải lại, hãy xem rồi quyết định.', 'changed');
+  }
+  // huỷ theo đúng cấp duyệt: CVKTHT chỉ huỷ báo cáo của cấp dưới
+  if (k.waiting && !duyetCap(user.role, k.capBao)) {
+    throw new HttpError(403, `Báo cáo ${k.name} do CVKTHT hoặc cấp trên báo: cần ${CAP_TREN} huỷ.`, 'cap');
   }
   if (!k.waiting) throw bad(k.rep ? 'Báo cáo của khu này đã duyệt, số đã vào tồn. Muốn sửa thì để khu báo lại, hoặc lập phiếu Điều chỉnh tồn.' : 'Khu này chưa có báo cáo nào để huỷ');
   const last = rv.last || '';
@@ -445,7 +452,9 @@ export async function huyBaoCao(req, env, user) {
       env.DB.prepare(
         `UPDATE counts SET v = duyet_v, kind = duyet_kind, ts = duyet_ts, bo = NULL, le = NULL,
            user_id = COALESCE((SELECT l.user_id FROM counts_log l WHERE l.day = counts.day AND l.khu_id = counts.khu_id
-                               AND l.phi_id = counts.phi_id AND l.ts = counts.duyet_ts ORDER BY l.id DESC LIMIT 1), user_id)
+                               AND l.phi_id = counts.phi_id AND l.ts = counts.duyet_ts ORDER BY l.id DESC LIMIT 1), user_id),
+           cap = COALESCE((SELECT l.cap FROM counts_log l WHERE l.day = counts.day AND l.khu_id = counts.khu_id
+                           AND l.phi_id = counts.phi_id AND l.ts = counts.duyet_ts ORDER BY l.id DESC LIMIT 1), cap)
          WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND ${CHO} AND duyet_v IS NOT NULL`
       ).bind(khu, last, day),
       // ô chưa từng được duyệt: sau câu trên, mọi ô còn duyet_v NULL đều là ô đang chờ

@@ -1,5 +1,5 @@
 // Dữ liệu chung một lần tải cho máy khách (/bootstrap).
-import { HIGH_KG, MIN_RATE_DAYS, NEG_KG, PHI_DEFAULTS, vnDay } from './core.js';
+import { HIGH_KG, MIN_RATE_DAYS, NEG_KG, PHI_DEFAULTS, duyetCap, duyetPhieuDuoc, vnDay } from './core.js';
 import { slotInfo } from './slots.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './helpers.js';
 import { EFF_SELECT, MV_NEW } from './counts.js';
@@ -55,7 +55,10 @@ export async function bootstrap(env, user) {
     env.DB.prepare('SELECT id, name FROM doitac WHERE active = 1 ORDER BY name'),
     // đếm nhanh để nhắc ở Tổng quan; chi tiết nạp khi vào đúng màn Vay mượn, như /users
     // đếm theo LẦN GHI (grp) chứ không theo dòng: ghi một lần ba phi là MỘT việc admin phải duyệt
-    env.DB.prepare('SELECT COUNT(DISTINCT COALESCE(grp, id)) n FROM loans WHERE voided = 0 AND duyet_ts IS NULL'),
+    // kèm cấp người ghi và có phiếu kho hay không, để đếm riêng những lần ghi NGƯỜI NÀY duyệt được
+    env.DB.prepare(`SELECT MAX(l.cap) cap,
+                      EXISTS (SELECT 1 FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' AND r.voided = 0) kho
+                    FROM loans l WHERE l.voided = 0 AND l.duyet_ts IS NULL GROUP BY COALESCE(l.grp, l.id)`),
     // các dòng vay mượn đã duyệt: tính phần còn nợ theo từng lần vay để biết khoản nào QUÁ HẠN
     env.DB.prepare(LOAN_LOT_SQL),
     /* Báo cáo bị admin huỷ HÔM NAY: máy khách bày thông báo + lý do cho người đã gửi (và người đếm
@@ -98,7 +101,10 @@ export async function bootstrap(env, user) {
     dcReasons: Object.entries(DC_REASONS).map(([id, name]) => ({ id, name })),
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
     doitacAct: doitacAct.results,
-    loanPending: loanPending.results[0] ? loanPending.results[0].n : 0,
+    loanPending: loanPending.results.length,
+    /* Trong đó, số lần ghi người đang xem DUYỆT ĐƯỢC (cùng luật với duyetLoan): thẻ nhắc ở Tổng quan
+       dùng số này, không thì CVKTHT bị nhắc cả những lần ghi phải chờ cấp trên. */
+    loanDuyet: loanPending.results.filter((x) => (x.kho ? duyetPhieuDuoc(user.role) : duyetCap(user.role, x.cap))).length,
     // số khoản (lần vay còn nợ) đã quá hạn trả, theo hai chiều: mình nợ đối tác / đối tác nợ mình
     loanQuaHan: (() => { const l = loanLots(loanLotR.results, day).filter((x) => x.quaHan); return { no: l.filter((x) => x.chieu === 'no').length, co: l.filter((x) => x.chieu === 'co').length }; })(),
   };

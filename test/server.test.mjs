@@ -24,9 +24,9 @@ async function setup() {
     await S.call('POST', '/change-pin', { pin: r.data.pin, newPin: '1357' }, name);
     return r.data;
   };
-  await mk('An', '0900000002', 'nguoidem');
-  await mk('Binh', '0900000003', 'nguoidem');
-  await mk('Kho', '0900000004', 'thukho');
+  await mk('An', '0900000002', 'tieudoi');
+  await mk('Binh', '0900000003', 'tieudoi');
+  await mk('Kho', '0900000004', 'cvktht'); // người lập phiếu kho (vai trò Thủ kho đã bỏ)
   // chỉ dùng 3 khu đầu cho gọn: ẩn các khu còn lại (chưa có thép nên ẩn được)
   for (const k of ['D', 'E', 'F', 'G', 'H']) await S.call('PATCH', '/khu/' + k, { active: 0 });
   return S;
@@ -695,7 +695,7 @@ async function main() {
     let rv = (await S.call('GET', '/review')).data;
     eq('2 khu chờ duyệt = 2 việc', rv.pending, 2);
     eq('người đếm không duyệt được', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'An')).status, 403);
-    eq('thủ kho cũng không duyệt được', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'Kho')).status, 403);
+    eq('tiểu đội trưởng khác cũng không duyệt được', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'Binh')).status, 403);
     eq('duyệt khu không tồn tại: từ chối', (await S.call('POST', '/review/duyet', { khu: 'ZZ' })).status, 400);
 
     eq('duyệt khu A', (await duyet(S, 'A')).status, 200);
@@ -1093,7 +1093,7 @@ async function main() {
     eq('admin khác không khoá được admin đầu tiên',
       (await S.call('POST', `/users/${first}/lock`, { locked: 1 }, 'Admin Hai')).status, 400);
     eq('không hạ quyền được admin đầu tiên',
-      (await S.call('POST', `/users/${first}/role`, { role: 'nguoidem' }, 'Admin Hai')).status, 400);
+      (await S.call('POST', `/users/${first}/role`, { role: 'tieudoi' }, 'Admin Hai')).status, 400);
     eq('và chính admin đầu tiên cũng không tự xoá được',
       (await S.call('POST', `/users/${first}/delete`, {})).status, 400);
 
@@ -1151,7 +1151,7 @@ async function main() {
     await S.call('POST', `/users/${binh}/lock`, { locked: false });
     eq('mở khoá rồi thì gán được', (await S.call('PUT', `/khu/B/users`, { users: [binh] })).status, 200);
     // số điện thoại vẫn bị giữ: nói rõ đường đi thay vì "đã có tài khoản"
-    const dup = await S.call('POST', '/users', { name: 'Người mới', phone: '0900000002', role: 'nguoidem' });
+    const dup = await S.call('POST', '/users', { name: 'Người mới', phone: '0900000002', role: 'tieudoi' });
     ok('tạo trùng số của tài khoản đã xoá: chỉ dẫn khôi phục', /khôi phục/i.test(JSON.stringify(dup.data)), JSON.stringify(dup.data));
 
     /* --- KHÔI PHỤC --- */
@@ -1943,7 +1943,7 @@ async function main() {
     await S.login('A2', '0900000009', a2.data.pin);
     await S.call('POST', '/change-pin', { pin: a2.data.pin, newPin: '2846' }, 'A2');
     // dựng lại đúng cảnh của một database cũ: dòng id nhỏ nhất không còn là admin
-    S.raw.prepare("UPDATE users SET role = 'nguoidem' WHERE id = 1").run();
+    S.raw.prepare("UPDATE users SET role = 'tieudoi' WHERE id = 1").run();
 
     /* Lấy sẵn id trước, không tra lại theo tên: nếu bản sửa bị bỏ thì lệnh sửa tên trả 403 và
        cái tên mới không tồn tại, lúc đó uid('An B') ném lỗi làm sập cả bộ test — che hết những
@@ -1983,11 +1983,11 @@ async function main() {
     eq('giờ Bình đếm được khu A — đúng như lời cảnh báo', (await bao(S, { khu: 'A', day, items: items({ D16: 10 }) }, 'Binh')).status, 200);
 
     // còn người khác phụ trách thì không phải hỏi, nhưng phân công mới vẫn phải vào nhật ký
-    const khoId = uid('Kho');
+    const khoId = (await S.call('POST', '/users', { name: 'Cuong', phone: '0900000031', role: 'tieudoi' })).data.id;
     await S.call('PUT', '/khu/B/users', { users: [binhId, khoId] });
     const d3 = await S.call('POST', `/users/${binhId}/delete`, {});
     eq('xoá một trong hai người phụ trách: không phải hỏi', [d3.status, d3.data.mo], [200, []]);
-    eq('khu B vẫn còn thủ kho phụ trách', S.sql('SELECT user_id FROM khu_user WHERE khu_id = ?', 'B').map((x) => x.user_id), [khoId]);
+    eq('khu B vẫn còn người kia phụ trách', S.sql('SELECT user_id FROM khu_user WHERE khu_id = ?', 'B').map((x) => x.user_id), [khoId]);
     eq('và nhật ký ghi phân công còn lại', JSON.parse(S.sql("SELECT detail FROM audit WHERE action = 'khu_users' ORDER BY id DESC")[0].detail),
       { khu: 'B', n: 1, users: [khoId] });
   }
@@ -2317,10 +2317,11 @@ async function main() {
     await S.call('POST', '/conflict/resolve', { khu: 'A', pick: { D16: 1200 } });
     eq('chọn số lúc 13h không tính là đã đếm buổi chiều', (await S.call('GET', '/bootstrap')).data.slot.done.A, [0]);
 
-    // bản sao bản 14 (chưa có khu_report_log) vẫn nạp được vào bản 15
+    // bản 23 đổi nghĩa dữ liệu cũ (mã vai trò, cấp người báo): bản sao của cấu trúc trước đó không nạp được
     const f = (await S.call('GET', '/backup')).data;
     const bang = { ...f.bang }; delete bang.khu_report_log;
-    eq('bản sao cấu trúc liền trước nạp được', (await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 1, bang }, confirm: 'NAP LAI' })).status, 200);
+    eq('bản sao cấu trúc liền trước KHÔNG nạp được', (await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 1, bang }, confirm: 'NAP LAI' })).status, 400);
+    eq('bản sao cùng cấu trúc, thiếu một bảng: vẫn nạp được', (await S.call('POST', '/restore', { file: { ...f, bang }, confirm: 'NAP LAI' })).status, 200);
 
     /* --- giờ làm do admin đặt, không cố định 6h–18h --- */
     eq('giờ kết thúc trước giờ bắt đầu: từ chối', (await S.call('PUT', '/settings', { work_from: 17, work_to: 7 })).status, 400);
@@ -2463,8 +2464,8 @@ async function main() {
     await S.call('POST', '/reset', { mode: 'wipe', confirm: 'XOA SACH' });
     eq('xoá sạch dữ liệu thép: sổ vay còn nguyên', soDong(), truoc);
     const bang = { ...f.bang }; delete bang.doitac; delete bang.loans; delete bang.khu_report_log;
-    const kq = await S.call('POST', '/restore', { file: { ...f, schema: 15, bang }, confirm: 'NAP LAI' });
-    eq('nạp bản sao bản 15 được', kq.status, 200);
+    const kq = await S.call('POST', '/restore', { file: { ...f, bang }, confirm: 'NAP LAI' });
+    eq('nạp bản sao thiếu bảng sổ vay được', kq.status, 200);
     eq('bản sao chưa có sổ vay: sổ vay giữ nguyên', soDong(), truoc);
     eq('và nói rõ đã giữ những bảng nào', kq.data.giu, ['doitac', 'loans']);
     ok('số dòng nạp vẫn là số (không lẫn chữ)', Object.values(kq.data.dong).every((x) => typeof x === 'number'), JSON.stringify(kq.data.dong));
@@ -3012,6 +3013,210 @@ async function main() {
     // kỳ không có ngày đặt lại: không có gì đổi
     const rep2 = (await S.call('GET', `/report?from=${d2}&to=${d2}`)).data;
     eq('kỳ không có ngày đặt lại: không có cột, mọi phi 0', [rep2.hasKk, rep2.rows.every((x) => x.kk === 0)], [false, true]);
+  }
+
+  /* ================= 62. Phân quyền theo cấp bậc =================
+     Tiểu đội trưởng (cấp 0) báo → CVKTHT (cấp 1) duyệt báo cáo đếm và sổ vay của cấp 0 → Trung đội
+     trưởng, Đại đội trưởng, admin (cấp 2) duyệt được hết. PHIẾU KHO chỉ cấp 2 duyệt. Phần hệ thống
+     chỉ vai trò admin. Vai trò Thủ kho đã bỏ. */
+  {
+    const S = await setup();
+    const mk = async (name, phone, role) => {
+      const r = await S.call('POST', '/users', { name, phone, role });
+      await S.login(name, phone, r.data.pin);
+      await S.call('POST', '/change-pin', { pin: r.data.pin, newPin: '1357' }, name);
+    };
+    await mk('Cv', '0900000011', 'cvktht');
+    await mk('Cv2', '0900000012', 'cvktht');
+    await mk('Trung', '0900000013', 'trungdoi');
+    await mk('Dai', '0900000014', 'daidoi');
+    const khuOf = async (k, who = 'Dai') => (await S.call('GET', '/review', undefined, who)).data.khus.find((x) => x.khu === k);
+    const ton = async (k, phi) => { const b = (await S.call('GET', '/bootstrap')).data; return (b.eff.find((x) => x.khu_id === k && x.phi_id === phi) || {}).v; };
+
+    // --- ai vào được đâu ---
+    eq('tiểu đội trưởng không vào màn Duyệt', [(await S.call('GET', '/review', undefined, 'An')).status, (await S.call('GET', '/review', undefined, 'Binh')).status], [403, 403]);
+    eq('CVKTHT, trung đội trưởng, đại đội trưởng vào được màn Duyệt', [(await S.call('GET', '/review', undefined, 'Cv')).status, (await S.call('GET', '/review', undefined, 'Trung')).status, (await S.call('GET', '/review', undefined, 'Dai')).status], [200, 200, 200]);
+    eq('cấp duyệt xem được nhật ký', [(await S.call('GET', '/audit', undefined, 'Cv')).status, (await S.call('GET', '/audit', undefined, 'An')).status], [200, 403]);
+    // phần hệ thống: chỉ admin, kể cả đại đội trưởng cũng không
+    for (const [m, p, body] of [['GET', '/users'], ['POST', '/users', { name: 'x', phone: '0911111111', role: 'tieudoi' }],
+      ['PUT', '/settings', { max_keep_streak: 5 }], ['POST', '/khu', { name: 'Khu Z' }], ['PUT', '/khu/A/users', { users: [] }],
+      ['PATCH', '/phi/D10', { min_stock: 1 }], ['POST', '/reset', { mode: 'zero' }], ['GET', '/backup']]) {
+      eq(`đại đội trưởng không đụng được phần hệ thống: ${m} ${p}`, (await S.call(m, p, body, 'Dai')).status, 403);
+    }
+    eq('vai trò lạ vẫn bị từ chối', (await S.call('POST', '/users', { name: 'x', phone: '0911111112', role: 'totruong' })).status, 400);
+    eq('vai trò Thủ kho đã bỏ: không tạo, không gán được nữa', [(await S.call('POST', '/users', { name: 'x', phone: '0911111113', role: 'thukho' })).status,
+      (await S.call('POST', `/users/${S.one("SELECT id FROM users WHERE name = 'Binh'").id}/role`, { role: 'thukho' })).status], [400, 400]);
+    eq('tiểu đội trưởng không lập phiếu kho', (await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D18', qty: 1 }] }, 'An')).status, 403);
+
+    // --- báo cáo đếm của tiểu đội trưởng: CVKTHT duyệt được ---
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 100 }) }, 'An');
+    eq('khu do tiểu đội trưởng báo: cấp người báo = 0', (await khuOf('A')).capBao, 0);
+    eq('tiểu đội trưởng không tự duyệt', (await duyet(S, 'A', 'An')).status, 403);
+    eq('CVKTHT duyệt báo cáo của tiểu đội trưởng', (await duyet(S, 'A', 'Cv')).status, 200);
+    eq('số đã duyệt vào tồn', await ton('A', 'D16'), 100);
+
+    // --- báo cáo đếm của CVKTHT: CVKTHT (mình hay người khác) không duyệt, cấp trên duyệt ---
+    await S.call('PUT', '/counts', { khu: 'B', items: items({ D16: 50 }) }, 'Cv');
+    eq('khu do CVKTHT báo: cấp người báo = 1', (await khuOf('B')).capBao, 1);
+    const tu = await duyet(S, 'B', 'Cv');
+    eq('CVKTHT không tự duyệt số mình báo', [tu.status, tu.data.code], [403, 'cap']);
+    eq('CVKTHT khác cũng không duyệt', (await duyet(S, 'B', 'Cv2')).status, 403);
+    eq('CVKTHT không huỷ được báo cáo của CVKTHT', (await S.call('POST', '/recount', { khu: 'B', ly_do: 'thử' }, 'Cv2')).status, 403);
+    eq('chưa ai duyệt thì chưa vào tồn', await ton('B', 'D16'), undefined);
+    eq('trung đội trưởng duyệt báo cáo của CVKTHT', (await duyet(S, 'B', 'Trung')).status, 200);
+    eq('số vào tồn sau khi cấp trên duyệt', await ton('B', 'D16'), 50);
+
+    // --- phiếu kho: CVKTHT lập được, nhưng CHỈ cấp chỉ huy duyệt ---
+    const pK = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D18', qty: 10 }] }, 'Kho');
+    eq('CVKTHT lập được phiếu', pK.status, 200);
+    const tuP = await duyetP(S, pK.data.id, 'Kho');
+    eq('CVKTHT không tự duyệt phiếu mình lập', [tuP.status], [403]);
+    eq('CVKTHT khác cũng không duyệt phiếu kho', (await duyetP(S, pK.data.id, 'Cv')).status, 403);
+    eq('trung đội trưởng duyệt phiếu kho', (await duyetP(S, pK.data.id, 'Trung')).status, 200);
+    eq('CVKTHT không huỷ được phiếu đã duyệt của người khác', (await S.call('DELETE', '/receipts/' + pK.data.id, undefined, 'Cv')).status, 403);
+    const pC = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D18', qty: 20 }] }, 'Cv');
+    eq('CVKTHT khác không từ chối được phiếu chờ', (await S.call('DELETE', '/receipts/' + pC.data.id, undefined, 'Cv2')).status, 403);
+    // khu A có báo cáo của tiểu đội trưởng NHƯNG còn phiếu kho chờ: CVKTHT không duyệt nửa khu
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 90, D18: 10 }) }, 'An');
+    const kA = await khuOf('A');
+    eq('khu A: số của cấp 0, còn phiếu kho (cần cấp 2)', [kA.capBao, kA.capPhieu], [0, 2]);
+    eq('CVKTHT không duyệt được khu còn phiếu kho chờ', (await duyet(S, 'A', 'Cv2')).status, 403);
+    eq('số của khu vẫn chờ, không vào tồn nửa chừng', await ton('A', 'D16'), 100);
+    eq('CVKTHT vẫn huỷ được báo cáo của tiểu đội trưởng ở khu đó', (await S.call('POST', '/recount', { khu: 'A', ly_do: 'D16 đếm thiếu' }, 'Cv2')).status, 200);
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 95, D18: 30 }) }, 'An');
+    eq('đại đội trưởng duyệt cả khu: số và phiếu kho', (await duyet(S, 'A', 'Dai')).data.phieu, 1);
+    eq('tồn lấy theo báo cáo vừa duyệt', [await ton('A', 'D16'), await ton('A', 'D18')], [95, 30]);
+    // phiếu của cấp chỉ huy: tự duyệt được (như admin trước đây), CVKTHT thì không
+    const pD = await S.call('POST', '/receipts', { khu: 'C', lines: [{ phi: 'D10', qty: 5 }] }, 'Dai');
+    eq('CVKTHT không duyệt phiếu của đại đội trưởng', (await duyetP(S, pD.data.id, 'Cv')).status, 403);
+    eq('trung đội trưởng duyệt phiếu của đại đội trưởng (ngang cấp)', (await duyetP(S, pD.data.id, 'Trung')).status, 200);
+
+    // --- duyệt tất cả: CVKTHT chỉ duyệt phần của cấp dưới, phần còn lại vẫn chờ ---
+    { const d = vnDay(); addDays(1); await REV.closeDayAuto(S.env, d); }
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 80, D18: 30 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'B', items: items({ D16: 40 }) }, 'Cv');
+    const all = await duyetAll(S, 'Cv2');
+    eq('duyệt tất cả: 1 khu duyệt được, 1 khu còn chờ cấp trên', [all.status, all.data.khu, all.data.con], [200, 1, 1]);
+    eq('khu của tiểu đội trưởng đã vào tồn, khu của CVKTHT thì chưa', [await ton('A', 'D16'), await ton('B', 'D16')], [80, undefined]);
+    eq('admin duyệt nốt', (await duyet(S, 'B')).status, 200);
+
+    // --- hai người báo khác số: CVKTHT chọn số thì số đó thành của CVKTHT, cấp trên duyệt ---
+    await S.call('PUT', '/counts', { khu: 'C', items: items({ D10: 5, D16: 7 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'C', items: items({ D10: 5, D16: 9 }) }, 'Binh');
+    eq('CVKTHT lưu lựa chọn được', (await S.call('POST', '/conflict/resolve', { khu: 'C', pick: { D16: 7 } }, 'Cv')).status, 200);
+    eq('ô CVKTHT vừa chọn mang cấp của CVKTHT', (await khuOf('C')).capBao, 1);
+    eq('CVKTHT không tự duyệt số mình chọn', (await duyet(S, 'C', 'Cv')).status, 403);
+    eq('đại đội trưởng duyệt', (await duyet(S, 'C', 'Dai')).status, 200);
+    eq('tồn là số được chọn', await ton('C', 'D16'), 7);
+
+    // --- sổ vay mượn: cùng thang duyệt ---
+    const dt = (await S.call('POST', '/doitac', { name: 'Cty Cấp Bậc' }, 'An')).data.id;
+    const ghi = (who, qty) => S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-' + who, doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty }] }, who);
+    const lA = await ghi('An', 3), lC = await ghi('Cv', 4);
+    eq('CVKTHT duyệt lần ghi của tiểu đội trưởng', (await S.call('POST', '/loans/' + lA.data.ids[0] + '/duyet', {}, 'Cv')).status, 200);
+    eq('CVKTHT không duyệt lần ghi của mình', (await S.call('POST', '/loans/' + lC.data.ids[0] + '/duyet', {}, 'Cv')).status, 403);
+    eq('nhưng tự rút lại lần ghi của mình thì được', (await S.call('DELETE', '/loans/' + lC.data.ids[0], undefined, 'Cv')).status, 200);
+    // lần ghi KÈM PHIẾU KHO theo luật phiếu kho, kể cả khi người ghi sau đó bị hạ xuống tiểu đội trưởng
+    const lK = await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-kho', doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty: 2 }], khu: 'A' }, 'Cv2');
+    eq('CVKTHT ghi sổ kèm phiếu kho được', lK.status, 200);
+    await S.call('POST', `/users/${S.one("SELECT id FROM users WHERE name = 'Cv2'").id}/role`, { role: 'tieudoi' });
+    eq('người ghi bị hạ cấp: CVKTHT vẫn không duyệt được lần ghi kèm phiếu kho', (await S.call('POST', '/loans/' + lK.data.ids[0] + '/duyet', {}, 'Cv')).status, 403);
+    eq('CVKTHT cũng không từ chối được nó', (await S.call('DELETE', '/loans/' + lK.data.ids[0], undefined, 'Cv')).status, 403);
+    eq('đại đội trưởng duyệt lần ghi kèm phiếu kho', (await S.call('POST', '/loans/' + lK.data.ids[0] + '/duyet', {}, 'Dai')).status, 200);
+    const lC2 = await ghi('Cv', 6);
+    // Tổng quan nhắc mỗi người đúng số lần ghi mình duyệt được: đang chờ có 1 lần của CVKTHT (lC2)
+    const lA2 = await ghi('Binh', 1);
+    const dem = async (who) => { const b = (await S.call('GET', '/bootstrap', undefined, who)).data; return [b.loanPending, b.loanDuyet]; };
+    eq('đang chờ 2 lần ghi: CVKTHT duyệt được 1 (của tiểu đội trưởng)', await dem('Cv'), [2, 1]);
+    eq('trung đội trưởng duyệt được cả 2', await dem('Trung'), [2, 2]);
+    eq('tiểu đội trưởng không duyệt được lần nào', await dem('An'), [2, 0]);
+    await S.call('DELETE', '/loans/' + lA2.data.ids[0], undefined, 'Binh');
+    eq('trung đội trưởng duyệt lần ghi của CVKTHT', (await S.call('POST', '/loans/' + lC2.data.ids[0] + '/duyet', {}, 'Trung')).status, 200);
+
+    // --- giao khu chỉ cho tiểu đội trưởng; CVKTHT trở lên đếm được mọi khu, không cần giao ---
+    const idOf = (n) => S.one('SELECT id FROM users WHERE name = ?', n).id;
+    eq('không giao khu cho CVKTHT', (await S.call('PUT', '/khu/A/users', { users: [idOf('An'), idOf('Cv')] })).status, 400);
+    eq('không giao khu cho cấp chỉ huy', (await S.call('PUT', '/khu/A/users', { users: [idOf('Dai')] })).status, 400);
+    eq('giao khu cho tiểu đội trưởng', (await S.call('PUT', '/khu/A/users', { users: [idOf('An')] })).status, 200);
+    eq('tiểu đội trưởng khác không báo nhầm được khu đã giao', (await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 1 }) }, 'Binh')).status, 403);
+    eq('CVKTHT đếm được khu đã giao người khác', (await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 80, D18: 30 }) }, 'Cv')).status, 200);
+    await duyet(S, 'A', 'Dai');
+
+    // --- cấp người báo GHI LÚC BÁO: đổi vai trò sau đó không đổi việc ai duyệt được ---
+    await S.call('PUT', '/counts', { khu: 'B', items: items({ D16: 33 }) }, 'Cv');
+    const lCv = await ghi('Cv', 9);
+    eq('ô do CVKTHT báo ghi cấp 1 ngay trong dòng', S.one("SELECT DISTINCT cap FROM counts WHERE khu_id = 'B' AND day = ?", vnDay()).cap, 1);
+    eq('hạ CVKTHT đó xuống tiểu đội trưởng', (await S.call('POST', `/users/${idOf('Cv')}/role`, { role: 'tieudoi' })).status, 200);
+    eq('số họ báo lúc còn là CVKTHT vẫn là việc cấp 1', (await khuOf('B')).capBao, 1);
+    eq('CVKTHT khác vẫn không duyệt được số đó', (await duyet(S, 'B', 'Kho')).status, 403);
+    eq('lần ghi sổ họ ghi lúc đó cũng vậy', (await S.call('POST', '/loans/' + lCv.data.ids[0] + '/duyet', {}, 'Kho')).status, 403);
+    eq('trung đội trưởng duyệt', [(await duyet(S, 'B', 'Trung')).status, (await S.call('POST', '/loans/' + lCv.data.ids[0] + '/duyet', {}, 'Trung')).status], [200, 200]);
+    // từ giờ họ báo với cấp mới
+    await S.call('PUT', '/counts', { khu: 'B', items: items({ D16: 30 }) }, 'Cv');
+    eq('báo lại sau khi đổi vai trò: ghi cấp 0, CVKTHT duyệt được', [(await khuOf('B')).capBao, (await duyet(S, 'B', 'Kho')).status], [0, 200]);
+    // huỷ báo cáo: ô quay về lần đã duyệt thì lấy lại cả cấp của lần đó
+    await S.call('PUT', '/counts', { khu: 'B', items: items({ D16: 29 }) }, 'Trung');
+    eq('trung đội trưởng báo đè: khu thành việc cấp 2', (await khuOf('B')).capBao, 2);
+    eq('đại đội trưởng huỷ báo cáo đó', (await S.call('POST', '/recount', { khu: 'B', ly_do: 'nhầm khu' }, 'Dai')).status, 200);
+    eq('ô quay về lần đã duyệt của tiểu đội trưởng, kèm cấp 0', [(await khuOf('B')).capBao, await ton('B', 'D16')], [0, 30]);
+
+    // --- thôi là tiểu đội trưởng thì thôi phụ trách khu ---
+    await S.call('PUT', '/khu/A/users', { users: [idOf('An'), idOf('Binh')] });
+    await S.call('PUT', '/khu/C/users', { users: [idOf('An')] });
+    const len = await S.call('POST', `/users/${idOf('An')}/role`, { role: 'cvktht' });
+    eq('An là người duy nhất của khu C: phải hỏi lại trước khi đổi vai trò', [len.status, len.data.code], [409, 'khu_open']);
+    eq('chưa xác nhận thì chưa đổi gì', [S.one('SELECT role FROM users WHERE id = ?', idOf('An')).role, S.sql('SELECT 1 FROM khu_user WHERE user_id = ?', idOf('An')).length], ['tieudoi', 2]);
+    const len2 = await S.call('POST', `/users/${idOf('An')}/role`, { role: 'cvktht', confirm_khu: true });
+    eq('xác nhận rồi thì đổi được, kèm khu vừa mở ra', [len2.status, len2.data.mo], [200, ['C']]);
+    eq('An bị gỡ khỏi mọi khu; khu A còn Bình', [S.sql('SELECT 1 FROM khu_user WHERE user_id = ?', idOf('An')).length, S.sql("SELECT user_id FROM khu_user WHERE khu_id = 'A'").map((x) => x.user_id)], [0, [idOf('Binh')]]);
+    eq('bảng phân công chỉ còn tiểu đội trưởng', S.sql("SELECT 1 FROM khu_user ku JOIN users u ON u.id = ku.user_id WHERE u.role <> 'tieudoi'").length, 0);
+    eq('đổi vai trò người không phụ trách khu nào: không phải hỏi', (await S.call('POST', `/users/${idOf('Cv')}/role`, { role: 'cvktht' })).status, 200);
+  }
+
+  /* ================= 63. Nâng cấp từ bản 22 =================
+     Bảng users nhận bộ vai trò mới và đổi hai mã cũ; cột cap được thêm và điền; phân công khu chỉ
+     còn Tiểu đội trưởng. Không mất tài khoản nào, bộ đếm id không lùi. */
+  {
+    const S = await setup();
+    const day = vnDay();
+    await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 10 }) }, 'An');
+    await S.call('PUT', '/counts', { khu: 'B', items: items({ D16: 20 }) }, 'Kho');
+    const dt = (await S.call('POST', '/doitac', { name: 'Cty Cũ' }, 'An')).data.id;
+    await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-1', doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] }, 'Kho');
+    const idOf = (n) => S.one('SELECT id FROM users WHERE name = ?', n).id;
+    const cols = 'id, name, phone, role, pin_salt, pin_hash, must_change, locked, fail_count, locked_until, lock_level, created_at, deleted';
+    // dựng lại đúng cảnh bản 22: vai trò mã cũ (CHECK ba vai trò), chưa có cột cap, thủ kho đang phụ trách khu
+    S.raw.exec(`CREATE TABLE users_cu (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK (role IN ('admin','thukho','ngu` + `oidem')), pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL,
+      must_change INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, fail_count INTEGER NOT NULL DEFAULT 0,
+      locked_until INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, lock_level INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0);
+      INSERT INTO users_cu (${cols}) SELECT ${cols.replace('role', "CASE role WHEN 'cvktht' THEN 'thukho' WHEN 'tieudoi' THEN 'ngu' || 'oidem' ELSE role END")} FROM users;
+      INSERT INTO users_cu (name, phone, role, pin_salt, pin_hash, created_at) VALUES ('Tạm', '0900000099', 'admin', 's', 'h', 1);
+      DELETE FROM users_cu WHERE name = 'Tạm';
+      DROP TABLE users; ALTER TABLE users_cu RENAME TO users;
+      ALTER TABLE counts DROP COLUMN cap; ALTER TABLE counts_log DROP COLUMN cap; ALTER TABLE loans DROP COLUMN cap;
+      INSERT INTO khu_user (khu_id, user_id) VALUES ('A', ${idOf('An')}), ('B', ${idOf('Kho')});
+      UPDATE meta SET value = 22 WHERE key = 'schema';`);
+    const truoc = S.sql('SELECT id, name, phone, role, pin_hash, deleted FROM users ORDER BY id');
+    const seq = S.one("SELECT seq FROM sqlite_sequence WHERE name = 'users'").seq;
+    ok('bộ đếm id đang cao hơn id lớn nhất còn trong bảng', seq > Math.max(...truoc.map((u) => u.id)), seq);
+    const S2 = await boot(ROOT, S.raw);
+    await S2.login('admin', '0900000001', '2468');
+    eq('nâng cấp xong: lên bản mới nhất', S2.one("SELECT value FROM meta WHERE key='schema'").value, SCHEMA_NOW);
+    const moiMa = { thukho: 'cvktht', ['ngu' + 'oidem']: 'tieudoi' };
+    eq('không mất tài khoản nào (kể cả PIN); chỉ hai mã vai trò cũ được đổi',
+      S2.sql('SELECT id, name, phone, role, pin_hash, deleted FROM users ORDER BY id'), truoc.map((u) => ({ ...u, role: moiMa[u.role] || u.role })));
+    eq('vai trò sau nâng cấp', S2.sql('SELECT name, role FROM users ORDER BY id').map((u) => u.name + ':' + u.role), ['Admin:admin', 'An:tieudoi', 'Binh:tieudoi', 'Kho:cvktht']);
+    eq('bộ đếm id không lùi', S2.one("SELECT seq FROM sqlite_sequence WHERE name = 'users'").seq, seq);
+    const moi = await S2.call('POST', '/users', { name: 'Mới', phone: '0900000021', role: 'trungdoi' });
+    ok('tài khoản tạo sau nâng cấp không dùng lại id cũ', moi.status === 200 && moi.data.id > seq, JSON.stringify(moi.data));
+    eq('số điện thoại vẫn là duy nhất', (await S2.call('POST', '/users', { name: 'Trùng', phone: '0900000002', role: 'tieudoi' })).status, 400);
+    eq('bảng mới từ chối mã vai trò cũ', (() => { try { S2.raw.exec("UPDATE users SET role = 'thukho' WHERE name = 'Kho'"); return 'nhận'; } catch (e) { return /CHECK/i.test(String(e.message)) ? 'từ chối' : String(e.message); } })(), 'từ chối');
+    eq('cấp người báo được điền theo người báo: An 0, Kho (thành CVKTHT) 1',
+      [S2.one("SELECT DISTINCT cap FROM counts WHERE khu_id = 'A' AND day = ?", day).cap, S2.one("SELECT DISTINCT cap FROM counts WHERE khu_id = 'B' AND day = ?", day).cap, S2.one('SELECT cap FROM loans').cap], [0, 1, 1]);
+    eq('phân công khu: thủ kho cũ bị gỡ, tiểu đội trưởng giữ nguyên', S2.sql('SELECT khu_id, user_id FROM khu_user ORDER BY khu_id'), [{ khu_id: 'A', user_id: idOf('An') }]);
+    // dùng được ngay sau nâng cấp
+    eq('sau nâng cấp: báo số và duyệt chạy bình thường', [(await S2.call('PUT', '/counts', { khu: 'A', items: items({ D16: 11 }) })).status, (await duyet(S2, 'A')).status], [200, 200]);
   }
 
   /* ================= kết quả ================= */

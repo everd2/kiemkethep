@@ -1,5 +1,5 @@
 // Quản trị: người dùng, khu, phi, cài đặt.
-import { HttpError, PHI_DEFAULTS, ROLES, bad, hashPin, json, rand, seedPhi, vnDay } from './core.js';
+import { GIAO_KHU, HttpError, PHI_DEFAULTS, ROLES, bad, hashPin, json, rand, seedPhi, vnDay } from './core.js';
 import { SETTINGS_SQL, SETTING_RANGE, auditStmt, boWord, bump, genPin, intIn, normPhone,
   parseSettings, qtyWord, readJson, unitWord } from './helpers.js';
 import { logout } from './auth.js';
@@ -35,7 +35,7 @@ export async function createUser(req, env, admin) {
   const name = String(b.name || '').trim().slice(0, 60);
   if (!name) throw bad('Cần nhập tên');
   const phone = normPhone(b.phone);
-  const role = String(b.role || 'nguoidem');
+  const role = String(b.role || 'tieudoi');
   if (!ROLES.includes(role)) throw bad('Vai trò không hợp lệ');
   const exist = await env.DB.prepare('SELECT name, deleted FROM users WHERE phone = ?').bind(phone).first();
   /* Số điện thoại là UNIQUE và dòng của người đã xoá vẫn còn, nên không tạo mới trùng số được.
@@ -60,6 +60,37 @@ export const PROTECT_FIRST = ['lock', 'role', 'delete'];
    trên màn hình cho họ đọc, họ đăng nhập vào chính tài khoản chủ hệ thống rồi làm đủ những việc
    vừa bị chặn — đổi tên và xoá bất kỳ ai, kể cả mọi admin khác. */
 export const FIRST_SELF_ONLY = ['reset-pin'];
+
+/* Các khu một người đang phụ trách, và ai còn lại ở từng khu nếu gỡ người đó ra. solo = khu mà
+   người đó là người phụ trách DUY NHẤT: gỡ xong khu thành chưa giao ai, tức Tiểu đội trưởng nào cũng
+   đếm được — ngược hẳn ý của người vừa bấm, nên phải hỏi lại (mã lỗi 'khu_open'), và mỗi khu bị đổi
+   phân công để lại một dòng nhật ký y như lúc sửa phân công tay. Dùng khi XOÁ tài khoản và khi ĐỔI
+   VAI TRÒ một người khỏi Tiểu đội trưởng: khu_user chỉ được chứa Tiểu đội trưởng đang dùng được. */
+async function goKhoiKhu(env, admin, u, b, viec) {
+  const asg = await env.DB.prepare(
+    `SELECT ku.khu_id khu, k.name, ku.user_id uid FROM khu_user ku JOIN khu k ON k.id = ku.khu_id
+     WHERE ku.khu_id IN (SELECT khu_id FROM khu_user WHERE user_id = ?1)`).bind(u.id).all();
+  const byKhu = new Map();
+  for (const r of asg.results) {
+    if (!byKhu.has(r.khu)) byKhu.set(r.khu, { khu: r.khu, name: r.name, users: [] });
+    byKhu.get(r.khu).users.push(r.uid);
+  }
+  const khus = [...byKhu.values()].map((k) => ({ ...k, users: k.users.filter((x) => x !== u.id) }));
+  const solo = khus.filter((k) => !k.users.length);
+  if (solo.length && !b.confirm_khu) {
+    throw new HttpError(409,
+      `${u.name} là người phụ trách duy nhất của ${solo.map((k) => k.khu + ' ' + k.name).join(', ')}. `
+      + `${viec} xong thì khu đó không còn ai phụ trách, tức là MỌI người đếm đều đếm được khu đó. `
+      + 'Hãy gán người phụ trách khác trước, hoặc xác nhận lại để tiếp tục.', 'khu_open');
+  }
+  return {
+    mo: solo.map((k) => k.khu),
+    stmts: khus.length ? [
+      env.DB.prepare('DELETE FROM khu_user WHERE user_id = ?').bind(u.id),
+      ...khus.map((k) => auditStmt(env, admin, 'khu_users', { khu: k.khu, n: k.users.length, users: k.users })),
+    ] : [],
+  };
+}
 
 export async function userAction(req, env, admin, id, action) {
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
@@ -103,11 +134,15 @@ export async function userAction(req, env, admin, id, action) {
     const role = String(b.role || '');
     if (!ROLES.includes(role)) throw bad('Vai trò không hợp lệ');
     if (id === admin.id && role !== 'admin') throw bad('Không thể tự bỏ quyền admin của mình');
+    // thôi là Tiểu đội trưởng thì thôi phụ trách khu: cấp trên đếm được mọi khu, không đứng tên khu nào
+    const go = role !== GIAO_KHU ? await goKhoiKhu(env, admin, u, b, 'Đổi vai trò') : { mo: [], stmts: [] };
     await env.DB.batch([
       env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(role, id),
-      auditStmt(env, admin, 'user_role', { id, name: u.name, role }),
+      ...go.stmts,
+      auditStmt(env, admin, 'user_role', { id, name: u.name, role, tu: u.role, mo: go.mo }),
+      bump(env),
     ]);
-    return json({ ok: true });
+    return json({ ok: true, mo: go.mo });
   }
   if (action === 'logout') {
     await env.DB.batch([
@@ -139,26 +174,8 @@ export async function userAction(req, env, admin, id, action) {
      đếm được). Số đếm, phiếu, báo cáo người này đã làm thì giữ nguyên, kèm nguyên tên. */
   if (action === 'delete') {
     if (id === admin.id) throw bad('Không thể tự xoá chính mình');
-    /* Bỏ phân công khu là chỗ có hậu quả ngầm: khu KHÔNG còn ai phụ trách nghĩa là MỌI người đếm
-       đều đếm được khu đó (xem putCounts), nên xoá người phụ trách duy nhất của một khu là âm thầm
-       mở khu đó ra cho cả bãi — ngược hẳn ý của người vừa bấm "xoá tài khoản". Vì vậy phải hỏi lại
-       một lần, và mỗi khu bị đổi phân công để lại một dòng nhật ký y như lúc sửa phân công tay. */
-    const asg = await env.DB.prepare(
-      `SELECT ku.khu_id khu, k.name, ku.user_id uid FROM khu_user ku JOIN khu k ON k.id = ku.khu_id
-       WHERE ku.khu_id IN (SELECT khu_id FROM khu_user WHERE user_id = ?1)`).bind(id).all();
-    const byKhu = new Map();
-    for (const r of asg.results) {
-      if (!byKhu.has(r.khu)) byKhu.set(r.khu, { khu: r.khu, name: r.name, users: [] });
-      byKhu.get(r.khu).users.push(r.uid);
-    }
-    const khus = [...byKhu.values()].map((k) => ({ ...k, users: k.users.filter((x) => x !== id) }));
-    const solo = khus.filter((k) => !k.users.length);
-    if (solo.length && !b.confirm_khu) {
-      throw new HttpError(409,
-        `${u.name} là người phụ trách duy nhất của ${solo.map((k) => k.khu + ' ' + k.name).join(', ')}. `
-        + 'Xoá xong thì khu đó không còn ai phụ trách, tức là MỌI người đếm đều đếm được khu đó. '
-        + 'Hãy gán người phụ trách khác trước, hoặc xác nhận lại để tiếp tục.', 'khu_open');
-    }
+    // bỏ phân công khu, hỏi lại nếu có khu chỉ còn mỗi người này (xem goKhoiKhu)
+    const go = await goKhoiKhu(env, admin, u, b, 'Xoá');
     /* locked GIỮ NGUYÊN, không xoá về 0: một tài khoản bị khoá có chủ đích mà đi qua một vòng xoá
        rồi khôi phục thì phải quay về đúng trạng thái bị khoá, chứ không được tự mở khoá dọc đường
        mà không dòng nhật ký nào nói. fail_count/locked_until thì xoá, đó chỉ là số lần nhập sai
@@ -166,12 +183,11 @@ export async function userAction(req, env, admin, id, action) {
     await env.DB.batch([
       env.DB.prepare('UPDATE users SET deleted = 1, fail_count = 0, locked_until = 0 WHERE id = ?').bind(id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
-      env.DB.prepare('DELETE FROM khu_user WHERE user_id = ?').bind(id),
-      ...khus.map((k) => auditStmt(env, admin, 'khu_users', { khu: k.khu, n: k.users.length, users: k.users })),
-      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone, locked: u.locked, mo: solo.map((k) => k.khu) }),
+      ...go.stmts,
+      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone, locked: u.locked, mo: go.mo }),
       bump(env),
     ]);
-    return json({ ok: true, mo: solo.map((k) => k.khu) });
+    return json({ ok: true, mo: go.mo });
   }
   /* Khôi phục tài khoản xoá nhầm — và cấp luôn PIN MỚI. must_change một mình là không đủ: nó chỉ
      có tác dụng SAU khi đăng nhập được, nên để nguyên PIN cũ là mở lại đúng cánh cửa vừa đóng —
@@ -227,10 +243,13 @@ export async function khuUsers(req, env, admin, id) {
     /* Tài khoản đã xoá hoặc ĐANG KHOÁ thì không gán được: khu gán cho người không đăng nhập được thì
        chỉ còn admin đếm được, mà nhìn danh sách phân công không ai hiểu vì sao. Người đã gán rồi mới
        bị khoá thì vẫn giữ phân công (mở khoá là đếm tiếp được). */
-    const have = await env.DB.prepare('SELECT id, deleted, locked FROM users WHERE id IN (SELECT value FROM json_each(?))')
+    const have = await env.DB.prepare('SELECT id, role, deleted, locked FROM users WHERE id IN (SELECT value FROM json_each(?))')
       .bind(JSON.stringify(ids)).all();
     if (have.results.length !== ids.length || have.results.some((u) => u.deleted)) throw bad('Có tài khoản không tồn tại hoặc đã bị xoá');
     if (have.results.some((u) => u.locked)) throw bad('Có tài khoản đang bị khoá. Mở khoá trước khi giao khu cho người đó');
+    /* Chỉ giao khu cho Tiểu đội trưởng. CVKTHT trở lên đã đếm được mọi khu, giao thêm không có tác
+       dụng gì mà còn làm danh sách phụ trách (và bảng chấm công báo cáo) nói sai ai là người giữ khu. */
+    if (have.results.some((u) => u.role !== GIAO_KHU)) throw bad('Chỉ giao khu cho Tiểu đội trưởng. CVKTHT trở lên đã đếm được mọi khu, không cần giao');
   }
   const stmts = [env.DB.prepare('DELETE FROM khu_user WHERE khu_id = ?').bind(id)];
   if (ids.length) {

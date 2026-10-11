@@ -4,37 +4,58 @@
 
 ## Cách hệ thống tính
 
-- **Nhắc đúng người phụ trách**: thẻ *chưa báo*, *báo cáo bị huỷ*, *chưa đếm buổi…* chỉ hiện cho người phụ trách khu đó (và admin); khu **chưa giao ai** thì ai cũng được nhắc, nên admin thấy thẻ *"N khu chưa giao người phụ trách"* để đi giao ở **Cài đặt → Khu bãi**. Thẻ *chưa báo* của admin ghi kèm tên người phụ trách từng khu. Khu trống (không có thép, không có phiếu) không bị nhắc. App chỉ nhắc khi người đó **mở app** — chưa có thông báo đẩy.
+- **Nhắc đúng người phụ trách**: thẻ *chưa báo*, *báo cáo bị huỷ*, *chưa đếm buổi…* chỉ hiện cho người phụ trách khu đó (và cấp duyệt, từ CVKTHT trở lên); khu **chưa giao ai** thì ai cũng được nhắc, nên Admin thấy thẻ *"N khu chưa giao người phụ trách"* để đi giao ở **Cài đặt → Khu bãi**. Thẻ *chưa báo* của cấp duyệt ghi kèm tên người phụ trách từng khu. Khu trống (không có thép, không có phiếu) không bị nhắc. App chỉ nhắc khi người đó **mở app** — chưa có thông báo đẩy.
 - **Tổng quan**: chạm vào thẻ một khu để xem thép của khu đó với **đủ mọi đường kính** (phi không có thép ghi 0), và bấm **Đếm / báo cáo** ngay ở đó (chỉ hiện với người đếm được khu đó, khi ngày chưa chốt).
 - Mỗi ô **(ngày × khu × phi)** là đơn vị gốc. Mọi thống kê (toàn bãi, theo khu, theo phi) tính từ các ô này.
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.
 - **Chưa duyệt thì không vào tồn.** Đây là quy tắc trung tâm, áp cho cả báo cáo đếm lẫn phiếu nhập/chuyển: tồn của một khu luôn bằng **báo cáo mới nhất ĐƯỢC DUYỆT** của khu đó, không liên quan khu khác. Khu báo lại số mới mà chưa ai duyệt thì tồn vẫn là số đã duyệt trước đó.
 - **Đã dùng = Tồn chuẩn hôm qua + Nhập trong ngày − Tổng đếm hôm nay** (tính ở cấp toàn bãi, **không ai phải nhập phiếu xuất**). Muốn biết thép đi đâu thì ghi **phiếu xuất** — tuỳ chọn, không bắt buộc, và nó **không thay phép tính này**, chỉ tách con số "đã dùng" thành phần *có phiếu* và phần *không rõ*. Xem mục [Phiếu xuất](#phiếu-xuất-tuỳ-chọn). Vế "Tổng đếm" là **thép đang có**: báo cáo đã duyệt gần nhất của từng khu, cộng phiếu được duyệt **sau** lần duyệt đó (thép về mà khu chưa báo lại không bị tính là đã dùng). Phiếu duyệt trước hoặc cùng lúc với báo cáo thì không cộng — duyệt báo cáo là lấy tồn theo báo cáo — nên không tính trùng với vế "Nhập".
 - **Thép đang có** của một khu = số đếm đã duyệt gần nhất **+ phiếu đã duyệt sau lần đếm đó**. Đã duyệt thì phải vào tồn, nên một khu vừa nhận thép đã duyệt mà chưa kịp đếm vẫn thấy ngay ở Tổng quan và Tồn bãi, khớp với số "dự kiến" mà màn Báo cáo đang hiện. **Duyệt báo cáo của khu là lấy tồn khu đó theo báo cáo**: phiếu đã duyệt trước đó (hoặc được duyệt kèm trong cùng lần bấm Duyệt khu) coi như đã nằm trong số báo cáo. Mọi chỗ đọc tồn đều theo đúng quy tắc này: Tổng quan, Tồn bãi, màn Duyệt, chốt chặn rút thép (chuyển khu, xuất, điều chỉnh giảm, cho mượn), kiểm tra trước khi ẩn khu/phi, **tệp xuất CSV, màn Xem lại ngày cũ**, và **tồn chuẩn lúc sổ tự chốt** — thép đã duyệt mà khu chưa báo lại vẫn nằm trong tồn chuẩn của ngày sau.
-- **Duyệt theo từng khu, độc lập.** Màn Duyệt bày cho mỗi khu một bảng *dự kiến → khu báo → lệch*, rồi admin bấm **Duyệt khu**. Lệch to hay nhỏ chỉ đổi màu chữ để dễ thấy, **không** quyết định khu có duyệt được hay không — khu nào đã báo cũng duyệt được. Duyệt khu nào thì duyệt luôn phiếu đang chờ của khu đó, trong cùng một lần ghi.
-- **Báo cáo sai thì admin HUỶ, kèm lý do.** Ở màn Duyệt, mỗi báo cáo đang chờ duyệt có nút **Huỷ báo cáo**; bấm thì phải gõ lý do (ví dụ *"D16 đếm thiếu 2 bó"*). Huỷ là gỡ hẳn: số đó **không còn chờ duyệt**, không duyệt được nữa, không vào tồn, và khu **trở về chưa báo**. Người gửi thấy thẻ đỏ *"Báo cáo … của bạn đã bị huỷ"* kèm **lý do** và tên người huỷ ở Tổng quan và ngay trên màn đếm, cho tới khi khu báo lại; bảng đếm không điền sẵn số bị huỷ. Lý do và số bị huỷ nằm trong nhật ký. Nếu khu đã có một lần báo **được duyệt** trước đó trong ngày thì ô quay về đúng lần đó — tồn không đổi. Báo cáo **đã duyệt** thì không huỷ được (số đã là tồn): để khu báo lại, hoặc lập phiếu Điều chỉnh tồn. Báo cáo bị huỷ không tính là đã đếm buổi đó, và không chuyển sang ngày sau.
-- Admin vẫn được nhắc riêng những việc không duyệt được bằng một nút: khu chưa báo (kể cả khu vừa bị huỷ báo cáo), hai người báo khác số, phi dùng âm hoặc dùng quá 3 lần mức bình thường.
+- **Duyệt theo từng khu, độc lập.** Màn Duyệt bày cho mỗi khu một bảng *dự kiến → khu báo → lệch*, rồi người duyệt bấm **Duyệt khu**. Lệch to hay nhỏ chỉ đổi màu chữ để dễ thấy, **không** quyết định khu có duyệt được hay không — khu nào đã báo cũng duyệt được. Duyệt khu nào thì duyệt luôn phiếu đang chờ của khu đó, trong cùng một lần ghi.
+- **Báo cáo sai thì người duyệt HUỶ, kèm lý do.** Ở màn Duyệt, mỗi báo cáo đang chờ duyệt có nút **Huỷ báo cáo**; bấm thì phải gõ lý do (ví dụ *"D16 đếm thiếu 2 bó"*). Huỷ là gỡ hẳn: số đó **không còn chờ duyệt**, không duyệt được nữa, không vào tồn, và khu **trở về chưa báo**. Người gửi thấy thẻ đỏ *"Báo cáo … của bạn đã bị huỷ"* kèm **lý do** và tên người huỷ ở Tổng quan và ngay trên màn đếm, cho tới khi khu báo lại; bảng đếm không điền sẵn số bị huỷ. Lý do và số bị huỷ nằm trong nhật ký. Nếu khu đã có một lần báo **được duyệt** trước đó trong ngày thì ô quay về đúng lần đó — tồn không đổi. Báo cáo **đã duyệt** thì không huỷ được (số đã là tồn): để khu báo lại, hoặc lập phiếu Điều chỉnh tồn. Báo cáo bị huỷ không tính là đã đếm buổi đó, và không chuyển sang ngày sau.
+- Người duyệt vẫn được nhắc riêng những việc không duyệt được bằng một nút: khu chưa báo (kể cả khu vừa bị huỷ báo cáo), hai người báo khác số, phi dùng âm hoặc dùng quá 3 lần mức bình thường.
 - **Để trống phi đang có thép** thì app hỏi lại ngay lúc gửi (*"gửi là ghi 0, đúng chưa?"*), và màn Duyệt đánh dấu riêng ô đó cho người duyệt thấy. Phi dự kiến đang 0 mà để trống thì không hỏi gì.
-- **Sổ ngày tự chốt sau nửa đêm — không có nút chốt.** Admin chỉ việc duyệt. Ngay sau 0h, số **đã duyệt** của ngày hôm trước trở thành **tồn chuẩn** cho ngày sau, ngày đó được khoá. Xem mục [Sổ ngày tự chốt](#sổ-ngày-tự-chốt).
+- **Sổ ngày tự chốt sau nửa đêm — không có nút chốt.** Người duyệt chỉ việc duyệt. Ngay sau 0h, số **đã duyệt** của ngày hôm trước trở thành **tồn chuẩn** cho ngày sau, ngày đó được khoá. Xem mục [Sổ ngày tự chốt](#sổ-ngày-tự-chốt).
 - **Đếm nhiều lần/ngày (tuỳ chọn, bắt buộc khi bật)**: admin đặt mỗi khu phải đếm 1–4 lần/ngày. Từ 2 lần trở lên, khung giờ đã qua mà khu chưa đếm là một việc chưa xử lý và được ghi vào nhật ký lúc sổ tự chốt. Xem mục [Đếm nhiều lần mỗi ngày](#đếm-nhiều-lần-mỗi-ngày).
 - **Số tấn của ngày đã chốt được khoá.** Lúc chốt, app lưu kg/cây của từng phi; báo cáo kỳ, Xem lại ngày cũ, Thống kê và tệp CSV ngày cũ nhân với số đó. Sửa kg/cây ở Cài đặt chỉ có tác dụng từ ngày chưa chốt trở đi, không viết lại số tấn của quá khứ.
 - Mất mạng khi gửi báo cáo: app lưu báo cáo kèm **ngày đếm** và tự gửi lại khi có mạng. Nếu đã sang ngày mới, báo cáo hiện ở Tổng quan để người dùng chọn *Gửi làm số hôm nay* hoặc *Bỏ*, không tự ghi vào sai ngày.
 - **Nhiều người dùng chung một điện thoại**: báo cáo chờ gửi và nháp đếm dở gắn với **từng người**. App chỉ tự gửi báo cáo của người đang đăng nhập; báo cáo của người khác nằm chờ chính người đó đăng nhập lại, không bị gửi dưới tên người khác và người khác cũng không bỏ được.
 - **Nhập kho** một phiếu được nhiều phi, có hộp xác nhận trước khi lưu. Mọi nút lưu đều bị khóa trong lúc đang gửi nên bấm đúp không tạo phiếu trùng.
-- **Mọi phiếu đều chờ admin duyệt**, kể cả phiếu admin tự nhập. Phiếu ghi **cả ngày nhập và ngày duyệt**, và tính vào tồn theo **ngày duyệt**: thép về chiều ngày 7 duyệt sáng ngày 8 thì nằm trong số liệu ngày 8, chứng từ vẫn ghi đủ hai mốc. Nhờ vậy phiếu treo qua đêm không cần chặn chốt ngày.
-- Người lập **rút lại** phiếu chưa duyệt bất cứ lúc nào; phiếu đã duyệt thì chỉ hoàn tác được trong 10 phút kể từ **lúc duyệt**, sau đó nhờ admin. Admin **từ chối** phiếu chờ duyệt, hoặc **huỷ** phiếu đã duyệt cho tới khi sổ của ngày duyệt tự chốt (sau 0h).
+- **Mọi phiếu đều chờ cấp chỉ huy duyệt**, kể cả phiếu cấp chỉ huy tự nhập. Phiếu ghi **cả ngày nhập và ngày duyệt**, và tính vào tồn theo **ngày duyệt**: thép về chiều ngày 7 duyệt sáng ngày 8 thì nằm trong số liệu ngày 8, chứng từ vẫn ghi đủ hai mốc. Nhờ vậy phiếu treo qua đêm không cần chặn chốt ngày.
+- Người lập **rút lại** phiếu chưa duyệt bất cứ lúc nào; phiếu đã duyệt thì chỉ hoàn tác được trong 10 phút kể từ **lúc duyệt**, sau đó nhờ cấp chỉ huy. Cấp chỉ huy **từ chối** phiếu chờ duyệt, hoặc **huỷ** phiếu đã duyệt cho tới khi sổ của ngày duyệt tự chốt (sau 0h).
 - **Chuyển khu** (Nhập → Chuyển khu): ghi một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng.
-- **Điều chỉnh tồn** (Nhập → Điều chỉnh): sửa tồn một ô (khu × phi) khi **sổ sai** mà không phiếu nào giải thích được. Bắt buộc chọn **lý do**, phải **admin duyệt** mới vào tồn, và **không giảm quá số khu đang thực có**. Xem mục [Điều chỉnh tồn](#điều-chỉnh-tồn) bên dưới.
+- **Điều chỉnh tồn** (Nhập → Điều chỉnh): sửa tồn một ô (khu × phi) khi **sổ sai** mà không phiếu nào giải thích được. Bắt buộc chọn **lý do**, phải **cấp chỉ huy duyệt** mới vào tồn, và **không giảm quá số khu đang thực có**. Xem mục [Điều chỉnh tồn](#điều-chỉnh-tồn) bên dưới.
 - Bấm **Hết (0)** trên phi **đang có thép** thì app hỏi lại (nút này nằm sát nút TIẾP, bấm nhầm là ghi 0 cho phi còn thép).
 - Khi đếm, ô chưa chạm tới hiện dấu **—** kèm chữ *"sẽ ghi 0"* và số dự kiến làm tham chiếu (= tồn đã duyệt hôm qua + phiếu đã duyệt). Muốn lấy nguyên số hôm qua thì bấm **Giữ nguyên**, không phải cứ bỏ trống. Phi có thép nhập/chuyển từ lần chốt trước **không được "giữ nguyên"**, bắt buộc đếm thực tế.
-- **Mở lại màn đếm**: bảng chỉ điền sẵn số khu đã gửi **hôm nay, trong khung giờ đang diễn ra** (để sửa lại lần báo vừa rồi). Báo cáo hôm qua chưa duyệt và số của khung giờ trước **không** điền sẵn, thông báo trên màn ghi rõ ngày của số đang chờ duyệt: điền sẵn thì chỉ cần bấm Gửi là số cũ thành lần đếm mới, và thép duyệt vào sau lần đếm cũ biến mất khỏi sổ. Chạm vào một ô đã có số rồi bấm Tiếp hay Đóng mà **không gõ gì** thì ô giữ nguyên như cũ, kể cả loại của nó: ô *giữ nguyên* không thành *đếm thật*, ô *để trống* không thành *Hết (0)*. Lúc gửi, ô để trống có sẵn từ lần báo trước cũng được hỏi lại như ô chưa chạm. Số điền sẵn cũng không đi theo sang khung giờ sau qua nháp lưu trên máy hay qua màn đếm để mở: sang khung mới là các ô đó trở về *chưa đếm* (ô người đếm tự gõ thì vẫn giữ). **Giữ nguyên** chỉ được nhận khi con số đúng bằng số đã duyệt gần nhất; số đó đổi sau lúc bấm nút (admin vừa duyệt báo cáo khác) thì server từ chối và ô trở về *chưa đếm* để xem lại.
-- Nếu một phiếu được duyệt **sau khi** số của khu đã duyệt, số dự kiến của khu đổi mà số đã duyệt thì không: màn Duyệt nhắc *xem lại khu đó*. Duyệt lại khu là hết nhắc. Khi 2 người báo khác số, admin xem **hai số cạnh nhau** và chọn từng phi — chọn số xong vẫn phải bấm Duyệt khu, vì chọn số không phải là duyệt số.
+- **Mở lại màn đếm**: bảng chỉ điền sẵn số khu đã gửi **hôm nay, trong khung giờ đang diễn ra** (để sửa lại lần báo vừa rồi). Báo cáo hôm qua chưa duyệt và số của khung giờ trước **không** điền sẵn, thông báo trên màn ghi rõ ngày của số đang chờ duyệt: điền sẵn thì chỉ cần bấm Gửi là số cũ thành lần đếm mới, và thép duyệt vào sau lần đếm cũ biến mất khỏi sổ. Chạm vào một ô đã có số rồi bấm Tiếp hay Đóng mà **không gõ gì** thì ô giữ nguyên như cũ, kể cả loại của nó: ô *giữ nguyên* không thành *đếm thật*, ô *để trống* không thành *Hết (0)*. Lúc gửi, ô để trống có sẵn từ lần báo trước cũng được hỏi lại như ô chưa chạm. Số điền sẵn cũng không đi theo sang khung giờ sau qua nháp lưu trên máy hay qua màn đếm để mở: sang khung mới là các ô đó trở về *chưa đếm* (ô người đếm tự gõ thì vẫn giữ). **Giữ nguyên** chỉ được nhận khi con số đúng bằng số đã duyệt gần nhất; số đó đổi sau lúc bấm nút (người duyệt vừa duyệt báo cáo khác) thì server từ chối và ô trở về *chưa đếm* để xem lại.
+- Nếu một phiếu được duyệt **sau khi** số của khu đã duyệt, số dự kiến của khu đổi mà số đã duyệt thì không: màn Duyệt nhắc *xem lại khu đó*. Duyệt lại khu là hết nhắc. Khi 2 người báo khác số, người duyệt xem **hai số cạnh nhau** và chọn từng phi — chọn số xong vẫn phải bấm Duyệt khu, vì chọn số không phải là duyệt số.
 - Không ẩn được khu còn thép (phải chuyển đi hoặc đếm về 0 trước).
 - **Xem lại ngày cũ**, **báo cáo Nhập – Dùng – Tồn theo kỳ** (xuất CSV, có **cột Điều chỉnh** riêng khi kỳ đó có sửa sổ), và **dự báo số ngày còn đủ dùng** từng phi (theo lượng dùng trung bình 28 ngày). Kỳ nào có phiếu xuất thì bảng thêm **cột "Có phiếu"** — phần lượng dùng đã giải thích được.
 - Nhật ký hoạt động và lịch sử đếm chỉ ghi thêm (database từ chối sửa/xóa).
 - **Thống kê báo cáo (ai báo, ai không báo)** nằm ngay trong màn **Nhật ký hoạt động**, mục *Thống kê báo cáo* (Thêm → Nhật ký hoạt động): chọn 7, 30 hoặc 90 ngày, một dòng tóm tắt bao nhiêu người và bao nhiêu khu thiếu buổi, rồi một bảng theo người và một bảng theo khu. Mỗi dòng có nhãn *Đủ* hoặc *Thiếu N buổi*; chạm dòng thiếu để xem từng ngày. Chỉ tính các ngày đã chốt.
 
-Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Người đếm** (đếm + xem).
+### Vai trò và cấp duyệt
+
+Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc. Trong tài liệu này, *người duyệt* là người đủ cấp duyệt việc đó theo bảng dưới, *cấp chỉ huy* là cấp 2 (Trung đội trưởng, Đại đội trưởng, Admin), còn *Admin* chỉ người quản lý hệ thống.
+
+| Vai trò | Cấp duyệt | Làm được |
+|---|---|---|
+| **Tiểu đội trưởng** (trước là *Người đếm*) | 0 | Đếm và báo số khu mình phụ trách, ghi sổ vay mượn (chỉ ghi sổ), xem số liệu |
+| **CVKTHT** (admin cấp 3) | 1 | Đếm, **lập phiếu kho** (nhập / chuyển / xuất / điều chỉnh), và **duyệt việc Tiểu đội trưởng báo**: báo cáo đếm, sổ vay mượn chỉ ghi sổ. Có tab Duyệt, xem Nhật ký và Thống kê báo cáo |
+| **Trung đội trưởng** (admin cấp 2) | 2 | **Duyệt được hết**: việc CVKTHT báo và mọi phiếu kho. Đếm được mọi khu |
+| **Đại đội trưởng** (admin cấp 1) | 2 | Ngang Trung đội trưởng |
+| **Admin** (người quản lý app) | 2 | Duyệt được hết, **và quản lý hệ thống**: tài khoản và PIN, khu và phân công, phi, quy tắc, dữ liệu |
+
+- **Phiếu kho chỉ Trung đội trưởng, Đại đội trưởng, Admin duyệt**, ai lập cũng vậy. CVKTHT lập được phiếu nhưng không duyệt phiếu nào. Lần ghi vay mượn có kèm phiếu kho cũng theo luật này.
+- **Việc mình báo thì cấp mình không tự duyệt** (áp cho CVKTHT): số đếm hay lần ghi sổ do một CVKTHT báo thì CVKTHT đó và các CVKTHT khác đều không duyệt được, phải lên cấp 2. Cấp 2 thì duyệt được cả việc của mình, như admin trước đây.
+- **Duyệt khu là duyệt cả số đếm lẫn phiếu chờ của khu** trong một lần ghi, nên CVKTHT chỉ duyệt được khu mà số đếm do Tiểu đội trưởng báo **và không còn phiếu kho nào chờ**. Khu còn phiếu kho chờ thì cả khu chờ cấp 2; màn Duyệt ghi rõ đang chờ ai. *Duyệt tất cả* của CVKTHT chỉ duyệt các khu duyệt được, phần còn lại vẫn chờ.
+- **Hai người báo khác số**: ai *chọn số* thì số đó là của người chọn. CVKTHT chọn số xong thì khu chờ cấp 2 duyệt.
+- **Ai duyệt được thì cũng từ chối / huỷ được** (phiếu, lần ghi sổ, báo cáo đếm đang chờ). Người lập vẫn rút lại việc của mình như cũ.
+- **Phần hệ thống chỉ vai trò Admin**, kể cả Đại đội trưởng cũng không vào được: Người dùng và PIN, Cài đặt (khu, phân công, phi, quy tắc), đặt lại / sao lưu / nạp lại dữ liệu.
+- **Giao khu chỉ giao cho Tiểu đội trưởng**, để mỗi người giữ bãi của mình và không báo nhầm khu của nhau: khu đã giao thì trong hàng Tiểu đội trưởng chỉ người được giao đếm được. **CVKTHT trở lên quản lý chung cả bãi**, đếm và báo cáo được mọi khu mà không cần giao. Vì vậy lời nhắc *"khu … chưa đếm buổi …"* (khung đang diễn ra) gửi cho Tiểu đội trưởng theo khu được giao và gửi cho CVKTHT **cả bãi**; cấp 2 không nhận lời nhắc này mà thấy khu thiếu buổi sau khi khung đã hết.
+- **Cấp của người báo được ghi vào số liệu ngay lúc báo.** Đổi vai trò một người không làm đổi việc ai duyệt được những thứ họ đã báo: số một CVKTHT báo vẫn cần cấp 2 duyệt dù sau đó người ấy xuống làm Tiểu đội trưởng. Từ lần báo sau họ mới báo với cấp mới.
+- **Thôi là Tiểu đội trưởng thì thôi phụ trách khu.** Đổi vai trò một Tiểu đội trưởng lên cấp khác (hoặc xoá tài khoản) là gỡ người đó khỏi mọi khu đang phụ trách; nếu có khu chỉ còn mỗi người đó thì app hỏi lại trước, vì khu đó sẽ thành chưa giao ai.
+- **Khi nâng cấp từ bản cũ** (tự động ở lần chạy đầu sau deploy): *Người đếm* thành *Tiểu đội trưởng*; vai trò *Thủ kho* đã bỏ, tài khoản thủ kho thành **CVKTHT** và bị gỡ khỏi các khu đang phụ trách; mọi tài khoản admin vẫn là Admin. Admin đầu tiên vào **Người dùng và PIN** xếp lại từng người cho đúng cấp. **Bản sao (JSON) tải từ trước bản này không nạp lại được nữa.**
 
 ### Tài khoản và tên người làm
 
@@ -57,40 +78,40 @@ Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Ngườ
   - màn Duyệt tính là **việc chưa xử lý**;
   - lần sổ tự chốt sau 0h ghi rõ vào nhật ký khu nào thiếu khung nào.
 - **Lần đếm khung sau không bù cho khung trước.** Mục đích của việc đếm nhiều lần là có số ở từng buổi; cho bù thì ai cũng đếm một lần buổi chiều cho xong. Quên buổi sáng thì việc thiếu nằm lại trong nhật ký chốt của ngày đó.
-- Khung **đang diễn ra** chưa tính là thiếu, nhưng Tổng quan **nhắc người đếm** khu nào chưa đếm khung đó (*"Khu A chưa đếm buổi chiều, còn tới 18h"*), bấm vào là mở thẳng màn đếm khu đó; màn Báo cáo cũng ghi *"khu này đã đếm / chưa đếm"*. Khung **đã hết** mà thiếu thì chỉ admin thấy (chỉ admin có việc để làm). Khu **trống** (không có thép, không có phiếu) không bị đòi. Khu chưa báo lần nào thì đã có nhắc *"chưa báo"*, không bị nhắc thêm lần nữa.
+- Khung **đang diễn ra** chưa tính là thiếu, nhưng Tổng quan **nhắc người đếm** khu nào chưa đếm khung đó (*"Khu A chưa đếm buổi chiều, còn tới 18h"*), bấm vào là mở thẳng màn đếm khu đó; màn Báo cáo cũng ghi *"khu này đã đếm / chưa đếm"*. Khung **đã hết** mà thiếu thì chỉ người duyệt thấy (chỉ người duyệt có việc để làm). Khu **trống** (không có thép, không có phiếu) không bị đòi. Khu chưa báo lần nào thì đã có nhắc *"chưa báo"*, không bị nhắc thêm lần nữa.
 - Đổi số lần đếm hoặc giờ làm **trong ngày** thì màn Duyệt hôm đó báo *"Khung giờ đếm vừa đổi lúc … (ai đổi)"*, vì các lần đếm hôm đó được xếp lại theo khung mới. **Xem lại ngày cũ** ghi rõ lúc tự chốt còn treo việc gì (khu nào thiếu khung nào...).
-- **Mỗi lần khu báo lại phải được duyệt lại**: đếm 2 lần/ngày là admin duyệt mỗi khu 2 lần.
+- **Mỗi lần khu báo lại phải được duyệt lại**: đếm 2 lần/ngày là mỗi khu phải được duyệt 2 lần.
 - Khung giờ tính theo **giờ Việt Nam của máy chủ**, không theo đồng hồ điện thoại, nên máy để sai giờ cũng không nhắc sai.
 - Báo cáo lưu lúc mất mạng rồi tự gửi lại thì khung tính theo **lúc đếm**, không theo lúc có mạng. Gửi muộn quá 15 phút thì màn Duyệt hiện cả hai giờ (*"đếm lúc 11:30, tới máy chủ lúc 13:00"*) để người duyệt soi.
-- Lần admin **chọn số** khi hai người báo khác nhau và mốc **đặt tồn về 0** không được tính là một lần đếm.
+- Lần người duyệt **chọn số** khi hai người báo khác nhau và mốc **đặt tồn về 0** không được tính là một lần đếm.
 
 ### Vay mượn ngoài bãi
 
 Ở **Thêm → Vay mượn ngoài bãi**. Sổ ghi **công nợ thép với đối tác bên ngoài**: ai đang giữ thép của ai, bao nhiêu, phi nào.
 
-- **Thép có qua bãi không?** Khi ghi sổ, thủ kho hoặc admin chọn:
+- **Thép có qua bãi không?** Khi ghi sổ, người lập được phiếu kho (từ CVKTHT trở lên) chọn:
   - **Có, lập phiếu kho** (chọn khu): app lập kèm một **phiếu kho loại "vay mượn"** cùng lần ghi. Tồn khu đổi khi duyệt (cho mượn thì giảm, đi vay về thì tăng), nhưng thép này **không tính là nhập, cũng không tính là dùng**. Nhờ vậy cho đối tác mượn 300 cây rồi khu đếm hụt 300 cây thì "đã dùng" là **0**, không làm đội mức dùng trung bình, không làm sai dự báo "còn đủ dùng", không bật cảnh báo "dùng nhiều". Sổ và phiếu đi cùng nhau: duyệt hay huỷ bên nào cũng là cả hai. Cho mượn thì không được vượt số khu đang có (phiếu chờ duyệt đã giữ chỗ, như phiếu xuất).
-  - **Không, chỉ ghi sổ**: chỉ ghi công nợ, tồn bãi không đổi (ví dụ thép giao thẳng tới công trình, không qua bãi). Người đếm chỉ ghi được kiểu này.
+  - **Không, chỉ ghi sổ**: chỉ ghi công nợ, tồn bãi không đổi (ví dụ thép giao thẳng tới công trình, không qua bãi). Tiểu đội trưởng chỉ ghi được kiểu này.
 - Báo cáo kỳ có **cột "Vay mượn"** riêng (có dấu: − là cho mượn đi, + là đi vay về), cả trong app lẫn trong CSV. Đẳng thức: **Tồn đầu + Nhập + Điều chỉnh + Vay mượn − Dùng = Tồn cuối**.
 - Bốn loại ghi, tính thành **hai cặp riêng**: *Mình vay* / *Mình trả* là **mình nợ đối tác**; *Cho họ vay* / *Họ trả* là **đối tác nợ mình**. Cùng một đối tác có thể vừa cho mình vay D16 vừa đang mượn của mình D18.
-- **Ai cũng ghi được** (cả người đếm), vì người thấy xe thép thường là người ngoài bãi. Một lần ghi được nhiều phi.
+- **Ai cũng ghi được** (cả Tiểu đội trưởng), vì người thấy xe thép thường là người ngoài bãi. Một lần ghi được nhiều phi.
 - **Bắt buộc xác nhận chứng từ**: trước khi ghi sổ phải tick hai ô *"Đã có biên bản giao nhận"* và *"Đã gửi biên bản lên nhóm Zalo"* (server cũng kiểm, lần xác nhận nằm trong nhật ký). Biên bản là chứng từ gốc, sổ này chỉ là bản ghi nhớ. Ghi xong hai ô tự bỏ tick, lần sau phải tick lại cho biên bản của lần đó.
 - **Ngày tháng và chứng từ của mỗi lần ghi**:
   - **Ngày giao nhận** (bắt buộc, mặc định hôm nay) là ngày trên biên bản. Ghi bù được tối đa một năm về trước, không được ghi ngày sau hôm nay. Sổ và lịch sử xếp theo ngày này. Ngày lúc bấm ghi vẫn hiện riêng ở dòng "ghi sổ".
   - **Số biên bản giao nhận** là bắt buộc, để đối chiếu với bản giấy hay ảnh trên Zalo. Có thể ghi thêm **người giao/nhận** và **biển số xe**.
   - **Hạn trả** (không bắt buộc) chỉ có ở lần *đi vay* và *cho mượn*. Có nút nhanh +7, +15 và +30 ngày tính từ ngày giao nhận.
-- **Quá hạn tính trên phần còn nợ**: lần trả được trừ vào lần vay **cũ nhất** trước, tính riêng cho từng đối tác, từng phi và từng chiều. Một lần vay đã trả hết thì không còn bị coi là quá hạn. Màn chi tiết đối tác có bảng *còn nợ theo từng lần vay* (ngày, phi, còn bao nhiêu, hạn trả); dòng quá hạn tô đỏ. Thẻ đối tác ghi số khoản quá hạn và hạn trả gần nhất. Tổng quan nhắc admin và thủ kho khi có khoản quá hạn.
+- **Quá hạn tính trên phần còn nợ**: lần trả được trừ vào lần vay **cũ nhất** trước, tính riêng cho từng đối tác, từng phi và từng chiều. Một lần vay đã trả hết thì không còn bị coi là quá hạn. Màn chi tiết đối tác có bảng *còn nợ theo từng lần vay* (ngày, phi, còn bao nhiêu, hạn trả); dòng quá hạn tô đỏ. Thẻ đối tác ghi số khoản quá hạn và hạn trả gần nhất. Tổng quan nhắc từ CVKTHT trở lên khi có khoản quá hạn.
 - **Công nợ dễ nhìn**: đầu màn có ô tổng *bãi đang nợ đối tác* và *đối tác đang giữ của bãi* (tấn, số đối tác). Mỗi đối tác là một thẻ tóm tắt hai chiều theo từng phi; **bấm vào** mở màn chi tiết: bảng *Mình vay của họ* (đã vay / đã trả / còn nợ), bảng *Họ mượn của mình*, lần ghi đang chờ duyệt, **toàn bộ lịch sử kể cả lần đã huỷ**, và nút *Ghi sổ với đối tác này*.
-- **Admin duyệt** từng lần ghi; chưa duyệt thì chưa vào dư nợ. Lần ghi chỉ ghi sổ hiện ngay ở **màn Duyệt** (mục *Sổ vay mượn chờ duyệt*); lần ghi có phiếu kho thì nằm trong *Phiếu chờ duyệt*. Tổng quan cũng nhắc admin.
-- Hoàn tác: người ghi **rút lại** khi chưa duyệt, hoặc **huỷ** trong 10 phút sau khi duyệt; sau đó nhờ admin. Admin huỷ được lần ghi đã duyệt trong **7 ngày**; quá hạn thì ghi một lần **ngược lại** (trả, hoặc vay) để sửa, sổ giữ được cả hai dấu vết. Lần ghi có phiếu kho mà ngày duyệt phiếu đã chốt thì không huỷ được (luật của mọi phiếu kho).
+- **Duyệt theo cấp bậc** từng lần ghi (CVKTHT duyệt lần ghi của Tiểu đội trưởng; lần ghi của CVKTHT và mọi lần ghi kèm phiếu kho thì cấp 2 duyệt); chưa duyệt thì chưa vào dư nợ. Lần ghi chỉ ghi sổ hiện ngay ở **màn Duyệt** (mục *Sổ vay mượn chờ duyệt*); lần ghi có phiếu kho thì nằm trong *Phiếu chờ duyệt*. Tổng quan nhắc mỗi người đúng số lần ghi mà người đó duyệt được.
+- Hoàn tác: người ghi **rút lại** khi chưa duyệt, hoặc **huỷ** trong 10 phút sau khi duyệt; sau đó nhờ người duyệt. Người duyệt huỷ được lần ghi đã duyệt trong **7 ngày**; quá hạn thì ghi một lần **ngược lại** (trả, hoặc vay) để sửa, sổ giữ được cả hai dấu vết. Lần ghi có phiếu kho mà ngày duyệt phiếu đã chốt thì không huỷ được (luật của mọi phiếu kho).
 - Ghi *trả* nhiều hơn số đang nợ thì app **nhắc** (có thể một lần vay cũ chưa ai ghi) nhưng không chặn; dư nợ khi đó hiện là **"trả dư"** để không đọc ngược nghĩa.
-- **Đối tác**: ai cũng thêm được tên mới; admin và thủ kho sửa tên hoặc ẩn. Đối tác đã ẩn không ghi thêm được, nhưng dư nợ và lịch sử vẫn giữ.
+- **Đối tác**: ai cũng thêm được tên mới; từ CVKTHT trở lên sửa tên hoặc ẩn. Đối tác đã ẩn không ghi thêm được, nhưng dư nợ và lịch sử vẫn giữ.
 - Mọi lần ghi, duyệt, huỷ nằm trong **nhật ký**, có chip lọc *Vay mượn* riêng.
 - **Xoá sạch dữ liệu thép không xoá sổ vay**: đây là công nợ với bên ngoài, không phải số liệu của bãi. Bản sao toàn bộ có chứa sổ vay; nạp lại một bản sao **cũ chưa có sổ vay** thì sổ vay hiện tại được **giữ nguyên**.
 
 ### Điều chỉnh tồn
 
-Ở **Nhập → Điều chỉnh**. Dùng khi **sổ sai** mà không phiếu nào giải thích được: kỳ trước đếm sai, ghi nhầm phiếu, hoặc hụt thép không rõ nguyên nhân. Thủ kho và admin **lập** được, chỉ admin **duyệt**.
+Ở **Nhập → Điều chỉnh**. Dùng khi **sổ sai** mà không phiếu nào giải thích được: kỳ trước đếm sai, ghi nhầm phiếu, hoặc hụt thép không rõ nguyên nhân. Từ CVKTHT trở lên **lập** được, chỉ cấp 2 (Trung đội trưởng, Đại đội trưởng, Admin) **duyệt**.
 
 - **Đây không phải phiếu xuất.** Thép thật đi hay về thì dùng **Nhập thép về** / **Chuyển khu**; thép rời bãi đi công trình thì ghi **[Phiếu xuất](#phiếu-xuất-tuỳ-chọn)** (hoặc cứ để khu đếm xuống, hệ thống tự tính ra "đã dùng"). Chỉ dùng Điều chỉnh khi con số trong máy **sai** so với thực tế ngoài bãi. Khác nhau ở chỗ: điều chỉnh **sửa sổ** nên nó *không* tính vào lượng dùng, còn phiếu xuất là thép **đi thật** nên nó *nằm trong* lượng dùng.
 - Chọn **khu**, chọn **tăng hay giảm**, chọn **phi**, gõ số **luôn dương** (chiều do nút quyết định, không phải gõ dấu trừ), rồi chọn **lý do** — bốn lựa chọn sẵn, "Lý do khác" thì bắt ghi rõ. Lý do nằm trong phiếu và trong **nhật ký mãi mãi**.
@@ -101,26 +122,26 @@ Vai trò: **Admin** (tất cả), **Thủ kho** (đếm + nhập kho), **Ngườ
 - **Lượng dùng không bị ảnh hưởng.** Sửa sổ giảm 300 cây rồi khu đếm lại thấy đúng số mới thì "đã dùng" ra **0**, không phải 300. Đây là lý do tính năng này làm bằng một phiếu chứ không phải sửa thẳng số đếm: sửa thẳng số đếm thì phần chênh thành một cú "đã dùng" khổng lồ, nó vào mức dùng trung bình và kéo cảnh báo *"dùng nhiều bất thường"* sai suốt 28 ngày sau — đúng cái bẫy mà mục **Đặt tồn về 0** cũng phải tránh.
 - **Không trộn vào cột Nhập.** Báo cáo theo kỳ có **cột Điều chỉnh riêng** (cả trong app lẫn trong CSV), nên mỗi kỳ đọc được ngay "tháng này sổ bị sửa bao nhiêu tấn". Gộp vào Nhập là biến tính năng này thành chỗ giấu chênh lệch. Đẳng thức vẫn khép kín: **Tồn đầu + Nhập + Điều chỉnh − Dùng = Tồn cuối**.
 - Nhật ký có **chip lọc "Điều chỉnh"** riêng, không nằm trong nhóm "Nhập kho".
-- Hoàn tác như mọi phiếu: người lập **rút lại** khi chưa duyệt, admin **từ chối** phiếu chờ hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
+- Hoàn tác như mọi phiếu: người lập **rút lại** khi chưa duyệt, cấp chỉ huy **từ chối** phiếu chờ hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
 
 ### Phiếu xuất (tuỳ chọn)
 
-Ở **Nhập → Xuất kho**. Thủ kho và admin **lập** được, chỉ admin **duyệt**.
+Ở **Nhập → Xuất kho**. Từ CVKTHT trở lên **lập** được, chỉ cấp 2 (Trung đội trưởng, Đại đội trưởng, Admin) **duyệt**.
 
 **Ghi phiếu xuất là tuỳ bạn.** Không ghi thì app chạy y như trước: lượng dùng vẫn suy ra từ *tồn cũ + nhập − đếm*. Phiếu xuất không thay phép tính đó, nó chỉ **giải thích** được bao nhiêu phần trong đó. Ghi được bao nhiêu thì phần **"không rõ"** co lại bấy nhiêu — và chính phần không rõ mới là con số đáng đi hỏi.
 
 - Bắt buộc ghi **xuất cho ai / công trình nào**. Phiếu xuất không nói thép đi đâu thì không thêm được gì so với con số app đã tự suy ra, nên app từ chối.
 - **Không xuất quá số khu đang thực có.** Chặn cả lúc lập và lúc duyệt, dùng chung chốt chặn với Chuyển khu và Điều chỉnh: phiếu đang chờ duyệt đã giữ phần thép đó, nên hai phiếu xuất không cùng rút một lô thép được.
-- **Phải admin duyệt** mới trừ vào tồn. Lý do không phải hình thức: một phiếu xuất làm số **dự kiến** của khu tụt xuống, tức nó đổi chính cái thước mà admin dùng để soi khu đó. Nếu tự ghi phiếu xuất là tự hạ thước thì ghi phiếu xuất thành cách xoá dấu vết hụt thép.
+- **Phải cấp chỉ huy duyệt** mới trừ vào tồn. Lý do không phải hình thức: một phiếu xuất làm số **dự kiến** của khu tụt xuống, tức nó đổi chính cái thước mà cấp chỉ huy dùng để soi khu đó. Nếu tự ghi phiếu xuất là tự hạ thước thì ghi phiếu xuất thành cách xoá dấu vết hụt thép.
 - Màn **Duyệt** tách con số ra: *"đã dùng 1.300 — trong đó 1.100 có phiếu xuất, 200 không rõ đi đâu"*.
 - **Lượng dùng vẫn là TỔNG.** Xuất 1.100 có phiếu mà khu đếm hụt 1.300 thì "đã dùng" là **1.300**, không phải 200. Đây là chỗ dễ sai nhất: nếu để phần xuất nằm trong vế "Nhập" thì nó tự triệt tiêu với phần khu đếm hụt, "đã dùng" tụt còn đúng phần không có phiếu, mức dùng trung bình thấp hơn thực tế, rồi dự báo *"còn đủ dùng bao nhiêu ngày"* nói dư ra — **càng ghi phiếu đầy đủ thì dự báo càng sai**, đúng chiều ngược với mục đích.
 - Báo cáo kỳ có **cột "Có phiếu"** riêng (app) và cột **"Có phiếu xuất"** trong CSV. Cột này **nằm trong** cột Dùng, không cộng thêm, nên đẳng thức vẫn khép kín: **Tồn đầu + Nhập − Dùng = Tồn cuối**.
 - Nhật ký ghi **nơi đến** của từng phiếu, nên tra lại được "tháng này xuất cho công trình nào bao nhiêu".
-- Hoàn tác như mọi phiếu: người lập **rút lại** khi chưa duyệt, admin **từ chối** phiếu chờ hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
+- Hoàn tác như mọi phiếu: người lập **rút lại** khi chưa duyệt, cấp chỉ huy **từ chối** phiếu chờ hoặc **huỷ** phiếu đã duyệt cho tới khi ngày duyệt bị chốt.
 
 ### Sổ ngày tự chốt
 
-Không có nút chốt. Việc của admin trong ngày chỉ là **duyệt**: từng khu, và các phiếu. Ngay sau nửa đêm (lần chạy 0h05), hệ thống tự chốt sổ của ngày vừa qua:
+Không có nút chốt. Việc của người duyệt trong ngày chỉ là **duyệt**: từng khu, và các phiếu. Ngay sau nửa đêm (lần chạy 0h05), hệ thống tự chốt sổ của ngày vừa qua:
 
 - **Chỉ số đã duyệt vào sổ**, như trước. Tồn chuẩn, lượng dùng của ngày, mức dùng trung bình 28 ngày và báo cáo kỳ đều có số đều đặn mỗi ngày, không còn ngày bị gộp vì quên chốt.
 - **Việc còn treo không chặn chốt** mà được tự ghi vào nhật ký của lần chốt: khu chưa báo, khu thiếu lần đếm, hai người báo khác số, phiếu chờ duyệt... **Xem lại ngày cũ** hiện đủ.
@@ -136,7 +157,7 @@ Không có nút chốt. Việc của admin trong ngày chỉ là **duyệt**: t�
 Ở **Thêm → Cài đặt → Dữ liệu thép**, chỉ **admin đầu tiên** thấy.
 
 - **Tải bản sao toàn bộ (JSON)** — một tệp chứa tất cả: phi, khu, tài khoản, số đếm, phiếu, các ngày đã chốt, tồn chuẩn, cài đặt và nhật ký. Khác hai tệp CSV ở chỗ nó **nạp lại được**, nên đây mới là đường lùi thật. Nên tải định kỳ và cất ra ngoài máy chủ.
-- **Nạp lại từ bản sao** — thay **sạch** số liệu hiện tại bằng số liệu trong tệp, không trộn. Phải chọn tệp, gõ `NAP LAI`, rồi còn một hộp xác nhận. Chỉ nạp được bản sao **cùng phiên bản cấu trúc**: nạp bản sao của cấu trúc cũ vào bảng đã đổi cột là hỏng kiểu không sửa được, nên hệ thống từ chối thẳng. Ngoại lệ: bản sao của cấu trúc **liền trước** vẫn nạp được khi bản mới chỉ thêm bảng hoặc cột (bảng/cột mới để trống, số tấn ngày cũ điền theo kg/cây hiện tại rồi khoá lại).
+- **Nạp lại từ bản sao** — thay **sạch** số liệu hiện tại bằng số liệu trong tệp, không trộn. Phải chọn tệp, gõ `NAP LAI`, rồi còn một hộp xác nhận. Chỉ nạp được bản sao **cùng phiên bản cấu trúc**: nạp bản sao của cấu trúc cũ vào bảng đã đổi cột là hỏng kiểu không sửa được, nên hệ thống từ chối thẳng. Ngoại lệ chỉ có khi bản mới **chỉ thêm bảng hoặc cột** so với bản liền trước; bản hiện tại (cấu trúc 23) đổi mã vai trò và ghi thêm cấp người báo nên **không nhận bản sao cũ hơn**.
 - **Nhật ký không bị thay.** Database không cho xoá nhật ký, nên nạp lại chỉ có thể cộng thêm, tức nhân đôi lịch sử. Vì vậy nạp lại giữ nguyên nhật ký đang có và ghi thêm một dòng nói rõ vừa nạp từ bản sao nào.
 - Tài khoản và PIN cũng nằm trong bản sao (PIN đã băm). Băm đó vô dụng nếu không có `PEPPER`, mà `PEPPER` chỉ nằm trên máy chủ chứ không nằm trong tệp. **Nhưng** ai được tạo sau ngày sao lưu sẽ mất tài khoản khi nạp lại.
 - Cỡ bản sao: đo thực tế **60 ngày ≈ 2,7 MB**, suy ra khoảng **16 MB một năm**. Nhật ký và lịch sử đếm có trần 20.000 dòng gần nhất nên không phình vô hạn. Nếu bãi chạy nhiều năm thì nên xem lại chỗ này.
@@ -204,8 +225,8 @@ Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên
 ### 7. Thiết lập ban đầu trong ứng dụng
 Đăng nhập admin, vào **Thêm**:
 1. **Cài đặt**: đổi tên khu, thêm/ẩn khu theo bãi thực tế (mặc định có Khu A → H). Với từng phi, đặt **số cây mỗi bó**, **mức tồn tối thiểu** và **kg/cây** (mặc định theo 0,00617 × D² × 11,7 m, sửa theo trọng lượng thực tế nhà máy nếu khác).
-2. **Người dùng và PIN**: tạo tài khoản cho thủ kho và các tổ. Hệ thống tạo PIN ngẫu nhiên hiện **một lần**, đưa cho người dùng. Họ phải tự đổi PIN khi đăng nhập lần đầu.
-3. Ngày đầu tiên: các khu báo cáo hết, admin vào **Duyệt** và duyệt từng khu. Sau 0h sổ tự chốt, số đã duyệt hôm đó trở thành tồn chuẩn đầu tiên; từ ngày sau hệ thống tính lượng dùng.
+2. **Người dùng và PIN**: tạo tài khoản cho từng người và chọn đúng vai trò (Tiểu đội trưởng, CVKTHT, Trung đội trưởng, Đại đội trưởng). Hệ thống tạo PIN ngẫu nhiên hiện **một lần**, đưa cho người dùng. Họ phải tự đổi PIN khi đăng nhập lần đầu.
+3. Ngày đầu tiên: các khu báo cáo hết, người duyệt vào **Duyệt** và duyệt từng khu. Sau 0h sổ tự chốt, số đã duyệt hôm đó trở thành tồn chuẩn đầu tiên; từ ngày sau hệ thống tính lượng dùng.
 
 ### 8. Cài lên điện thoại
 - **Android (Chrome):** mở địa chỉ → menu ⋮ → **Thêm vào Màn hình chính** (hoặc **Cài đặt ứng dụng**).
@@ -231,9 +252,9 @@ Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên
 | Kiểm kê lại cả bãi | **Cài đặt → Dữ liệu thép → Đặt tồn về 0**. Lịch sử cũ vẫn giữ, hoàn tác được |
 | Sổ ngày cũ sai | **Nhập → Điều chỉnh**: sửa số hiện tại, để lại dấu vết. Ngày đã chốt không mở lại được |
 | Đặt lại số liệu nhầm | **Duyệt → Hoàn tác đặt lại số liệu**, trong cùng ngày |
-| Sổ sai một phi ở một khu | **Nhập → Điều chỉnh**, chọn tăng/giảm và lý do, rồi admin duyệt. Không ảnh hưởng lượng dùng |
-| Xuất thép đi công trình | **Nhập → Xuất kho** (tuỳ chọn), ghi rõ nơi đến, rồi admin duyệt. Không ghi cũng được — app vẫn tính lượng dùng |
-| Vay / cho đối tác vay thép | **Thêm → Vay mượn ngoài bãi** (hoặc lối tắt ở màn Nhập), chọn *thép qua bãi* + khu nếu thép đi qua cổng. Admin duyệt. Không tính là nhập hay dùng |
+| Sổ sai một phi ở một khu | **Nhập → Điều chỉnh**, chọn tăng/giảm và lý do, rồi cấp chỉ huy duyệt. Không ảnh hưởng lượng dùng |
+| Xuất thép đi công trình | **Nhập → Xuất kho** (tuỳ chọn), ghi rõ nơi đến, rồi cấp chỉ huy duyệt. Không ghi cũng được — app vẫn tính lượng dùng |
+| Vay / cho đối tác vay thép | **Thêm → Vay mượn ngoài bãi** (hoặc lối tắt ở màn Nhập), chọn *thép qua bãi* + khu nếu thép đi qua cổng. Cấp chỉ huy duyệt. Không tính là nhập hay dùng |
 
 Nên sao lưu `backup.sql` định kỳ (ví dụ mỗi tuần) và cất ngoài Cloudflare.
 

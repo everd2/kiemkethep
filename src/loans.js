@@ -1,5 +1,5 @@
 // Sổ vay mượn thép với đối tác ngoài bãi (không tính vào tồn).
-import { DAY_RE, HttpError, bad, daysBetween, json, rand, vnDay } from './core.js';
+import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetCap, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
 import { DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, UNAME, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn,
   readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
@@ -152,17 +152,18 @@ export async function postLoan(req, env, user) {
      cho đối tác mượn 30 cây rồi khu đếm hụt 30 cây thì "đã dùng" ra 0, không phải 30 — nếu không,
      mức dùng trung bình đội lên, dự báo "còn đủ dùng" nói thiếu, và có khi bật cảnh báo "dùng
      nhiều bất thường" chỉ vì cho mượn thép. Sổ và phiếu cùng grp nên duyệt hay huỷ bên nào cũng là
-     cả hai. Lập phiếu kho thì phải là thủ kho/admin, như mọi phiếu kho khác. */
+     cả hai. Lập phiếu kho thì phải từ CVKTHT trở lên, như mọi phiếu kho khác. */
   const khuId = b.khu ? String(b.khu) : '';
   const stmts = [
     env.DB.prepare(
-      `INSERT INTO loans (doitac_id, phi_id, kind, qty, note, grp, user_id, ts, ngay, han, so_bb, nguoi, bien_so)
-       SELECT ?1, ${J('phi')}, ?2, ${J('qty')}, ?3, ?4, ?5, ?6, ?8, ?9, ?10, ?11, ?12 FROM json_each(?7) j`
-    ).bind(doitacId, kind, note, grp, user.id, ts, data, ngay, han, soBB, nguoi || null, bienSo || null),
+      // cap: cấp của người ghi LÚC NÀY, ghi vào dòng — xem lời giải thích ở CAP (core.js)
+      `INSERT INTO loans (doitac_id, phi_id, kind, qty, note, grp, user_id, ts, ngay, han, so_bb, nguoi, bien_so, cap)
+       SELECT ?1, ${J('phi')}, ?2, ${J('qty')}, ?3, ?4, ?5, ?6, ?8, ?9, ?10, ?11, ?12, ?13 FROM json_each(?7) j`
+    ).bind(doitacId, kind, note, grp, user.id, ts, data, ngay, han, soBB, nguoi || null, bienSo || null, capOf(user.role)),
   ];
   let day = null;
   if (khuId) {
-    if (user.role !== 'admin' && user.role !== 'thukho') throw new HttpError(403, 'Chỉ thủ kho và admin lập được phiếu kho kèm sổ vay. Bỏ chọn "Thép qua bãi" để chỉ ghi sổ.');
+    if (!LAP_PHIEU.includes(user.role)) throw new HttpError(403, 'Tiểu đội trưởng không lập được phiếu kho kèm sổ vay. Bỏ chọn "Thép qua bãi" để chỉ ghi sổ.');
     const ctx = await receiptCtx(env, [khuId]); // chặn ngày đã chốt và khu không hợp lệ
     for (const l of lines) if (!ctx.phiBy[l.phi]) throw bad('Phi không hợp lệ: ' + l.phi);
     day = ctx.day;
@@ -205,10 +206,14 @@ export async function duyetLoan(env, user, id) {
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
   if (r.voided) throw bad('Dòng này đã bị hủy, không duyệt được');
   if (r.duyet_ts) throw bad('Dòng này đã được duyệt');
+  if (!duyetCap(user.role, r.cap)) throw new HttpError(403, `Lần ghi do CVKTHT hoặc cấp trên ghi: cần ${CAP_TREN} duyệt.`, 'cap');
   const info = await loanGroupInfo(env, r);
   const ts = Date.now();
   // phiếu kho đi kèm (thép qua bãi): vào tồn hôm nay, nên qua cùng chốt chặn với phiếu thường
   const kho = r.grp ? (await env.DB.prepare("SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0 AND duyet_day IS NULL").bind(r.grp).all()).results : [];
+  /* Lần ghi kèm phiếu kho: duyệt sổ là duyệt luôn phiếu, nên phải đúng luật của phiếu kho — chỉ cấp
+     chỉ huy, ai ghi cũng vậy. Kiểm theo CHÍNH PHIẾU, không suy ra từ cấp của người ghi. */
+  if (kho.length && !duyetPhieuDuoc(user.role)) throw new HttpError(403, `Lần ghi này kèm phiếu kho: cần ${CAP_TREN} duyệt.`, 'cap');
   const day = vnDay();
   if (kho.length) await checkTransferStock(env, day, kho, { kind: 'vay' });
   const run = kho.length
@@ -235,13 +240,16 @@ export async function voidLoan(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ? AND voided = 0').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
   const pending = !r.duyet_ts;
-  if (user.role !== 'admin') {
-    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc admin mới hủy được');
+  // ai DUYỆT được lần ghi này thì cũng từ chối / hủy được nó; kèm phiếu kho thì theo luật phiếu kho
+  const coKho = !!(r.grp && await env.DB.prepare("SELECT 1 x FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0").bind(r.grp).first());
+  const quyen = coKho ? duyetPhieuDuoc(user.role) : duyetCap(user.role, r.cap);
+  if (!quyen) {
+    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc cấp duyệt được lần ghi này mới hủy được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) {
-      throw new HttpError(403, 'Dòng đã duyệt quá 10 phút, nhờ admin hủy');
+      throw new HttpError(403, 'Dòng đã duyệt quá 10 phút, nhờ cấp trên hủy');
     }
   }
-  if (!pending && user.role === 'admin' && Date.now() - r.duyet_ts > LOAN_VOID_DAYS * 864e5) {
+  if (!pending && quyen && Date.now() - r.duyet_ts > LOAN_VOID_DAYS * 864e5) {
     throw new HttpError(409, `Lần ghi đã duyệt quá ${LOAN_VOID_DAYS} ngày, không huỷ được nữa. Ghi một lần ngược lại (trả, hoặc vay) để sửa dư nợ.`, 'too_old');
   }
   const info = await loanGroupInfo(env, r);
@@ -281,7 +289,7 @@ export async function loansView(env, url) {
       env.DB.prepare(
         `SELECT l.id, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.grp, l.voided, l.voided_ts,
            l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so,
-           l.user_id, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
+           l.user_id, l.cap, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
            (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' LIMIT 1) kho
          FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
            ${DUYET_JOIN_LOAN}
@@ -297,7 +305,7 @@ export async function loansView(env, url) {
     env.DB.prepare('SELECT id, name, active FROM doitac ORDER BY name'),
     env.DB.prepare(
       `SELECT l.id, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.grp,
-         l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so, l.user_id, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
+         l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so, l.user_id, l.cap, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
          (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' AND r.voided = 0 LIMIT 1) kho
        FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
          ${DUYET_JOIN_LOAN}

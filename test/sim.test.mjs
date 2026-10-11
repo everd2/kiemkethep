@@ -44,7 +44,7 @@ async function sim(seed) {
   await S.call('POST', '/setup', { token: 'setup-tok', name: 'Admin', phone: '0900000001', pin: '2468' });
   await S.login('admin', '0900000001', '2468');
   for (const [n, ph] of [['An', '0900000002'], ['Binh', '0900000003']]) {
-    const r = await S.call('POST', '/users', { name: n, phone: ph, role: 'nguoidem' });
+    const r = await S.call('POST', '/users', { name: n, phone: ph, role: 'tieudoi' });
     await S.login(n, ph, r.data.pin);
     await S.call('POST', '/change-pin', { pin: r.data.pin, newPin: '1357' }, n);
   }

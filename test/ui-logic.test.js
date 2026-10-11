@@ -386,8 +386,8 @@ const run = async () => {
   r(`S.me = { id: 1, name: 'admin', role: 'admin' }; S.uFirst = 1; S.screen = 'users'; S.pinShown = null; S.uRename = null;
      S.users = [
        { id: 1, name: 'admin', phone: '0900000001', role: 'admin', locked: 0, deleted: 0, must_change: 0 },
-       { id: 2, name: 'An', phone: '0900000002', role: 'nguoidem', locked: 0, deleted: 0, must_change: 0 },
-       { id: 3, name: 'Cu', phone: '0900000003', role: 'nguoidem', locked: 1, deleted: 1, must_change: 0 },
+       { id: 2, name: 'An', phone: '0900000002', role: 'tieudoi', locked: 0, deleted: 0, must_change: 0 },
+       { id: 3, name: 'Cu', phone: '0900000003', role: 'tieudoi', locked: 1, deleted: 1, must_change: 0 },
      ];
      var HU = vUsers();`);
   ok('chủ hệ thống sửa được tên CHÍNH MÌNH (tài khoản hay đặt theo chức danh)', /data-a="urename" data-id="1"/.test(r('HU')),
@@ -402,7 +402,7 @@ const run = async () => {
   ok('và không thấy nút sửa tên của bất kỳ ai', !/data-a="urename"/.test(r('HU2')));
 
   // hộp xác nhận xoá phải nói ra khu sẽ không còn ai phụ trách, trước khi bấm
-  r(`S.me = { id: 1, name: 'admin', role: 'admin' }; S.users[1].role = 'nguoidem';
+  r(`S.me = { id: 1, name: 'admin', role: 'admin' }; S.users[1].role = 'tieudoi';
      S.boot.khuUser = [{ khu_id: 'A', user_id: 2 }, { khu_id: 'B', user_id: 2 }, { khu_id: 'B', user_id: 4 }];
      indexBoot(S.boot); S.ask = null; S.busy = false; ACTIONS.udelete({ id: '2' });`);
   ok('hộp xác nhận xoá nói rõ khu sẽ mở ra cho cả bãi', /phụ trách DUY NHẤT của A/.test(r('(S.ask && S.ask.msg) || ""')),
@@ -791,7 +791,7 @@ const run = async () => {
   ok('admin thấy nút duyệt', /data-a="lduyet"/.test(VM));
   ok('đối tác đã ẩn không có trong ô chọn để ghi', !/data-a="ldt" data-v="6"/.test(VM) && /data-a="ldt" data-v="5"/.test(VM));
   ok('thủ kho/admin: chọn được "thép qua bãi" (lập phiếu kho)', /data-a="lkho" data-v="1"/.test(VM) && /không<\/b> tính là nhập hay dùng/.test(VM));
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   const VM2 = r('vVayMuon()');
   ok('người đếm: không có nút duyệt', !/data-a="lduyet"/.test(VM2));
   ok('người đếm: rút lại được lần ghi của mình', /data-a="lvoid" data-id="11">Rút lại/.test(VM2));
@@ -826,12 +826,54 @@ const run = async () => {
     indexBoot(RB); S.boot = RB; S.me = { id: 1, name: 'A', role: 'admin' };`);
   ok('Nhập hôm nay: bỏ phiếu chờ duyệt, chỉ tính phiếu đã duyệt', Math.abs(r('totals().inKg') - 50 * 0.617) < 1e-6, r('totals().inKg'));
   // B3: người đếm không bị dẫn vào màn Nhập kho
-  r(`S.me = { id: 9, name: 'B', role: 'nguoidem' };`);
+  r(`S.me = { id: 9, name: 'B', role: 'tieudoi' };`);
   ok('người đếm: không thấy thẻ phiếu chờ (không lập, không duyệt phiếu)', !/data-s="nhap"/.test(r('vHome()')) && !/phiếu chờ duyệt/.test(r('vHome()')), (r('vHome()').match(/phiếu chờ duyệt.{0,80}/) || [''])[0]);
-  ok('người đếm vào màn Nhập (Back, link cũ): chỉ thấy lời nhắc, không có form', /Chỉ thủ kho và admin/.test(r('vNhap()')) && !/data-a="nconfirm"/.test(r('vNhap()')));
+  ok('người đếm vào màn Nhập (Back, link cũ): chỉ thấy lời nhắc, không có form', /Tiểu đội trưởng không lập phiếu/.test(r('vNhap()')) && !/data-a="nconfirm"/.test(r('vNhap()')));
   // B5: phiếu chờ duyệt của người KHÁC không phải "quá 10 phút"
-  r(`S.me = { id: 7, name: 'Kho 2', role: 'thukho' };`);
-  ok('thủ kho xem phiếu chờ của người khác: "chờ admin duyệt"', /chờ admin duyệt/.test(r('vNhap()')) && !/quá 10 phút/.test(r('vNhap()')));
+  r(`S.me = { id: 7, name: 'Kho 2', role: 'cvktht' };`);
+  ok('CVKTHT xem phiếu chờ của người khác: "chờ cấp trên duyệt"', /chờ cấp trên duyệt/.test(r('vNhap()')) && !/quá 10 phút/.test(r('vNhap()')));
+  // phân quyền theo cấp bậc: nút duyệt phiếu theo cấp của NGƯỜI LẬP
+  r(`var RC = _boot(); RC.receipts = [${rc({ id: 11, urole: 'cvktht', user_id: 7 })}, ${rc({ id: 12, urole: 'cvktht', user_id: 8, grp: 'gc' })}]; indexBoot(RC); S.boot = RC;`);
+  r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  ok('CVKTHT có tab Nhập và tab Duyệt', /data-s="nhap"/.test(r('tabsHtml()')) && /data-s="duyet"/.test(r('tabsHtml()')));
+  ok('CVKTHT: không duyệt được phiếu kho nào, phiếu của mình chỉ rút lại được',
+    !/data-a="pduyet"/.test(r('vNhap()')) && !/data-a="void" data-id="11"/.test(r('vNhap()')) && /data-a="void" data-id="12">Rút lại/.test(r('vNhap()')));
+  ok('danh sách vai trò: đúng năm vai trò theo cấp bậc', r('Object.keys(ROLE).join()') === 'admin,daidoi,trungdoi,cvktht,tieudoi', r('Object.keys(ROLE).join()'));
+  r(`S.me = { id: 9, name: 'Dai', role: 'daidoi' };`);
+  ok('đại đội trưởng duyệt được cả hai phiếu', /data-a="pduyet" data-id="11"/.test(r('vNhap()')) && /data-a="pduyet" data-id="12"/.test(r('vNhap()')));
+  ok('đại đội trưởng không thấy mục hệ thống ở màn Thêm, nhưng thấy Nhật ký',
+    !/data-s="users"/.test(r('vMore()')) && !/data-s="settings"/.test(r('vMore()')) && /data-s="nhatky"/.test(r('vMore()')));
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
+  ok('tiểu đội trưởng: không có tab Duyệt, tab Nhập; nhãn vai trò là "Tiểu đội trưởng"',
+    !/data-s="duyet"/.test(r('tabsHtml()')) && !/data-s="nhap"/.test(r('tabsHtml()')) && /Tiểu đội trưởng/.test(r('vMore()')));
+  // màn Duyệt: khu do CVKTHT báo thì CVKTHT không có nút duyệt, có dòng nói đang chờ ai
+  r(`S.boot = _boot(); indexBoot(S.boot); S.subs = {}; S.cmp = null; S.screen = 'duyet';
+     S.review = { day: S.boot.today, last: null, span: 1, rev: 1, closed: false, rows: [], phieu: [], exceptions: [], pending: 2, loans: [], reports: [], khu: [], slot: { n: 1, defs: [] },
+       khus: [{ khu: 'A', name: 'Khu A', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'a', duyet: null, slots: null, capBao: 0, capPhieu: 0 },
+              { khu: 'B', name: 'Khu B', items: [], waiting: 1, blank: 0, rep: { uname: 'Cv', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'b', duyet: null, slots: null, capBao: 1, capPhieu: 0 },
+              { khu: 'C', name: 'Khu C', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'c', duyet: null, slots: null, capBao: 0, capPhieu: 2 }] };
+     S.me = { id: 8, name: 'Cv', role: 'cvktht' }; var DC = vDuyet();`);
+  ok('CVKTHT ở màn Duyệt: có nút duyệt khu của tiểu đội trưởng, không có nút cho khu CVKTHT báo',
+    /data-a="khuduyet" data-k="A"/.test(r('DC')) && !/data-a="khuduyet" data-k="B"/.test(r('DC')) && /chờ Trung đội trưởng, Đại đội trưởng hoặc admin duyệt/.test(r('DC')));
+  ok('CVKTHT: khu còn phiếu kho chờ thì không có nút duyệt, nhưng huỷ được báo cáo của tiểu đội trưởng',
+    !/data-a="khuduyet" data-k="C"/.test(r('DC')) && /Khu còn phiếu kho chờ duyệt/.test(r('DC')) && /data-a="recount" data-k="C"/.test(r('DC')));
+  ok('CVKTHT: không có nút "Duyệt tất cả" khi chỉ duyệt được một khu', !/data-a="khuduyetall"/.test(r('DC')));
+  r(`S.me = { id: 9, name: 'Trung', role: 'trungdoi' }; var DT = vDuyet();`);
+  ok('trung đội trưởng: duyệt được cả ba khu và có "Duyệt tất cả"',
+    /data-a="khuduyet" data-k="A"/.test(r('DT')) && /data-a="khuduyet" data-k="B"/.test(r('DT')) && /data-a="khuduyet" data-k="C"/.test(r('DT')) && /DUYỆT TẤT CẢ 3 KHU</.test(r('DT')));
+  // sổ vay mượn chờ duyệt: nút theo cấp GHI TRONG DÒNG (cap), thiếu thì coi là việc cấp 2
+  r(`S.review.loans = [{ id: 31, grp: 'l1', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 5, ts: Date.now(), user_id: 2, uname: 'An', cap: 0 },
+       { id: 32, grp: 'l2', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 6, ts: Date.now(), user_id: 8, uname: 'Cv', cap: 1 },
+       { id: 33, grp: 'l3', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 7, ts: Date.now(), user_id: 2, uname: 'An' }];
+     S.me = { id: 8, name: 'Cv', role: 'cvktht' }; var DL = vDuyet();`);
+  ok('CVKTHT: duyệt được lần ghi cấp 0, không duyệt lần ghi cấp 1 hay lần ghi không rõ cấp',
+    /data-a="lduyet" data-id="31"/.test(r('DL')) && !/data-a="lduyet" data-id="32"/.test(r('DL')) && !/data-a="lduyet" data-id="33"/.test(r('DL')));
+  // lời nhắc khung đang diễn ra: CVKTHT được nhắc mọi khu dù không đứng tên khu nào, cấp chỉ huy thì không
+  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00"); SB.khuUser = [{ khu_id: "A", user_id: 2 }];')} S.screen = 'home'; S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  ok('CVKTHT được nhắc khu chưa đếm buổi đang diễn ra dù khu giao cho người khác', /chưa đếm/.test(r('vHome()')), (r('vHome()').match(/chưa đếm.{0,60}/) || [''])[0]);
+  r(`S.me = { id: 9, name: 'Dai', role: 'daidoi' };`);
+  ok('cấp chỉ huy không nhận lời nhắc khung đang diễn ra', !/chưa đếm buổi/.test(r('vHome()')), (r('vHome()').match(/chưa đếm.{0,60}/) || [''])[0]);
+  r(`S.review = null; S.screen = 'home'; S.me = { id: 7, name: 'Kho 2', role: 'cvktht' };`);
   // B6: "còn lấy được" trừ phiếu rút thép đang chờ; xuất cũng báo đỏ khi vượt
   r(`var RX = _boot(); RX.receipts = [${rc({ id: 4, phi_id: 'D10', qty: -250, kind: 'xuat' })}]; indexBoot(RX); S.boot = RX; S.me = { id: 1, name: 'A', role: 'admin' };
     S.nhap.mode = 'xuat'; S.nhap.khu = 'A'; S.nhap.phi = 'D10'; S.nhap.lines = []; S.nhap.qty = 60;`);
@@ -892,7 +934,7 @@ const run = async () => {
 
   // ---- 1d6. Nhắc đúng người, đúng lúc; sổ vay kèm phiếu kho; số liệu theo lúc chốt ----
   // khung ĐANG DIỄN RA (13h, buổi chiều) mà khu đã báo sáng chưa đếm chiều: nhắc, bấm mở thẳng khu đó
-  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00");')} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00");')} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   const HN = r('vHome()');
   ok('người đếm: nhắc khung đang diễn ra', /Khu A chưa đếm buổi chiều<\/b><span class="sm">Còn tới 18h</.test(HN), (HN.match(/chưa đếm.{0,60}/) || [''])[0]);
   ok('thẻ nhắc mở thẳng khu đó', /data-s="dem" data-k="A"/.test(HN));
@@ -900,7 +942,7 @@ const run = async () => {
   ok('bấm thẻ: mở màn Đếm của đúng khu', r('S.khu') === 'A' && r('S.screen') === 'dem');
   ok('màn Đếm nói khu này chưa đếm khung đang diễn ra', /khu này chưa đếm/.test(r('demView()')));
   // khung ĐÃ HẾT mà thiếu: người đếm không làm gì được, nên không thấy thẻ đỏ; admin thì thấy
-  r(`${slotBoot({ A: [0] })} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`${slotBoot({ A: [0] })} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('người đếm: không thấy thẻ đỏ thiếu khung đã qua', !/thiếu buổi/.test(r('vHome()')));
   r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
   ok('admin: vẫn thấy thẻ thiếu khung', /Khu A thiếu buổi/.test(r('vHome()')));
@@ -914,7 +956,7 @@ const run = async () => {
   r(`delete S.form.sslots;`);
 
   // sổ vay: thủ kho chọn "thép qua bãi" + khu, gửi kèm khu; người đếm thì chỉ ghi sổ
-  r(`S.me = { id: 7, name: 'Kho', role: 'thukho' }; S.screen = 'vaymuon';
+  r(`S.me = { id: 7, name: 'Kho', role: 'cvktht' }; S.screen = 'vaymuon';
     S.loan = { doitac: 5, kind: 'cho_vay', phi: 'D10', qty: 0, done: null, lines: [], kho: true, khu: 'A', bb: true, zl: true };
     S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [] };`);
   const VK = r('vVayMuon()');
@@ -926,10 +968,10 @@ const run = async () => {
   ok('hộp xác nhận nói kèm phiếu kho', /Kèm phiếu kho: thép rời Khu A/.test(r('S.ask ? S.ask.msg : ""')));
   r(`ACTIONS.askyes()`);
   await new Promise((res) => setImmediate(res));
-  r(`S.me = { id: 7, name: 'Kho', role: 'thukho' };`);
+  r(`S.me = { id: 7, name: 'Kho', role: 'cvktht' };`);
   const pl = calls.find((c) => c.url === '/api/loans' && c.method === 'POST');
   ok('gửi kèm khu', pl && pl.body.khu === 'A' && pl.body.kind === 'cho_vay', JSON.stringify(pl && pl.body));
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('người đếm: không có lựa chọn phiếu kho', !/data-a="lkho"/.test(r('vVayMuon()')));
   // dư nợ âm (trả dư) nói đúng nghĩa
   r(`S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [{ doitac_id: 5, phi_id: 'D10', kind: 'tra_vay', q: 10 }] };`);
@@ -973,10 +1015,10 @@ const run = async () => {
   r(`S.ask = null; ACTIONS.pendrm({ j: 'A|${today}|501' });`);
   ok('không bỏ được báo cáo người khác bằng khoá của nó', !r('S.ask') && r('readPending().length') === 1);
   // An đăng nhập lại: báo cáo của An tự gửi
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   calls.length = 0;
   await r('flushPending()');
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('đúng người đăng nhập lại thì tự gửi', calls.some((c) => c.url === '/api/counts' && c.body.khu === 'A') && r('readPending().length') === 0);
   // báo cáo lưu từ bản cũ (chưa có uid): giữ cách cũ, coi là của người đang đăng nhập
   r(`writePending([{ khu: 'A', day: S.boot.today, items: [], ts: 503 }]);`);
@@ -984,15 +1026,15 @@ const run = async () => {
   r(`writePending([]);`);
 
   // nháp đếm dở tách theo người
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' }; S.khu = 'A'; S.draft = { cells: { D10: { v: 77, kind: 'dem', bo: 7, le: 7 } }, baseTs: 0 }; saveDraft();`);
-  r(`S.me = { id: 3, name: 'Bình', role: 'nguoidem' }; S.khu = 'A'; loadDraft();`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' }; S.khu = 'A'; S.draft = { cells: { D10: { v: 77, kind: 'dem', bo: 7, le: 7 } }, baseTs: 0 }; saveDraft();`);
+  r(`S.me = { id: 3, name: 'Bình', role: 'tieudoi' }; S.khu = 'A'; loadDraft();`);
   ok('người sau mở cùng khu: không thấy nháp của người trước', r("S.draft.cells.D10 === undefined"), r('JSON.stringify(S.draft.cells)'));
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' }; loadDraft();`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' }; loadDraft();`);
   ok('đúng người mở lại: nháp còn nguyên', r("S.draft.cells.D10 && S.draft.cells.D10.v") === 77);
   ok('khu mở lần trước cũng nhớ theo người', r('lastKhuKey()') === 'kt:lastKhu:2');
 
   // thẻ "chưa báo": người đếm chỉ thấy khu mình đếm được; admin thấy cả bãi
-  r(`var SK = _boot(); SK.khuUser = [{ khu_id: 'B', user_id: 99 }]; indexBoot(SK); S.boot = SK; S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`var SK = _boot(); SK.khuUser = [{ khu_id: 'B', user_id: 99 }]; indexBoot(SK); S.boot = SK; S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   const HK = r('vHome()');
   ok('người đếm: thẻ chưa báo chỉ có khu mình', /Khu A chưa báo/.test(HK) && !/Khu B/.test((HK.match(/chưa báo<\/b><span class="sm">[^<]*/) || [''])[0]), (HK.match(/<b[^>]*>[^<]*chưa báo<\/b><span class="sm">[^<]*/) || [''])[0]);
   r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
@@ -1002,11 +1044,11 @@ const run = async () => {
   r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00");')} S.me = { id: 1, name: 'A', role: 'admin' };`);
   ok('admin: không bị nhắc đếm khu không gán cho mình', !/chưa đếm buổi chiều/.test(r('vHome()')));
   r(`${slotBoot({ A: [0] }, 'SB.slot.now = Date.parse(SB.today + "T13:00:00+07:00"); SB.khuUser = [{ khu_id: "A", user_id: 1 }];')} S.me = { id: 1, name: 'A', role: 'admin' };`);
-  ok('admin được gán khu A: có nhắc', /Khu A chưa đếm buổi chiều/.test(r('vHome()')));
+  ok('cấp chỉ huy không đứng tên khu (khu chỉ giao cho tiểu đội trưởng): dữ liệu lệch cũng không nhắc', !/chưa đếm buổi chiều/.test(r('vHome()')));
 
   // bảng gán người phụ trách không bày tài khoản đang khoá
   r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };
-    S.users = [{ id: 2, name: 'An', role: 'nguoidem', locked: 0, deleted: 0 }, { id: 4, name: 'Đã Khoá', role: 'nguoidem', locked: 1, deleted: 0 }];
+    S.users = [{ id: 2, name: 'An', role: 'tieudoi', locked: 0, deleted: 0 }, { id: 4, name: 'Đã Khoá', role: 'tieudoi', locked: 1, deleted: 0 }];
     S.kuEdit = 'A'; S.kuPick = [];`);
   const KP = r('vSettings()');
   ok('gán khu: không có tài khoản đang khoá', /data-a="kupick" data-v="2"/.test(KP) && !/data-a="kupick" data-v="4"/.test(KP));
@@ -1014,7 +1056,7 @@ const run = async () => {
 
   // ---- 1d8. Thẻ khu ở Tổng quan; chi tiết công nợ một đối tác ----
   // thẻ khu: đủ mọi đường kính (kể cả 0), và nút đếm/báo cáo cho người đếm được khu đó
-  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 2, name: 'An', role: 'nguoidem' }; S.khuMo = { A: true }; S.screen = 'home';`);
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 2, name: 'An', role: 'tieudoi' }; S.khuMo = { A: true }; S.screen = 'home';`);
   const HKA = r('vHome()');
   ok('thẻ khu: bày đủ mọi phi', ['D8', 'D10', 'D12'].every((ph) => new RegExp('<b style="width:44px">' + ph + '</b>').test(HKA)));
   ok('thẻ khu: có nút báo cáo, mở thẳng khu đó', /data-s="dem" data-k="A">BÁO CÁO/.test(HKA));
@@ -1084,7 +1126,7 @@ const run = async () => {
     r(`S.newVer = false;`);
   }
   // ô số lượng ở màn Vay mượn: bộ nút giống màn Nhập kho, có dòng quy đổi kg/tấn
-  r(`S.me = { id: 7, name: 'Kho', role: 'thukho' }; S.screen = 'vaymuon'; S.form.lqty = '';
+  r(`S.me = { id: 7, name: 'Kho', role: 'cvktht' }; S.screen = 'vaymuon'; S.form.lqty = '';
     S.loan = { doitac: 5, kind: 'vay', phi: 'D10', qty: 0, done: null, lines: [], kho: false };
     S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }, { id: 6, name: 'Cty Đã Xong', active: 1 }], items: [], agg: [{ doitac_id: 5, phi_id: 'D10', kind: 'vay', q: 10 }] };`);
   const VQ = r('vVayMuon()');
@@ -1110,9 +1152,9 @@ const run = async () => {
   const nhacBoot = (extra) => `var NB = _boot(); NB.khuUser = [{ khu_id: 'A', user_id: 2, name: 'An' }];
     NB.lastClosed = '${yday}'; ${extra || ''} indexBoot(NB); S.boot = NB; S.screen = 'home';`;
   const theNhac = (h) => (h.match(/<b style="font-size:17px">[^<]*<\/b><span class="sm">[^<]*/g) || []).join(' || ');
-  r(`${nhacBoot()} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`${nhacBoot()} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('An (phụ trách A): được nhắc A, và B vì B chưa giao ai', /2 khu chưa báo<\/b><span class="sm">Khu A, Khu B/.test(r('vHome()')), theNhac(r('vHome()')));
-  r(`S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  r(`S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
   const HB = r('vHome()');
   ok('Bình (không phụ trách A): không bị nhắc A', /Khu B chưa báo/.test(HB) && !/Khu A/.test(theNhac(HB)), theNhac(HB));
   ok('một khu chưa báo: bấm mở thẳng khu đó', /data-s="dem" data-k="B"/.test(HB));
@@ -1132,9 +1174,9 @@ const run = async () => {
   /* Báo cáo bị admin HUỶ: khu trở về chưa báo (không còn dòng reports), người gửi thấy thẻ đỏ kèm
      lý do ở Tổng quan và ở màn đếm; người không liên quan thì không. */
   const huyA = `NB.reports = []; NB.huy = [{ khu_id: 'A', user_id: 2, uname: 'An', rep_ts: Date.now() - 600e3, ly_do: 'D16 đếm thiếu 2 bó', huy_name: 'Sếp', ts: Date.now() - 60e3 }];`;
-  r(`${nhacBoot(huyA)} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  r(`${nhacBoot(huyA)} S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
   ok('báo cáo khu A bị huỷ: Bình (không phụ trách A) không bị nhắc', !/bị huỷ/.test(theNhac(r('vHome()'))), theNhac(r('vHome()')));
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   const HH = r('vHome()');
   ok('An (người gửi): thẻ đỏ nói báo cáo bị huỷ, kèm lý do, bấm mở thẳng khu A',
     /class="alertbtn bad" data-a="nav" data-s="dem" data-k="A"><span class="f1 col" style="gap:2px"><b style="font-size:17px">Báo cáo Khu A của bạn đã bị huỷ<\/b><span class="sm">Lý do: D16 đếm thiếu 2 bó/.test(HH), theNhac(HH));
@@ -1146,7 +1188,7 @@ const run = async () => {
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home';`);
   ok('admin: thấy khu đang chờ báo lại sau khi huỷ', /Khu A: đã huỷ báo cáo, chờ báo lại<\/b><span class="sm">Của An · lý do: D16 đếm thiếu 2 bó/.test(r('vHome()')), theNhac(r('vHome()')));
   // khu đã báo lại (lần báo mới hơn lúc huỷ): thông báo hết việc
-  r(`${nhacBoot(huyA + " NB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];")} S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
+  r(`${nhacBoot(huyA + " NB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];")} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('đã báo lại sau khi bị huỷ: không nhắc nữa', !/bị huỷ/.test(r('vHome()')) && r("huyOf('A')") === null);
   // hộp huỷ của admin: bắt gõ lý do, không gõ thì không gửi gì
   {
@@ -1171,7 +1213,7 @@ const run = async () => {
     ok('gõ lý do rồi đồng ý: gửi khu, lý do và dấu của khu', !!c && JSON.stringify(c.body) === '{"khu":"A","ly_do":"D10 đếm thiếu","mark":"m1"}', c && JSON.stringify(c.body));
     r(`S.review = null; S.ask = null; S.form = {}; S.screen = 'home';`);
   }
-  r(`${nhacBoot(repA('{ conflict: 1 }'))} S.me = { id: 3, name: 'Bình', role: 'nguoidem' };`);
+  r(`${nhacBoot(repA('{ conflict: 1 }'))} S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
   // (thẻ KHU bên dưới vẫn ghi trạng thái cho mọi người xem — đó là thông tin; ở đây chỉ xét THẺ NHẮC)
   ok('hai người báo khác số ở A: Bình không bị nhắc', !/2 người báo số khác nhau/.test(theNhac(r('vHome()'))), theNhac(r('vHome()')));
 
@@ -1182,10 +1224,10 @@ const run = async () => {
   ok('và không tính là đã báo hôm nay', r(`daBaoHomNay('A')`) === false);
 
   // sổ vay chờ duyệt: admin MỘT thẻ (không trùng); người khác không thấy số của cả bãi
-  r(`${nhacBoot('NB.loanPending = 2;')} S.me = { id: 1, name: 'A', role: 'admin' };`);
-  ok('admin: một thẻ sổ vay chờ duyệt, không trùng', (r('vHome()').match(/vay mượn chờ duyệt|vay\/mượn chờ duyệt/g) || []).length === 1);
-  r(`S.me = { id: 2, name: 'An', role: 'nguoidem' };`);
-  ok('người đếm: không thấy số sổ vay chờ duyệt của cả bãi', !/vay mượn chờ duyệt|vay\/mượn chờ duyệt/.test(r('vHome()')));
+  r(`${nhacBoot('NB.loanPending = 2; NB.loanDuyet = 2;')} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  ok('admin: một thẻ sổ vay chờ duyệt, không trùng', (r('vHome()').match(/vay mượn chờ bạn duyệt/g) || []).length === 1);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
+  ok('người đếm: không thấy số sổ vay chờ duyệt của cả bãi', !/vay mượn chờ (bạn )?duyệt/.test(r('vHome()')));
   r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
 
   // ---- 1d11. Trang Thống kê ----

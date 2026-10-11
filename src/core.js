@@ -38,7 +38,36 @@ export const fmtDay = (d) => String(d).split('-').reverse().join('/');
 export const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400e3);
 export const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const KINDS = ['dem', 'giu', 'zero'];
-export const ROLES = ['admin', 'thukho', 'nguoidem'];
+/* VAI TRÒ THEO CẤP BẬC
+     tieudoi  = Tiểu đội trưởng: đếm và báo số khu mình được giao
+     cvktht   = CVKTHT (admin cấp 3): quản lý chung cả bãi — đếm mọi khu, lập phiếu kho
+     trungdoi = Trung đội trưởng (admin cấp 2)        daidoi = Đại đội trưởng (admin cấp 1)
+     admin    = quản trị hệ thống
+   CAP là cấp DUYỆT, và là thứ duy nhất quyết định ai duyệt được việc của ai:
+     0 = chỉ báo, không duyệt gì
+     1 = CVKTHT: duyệt báo cáo đếm và sổ vay mượn (chỉ ghi sổ) do cấp 0 báo. Việc do CVKTHT (hoặc
+         cấp trên) báo thì KHÔNG tự duyệt.
+     2 = Trung đội trưởng, Đại đội trưởng, admin — ngang nhau: duyệt được hết.
+   PHIẾU KHO (nhập, chuyển, xuất, điều chỉnh, phiếu kho của sổ vay) thì CHỈ cấp 2 duyệt, ai lập cũng vậy.
+   Riêng phần hệ thống (tài khoản, khu, phi, quy tắc, dữ liệu) chỉ vai trò 'admin', không theo CAP.
+
+   CẤP CỦA NGƯỜI BÁO được GHI VÀO DÒNG SỐ LIỆU lúc báo (counts.cap, loans.cap), không tra lại từ
+   vai trò hiện tại của người đó: đổi vai trò một người không được làm đổi việc ai duyệt được những
+   thứ họ đã báo. Cột đó mặc định 2, nên chỗ ghi nào quên điền thì việc bị đẩy lên cấp trên chứ không
+   lọt xuống cho CVKTHT. */
+export const ROLES = ['admin', 'daidoi', 'trungdoi', 'cvktht', 'tieudoi'];
+export const CAP = { admin: 2, daidoi: 2, trungdoi: 2, cvktht: 1, tieudoi: 0 };
+// cấp của một vai trò; vai trò lạ thì không có quyền gì
+export const capOf = (role) => CAP[role] ?? 0;
+// người có vai trò `role` duyệt được việc mà người báo (cao nhất) ở cấp `capBao` không
+export const duyetCap = (role, capBao) => capOf(role) >= 2 || (capOf(role) === 1 && capBao === 0);
+// duyệt / từ chối / huỷ PHIẾU KHO: chỉ cấp chỉ huy
+export const duyetPhieuDuoc = (role) => capOf(role) >= 2;
+// lập phiếu kho: từ CVKTHT trở lên
+export const LAP_PHIEU = ROLES.filter((r) => capOf(r) >= 1);
+// giao khu phụ trách: chỉ Tiểu đội trưởng (cấp trên đã đếm được mọi khu)
+export const GIAO_KHU = 'tieudoi';
+export const CAP_TREN = 'Trung đội trưởng, Đại đội trưởng hoặc admin';
 export const SESSION_MS = 30 * 24 * 3600e3;
 export const LOCK_AFTER = 5;
 export const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khóa lâu dần

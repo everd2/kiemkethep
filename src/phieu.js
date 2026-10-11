@@ -1,5 +1,5 @@
 // Phiếu nhập kho, chuyển khu, xuất kho và điều chỉnh tồn.
-import { HttpError, bad, json, rand, vnDay } from './core.js';
+import { CAP_TREN, HttpError, bad, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
 import { IS_CLOSED, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, qtyWord, readJson,
   unitWord } from './helpers.js';
 import { EFF_SELECT, J } from './counts.js';
@@ -164,6 +164,8 @@ export async function duyetReceipt(env, user, id) {
   if (!r) throw new HttpError(404, 'Không tìm thấy phiếu');
   if (r.voided) throw bad('Phiếu đã bị hủy, không duyệt được');
   if (r.duyet_day) throw bad('Phiếu này đã được duyệt');
+  // phiếu kho chỉ cấp chỉ huy duyệt, ai lập cũng vậy
+  if (!duyetPhieuDuoc(user.role)) throw new HttpError(403, `Phiếu kho cần ${CAP_TREN} duyệt.`, 'cap');
   const rows = (await env.DB.prepare('SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND voided = 0 AND duyet_day IS NULL')
     .bind(r.grp || '').all()).results;
   const list = r.grp && rows.length ? rows : [{ phi_id: r.phi_id, khu_id: r.khu_id, qty: r.qty }];
@@ -343,10 +345,11 @@ export async function voidReceipt(env, user, id) {
      Phiếu đã duyệt: người lập chỉ hoàn tác trong 10 phút kể từ LÚC DUYỆT (lúc nó vào tồn),
      sau đó phải nhờ admin. Mốc trước đây là lúc nhập, nay phiếu có thể được duyệt sau hàng giờ
      nên lấy mốc nhập sẽ làm người lập không bao giờ kịp hoàn tác. */
-  if (user.role !== 'admin') {
-    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người lập phiếu hoặc admin mới hủy được');
+  // ai DUYỆT được phiếu kho (cấp chỉ huy) thì cũng từ chối / hủy được nó
+  if (!duyetPhieuDuoc(user.role)) {
+    if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người lập phiếu hoặc cấp duyệt được phiếu này mới hủy được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) {
-      throw new HttpError(403, 'Phiếu đã duyệt quá 10 phút, nhờ admin hủy');
+      throw new HttpError(403, 'Phiếu đã duyệt quá 10 phút, nhờ cấp trên hủy');
     }
   }
   const rows = r.grp

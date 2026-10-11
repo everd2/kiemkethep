@@ -10,13 +10,16 @@
 -- khu và lần chốt ngày đều lấy tên người làm bằng cách join users, nên xoá hẳn dòng là toàn bộ
 -- lịch sử của người đó hiện "(đã xoá)" — mất dấu ai đã làm gì. Giữ dòng thì tên còn đúng mãi,
 -- và khôi phục được tài khoản xoá nhầm mà không phải mở database.
+-- role: vai trò theo cấp bậc, xem CAP ở src/core.js: 'tieudoi' = Tiểu đội trưởng, 'cvktht' = CVKTHT
+-- (admin cấp 3), 'trungdoi' = Trung đội trưởng (cấp 2), 'daidoi' = Đại đội trưởng (cấp 1),
+-- 'admin' = quản trị hệ thống.
 -- Tài khoản có id NHỎ NHẤT là admin đầu tiên (người thiết lập hệ thống): chỉ người này được sửa
 -- tên, xoá và khôi phục tài khoản, và không ai khoá/hạ quyền/xoá được tài khoản đó.
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   phone TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL CHECK (role IN ('admin','thukho','nguoidem')),
+  role TEXT NOT NULL CHECK (role IN ('admin','daidoi','trungdoi','cvktht','tieudoi')),
   pin_salt TEXT NOT NULL,
   pin_hash TEXT NOT NULL,
   must_change INTEGER NOT NULL DEFAULT 1,
@@ -77,8 +80,10 @@ CREATE TABLE IF NOT EXISTS khu_phi (
   PRIMARY KEY (khu_id, phi_id)
 );
 
--- Phân công người phụ trách khu: khu có tên trong bảng này thì CHỈ người được gán (và admin) mới đếm được.
--- Khu không có dòng nào ở đây = chưa phân công, mọi người đều đếm được.
+-- Phân công người phụ trách khu, CHỈ giao cho Tiểu đội trưởng (role 'tieudoi'): khu có tên trong bảng
+-- này thì trong hàng Tiểu đội trưởng chỉ người được giao đếm được; CVKTHT trở lên đếm được mọi khu.
+-- Khu không có dòng nào ở đây = chưa phân công, Tiểu đội trưởng nào cũng đếm được.
+-- Người thôi là Tiểu đội trưởng (đổi vai trò, xoá tài khoản) thì bị gỡ khỏi bảng này ngay lúc đó.
 CREATE TABLE IF NOT EXISTS khu_user (
   khu_id TEXT NOT NULL,
   user_id INTEGER NOT NULL,
@@ -97,6 +102,8 @@ CREATE INDEX IF NOT EXISTS idx_khu_user_u ON khu_user(user_id);
 -- kind: 'dem' đếm thật (bấm "Hết (0)" cũng là dem với v=0), 'giu' giữ nguyên số hôm qua,
 --       'zero' người đếm ĐỂ TRỐNG nên mặc định 0. Phân biệt 'zero' với 'dem' v=0 để màn Duyệt
 --       nói được "khu để trống D25 trong khi dự kiến 72 cây", rất khác "khu đếm, D25 hết thật".
+-- cap:  cấp duyệt của người báo LÚC BÁO (0 Tiểu đội trưởng, 1 CVKTHT, 2 cấp chỉ huy; xem CAP ở
+--       src/core.js). Quyết định ai duyệt được ô này. Mặc định 2: quên điền thì đẩy lên cấp trên.
 CREATE TABLE IF NOT EXISTS counts (
   day TEXT NOT NULL,
   khu_id TEXT NOT NULL,
@@ -113,10 +120,12 @@ CREATE TABLE IF NOT EXISTS counts (
   duyet_at INTEGER,
   duyet_by INTEGER,
   duyet_name TEXT,
+  cap INTEGER NOT NULL DEFAULT 2,
   PRIMARY KEY (day, khu_id, phi_id)
 );
 
--- Lịch sử mọi lần báo (chỉ ghi thêm)
+-- Lịch sử mọi lần báo (chỉ ghi thêm). cap: cấp của người báo lúc báo, như counts.cap — để khi huỷ một
+-- báo cáo, ô quay về lần đã duyệt thì lấy lại đúng cả cấp của lần đó.
 CREATE TABLE IF NOT EXISTS counts_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   day TEXT NOT NULL,
@@ -126,7 +135,8 @@ CREATE TABLE IF NOT EXISTS counts_log (
   v INTEGER NOT NULL,
   kind TEXT NOT NULL,
   user_id INTEGER NOT NULL,
-  ts INTEGER NOT NULL
+  ts INTEGER NOT NULL,
+  cap INTEGER NOT NULL DEFAULT 2
 );
 CREATE INDEX IF NOT EXISTS idx_counts_log_dk ON counts_log(day, khu_id);
 
@@ -285,6 +295,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_doitac_name ON doitac(name COLLATE NOCASE)
 -- ngay: ngày GIAO NHẬN thật (ghi bù được; khác ts là lúc bấm ghi sổ). han: hạn trả (tuỳ chọn, chỉ
 --       vay / cho_vay). so_bb: số biên bản giao nhận (bắt buộc từ bản 20). nguoi, bien_so: người
 --       giao/nhận bên đối tác, biển số xe.
+-- cap: cấp duyệt của người ghi LÚC GHI, như counts.cap.
 -- grp: các dòng cùng MỘT lần ghi (vd cho A vay cả D16 và D18 một lượt), để huỷ/duyệt cùng lúc
 -- như một phiếu, giống receipts.grp.
 CREATE TABLE IF NOT EXISTS loans (
@@ -306,7 +317,8 @@ CREATE TABLE IF NOT EXISTS loans (
   han TEXT,
   so_bb TEXT,
   nguoi TEXT,
-  bien_so TEXT
+  bien_so TEXT,
+  cap INTEGER NOT NULL DEFAULT 2
 );
 CREATE INDEX IF NOT EXISTS idx_loans_doitac ON loans(doitac_id);
 CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp);
@@ -364,7 +376,7 @@ CREATE TABLE IF NOT EXISTS bao_cao_huy (
 );
 CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 22);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 23);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

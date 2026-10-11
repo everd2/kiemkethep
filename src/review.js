@@ -1,6 +1,6 @@
 // Màn Duyệt: tính tồn, lượng dùng, cảnh báo; duyệt khu, chốt và mở lại ngày; việc tự động 23:50.
-import { HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
-  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, json, vnDay, vnHour } from './core.js';
+import { CAP_TREN, HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
+  PEAK_K, RATE_K, SYSTEM, bad, daysBetween, duyetCap, json, vnDay, vnHour } from './core.js';
 import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { RATE_SQL } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
@@ -43,7 +43,7 @@ export async function computeReview(env, day, opt = {}) {
     db.prepare(EFF_SELECT).bind(last, day),
     /* Lần báo MỚI NHẤT của từng ô, kèm trạng thái duyệt. Đây là số người duyệt đang phải quyết,
        khác số ở effR khi lần báo mới chưa được duyệt. */
-    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day, c.duyet_v, c.duyet_ts, c.duyet_at, ${DUYET_NAME}, ${UNAME}
+    db.prepare(`SELECT c.khu_id, c.phi_id, c.v, c.kind, c.ts, c.day, c.duyet_v, c.duyet_ts, c.duyet_at, c.cap, ${DUYET_NAME}, ${UNAME}
                 FROM counts c LEFT JOIN users u ON u.id = c.user_id ${DUYET_JOIN}
                 WHERE c.day > ?1 AND c.day <= ?2
                   AND c.day = (SELECT MAX(c2.day) FROM counts c2
@@ -85,7 +85,7 @@ export async function computeReview(env, day, opt = {}) {
     /* Sổ vay mượn chờ duyệt, để admin duyệt ngay ở màn Duyệt thay vì phải nhớ sang màn khác.
        Lần ghi có kèm phiếu kho thì KHÔNG lấy ở đây: phiếu đó đã nằm trong danh sách phiếu chờ
        duyệt, duyệt phiếu là duyệt luôn sổ — bày cả hai là một việc hiện thành hai. */
-    db.prepare(`SELECT l.id, l.grp, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.ts, l.user_id, ${UNAME}
+    db.prepare(`SELECT l.id, l.grp, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.ts, l.user_id, l.cap, ${UNAME}
                 FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
                 WHERE l.voided = 0 AND l.duyet_ts IS NULL
                   AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay')
@@ -240,7 +240,7 @@ export async function computeReview(env, day, opt = {}) {
   const khus = khuAct.map((k) => {
     const r = reps[k.id];
     const items = [];
-    let waiting = 0, blank = 0, lastDuyet = 0, subTs = 0;
+    let waiting = 0, blank = 0, lastDuyet = 0, subTs = 0, capBao = 0;
     for (const p of phiR.results) {
       const key = k.id + '|' + p.id;
       const sr = sub[key];
@@ -254,6 +254,7 @@ export async function computeReview(env, day, opt = {}) {
       }
       const ok = sr.duyet_ts != null && sr.duyet_ts === sr.ts;
       if (!ok) waiting++;
+      capBao = Math.max(capBao, sr.cap ?? 2);
       subTs = Math.max(subTs, sr.ts || 0);
       if (sr.duyet_at) lastDuyet = Math.max(lastDuyet, sr.duyet_at);
       const d = sr.v - exp;
@@ -272,6 +273,12 @@ export async function computeReview(env, day, opt = {}) {
     }
     return {
       khu: k.id, name: k.name, items, waiting, blank,
+      /* CẤP CỦA NGƯỜI BÁO, để biết ai duyệt được (xem CAP ở core.js). capBao: cấp cao nhất ghi trong
+         các ô số của khu (counts.cap, ghi lúc báo) — ô do CVKTHT báo, hoặc do CVKTHT/chỉ huy CHỌN SỐ khi
+         hai người báo khác nhau, là số của người đó. capPhieu: 2 khi khu còn phiếu kho chờ duyệt (phiếu
+         kho chỉ cấp chỉ huy duyệt, ai lập cũng vậy), không thì 0. Duyệt khu là duyệt cả số lẫn phiếu
+         trong một lần ghi, nên phải đủ cấp cho cả hai. */
+      capBao, capPhieu: (pendKhu[k.id] || []).length ? 2 : 0,
       rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved } : null,
       /* Phiếu của khu được duyệt SAU số của khu: số đếm không gồm phần thép đó nên dự kiến vừa
          đổi, số đã duyệt của khu không còn khớp. Thay cho cảnh báo 'late' cũ, và quan trọng là
@@ -431,9 +438,9 @@ export async function reopenDay(req, env, user) {
   ];
   if (snap.counts && snap.counts.length) {
     stmts.push(env.DB.prepare(
-      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name)
+      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name, cap)
        SELECT ?1, ${J('khu_id')}, ${J('phi_id')}, ${J('v')}, ${J('kind')}, ${J('bo')}, ${J('le')}, ${J('user_id')}, ${J('ts')},
-              ${J('duyet_v')}, ${J('duyet_kind')}, ${J('duyet_ts')}, ${J('duyet_at')}, ${J('duyet_by')}, ${J('duyet_name')}
+              ${J('duyet_v')}, ${J('duyet_kind')}, ${J('duyet_ts')}, ${J('duyet_at')}, ${J('duyet_by')}, ${J('duyet_name')}, COALESCE(${J('cap')}, 2)
        FROM json_each(?2) j`
     ).bind(day, JSON.stringify(snap.counts)));
   }
@@ -478,9 +485,17 @@ export async function reviewDuyet(req, env, user) {
      được duyệt hoặc bị hủy SAU lúc số của khu đã duyệt, số dự kiến đổi mà số đã duyệt thì không,
      và đường gỡ chính là admin xem bảng lệch mới rồi DUYỆT LẠI. Không nhận thì nút "Duyệt lại"
      bị từ chối và cảnh báo treo vĩnh viễn — đúng cái bệnh của exception 'late' bản cũ. */
-  const list = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length || k.recheck));
-  if (!list.length) {
+  const cho = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length || k.recheck));
+  if (!cho.length) {
     throw bad(all ? 'Không còn khu nào chờ duyệt' : rv.khus.some((k) => k.khu === khu) ? 'Khu này không có gì chờ duyệt' : 'Khu không hợp lệ');
+  }
+  /* THEO CẤP BẬC: CVKTHT chỉ duyệt khu mà số đếm do cấp dưới báo VÀ không còn phiếu kho nào chờ.
+     Khu có số của CVKTHT trở lên, hoặc còn phiếu kho, thì để nguyên cả khu cho cấp trên — không duyệt nửa khu: duyệt số
+     mà bỏ lại phiếu là mở đúng cái khe "số đã duyệt, dự kiến đổi sau" mà việc duyệt gộp sinh ra để
+     đóng. "Duyệt tất cả" thì duyệt những khu mình duyệt được, phần còn lại vẫn chờ. */
+  const list = cho.filter((k) => duyetCap(user.role, Math.max(k.capBao, k.capPhieu)));
+  if (!list.length) {
+    throw new HttpError(403, (all ? 'Các khu đang chờ' : cho[0].name) + ` có số do CVKTHT (hoặc cấp trên) báo, hoặc còn phiếu kho chờ: cần ${CAP_TREN} duyệt.`, 'cap');
   }
   const marks = b.marks && typeof b.marks === 'object' ? b.marks : null;
   const moi = marks ? list.filter((k) => marks[k.khu] !== k.mark) : [];
@@ -541,7 +556,7 @@ export async function reviewDuyet(req, env, user) {
      duyệt lần báo MỚI NHẤT lúc ghi. Khu báo lại đúng giữa hai bước đó là duyệt một con số chưa ai
      xem. rev tăng ở mọi lần ghi số liệu, nên lệch rev là từ chối, admin tải lại rồi duyệt. */
   await batchNeuChuaDoi(env, day, rv.rev, stmts);
-  return json({ ok: true, khu: list.length, phieu: phieu.length });
+  return json({ ok: true, khu: list.length, phieu: phieu.length, con: cho.length - list.length });
 }
 
 /* ========================= TỰ CHỐT SỔ NGÀY =========================
@@ -582,8 +597,8 @@ function carryStmts(env, day) {
                  AND NOT (c2.duyet_ts IS NOT NULL AND c2.duyet_ts = c2.ts)`;
   return [
     env.DB.prepare(
-      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts)
-       SELECT ?2, c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, c.ts FROM counts c
+      `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, cap)
+       SELECT ?2, c.khu_id, c.phi_id, c.v, c.kind, c.bo, c.le, c.user_id, c.ts, c.cap FROM counts c
        WHERE c.day = ?1 AND NOT (c.duyet_ts IS NOT NULL AND c.duyet_ts = c.ts)
        ON CONFLICT(day, khu_id, phi_id) DO NOTHING`
     ).bind(day, nd),

@@ -123,7 +123,14 @@ const two = (n) => String(n).padStart(2, '0');
 const cut = (s, n) => { const t = String(s == null ? '' : s); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const hhmm = (ts) => { const d = new Date(ts); return two(d.getHours()) + ':' + two(d.getMinutes()); };
 const dmy = (ts) => { const d = new Date(ts); return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + hhmm(ts); };
-const ROLE = { admin: 'Admin', thukho: 'Thủ kho', nguoidem: 'Người đếm' };
+/* Vai trò theo cấp bậc. CAP là cấp DUYỆT, chép
+   từ src/core.js: 0 chỉ báo; 1 = CVKTHT, duyệt báo cáo đếm và sổ vay của cấp 0; 2 = Trung đội trưởng,
+   Đại đội trưởng, admin, duyệt được hết. PHIẾU KHO chỉ cấp 2 duyệt. Phần hệ thống (tài khoản, khu, phi, quy tắc) chỉ vai trò admin.
+   Server mới là chỗ chặn thật; ở đây chỉ để khỏi bày nút bấm vào là bị từ chối. */
+const ROLE = { admin: 'Admin', daidoi: 'Đại đội trưởng', trungdoi: 'Trung đội trưởng', cvktht: 'CVKTHT', tieudoi: 'Tiểu đội trưởng' };
+const roleTen = (r) => ROLE[r] || r;
+const CAP = { admin: 2, daidoi: 2, trungdoi: 2, cvktht: 1, tieudoi: 0 };
+const CAP_TREN = 'Trung đội trưởng, Đại đội trưởng hoặc admin';
 const ROWH = 46; // chiều cao một dòng bảng đếm, phải khớp .mxrow/.mxh/.oc trong style.css
 
 const IC = {
@@ -294,12 +301,20 @@ function useCachedBoot() {
   return true;
 }
 function forgetBoot() { try { localStorage.removeItem('kt:boot'); } catch (e) { /* bỏ qua */ } }
+// isAdmin: quản trị HỆ THỐNG. Việc duyệt thì hỏi isQL / isCH / duyetCap, không hỏi isAdmin.
 const isAdmin = () => S.me && S.me.role === 'admin';
-const canIn = () => S.me && (S.me.role === 'admin' || S.me.role === 'thukho');
-// Khu chưa phân công ai thì mọi người đếm được; đã phân công thì chỉ người được gán và admin
+const capMe = () => (S.me && CAP[S.me.role]) || 0;
+const isQL = () => capMe() >= 1; // cấp duyệt: CVKTHT trở lên, có tab Duyệt
+const isCH = () => capMe() >= 2; // cấp chỉ huy: duyệt được hết, đếm được mọi khu
+/* duyệt được việc mà người báo (cao nhất) ở cấp capBao không. Cấp người báo do server ghi vào dòng số
+   liệu lúc báo (cap); thiếu thì coi là 2, tức chỉ cấp chỉ huy duyệt. */
+const duyetCap = (capBao) => capMe() >= 2 || (capMe() === 1 && capBao === 0);
+const duyetDuoc = (r) => duyetCap(r && r.cap != null ? r.cap : 2);
+const canIn = () => !!S.me && S.me.role in CAP && S.me.role !== 'tieudoi';
+// Khu chưa phân công ai thì mọi người đếm được; đã phân công thì chỉ Tiểu đội trưởng được gán, và CVKTHT trở lên
 const canCount = (kid) => {
   const a = S.boot && S.boot.ku ? S.boot.ku[kid] : null;
-  return !a || !a.length || isAdmin() || a.includes(S.me.id);
+  return !a || !a.length || isQL() || a.includes(S.me.id);
 };
 const myKhu = () => S.boot.khuAct.filter((k) => canCount(k.id));
 
@@ -537,7 +552,7 @@ function khuStatus(k) {
   if (thieu.length) return { cls: 'warn', label: 'Thiếu lần đếm', who: 'Thiếu ' + slotTenNgan(thieu) + (khuWaiting(k.id) ? ' · có báo cáo chờ duyệt' : '') };
   /* Báo rồi mà chưa duyệt thì tồn CHƯA đổi, nên không được hiện "Đã báo" màu xanh như đã xong:
      người đếm phải thấy báo cáo của mình đang chờ, không thì tưởng hệ thống làm mất số. */
-  if (khuWaiting(k.id)) return { cls: 'warn', label: 'Chờ duyệt', who: who + ' · chờ admin duyệt' };
+  if (khuWaiting(k.id)) return { cls: 'warn', label: 'Chờ duyệt', who: who + ' · chờ cấp trên duyệt' };
   return { cls: 'ok', label: 'Đã duyệt', who };
 }
 const reportedCount = () => S.boot.khuAct.filter((k) => daBaoHomNay(k.id)).length;
@@ -774,16 +789,16 @@ function vForcePin() {
 function vHome() {
   const b = S.boot, T = totals();
   const alerts = [];
-  /* Khu chưa báo: admin theo dõi cả bãi nên thấy mọi khu; người đếm và thủ kho chỉ thấy khu mình
+  /* Khu chưa báo: admin theo dõi cả bãi nên thấy mọi khu; người dưới cấp duyệt chỉ thấy khu mình
      đếm được — khu người khác phụ trách thì họ không làm gì được, nhắc chỉ thành nhiễu.
      Dòng "Tạm tính: N khu chưa báo" ở đầu trang vẫn tính cả bãi, vì đó là nói về con số tồn. */
   const miss = b.khuAct.filter((k) => !daBaoHomNay(k.id));
   // chỉ nhắc khu có gì để đếm (khớp với server); dòng "Tạm tính" đầu trang vẫn tính mọi khu
   const missViec = miss.filter((k) => khuCoViec(k.id));
-  const missMine = isAdmin() ? missViec : missViec.filter((k) => canCount(k.id));
+  const missMine = isQL() ? missViec : missViec.filter((k) => canCount(k.id));
   /* Admin cần biết NHẮC AI: kèm tên người phụ trách từng khu; khu chưa giao ai thì nói thẳng. */
   const ai = (k) => (b.kuTen[k.id] && b.kuTen[k.id].length ? b.kuTen[k.id].join(', ') : 'chưa giao ai');
-  const missS = isAdmin() ? missMine.map((k) => k.name + ' (' + ai(k) + ')').join(' · ') : missMine.map((k) => k.name).join(', ');
+  const missS = isQL() ? missMine.map((k) => k.name + ' (' + ai(k) + ')').join(' · ') : missMine.map((k) => k.name).join(', ');
   // một khu và người này đếm được: bấm là mở thẳng khu đó
   const missK = missMine.length === 1 && canCount(missMine[0].id) ? missMine[0].id : null;
   if (missMine.length) alerts.push({ bad: false, t: (missMine.length === 1 ? missMine[0].name : missMine.length + ' khu') + ' chưa báo', s: missS, to: 'dem', k: missK });
@@ -797,8 +812,8 @@ function vHome() {
     const k = b.khuBy[r.khu_id];
     if (!k || !k.active) return;
     // chỉ người liên quan: admin, và người đếm được khu đó — khu của người khác thì không có việc gì cho họ
-    if (!isAdmin() && !canCount(k.id)) return;
-    if (r.conflict && !r.resolved) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: isAdmin() ? 'Vào Duyệt để chọn số' : 'Admin đang xem', to: isAdmin() ? 'duyet' : null });
+    if (!isQL() && !canCount(k.id)) return;
+    if (r.conflict && !r.resolved) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: isQL() ? 'Vào Duyệt để chọn số' : 'Cấp trên đang xem', to: isQL() ? 'duyet' : null });
   });
   /* Báo cáo bị huỷ: người GỬI phải thấy ngay ở Tổng quan (kèm lý do), cả người đếm được khu đó vì ai
      trong số họ cũng báo lại được. Admin thấy để biết khu đó còn đang chờ báo lại. */
@@ -806,7 +821,7 @@ function vHome() {
     const h = huyOf(k.id);
     if (!h) return;
     const cuaToi = h.user_id === S.me.id, demDuoc = canCount(k.id);
-    if (isAdmin() && !cuaToi) alerts.push({ bad: false, t: k.name + ': đã huỷ báo cáo, chờ báo lại', s: 'Của ' + (h.uname || '') + ' · lý do: ' + cut(h.ly_do, 70), to: null });
+    if (isQL() && !cuaToi) alerts.push({ bad: false, t: k.name + ': đã huỷ báo cáo, chờ báo lại', s: 'Của ' + (h.uname || '') + ' · lý do: ' + cut(h.ly_do, 70), to: null });
     else if (cuaToi || demDuoc) {
       alerts.push({ bad: true, t: 'Báo cáo ' + k.name + (cuaToi ? ' của bạn' : '') + ' đã bị huỷ',
         s: 'Lý do: ' + cut(h.ly_do, 90) + (demDuoc ? ' · bấm để đếm và báo lại' : ''), to: demDuoc ? 'dem' : null, k: demDuoc ? k.id : null });
@@ -816,13 +831,13 @@ function vHome() {
      người đếm biết báo cáo của mình đã tới chứ chưa được tính vào tồn. */
   // ngày đã chốt thì không còn gì "chờ duyệt" nữa: nhãn khu đã nói số đó không vào tồn
   // người không phải admin: chỉ khu mình đếm được (báo cáo của mình đang chờ), không phải cả bãi
-  const cho = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id) && (isAdmin() || canCount(k.id)));
+  const cho = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id) && (isQL() || canCount(k.id)));
   if (cho.length) {
     alerts.push({
       bad: false,
       t: (cho.length === 1 ? cho[0].name : cho.length + ' khu') + ' chờ duyệt',
-      s: isAdmin() ? 'Vào Duyệt để xem số và duyệt theo từng khu' : 'Đã gửi, chờ admin duyệt mới tính vào tồn',
-      to: isAdmin() ? 'duyet' : null,
+      s: isQL() ? 'Vào Duyệt để xem số và duyệt theo từng khu' : 'Đã gửi, chờ cấp trên duyệt mới tính vào tồn',
+      to: isQL() ? 'duyet' : null,
     });
   }
   /* Admin bắt mỗi khu đếm nhiều lần/ngày (Cài đặt → Quy tắc). Đây là việc BẮT BUỘC: khung đã qua
@@ -833,40 +848,41 @@ function vHome() {
      đếm không bù được khung đã qua — thẻ đỏ không bấm được chỉ làm họ quen bỏ qua cảnh báo. */
   // daBaoHomNay chứ không phải b.rm: báo cáo chưa duyệt chuyển từ hôm qua sang không phải "đã báo hôm nay",
   // khu đó đã có thẻ "chưa báo" ở trên — nhắc thêm thiếu khung là hai thẻ trùng ý cho một khu
-  const thieuSlot = !isAdmin() ? [] : b.khuAct.filter((k) => daBaoHomNay(k.id)).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
+  const thieuSlot = !isQL() ? [] : b.khuAct.filter((k) => daBaoHomNay(k.id)).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
   const slotHint = 'Không bù được, ghi vào nhật ký khi chốt sổ';
-  if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: isAdmin() ? 'duyet' : null });
-  else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu ' + slotTenNgan(x.m), s: slotHint, to: isAdmin() ? 'duyet' : null }));
+  if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: isQL() ? 'duyet' : null });
+  else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu ' + slotTenNgan(x.m), s: slotHint, to: isQL() ? 'duyet' : null }));
   /* Khung ĐANG DIỄN RA mà khu chưa đếm: đây mới là lời nhắc có ích — còn kịp đếm. Chỉ khu đã báo
      hôm nay (khu chưa báo gì thì thẻ "chưa báo" ở trên đã nói) và khu người này được đếm. */
   const curS = slotNow(), hNow = curS ? vnHourNow() : 0;
   if (curS && !b.closed && hNow >= curS.from && hNow < curS.to) {
-    /* Admin đếm được mọi khu nhưng thường không đi đếm: chỉ nhắc admin những khu CHÍNH họ được gán.
-       Ai khác thì nhắc mọi khu họ đếm được. */
-    const cuaToi = isAdmin() ? b.khuAct.filter((k) => (b.ku[k.id] || []).includes(S.me.id)) : myKhu();
+    /* Tiểu đội trưởng: nhắc các khu họ đếm được. CVKTHT quản lý chung cả bãi và là người đi đếm khi
+       khu thiếu người, nên được nhắc MỌI khu. Cấp chỉ huy đếm được mọi khu nhưng không đi đếm: không
+       nhắc, họ thấy khu thiếu buổi ở thẻ đỏ phía trên khi khung đã hết. */
+    const cuaToi = isCH() ? [] : myKhu();
     const chua = cuaToi.filter((k) => daBaoHomNay(k.id) && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
     const con = 'Còn tới ' + fmtGio(curS.to);
     if (chua.length > 2) alerts.push({ bad: false, t: chua.length + ' khu chưa đếm ' + curS.label, s: chua.map((k) => k.name).join(', ') + ' · ' + con, to: 'dem' });
     else chua.forEach((k) => alerts.push({ bad: false, t: k.name + ' chưa đếm ' + slotTen(curS, b.nSlot), s: con, to: 'dem', k: k.id }));
   }
-  /* Khoản vay mượn QUÁ HẠN TRẢ (phần còn nợ của lần vay đã qua hạn): admin và thủ kho là người đi đòi
+  /* Khoản vay mượn QUÁ HẠN TRẢ (phần còn nợ của lần vay đã qua hạn): người lập phiếu được là người đi đòi
      hoặc đi trả, nên chỉ họ thấy. Nói cả hai chiều, vì mình nợ quá hạn cũng là việc phải xử lý. */
   const qh = b.loanQuaHan || { no: 0, co: 0 };
-  if ((isAdmin() || canIn()) && (qh.no || qh.co)) {
+  if (canIn() && (qh.no || qh.co)) {
     alerts.push({ bad: true, t: (qh.no + qh.co) + ' khoản vay mượn quá hạn trả', s: [qh.co ? 'đối tác nợ mình ' + qh.co + ' khoản' : '', qh.no ? 'mình nợ đối tác ' + qh.no + ' khoản' : ''].filter(Boolean).join(' · '), to: 'vaymuon' });
   }
-  // sổ vay mượn chờ duyệt: chỉ nhắc admin, vì chỉ admin duyệt được, và việc này không chặn chốt ngày
-  if (isAdmin() && b.loanPending) alerts.push({ bad: false, t: b.loanPending + ' lần ghi vay mượn chờ duyệt', s: 'Chưa tính vào dư nợ với đối tác', to: 'vaymuon' });
+  // sổ vay mượn chờ duyệt: nhắc đúng số lần ghi NGƯỜI NÀY duyệt được (server đếm sẵn theo cấp bậc)
+  if (isQL() && b.loanDuyet) alerts.push({ bad: false, t: b.loanDuyet + ' lần ghi vay mượn chờ bạn duyệt', s: 'Chưa tính vào dư nợ với đối tác', to: 'vaymuon' });
   const choP = (b.receipts || []).filter((r) => !r.duyet_day && !r.voided);
   // người đếm không lập phiếu, cũng không duyệt: thẻ phiếu chờ không có gì cho họ làm
-  if (choP.length && (isAdmin() || canIn())) {
+  if (choP.length && canIn()) {
     const nP = new Set(choP.map((r) => r.grp || 'id' + r.id)).size;
     alerts.push({
       bad: false,
       t: nP + ' phiếu chờ duyệt',
-      s: isAdmin() ? 'Chưa tính vào tồn. Vào Duyệt để duyệt hoặc từ chối' : 'Chưa tính vào tồn, chờ admin duyệt',
-      // người đếm không có tab Nhập: thẻ chỉ để đọc, không dẫn vào màn họ không dùng được
-      to: isAdmin() ? 'duyet' : canIn() ? 'nhap' : null,
+      // phiếu kho chỉ cấp chỉ huy duyệt: CVKTHT lập được nhưng chỉ chờ, nên dẫn về màn Nhập
+      s: isCH() ? 'Chưa tính vào tồn. Vào Duyệt để duyệt hoặc từ chối' : 'Chưa tính vào tồn, chờ ' + CAP_TREN + ' duyệt',
+      to: isCH() ? 'duyet' : canIn() ? 'nhap' : null,
     });
   }
   /* (Đã có thẻ "lần ghi vay mượn chờ duyệt" cho admin ở trên. Không bày thêm cho người khác: số này là
@@ -883,7 +899,7 @@ function vHome() {
     if (T.perPhi[p.id] < p.min_stock) low.push(p);
     else if (dl !== null && dl < 3) shortp.push({ p, dl });
   });
-  const toDuyet = isAdmin() ? 'duyet' : null; // người không phải admin: thẻ chỉ để đọc, không bấm được
+  const toDuyet = isQL() ? 'duyet' : null; // người không phải admin: thẻ chỉ để đọc, không bấm được
   if (neg.length > 2) alerts.push({ bad: true, t: neg.length + ' phi có số "đã dùng" âm', s: neg.map((p) => p.id).join(', ') + ' · nhập sót phiếu hoặc đếm sai?', to: toDuyet });
   else neg.forEach((p) => alerts.push({ bad: true, t: p.id + ' đã dùng âm (' + qMain(T.used[p.id], p) + ')', s: 'Nhập sót phiếu hoặc đếm sai?', to: toDuyet }));
   if (low.length > 2) alerts.push({ bad: true, t: low.length + ' phi dưới mức báo động', s: low.map((p) => p.id).join(', '), to: 'ton' });
@@ -982,7 +998,7 @@ function khuChiTiet(k) {
     <div class="card" style="padding:0;overflow:hidden;margin:0">${rows.map(dong).join('')}</div>
     <div class="row sm" style="justify-content:space-between"><span class="muted">${coThep}/${rows.length} phi có thép</span><b>${fmtT(tongKg)} tấn</b></div>
     ${coCho
-      ? `<span class="sm" style="line-height:1.45;color:var(--warn)"><b>Số bên trái là số đang dùng, chưa tính báo cáo mới.</b> Khi admin duyệt báo cáo, nó đổi thành số ở cột "Khu báo".</span>`
+      ? `<span class="sm" style="line-height:1.45;color:var(--warn)"><b>Số bên trái là số đang dùng, chưa tính báo cáo mới.</b> Khi cấp trên duyệt báo cáo, nó đổi thành số ở cột "Khu báo".</span>`
       : '<span class="sm muted" style="line-height:1.45">Đây là số đã duyệt, cũng là số đang dùng để tính tồn bãi.</span>'}
     ${nutDem}
   </div>`;
@@ -1016,7 +1032,7 @@ function vKhu() {
 function demView() {
   const b = S.boot, k = S.khu, kname = b.khuBy[k].name;
   if (!b.phiAct.length) return `${head('Báo cáo ' + esc(kname), '', 'home')}<div class="pad muted">Chưa có phi thép nào trong hệ thống. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
-  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Admin đã giao khu này cho người khác. Bấm "Đổi khu" để chọn khu của bạn, hoặc nhờ admin gán quyền.</span><button class="btn s full" data-a="nav" data-s="khu">Đổi khu</button></div></div>`;
+  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Khu này đã giao cho người khác. Bấm "Đổi khu" để chọn khu của bạn, hoặc nhờ admin gán quyền.</span><button class="btn s full" data-a="nav" data-s="khu">Đổi khu</button></div></div>`;
   const zk =S.zoomK && S.zoomK !== k ? S.zoomK : null;
   const others = b.khuAct.filter((x) => x.id !== k);
   const shown = zk ? others.filter((x) => x.id === zk) : others;
@@ -1209,7 +1225,7 @@ function receiptGroups(list) {
 function vNhap() {
   const b = S.boot, N = S.nhap;
   // tới được đây bằng nút Back hoặc link cũ: người đếm không lập phiếu (server cũng chặn)
-  if (!canIn()) return `${head('Nhập kho', '', 'home')}<div class="pad"><div class="card warn">Chỉ thủ kho và admin lập phiếu nhập, chuyển, xuất và điều chỉnh.</div></div>`;
+  if (!canIn()) return `${head('Nhập kho', '', 'home')}<div class="pad"><div class="card warn">Tiểu đội trưởng không lập phiếu nhập, chuyển, xuất và điều chỉnh — việc này của CVKTHT và cấp chỉ huy.</div></div>`;
   if (!b.khuAct.length) return `${head('Nhập kho', '', 'home')}<div class="pad muted">Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.</div>`;
   const okKhu = (id) => id && b.khuBy[id] && b.khuBy[id].active;
   if (!okKhu(N.khu)) N.khu = okKhu(S.khu) ? S.khu : b.khuAct[0].id;
@@ -1234,19 +1250,21 @@ function vNhap() {
        Mốc là giờ duyệt chứ không phải giờ nhập: phiếu có thể được duyệt sau hàng giờ, lấy mốc
        nhập thì người lập không bao giờ kịp hoàn tác. */
     const mine = g.r0.user_id === S.me.id;
-    const can = isAdmin() || (mine && (cho || Date.now() - g.r0.duyet_ts < 10 * 60e3));
+    // phiếu kho chỉ cấp chỉ huy duyệt; ai duyệt được thì cũng từ chối / huỷ được
+    const quyen = isCH();
+    const can = quyen || (mine && (cho || Date.now() - g.r0.duyet_ts < 10 * 60e3));
     const ngay = cho
       ? (g.r0.day !== b.today ? ` · nhập ${esc(fmtDay(g.r0.day))}` : '')
       : (g.r0.duyet_day !== g.r0.day ? ` · nhập ${esc(fmtDay(g.r0.day))}, duyệt ${esc(fmtDay(g.r0.duyet_day))}` : '');
     const trangThai = cho
       ? '<span class="badge warn">Chờ duyệt</span>'
       : `<span class="badge ok">Đã duyệt${g.r0.duyet_name ? ' · ' + esc(g.r0.duyet_name) : ''}</span>`;
-    const nut = isAdmin() && cho
+    const nut = quyen && cho
       ? `<div class="row gap6"><button class="btn s ok" data-a="pduyet" data-id="${g.id}">Duyệt</button><button class="btn s bad" data-a="void" data-id="${g.id}">Từ chối</button></div>`
       : can ? `<button class="btn s bad" data-a="void" data-id="${g.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>`
       // không có nút thì nói vì sao: phiếu của người khác đang chờ duyệt, hay của mình mà đã quá giờ
-      : cho ? '<span class="sm muted" style="text-align:right;max-width:92px">chờ admin duyệt</span>'
-      : mine ? '<span class="sm muted" style="text-align:right;max-width:92px">quá 10 phút, nhờ admin huỷ</span>'
+      : cho ? '<span class="sm muted" style="text-align:right;max-width:92px">chờ cấp trên duyệt</span>'
+      : mine ? '<span class="sm muted" style="text-align:right;max-width:92px">quá 10 phút, nhờ cấp trên huỷ</span>'
       : '';
     return `<div class="li"><span><b>${g.title}</b> ${trangThai}<br>${esc(g.what)} · ${fmtT(g.kg)} tấn<br><span class="sm muted">${esc(g.r0.uname)} · ${hhmm(g.r0.ts)}${ngay}${g.r0.note ? ' · ' + esc(g.r0.note) : ''}</span></span>${nut}</div>`;
   }).join('');
@@ -1275,9 +1293,9 @@ function vNhap() {
   <div class="f1 scroll pad col gap12" id="body">
     <div class="row gap6"><button class="chip s f1 ${N.mode === 'nhap' ? 'on' : ''}" data-a="nmode" data-v="nhap">Nhập thép về</button><button class="chip s f1 ${chuyen ? 'on' : ''}" data-a="nmode" data-v="chuyen">Chuyển khu</button><button class="chip s f1 ${xuat ? 'on' : ''}" data-a="nmode" data-v="xuat">Xuất kho</button><button class="chip s f1 ${dc ? 'on' : ''}" data-a="nmode" data-v="dc">Điều chỉnh</button></div>
     <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:2px 0;text-decoration:underline" data-a="nav" data-s="vaymuon">Cho đối tác mượn hoặc đi vay thép? Ghi ở Vay mượn ngoài bãi →</button>
-    ${N.done ? `<div class="card warn col gap8"><b style="font-size:18px">Đã lưu phiếu · chờ admin duyệt</b><span style="font-size:17px">${esc(N.done.text)}</span><span class="sm" style="line-height:1.4">Phiếu chỉ tính vào tồn sau khi admin duyệt. Chứng từ ghi cả ngày nhập và ngày duyệt.</span><button class="btn s full" data-a="void" data-id="${N.done.id}">RÚT LẠI CẢ PHIẾU</button></div>` : ''}
-    ${xuat ? `<div class="card col gap6" style="border:2px solid var(--pri)"><b style="font-size:17px">Ghi phiếu xuất là <i>tuỳ bạn</i>, không bắt buộc</b><span class="sm" style="line-height:1.45">Không ghi thì app vẫn tính lượng dùng như cũ. Ghi được bao nhiêu thì phần <b>không rõ</b> co lại bấy nhiêu — và chính phần không rõ mới là con số đáng đi hỏi. Phiếu phải được admin duyệt mới tính vào sổ.</span></div>` : ''}
-    ${dc ? `<div class="card bad col gap6"><b style="font-size:17px">Việc này SỬA SỔ, không phải ghi thép ra vào</b><span class="sm" style="line-height:1.45">Chỉ dùng khi số trong máy sai mà không phiếu nào giải thích được. Thép thật đi hay về thì dùng <b>Nhập thép về</b> hoặc <b>Chuyển khu</b>; thép dùng hết thì để khu đếm xuống, đừng điều chỉnh. Phiếu phải được admin duyệt mới vào tồn, và lý do nằm trong nhật ký mãi mãi.</span></div>` : ''}
+    ${N.done ? `<div class="card warn col gap8"><b style="font-size:18px">Đã lưu phiếu · chờ cấp trên duyệt</b><span style="font-size:17px">${esc(N.done.text)}</span><span class="sm" style="line-height:1.4">Phiếu chỉ tính vào tồn sau khi được duyệt. Chứng từ ghi cả ngày nhập và ngày duyệt.</span><button class="btn s full" data-a="void" data-id="${N.done.id}">RÚT LẠI CẢ PHIẾU</button></div>` : ''}
+    ${xuat ? `<div class="card col gap6" style="border:2px solid var(--pri)"><b style="font-size:17px">Ghi phiếu xuất là <i>tuỳ bạn</i>, không bắt buộc</b><span class="sm" style="line-height:1.45">Không ghi thì app vẫn tính lượng dùng như cũ. Ghi được bao nhiêu thì phần <b>không rõ</b> co lại bấy nhiêu — và chính phần không rõ mới là con số đáng đi hỏi. Phiếu phải được cấp trên duyệt mới tính vào sổ.</span></div>` : ''}
+    ${dc ? `<div class="card bad col gap6"><b style="font-size:17px">Việc này SỬA SỔ, không phải ghi thép ra vào</b><span class="sm" style="line-height:1.45">Chỉ dùng khi số trong máy sai mà không phiếu nào giải thích được. Thép thật đi hay về thì dùng <b>Nhập thép về</b> hoặc <b>Chuyển khu</b>; thép dùng hết thì để khu đếm xuống, đừng điều chỉnh. Phiếu phải được cấp trên duyệt mới vào tồn, và lý do nằm trong nhật ký mãi mãi.</span></div>` : ''}
     ${chuyen
       ? `<div class="col gap8"><b style="font-size:18px">1. Từ khu</b>${khuChips(N.from, 'from')}</div><div class="col gap8"><b style="font-size:18px">2. Sang khu</b>${khuChips(N.to, 'to', N.from)}</div>`
       : `<div class="col gap8"><b style="font-size:18px">1. ${dc ? 'Sửa tồn của khu' : xuat ? 'Lấy thép từ khu' : 'Để vào khu'}</b>${khuChips(N.khu, 'khu')}</div>`}
@@ -1380,6 +1398,9 @@ function renderSubsPanel(khu, R) {
   return `<div style="overflow-x:auto;margin-top:6px"><table class="tbl"><thead><tr><th>ɸ</th>${hdrs}</tr></thead><tbody>${bodyRows}</tbody>${footRow ? '<tfoot>' + footRow + '</tfoot>' : ''}</table></div>`;
 }
 
+// thay cho nút duyệt khi việc này do CVKTHT (hoặc cấp trên) báo mà người đang xem là CVKTHT
+const choCapTren = (gi) => `<span class="sm b" style="color:var(--warn);line-height:1.4">${gi}: chờ ${CAP_TREN} duyệt.</span>`;
+
 /* Sổ vay mượn chờ duyệt, bày ngay ở màn Duyệt: admin vẫn duyệt mọi thứ ở đây, bắt sang một màn
    khác chỉ để duyệt sổ vay là để nó nằm chờ mãi. Lần ghi có kèm phiếu kho thì server đã bỏ khỏi
    danh sách này, vì phiếu kho đi kèm nằm ở mục Phiếu chờ duyệt và duyệt phiếu là duyệt luôn sổ. */
@@ -1394,7 +1415,7 @@ function loanSec(R) {
       return `<div class="card col gap6"><b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b>
         <span>${esc(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '))}</span>
         <span class="sm muted">${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>
-        ${R.closed ? '' : `<div class="row gap6"><button class="btn s ok f1" data-a="lduyet" data-id="${id}">DUYỆT</button><button class="btn s bad f1" data-a="lvoid" data-id="${id}">TỪ CHỐI</button></div>`}</div>`;
+        ${R.closed ? '' : duyetDuoc(r0) ? `<div class="row gap6"><button class="btn s ok f1" data-a="lduyet" data-id="${id}">DUYỆT</button><button class="btn s bad f1" data-a="lvoid" data-id="${id}">TỪ CHỐI</button></div>` : choCapTren('Lần ghi do CVKTHT hoặc cấp trên ghi')}</div>`;
     }).join('')}</div>`;
 }
 
@@ -1426,6 +1447,9 @@ function vDuyet() {
   const kname = (id) => (b.khuBy[id] ? b.khuBy[id].name : id);
   const khus = R.khus || [];
   const phieu = R.phieu || [];
+  // khu mình duyệt được: đủ cấp cho CẢ số đếm lẫn phiếu chờ của khu (duyệt khu là duyệt cả hai)
+  const khuDuoc = (k) => duyetCap(Math.max(k.capBao || 0, k.capPhieu || 0));
+  const huyDuoc = (kid) => { const k = khus.find((x) => x.khu === kid); return !!k && duyetCap(k.capBao || 0); };
   const phieuBy = Object.fromEntries(phieu.map((v) => [v.key, v]));
 
   /* --- Phiếu chờ duyệt --- */
@@ -1456,7 +1480,7 @@ function vDuyet() {
     return `<div class="card ${dc ? 'bad' : 'warn'} col gap8"><div class="col" style="gap:2px"><b style="font-size:17px">${title}</b>
       <span style="font-size:16px">${esc(what)} · ${fmtT(kg)} tấn</span>
       <span class="sm muted">${esc(v.uname)} · ${hhmm(v.ts)}${cuNgay}${v.note ? ' · ' + esc(v.note) : ''}</span>${canhBao}</div>
-      ${R.closed ? '' : `<div class="row gap6"><button class="btn s ok f1" data-a="pduyet" data-id="${v.id}">DUYỆT PHIẾU</button><button class="btn s bad f1" data-a="preject" data-id="${v.id}">TỪ CHỐI</button></div>`}</div>`;
+      ${R.closed ? '' : duyetCap(v.cap) ? `<div class="row gap6"><button class="btn s ok f1" data-a="pduyet" data-id="${v.id}">DUYỆT PHIẾU</button><button class="btn s bad f1" data-a="preject" data-id="${v.id}">TỪ CHỐI</button></div>` : choCapTren('Phiếu kho')}</div>`;
   };
   const phieuSec = !phieu.length ? '' : `<div class="col gap8">
     <div class="row" style="justify-content:space-between;align-items:baseline"><span class="sec">Phiếu chờ duyệt</span><span class="sm b" style="color:var(--warn)">${phieu.length} phiếu chưa vào tồn</span></div>
@@ -1475,17 +1499,17 @@ function vDuyet() {
         const pickB = C.pick[x.phi] !== 'a';
         return `<div class="li"><b style="width:44px">${x.phi}</b><button class="chip s f1 ${pickB ? '' : 'on'}" data-a="cpick" data-p="${x.phi}" data-v="a">${x.a == null ? '—' : fmtQs(x.a, x.phi)}</button><button class="chip s f1 ${pickB ? 'on' : ''}" data-a="cpick" data-p="${x.phi}" data-v="b">${x.b == null ? '—' : fmtQs(x.b, x.phi)}</button></div>`;
       }).join('')}</div><span class="sm">Chạm số đúng cho từng phi (đang chọn: ô đậm), rồi lưu. Chọn số xong vẫn phải bấm Duyệt khu.</span>
-      <div class="row gap8"><button class="btn s warnb f1" data-a="cresolve" data-k="${esc(e.khu)}">LƯU LỰA CHỌN</button><button class="btn s warnb f1" data-a="recount" data-k="${esc(e.khu)}">HUỶ BÁO CÁO</button></div>`;
+      <div class="row gap8"><button class="btn s warnb f1" data-a="cresolve" data-k="${esc(e.khu)}">LƯU LỰA CHỌN</button>${huyDuoc(e.khu) ? `<button class="btn s warnb f1" data-a="recount" data-k="${esc(e.khu)}">HUỶ BÁO CÁO</button>` : ''}</div>`;
     } else if (C && C.data) cmp = '<span class="sm">Không tìm thấy khác biệt trong lịch sử, có thể giữ số báo sau.</span>';
     return `<div class="card warn col gap8"><b style="font-size:18px">${esc(e.name)}: 2 người báo số khác nhau</b><span class="sm">Số đang chờ duyệt là của ${esc(r ? r.uname : '')} (báo sau). Dùng "Xem lần báo" ở thẻ khu để xem chi tiết từng người.</span>
-      ${cmp || `<div class="row gap8"><button class="btn s warnb f1" data-a="cview" data-k="${esc(e.khu)}">SO SÁNH 2 SỐ</button><button class="btn s warnb f1" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button></div><button class="btn s warnb full" data-a="recount" data-k="${esc(e.khu)}">HUỶ BÁO CÁO, BẮT ĐẾM LẠI</button>`}
+      ${cmp || `<div class="row gap8"><button class="btn s warnb f1" data-a="cview" data-k="${esc(e.khu)}">SO SÁNH 2 SỐ</button><button class="btn s warnb f1" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button></div>${huyDuoc(e.khu) ? `<button class="btn s warnb full" data-a="recount" data-k="${esc(e.khu)}">HUỶ BÁO CÁO, BẮT ĐẾM LẠI</button>` : ''}`}
       ${C && C.data && !C.data.diffs.length ? `<button class="btn s warnb full" data-a="resolve" data-k="${esc(e.khu)}">DÙNG SỐ BÁO SAU</button>` : ''}</div>`;
   }).join('');
 
   /* --- Cảnh báo cấp phi: dùng âm / dùng cao bất thường --- */
   const cards = badRows.map((r) => {
     // chỉ báo cáo ĐANG CHỜ DUYỆT mới huỷ được; số đã duyệt thì đã là tồn
-    const canRe = r.topKhu && khus.some((k) => k.khu === r.topKhu && k.waiting);
+    const canRe = r.topKhu && khus.some((k) => k.khu === r.topKhu && k.waiting) && huyDuoc(r.topKhu);
     const rp = b.phiBy[r.phi];
     const fmtEq = (v) => v === null ? '—' : fmtQe(v, rp);
     const perDayTxt = (x) => (isCuon(rp) ? fmtDec(x / rp.bo_size) + ' cuộn/ngày' : fmtInt(x) + ' cây/ngày');
@@ -1513,11 +1537,13 @@ function vDuyet() {
   /* --- Thẻ của từng khu: NỘI DUNG NHƯ NHAU dù lệch hay không --- */
   // khu "cần xem lại" cũng cần một lần bấm Duyệt khu, nên tính vào số khu đang chờ
   const nCho = khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length;
+  // trong đó, số khu NGƯỜI NÀY duyệt được: nút "Duyệt tất cả" chỉ nói về phần này
+  const nDuoc = khus.filter((k) => (k.waiting || k.phieu.length || k.recheck) && khuDuoc(k)).length;
   const nDuyet = khus.filter((k) => k.rep && !k.waiting).length;
   const khuHead = nCho
     ? `<span class="sm b" style="color:var(--warn)">${nCho} khu chờ duyệt</span>`
     : nDuyet ? `<span class="sm b" style="color:var(--ok)">${nDuyet} khu đã duyệt</span>` : '<span class="sm muted">chưa có khu nào báo</span>';
-  const duyetAll = nCho > 1 && !R.closed ? `<button class="btn s ok full" data-a="khuduyetall">DUYỆT TẤT CẢ ${nCho} KHU</button>` : '';
+  const duyetAll = nDuoc > 1 && !R.closed ? `<button class="btn s ok full" data-a="khuduyetall">DUYỆT TẤT CẢ ${nDuoc} KHU${nDuoc < nCho ? ' BẠN DUYỆT ĐƯỢC' : ''}</button>` : '';
 
   const khuSec = `<div class="col gap8"><div class="row" style="justify-content:space-between;align-items:baseline"><span class="sec">Báo cáo theo khu</span>${khuHead}</div>${duyetAll}${khus.map((k) => {
     const subOpen = S.subs[k.khu] !== undefined;
@@ -1582,10 +1608,14 @@ function vDuyet() {
     const slotLate = sl && sl.late.length ? `<div class="sm" style="color:var(--warn)">Gửi muộn: đếm ${sl.late.map((x) => hhmm(x.at) + ', tới ' + hhmm(x.ts)).join('; ')}</div>` : '';
     const recheck = k.recheck ? `<div class="sm b" style="color:var(--warn);line-height:1.4">Có phiếu được duyệt SAU khi số của khu đã duyệt, nên số dự kiến vừa đổi. Thép đó đang được cộng thêm vào tồn của khu. Nếu số khu báo ĐÃ gồm thép đó thì bấm Duyệt lại: tồn lấy đúng theo báo cáo.</div>` : '';
 
-    const btns = R.closed ? '' : `<div class="row gap6">${cho || choP
+    /* Theo cấp bậc: CVKTHT không duyệt khu có số của CVKTHT trở lên, hoặc còn phiếu kho chờ. Không bày nút mà nói
+       rõ đang chờ ai, và vì cái gì (số đếm hay phiếu) — không thì người xem tưởng app hỏng. */
+    const duoc = khuDuoc(k), canViec = cho || choP || k.recheck;
+    const vuong = !canViec || duoc ? '' : choCapTren(duyetCap(k.capBao || 0) ? 'Khu còn phiếu kho chờ duyệt' : 'Số của khu do CVKTHT hoặc cấp trên báo');
+    const btns = R.closed ? '' : `${vuong}<div class="row gap6">${!duoc ? '' : cho || choP
       ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT ${esc(cut(k.name, 14).toUpperCase())}</button>`
       : k.recheck ? `<button class="btn s ok f1" data-a="khuduyet" data-k="${esc(k.khu)}">DUYỆT LẠI</button>` : ''}
-      ${cho ? `<button class="btn s bad f1" data-a="recount" data-k="${esc(k.khu)}">Huỷ báo cáo</button>` : ''}</div>`;
+      ${cho && duyetCap(k.capBao || 0) ? `<button class="btn s bad f1" data-a="recount" data-k="${esc(k.khu)}">Huỷ báo cáo</button>` : ''}</div>`;
 
     return `<div class="card col gap6" style="${edge}"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
       <div class="col" style="gap:2px"><div class="row gap6" style="align-items:center"><b style="font-size:16px">${esc(k.name)}</b>${badge}</div><span class="sm muted">${who}</span>${duyetLine}</div>
@@ -1609,7 +1639,7 @@ function vDuyet() {
   return `${head('Duyệt ngày ' + b.today.split('-').reverse().slice(0, 2).join('/'), 'Duyệt theo từng khu' + (R.slot && R.slot.n > 1 ? ' · mỗi khu đếm ' + R.slot.n + ' lần/ngày' : ''), 'home')}
   <div class="f1 scroll pad col gap12" id="body">
     ${R.closed ? (b.closedReset ? '<div class="card ok"><b>Hôm nay vừa đặt lại số liệu.</b> Tồn cả bãi về 0, ngày này đã khoá. Ngày mai các khu báo số như thường.</div>' : '<div class="card ok"><b>Sổ hôm nay đã chốt.</b> Ngày mai các khu báo số như thường.</div>') : verdict}
-    ${R.closed && b.closedReset ? `<div class="card col gap6"><b>Đặt lại nhầm?</b><input class="inp s" id="reopenNote" placeholder="Lý do hoàn tác (bắt buộc)" data-model="reopenNote" value="${esc(S.form.reopenNote || '')}"><button class="btn s bad full" data-a="reopen">HOÀN TÁC ĐẶT LẠI SỐ LIỆU</button></div>` : ''}
+    ${R.closed && b.closedReset && isAdmin() ? `<div class="card col gap6"><b>Đặt lại nhầm?</b><input class="inp s" id="reopenNote" placeholder="Lý do hoàn tác (bắt buộc)" data-model="reopenNote" value="${esc(S.form.reopenNote || '')}"><button class="btn s bad full" data-a="reopen">HOÀN TÁC ĐẶT LẠI SỐ LIỆU</button></div>` : ''}
     ${R.slot && R.slot.changed ? `<div class="card warn col" style="gap:4px"><b>Khung giờ đếm vừa đổi hôm nay lúc ${hhmm(R.slot.changed.at)}${R.slot.changed.by ? ' (' + esc(R.slot.changed.by) + ')' : ''}</b><span class="sm" style="line-height:1.4">Các lần đếm hôm nay đã được xếp lại theo khung mới, nên việc "thiếu lần đếm" có thể khác lúc trước khi đổi.</span></div>` : ''}
     ${gap}${first}${phieuSec}${loanSec(R)}${items}${cards}
     ${khuSec}
@@ -1813,11 +1843,11 @@ function fmtAudit(a) {
       + (d.lech && d.lech.length ? ' · lệch: ' + d.lech.slice(0, 8).join(', ') : ''), 'admin'],
     reopen_day: ['mở lại ngày ' + fmtDay(d.day) + ' (' + d.note + ')', 'flag'], recount: ['yêu cầu ' + kn(d.khu) + ' đếm lại', 'admin'], report_cancel: ['huỷ báo cáo ' + kn(d.khu) + (d.nguoi_bao ? ' của ' + d.nguoi_bao : '') + ' · lý do: ' + (d.ly_do || ''), 'flag'], recount_after_close: ['mở lại ngày, yêu cầu ' + kn(d.khu) + ' đếm lại', 'flag'], conflict_resolve: [(d.changes && d.changes.length ? 'chọn số cho ' + kn(d.khu) + ': ' + d.changes.map((c) => c.phi + ' ' + c.from + ' → ' + c.to).join('; ') : 'chọn số báo sau cho ' + kn(d.khu)), 'admin'],
     user_create: ['tạo tài khoản ' + d.name, 'admin'], user_reset_pin: ['đặt lại PIN cho ' + d.name, 'admin'], user_lock: ['khóa ' + d.name, 'admin'], user_unlock: ['mở khóa ' + d.name, 'admin'],
-    user_role: ['đổi vai trò ' + d.name + ' thành ' + (ROLE[d.role] || d.role), 'admin'], user_logout: ['đăng xuất mọi máy của ' + d.name, 'admin'],
+    user_role: ['đổi vai trò ' + d.name + ' thành ' + roleTen(d.role), 'admin'], user_logout: ['đăng xuất mọi máy của ' + d.name, 'admin'],
     /* Dòng này là cái NỐI hai tên lại: nhật ký lưu sẵn tên vào từng dòng và database từ chối sửa,
        nên các dòng trước khi đổi tên vẫn mang tên cũ. Có dòng này thì vẫn tra ra được là ai. */
     user_rename: ['đổi tên "' + d.from + '" thành "' + d.to + '"', 'admin'],
-    user_delete: ['xoá tài khoản ' + d.name + ' (' + (ROLE[d.role] || d.role) + ')' + (d.phone ? ' · ' + d.phone : '') + ' — hoạt động cũ vẫn giữ tên', 'flag'],
+    user_delete: ['xoá tài khoản ' + d.name + ' (' + roleTen(d.role) + ')' + (d.phone ? ' · ' + d.phone : '') + ' — hoạt động cũ vẫn giữ tên', 'flag'],
     user_restore: ['khôi phục tài khoản ' + d.name, 'admin'],
     /* Hai dòng này là chỗ DUY NHẤT còn đọc lại được số thép trước khi đặt lại, vì nhật ký không
        xoá được. Nên hiện luôn tổng tấn và số theo từng phi, đừng chỉ ghi "đã đặt lại". */
@@ -2020,10 +2050,10 @@ function vMore() {
     <button class="menu" data-a="nav" data-s="lichsu">Xem lại ngày cũ</button>
     ${canIn() ? '<button class="menu" data-a="nav" data-s="baocao">Báo cáo Nhập – Dùng – Tồn theo kỳ</button>' : ''}
     <button class="menu" data-a="nav" data-s="vaymuon">Vay mượn ngoài bãi${S.boot.loanPending ? ` (${S.boot.loanPending} chờ duyệt)` : ''}</button>
-    ${a ? `<button class="menu" data-a="nav" data-s="nhatky">Nhật ký hoạt động</button>
-    <button class="menu" data-a="nav" data-s="users">Người dùng và PIN</button>
-    <button class="menu" data-a="nav" data-s="settings">Cài đặt khu, phi, quy tắc</button>
-    <div class="card col gap6"><b>Xuất Excel (CSV) bảng khu × phi</b><div class="row gap6"><input class="inp s f1" type="date" id="exday" data-model="exday" max="${S.boot.today}" value="${esc(fv('exday', S.boot.today))}"><button class="btn s" data-a="exportday">Tải về</button></div></div>` : ''}
+    ${isQL() ? '<button class="menu" data-a="nav" data-s="nhatky">Nhật ký hoạt động</button>' : ''}
+    ${a ? `<button class="menu" data-a="nav" data-s="users">Người dùng và PIN</button>
+    <button class="menu" data-a="nav" data-s="settings">Cài đặt khu, phi, quy tắc</button>` : ''}
+    ${isQL() ? `<div class="card col gap6"><b>Xuất Excel (CSV) bảng khu × phi</b><div class="row gap6"><input class="inp s f1" type="date" id="exday" data-model="exday" max="${S.boot.today}" value="${esc(fv('exday', S.boot.today))}"><button class="btn s" data-a="exportday">Tải về</button></div></div>` : ''}
     <div class="card col gap6"><b>Cách hiện số lượng</b>
       <div class="row gap6">${UNIT_OPTS.map(([v, l]) => `<button class="chip s f1 ${S.unit === v ? 'on' : ''}" data-a="unit" data-v="${v}">${l}</button>`).join('')}</div>
       <span class="sm muted" style="line-height:1.4">Ví dụ phi ${esc(uDemo().id)}: <b>${fmtQ(uDemo().bo_size * 31 + 10, uDemo())}</b><br>Chỉ đổi cách hiện trên máy này, số liệu không đổi.</span></div>
@@ -2076,7 +2106,7 @@ function vUsers() {
       <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div class="col" style="gap:2px;min-width:0"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:18px">${esc(u.name)}</b>${tags}</div>
           <span class="sm muted">${esc(u.phone)}</span></div>
-        <select class="inp s" style="width:130px;font-size:15px" data-change="role" data-id="${u.id}" ${first ? 'disabled' : ''}>${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
+        <select class="inp s" style="width:168px;font-size:15px" data-change="role" data-id="${u.id}" ${first ? 'disabled' : ''}>${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
       ${renameBox}
       <div class="row gap6">${first && !own ? '' : `<button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>`}
         ${me || first ? '' : `<button class="btn s f1 ${u.locked ? '' : 'bad'}" data-a="ulock" data-id="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}
@@ -2091,11 +2121,12 @@ function vUsers() {
       <div class="col" style="gap:2px"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:17px">${esc(u.name)}</b>${u.locked ? '<span class="badge bad">Đã khóa</span>' : ''}</div><span class="sm muted">${esc(u.phone)} · ${ROLE[u.role] || u.role}</span></div>
       ${u.locked ? '<span class="sm muted" style="line-height:1.4">Bị khóa trước khi xoá nên khôi phục xong vẫn còn khóa — nhớ mở khóa nếu cho dùng lại.</span>' : ''}
       ${own ? `<button class="btn s f1" data-a="urestore" data-id="${u.id}">KHÔI PHỤC</button>` : '<span class="sm muted">Chỉ admin đầu tiên khôi phục được.</span>'}</div>`).join('')}`;
-  return `${head('Người dùng', own ? 'Bạn là admin đầu tiên: tạo, sửa tên và xoá tài khoản' : 'Admin tạo tài khoản và PIN', 'more')}<div class="f1 scroll pad col gap12" id="body">
+  return `${head('Người dùng', own ? 'Bạn là admin đầu tiên: tạo, sửa tên và xoá tài khoản' : 'Admin tạo tài khoản, PIN và xếp cấp bậc', 'more')}<div class="f1 scroll pad col gap12" id="body">
     ${S.pinShown ? `<div class="card ok col gap8"><b style="font-size:18px">PIN của ${esc(S.pinShown.name)}</b><b style="font-size:40px;letter-spacing:8px">${esc(S.pinShown.pin)}</b><span class="sm">Đưa PIN này cho người dùng (chỉ hiện một lần). Họ sẽ phải đổi PIN khi đăng nhập lần đầu.</span><button class="btn s full" data-a="pinok">Đã ghi lại</button></div>` : ''}
     <div class="card col gap8"><b style="font-size:18px">Thêm người dùng</b>
       <input class="inp s" id="un" placeholder="Họ tên" value="${esc(S.form.un || '')}" data-model="un"><input class="inp s" id="up" type="tel" inputmode="numeric" placeholder="Số điện thoại" value="${esc(S.form.up || '')}" data-model="up">
-      <select class="inp s" id="ur" data-model="ur">${Object.keys(ROLE).reverse().map((r) => `<option value="${r}" ${(S.form.ur || 'nguoidem') === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select>
+      <select class="inp s" id="ur" data-model="ur">${Object.keys(ROLE).reverse().map((r) => `<option value="${r}" ${(S.form.ur || 'tieudoi') === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select>
+      <span class="sm muted" style="line-height:1.4"><b>Cấp duyệt:</b> Tiểu đội trưởng báo số → <b>CVKTHT</b> duyệt báo cáo của Tiểu đội trưởng, và lập phiếu kho → <b>Trung đội trưởng, Đại đội trưởng</b> duyệt được hết: việc CVKTHT báo và mọi phiếu kho. <b>Admin</b> duyệt được hết và quản lý hệ thống (tài khoản, khu, phi, quy tắc).</span>
       <span class="sm muted" style="line-height:1.4">Đặt ĐÚNG HỌ TÊN, đừng đặt theo chức danh: tên này đi theo mọi số đếm, phiếu và dòng nhật ký của người đó.</span>
       <div class="err" id="err">${esc(S.err)}</div><button class="btn pri full" data-a="ucreate">TẠO TÀI KHOẢN</button></div>
     ${live.map(card).join('') || (S.users ? '<div class="muted">Chưa có người dùng nào</div>' : panelWait('users'))}
@@ -2153,13 +2184,15 @@ function loanCard(rows) {
   const id = Math.min(...rows.map((r) => r.id));
   const kg = rows.reduce((a, r) => a + r.qty * (b.phiBy[r.phi_id] ? b.phiBy[r.phi_id].kg_per_cay : 0), 0);
   // cùng luật với server (voidLoan): người ghi rút lại khi chưa duyệt, huỷ trong 10 phút sau duyệt
+  // ai duyệt được lần ghi này thì cũng từ chối / huỷ được; lần ghi kèm phiếu kho thì chỉ cấp chỉ huy
+  const quyen = r0.kho ? isCH() : duyetDuoc(r0);
   const nut = huy ? ''
-    : isAdmin() && cho
+    : quyen && cho
       ? `<div class="row gap6"><button class="btn s ok" data-a="lduyet" data-id="${id}">Duyệt</button><button class="btn s bad" data-a="lvoid" data-id="${id}">Từ chối</button></div>`
     // cùng luật với server: admin huỷ lần ghi đã duyệt trong 7 ngày; quá hạn thì ghi một lần ngược lại
-    : !cho && isAdmin() && Date.now() - r0.duyet_ts > 7 * 864e5
+    : !cho && quyen && Date.now() - r0.duyet_ts > 7 * 864e5
       ? '<span class="sm muted" style="text-align:right;max-width:110px">quá 7 ngày, ghi lần ngược lại để sửa</span>'
-    : isAdmin() || (mine && (cho || Date.now() - r0.duyet_ts < 10 * 60e3))
+    : quyen || (mine && (cho || Date.now() - r0.duyet_ts < 10 * 60e3))
       ? `<button class="btn s bad" data-a="lvoid" data-id="${id}">${cho ? 'Rút lại' : 'Huỷ'}</button>`
       : '';
   const nhan = huy ? '<span class="badge bad">Đã huỷ</span>' : cho ? '<span class="badge warn">Chờ duyệt</span>' : `<span class="badge ok">Đã duyệt${r0.duyet_uname ? ' · ' + esc(r0.duyet_uname) : ''}</span>`;
@@ -2189,7 +2222,7 @@ function vVayMuon() {
   if (F.doitac && !(dtBy[F.doitac] && dtBy[F.doitac].active)) F.doitac = null;
   if (!F.phi || !b.phiBy[F.phi] || b.phiBy[F.phi].active === 0) F.phi = (b.phiAct[0] || {}).id || null;
   const p = F.phi ? b.phiBy[F.phi] : null;
-  const canSua = isAdmin() || canIn();
+  const canSua = canIn();
 
   /* --- Dư nợ: một ô tổng cho cả bãi, rồi một thẻ cho mỗi đối tác (bấm để xem chi tiết) ---
      Người dùng cần thấy ngay hai con số: bãi đang NỢ người ta bao nhiêu, và người ta đang GIỮ thép
@@ -2246,7 +2279,7 @@ function vVayMuon() {
   const cur = F.doitac && p ? (loanBalances(L).find((x) => x.dt === F.doitac && x.phi === F.phi) || { no: 0, co: 0 }) : null;
   const dangNo = !cur ? '' : F.kind === 'tra_vay' ? `Mình đang nợ ${esc(dtBy[F.doitac].name)} ${fmtQs(cur.no, F.phi)} ${F.phi}`
     : F.kind === 'tra_no' ? `${esc(dtBy[F.doitac].name)} đang nợ mình ${fmtQs(cur.co, F.phi)} ${F.phi}` : '';
-  /* Thép qua bãi: thủ kho/admin lập kèm phiếu kho cùng lần ghi, để tồn khu đổi đúng mà lượng dùng
+  /* Thép qua bãi: CVKTHT trở lên lập kèm phiếu kho cùng lần ghi, để tồn khu đổi đúng mà lượng dùng
      không bị tính thêm (cho đối tác mượn không phải dùng thép). Người đếm không lập phiếu kho được,
      nên với họ chỉ có ghi sổ. */
   const khoOn = canIn() && F.kho !== false;
@@ -2292,13 +2325,13 @@ function vVayMuon() {
   const nhom = loanGroups(L.items);
   const cho = nhom.filter((rows) => !rows[0].duyet_ts), xong = nhom.filter((rows) => rows[0].duyet_ts);
 
-  /* --- Danh bạ đối tác: sửa tên, ẩn/hiện (admin, thủ kho — server chặn người đếm) --- */
+  /* --- Danh bạ đối tác: sửa tên, ẩn/hiện (CVKTHT trở lên — server chặn Tiểu đội trưởng) --- */
   const dtList = !canSua || !(L.doitac || []).length ? '' : `<h2 class="sec">Đối tác</h2><div class="card" style="padding:0;overflow:hidden">${L.doitac.map((d) => (S.doitacEdit === d.id
     ? `<div class="li"><input class="inp s f1" id="ldtname" maxlength="60" value="${esc(S.form.ldtname == null ? d.name : S.form.ldtname)}" data-model="ldtname"><button class="btn s pri" data-a="ldtsave" data-id="${d.id}">Lưu</button><button class="btn s" data-a="ldtcancel">Bỏ</button></div>`
     : `<div class="li" style="${d.active ? '' : 'opacity:.6'}"><span>${esc(d.name)}${d.active ? '' : ' (đã ẩn)'}</span><span class="row gap6"><button class="btn s" data-a="ldtedit" data-id="${d.id}">Sửa tên</button><button class="btn s ${d.active ? 'bad' : ''}" data-a="ldthide" data-id="${d.id}" data-v="${d.active ? 0 : 1}">${d.active ? 'Ẩn' : 'Hiện'}</button></span></div>`)).join('')}</div>`;
 
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${F.done ? `<div class="card warn col gap6"><b style="font-size:17px">Đã ghi sổ · chờ admin duyệt</b><span>${esc(F.done)}</span><span class="sm">Chỉ tính vào dư nợ sau khi admin duyệt.</span></div>` : ''}
+    ${F.done ? `<div class="card warn col gap6"><b style="font-size:17px">Đã ghi sổ · chờ cấp trên duyệt</b><span>${esc(F.done)}</span><span class="sm">Chỉ tính vào dư nợ sau khi được duyệt.</span></div>` : ''}
     <h2 class="sec">Công nợ hiện tại</h2>${duNo}
     ${form}
     ${cho.length ? `<h2 class="sec">Chờ duyệt (${cho.length})</h2><div class="card" style="padding:0;overflow:hidden">${cho.map(loanCard).join('')}</div>` : ''}
@@ -2449,6 +2482,10 @@ function slotOpts() {
 }
 const hourOpts = (cur, lo, hi) => Array.from({ length: hi - lo + 1 }, (_, i) => lo + i)
   .map((h) => `<option value="${h}" ${cur === h ? 'selected' : ''}>${h}h</option>`).join('');
+/* Giao khu chỉ cho Tiểu đội trưởng đang dùng được. Người đang đứng tên khu mà vừa BỊ KHOÁ vẫn phải
+   hiện trong bảng chọn: họ nằm sẵn trong danh sách gửi lên, server từ chối cả lượt lưu vì họ, mà
+   không hiện thì admin không có gì để bỏ chọn. (Người đổi vai trò thì server đã gỡ khỏi khu rồi.) */
+const kuDuoc = (u) => u.role === 'tieudoi' && !u.locked;
 function vSettings() {
   const b = S.boot;
   const phi = b.phi.map(phiCard).join('');
@@ -2461,8 +2498,8 @@ function vSettings() {
        còn server thì từ chối gán khu cho người đã xoá — bày tên họ ra đây chỉ dẫn tới mất cả lượt
        lưu phân công vì một lỗi 400, mà người bấm không hiểu vì sao. */
     const picker = open ? `<div class="col gap6" style="border-top:1px solid var(--line);padding-top:8px">
-      ${(S.users || []).filter((u) => u.role !== 'admin' && !u.deleted && !u.locked).map((u) => `<button class="chip ${S.kuPick.includes(u.id) ? 'on' : ''}" style="justify-content:flex-start;font-size:16px" data-a="kupick" data-v="${u.id}">${esc(u.name)} · ${ROLE[u.role] || u.role}</button>`).join('') || '<span class="sm muted">Chưa có tài khoản nào ngoài admin.</span>'}
-      <span class="sm muted" style="line-height:1.4">${S.kuPick.length ? 'Chỉ ' + S.kuPick.length + ' người được chọn (và admin) đếm được khu này.' : 'Không chọn ai = mọi người đều đếm được khu này.'}</span>
+      ${(S.users || []).filter((u) => !u.deleted && (kuDuoc(u) || S.kuPick.includes(u.id))).map((u) => `<button class="chip ${S.kuPick.includes(u.id) ? 'on' : ''}" style="justify-content:flex-start;font-size:16px" data-a="kupick" data-v="${u.id}">${esc(u.name)} · ${roleTen(u.role)}${kuDuoc(u) ? '' : ' · <b style="color:var(--bad)">' + (u.locked ? 'đang khoá' : 'không phải Tiểu đội trưởng') + ', bỏ chọn rồi mới lưu được</b>'}</button>`).join('') || '<span class="sm muted">Chưa có tài khoản Tiểu đội trưởng nào.</span>'}
+      <span class="sm muted" style="line-height:1.4">${S.kuPick.length ? 'Trong các Tiểu đội trưởng, chỉ ' + S.kuPick.length + ' người được chọn đếm được khu này. CVKTHT trở lên đếm được mọi khu, không cần giao.' : 'Không chọn ai = Tiểu đội trưởng nào cũng đếm được khu này.'}</span>
       <div class="row gap6"><button class="btn s pri f1" data-a="kusave" data-k="${esc(k.id)}">Lưu phân công</button><button class="btn s f1" data-a="kucancel">Hủy</button></div></div>` : '';
     return `<div class="card col gap6" style="${k.active ? '' : 'opacity:.6'}"><div class="row gap6"><b style="width:30px">${esc(k.id)}</b><input class="inp s f1" id="kn-${esc(k.id)}" data-model="kn-${esc(k.id)}" value="${esc(fv('kn-' + k.id, k.name))}"></div>
       <div class="row gap6"><button class="btn s f1" data-a="ksave" data-k="${esc(k.id)}">Lưu tên</button><button class="btn s f1 ${k.active ? 'bad' : ''}" data-a="khide" data-k="${esc(k.id)}" data-v="${k.active ? 0 : 1}">${k.active ? 'Ẩn khu' : 'Hiện lại'}</button></div>
@@ -2532,7 +2569,7 @@ function vReset() {
 /* ===================== KHUNG CHÍNH ===================== */
 function tabsHtml() {
   const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more' }[S.screen];
-  const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Báo cáo', IC.count, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isAdmin()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
+  const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Báo cáo', IC.count, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isQL()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
   return `<nav class="tabs">${T.map((t) => `<button class="tab ${on === t[0] ? 'on' : ''}" data-a="nav" data-s="${t[0]}">${t[2]}${t[1]}</button>`).join('')}</nav>`;
 }
 
@@ -2962,8 +2999,8 @@ const ACTIONS = {
     const viec = dc ? `Điều chỉnh ${N.dir === 'giam' ? 'GIẢM' : 'TĂNG'} tồn` : xuat ? 'Xuất kho' : chuyen ? 'Chuyển khu' : 'Nhập kho';
     /* Hộp xác nhận của điều chỉnh nói thẳng hệ quả, không chỉ nhắc lại con số: đây là loại phiếu
        duy nhất sửa sổ mà không có thép thật đi kèm, nên người bấm phải đọc được điều đó. */
-    const them = dc ? `\nLý do: ${reasonName}${note ? ' — ' + note : ''}\n\nĐây là SỬA SỔ, không có thép ra vào bãi.\nPhiếu cần admin duyệt mới vào tồn.`
-      : xuat ? `\nXuất cho: ${noi}\n\nPhiếu cần admin duyệt mới trừ vào tồn.` : '';
+    const them = dc ? `\nLý do: ${reasonName}${note ? ' — ' + note : ''}\n\nĐây là SỬA SỔ, không có thép ra vào bãi.\nPhiếu cần cấp trên duyệt mới vào tồn.`
+      : xuat ? `\nXuất cho: ${noi}\n\nPhiếu cần cấp trên duyệt mới trừ vào tồn.` : '';
     if (!(await ask(`${viec} ${where}:\n${list}\nTổng ${fmtT(kg)} tấn${them}\n\nĐúng chưa?`, dc ? 'ĐIỀU CHỈNH' : xuat ? 'GHI PHIẾU XUẤT' : chuyen ? 'CHUYỂN KHU' : 'NHẬP KHO', dc))) return;
     const lines = N.lines.slice();
     act(async () => {
@@ -3319,15 +3356,15 @@ const ACTIONS = {
   },
   async khuduyetall() {
     const R = S.review; if (!R) return;
-    const ks = (R.khus || []).filter((k) => k.waiting || k.phieu.length || k.recheck);
-    if (!ks.length) return say('Không còn khu nào chờ duyệt.', true), render();
+    const ks = (R.khus || []).filter((k) => (k.waiting || k.phieu.length || k.recheck) && duyetCap(Math.max(k.capBao || 0, k.capPhieu || 0)));
+    if (!ks.length) return say('Không còn khu nào bạn duyệt được.', true), render();
     if (!(await ask('Duyệt cả ' + ks.length + ' khu đang chờ?\n' + ks.map((k) => k.name).join(', ')
       + '\nSố của các khu này sẽ thành tồn chính thức. Hãy xem bảng lệch trước khi duyệt hàng loạt.', 'DUYỆT TẤT CẢ'))) return;
     act(async () => {
       let r;
       try { r = await api('POST', '/review/duyet', { all: true, marks: Object.fromEntries((R.khus || []).map((k) => [k.khu, k.mark])) }); }
       finally { await reloadReview(); await loadBoot(); }
-      say('Đã duyệt ' + r.khu + ' khu' + (r.phieu ? ' và ' + r.phieu + ' phiếu.' : '.'));
+      say('Đã duyệt ' + r.khu + ' khu' + (r.phieu ? ' và ' + r.phieu + ' phiếu' : '') + (r.con ? '. Còn ' + r.con + ' khu chờ ' + CAP_TREN + '.' : '.'));
     });
   },
   // duyệt một phiếu riêng: thép về lúc 9h, khu chưa đếm, vẫn phải vào tồn được ngay
@@ -3441,7 +3478,7 @@ const ACTIONS = {
       + (han ? `\nHạn trả: ${fmtDay(han)}` : '')
       + `\nBiên bản số: ${soBB}${bienSo ? ' · xe ' + bienSo : ''}${nguoi ? ' · ' + nguoi : ''}`
       + '\n✓ Đã có biên bản giao nhận\n✓ Đã gửi biên bản lên nhóm Zalo'
-      + '\nCần admin duyệt. Đúng chưa?';
+      + '\nCần cấp trên duyệt. Đúng chưa?';
     if (!(await ask(msg, 'GHI SỔ'))) return;
     act(async () => {
       await api('POST', '/loans', { doitac: F.doitac, kind: F.kind, lines, note, bienban: true, zalo: true, ngay, han: han || null, so_bb: soBB, nguoi, bien_so: bienSo, ...(kho ? { khu: kho } : {}) });
@@ -3462,7 +3499,7 @@ const ACTIONS = {
   async lvoid(d) {
     const r0 = [].concat((S.loans && S.loans.items) || [], (S.loanDetail && S.loanDetail.items) || [], (S.review && S.review.loans) || []).find((r) => r.id === Number(d.id));
     const cho = r0 ? !r0.duyet_ts : true;
-    const tuChoi = cho && isAdmin() && r0 && r0.user_id !== S.me.id;
+    const tuChoi = cho && r0 && (r0.kho ? isCH() : duyetDuoc(r0)) && r0.user_id !== S.me.id;
     const msg = cho ? (tuChoi ? 'Từ chối lần ghi này?' : 'Rút lại lần ghi này?') + '\nChưa duyệt nên chưa vào dư nợ.'
       : 'Huỷ lần ghi đã duyệt?\nDư nợ được tính lại không có khoản này.';
     if (!(await ask(msg, cho ? (tuChoi ? 'TỪ CHỐI' : 'RÚT LẠI') : 'HUỶ', true))) return;
@@ -3549,8 +3586,22 @@ document.addEventListener('change', async (e) => {
   if (t.dataset && t.dataset.change === 'role') {
     const id = t.dataset.id, role = t.value;
     const u = (S.users || []).find((x) => x.id === Number(id));
-    if (!(await ask(`Đổi vai trò ${u ? u.name : ''} thành ${ROLE[role]}?`, 'ĐỔI VAI TRÒ'))) return render(); // vẽ lại để ô chọn quay về vai trò cũ
-    act(async () => { await api('POST', `/users/${id}/role`, { role }); await loadUsers(); }, 'Đã đổi vai trò.');
+    /* Thôi là Tiểu đội trưởng thì server gỡ người này khỏi mọi khu đang phụ trách. Khu mà họ là người
+       DUY NHẤT sẽ thành chưa giao ai — nói ra trước khi bấm, y như lúc xoá tài khoản (xem udelete). */
+    const ku = (S.boot && S.boot.ku) || {};
+    const cua = role === 'tieudoi' ? [] : Object.keys(ku).filter((k) => ku[k].includes(Number(id)));
+    const solo = cua.filter((k) => ku[k].length === 1);
+    const tenKhu = (k) => (S.boot.khuBy[k] && S.boot.khuBy[k].name) || k;
+    const msg = `Đổi vai trò ${u ? u.name : ''} thành ${ROLE[role]}?`
+      + (cua.length ? `\n\n• Thôi phụ trách ${cua.map(tenKhu).join(', ')}: chỉ Tiểu đội trưởng mới đứng tên khu.` : '')
+      + (solo.length ? `\n• ${solo.map(tenKhu).join(', ')} sẽ không còn ai phụ trách — Tiểu đội trưởng nào cũng đếm được. Giao người khác ở Cài đặt → Khu bãi.` : '');
+    if (!(await ask(msg, 'ĐỔI VAI TRÒ'))) return render(); // vẽ lại để ô chọn quay về vai trò cũ
+    act(async () => {
+      try { await api('POST', `/users/${id}/role`, { role, confirm_khu: solo.length > 0 }); }
+      catch (e) { if (e.code === 'khu_open') await loadBoot(); throw e; }
+      finally { await loadUsers(); }
+      await loadBoot();
+    }, 'Đã đổi vai trò.' + (cua.length ? ' Đã gỡ khỏi ' + cua.map(tenKhu).join(', ') + '.' : ''));
   }
 });
 document.addEventListener('keydown', (e) => {

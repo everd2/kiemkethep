@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -256,6 +256,52 @@ export const MIGRATIONS = {
     )`,
     'CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id)',
   ],
+  /* VAI TRÒ THEO CẤP BẬC (xem CAP ở core.js).
+     1. users.role nhận bộ vai trò mới. Cột có CHECK, mà SQLite không sửa được CHECK tại chỗ, nên phải
+        dựng lại bảng. Cả cụm nằm trong MỘT mảng con = một batch = một giao dịch: hỏng giữa chừng thì
+        lùi hết, không bao giờ có lúc database thiếu bảng users. Liệt kê tên cột vì database nâng cấp
+        dần có thứ tự cột khác schema.sql. Hai mã cũ được đổi ngay lúc chép: 'nguoidem' thành
+        'tieudoi' (Tiểu đội trưởng), 'thukho' thành 'cvktht' (vai trò Thủ kho đã bỏ). Tài khoản
+        'admin' giữ nguyên. Chạy lại lần hai (hai isolate cùng nâng cấp) chỉ là chép thêm một lượt.
+     2. cap: cấp của người báo, ghi vào dòng lúc báo (counts, counts_log, loans). Dòng đang có thì
+        điền theo vai trò hiện tại của người báo; counts_log là bảng chỉ-ghi-thêm nên để mặc định 2.
+     3. khu_user chỉ còn Tiểu đội trưởng: gỡ mọi phân công của người không phải Tiểu đội trưởng. */
+  23: [
+    [
+      'DROP TABLE IF EXISTS users_new',
+      `CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL UNIQUE,
+        role TEXT NOT NULL CHECK (role IN ('admin','daidoi','trungdoi','cvktht','tieudoi')),
+        pin_salt TEXT NOT NULL,
+        pin_hash TEXT NOT NULL,
+        must_change INTEGER NOT NULL DEFAULT 1,
+        locked INTEGER NOT NULL DEFAULT 0,
+        fail_count INTEGER NOT NULL DEFAULT 0,
+        locked_until INTEGER NOT NULL DEFAULT 0,
+        lock_level INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0
+      )`,
+      `INSERT INTO users_new (id, name, phone, role, pin_salt, pin_hash, must_change, locked, fail_count, locked_until, lock_level, created_at, deleted)
+       SELECT id, name, phone, CASE role WHEN 'nguoidem' THEN 'tieudoi' WHEN 'thukho' THEN 'cvktht' ELSE role END,
+              pin_salt, pin_hash, must_change, locked, fail_count, locked_until, lock_level, created_at, deleted FROM users`,
+      /* Giữ bộ đếm id: bảng mới chỉ biết id lớn nhất CÒN TRONG BẢNG. Nếu id cao nhất từng cấp đã không
+         còn dòng, tài khoản tạo sau đó sẽ nhận lại id ấy và mọi số đếm, phiếu cũ của người trước hiện
+         ra dưới tên người mới. */
+      `UPDATE sqlite_sequence SET seq = MAX(seq, COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'users'), 0))
+       WHERE name = 'users_new'`,
+      'DROP TABLE users',
+      'ALTER TABLE users_new RENAME TO users',
+    ],
+    'ALTER TABLE counts ADD COLUMN cap INTEGER NOT NULL DEFAULT 2',
+    'ALTER TABLE counts_log ADD COLUMN cap INTEGER NOT NULL DEFAULT 2',
+    'ALTER TABLE loans ADD COLUMN cap INTEGER NOT NULL DEFAULT 2',
+    `UPDATE counts SET cap = COALESCE((SELECT CASE u.role WHEN 'tieudoi' THEN 0 WHEN 'cvktht' THEN 1 ELSE 2 END FROM users u WHERE u.id = counts.user_id), 2)`,
+    `UPDATE loans SET cap = COALESCE((SELECT CASE u.role WHEN 'tieudoi' THEN 0 WHEN 'cvktht' THEN 1 ELSE 2 END FROM users u WHERE u.id = loans.user_id), 2)`,
+    "DELETE FROM khu_user WHERE user_id NOT IN (SELECT id FROM users WHERE role = 'tieudoi' AND deleted = 0)",
+  ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
   SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
@@ -264,6 +310,8 @@ export async function migrate(env) {
   const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
   for (let n = (r ? r.value : 1) + 1; n <= SCHEMA_VERSION; n++) {
     for (const sql of MIGRATIONS[n]) {
+      // mảng con = các câu phải chạy trọn trong một giao dịch (dựng lại bảng)
+      if (Array.isArray(sql)) { await env.DB.batch(sql.map((s) => env.DB.prepare(s))); continue; }
       // hai isolate có thể cùng nâng cấp: bỏ qua lỗi "cột đã tồn tại"
       try { await env.DB.prepare(sql).run(); } catch (e) { if (!/duplicate column/i.test(String(e && e.message))) throw e; }
     }

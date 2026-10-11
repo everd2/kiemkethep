@@ -198,9 +198,9 @@ S.audit = [
    người bị khoá, admin thường, và một tài khoản ĐÃ XOÁ để thử mục khôi phục. */
 S.users = [
   { id: 1, name: 'Nguyễn Văn A', phone: '0901234567', role: 'admin', locked: 0, deleted: 0, must_change: 0 },
-  { id: 2, name: 'Trần B', phone: '0902222222', role: 'nguoidem', locked: 1, deleted: 0, must_change: 1 },
-  { id: 3, name: 'Phạm D', phone: '0903333333', role: 'thukho', locked: 0, deleted: 0, must_change: 0 },
-  { id: 4, name: 'Lê C', phone: '0904444444', role: 'nguoidem', locked: 0, deleted: 1, must_change: 0 },
+  { id: 2, name: 'Trần B', phone: '0902222222', role: 'tieudoi', locked: 1, deleted: 0, must_change: 1 },
+  { id: 3, name: 'Phạm D', phone: '0903333333', role: 'cvktht', locked: 0, deleted: 0, must_change: 0 },
+  { id: 4, name: 'Lê C', phone: '0904444444', role: 'tieudoi', locked: 0, deleted: 1, must_change: 0 },
 ];
 S.uFirst = 1;
 S.usage = [{ day: '${yday}', span: 1, used: { D8: 55, D10: 120 }, kg: { D8: 0.4, D10: 0.62 }, xuat: { D10: 30 } }];
@@ -221,7 +221,7 @@ S.loans = { doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để t
   ],
   agg: [{ doitac_id: 5, phi_id: 'D8', kind: 'vay', q: 330 }, { doitac_id: 6, phi_id: 'D10', kind: 'cho_vay', q: 20 }] };
 S.loan.doitac = 5; S.loan.lines = [{ phi: 'D10', qty: 30 }];
-S.boot.loanPending = 1;
+S.boot.loanPending = 1; S.boot.loanDuyet = 1;
 
 // chi tiết công nợ một đối tác: có cả lần chờ, lần đã huỷ, hai chiều nợ
 S.loanDt = 5;
@@ -356,9 +356,9 @@ one('home+chi-tiet-khu+cho-duyet');
 S.boot.counts = []; S.khuMo = {};
 
 // vai trò khác
-S.me.role = 'nguoidem'; S.boot.user.role = 'nguoidem';
-for (const sc of ['home','more','dem','ton']) { S.screen = sc; one('nguoidem:' + sc); }
-S.me.role = 'thukho'; S.screen = 'nhap'; one('thukho:nhap');
+S.me.role = 'tieudoi'; S.boot.user.role = 'tieudoi';
+for (const sc of ['home','more','dem','ton']) { S.screen = sc; one('tieudoi:' + sc); }
+S.me.role = 'cvktht'; S.screen = 'nhap'; one('cvktht:nhap');
 S.me.role = 'admin';
 
 /* Màn Nhập có bốn chế độ dùng chung một hàm vẽ, nên phải render cả bốn. Chế độ Điều chỉnh còn phải

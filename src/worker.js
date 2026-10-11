@@ -1,7 +1,7 @@
 // Kho Thép Bãi - Cloudflare Worker (API) + D1
 // Giao diện tĩnh nằm trong /public, mọi đường dẫn /api/* chạy qua file này.
 // Điểm vào: định tuyến /api/* và việc Cron. Logic nghiệp vụ nằm ở các module cùng thư mục.
-import { HttpError, json, vnDay } from './core.js';
+import { HttpError, LAP_PHIEU, ROLES, capOf, json, vnDay } from './core.js';
 import { migrate } from './db.js';
 import { auth } from './helpers.js';
 import { changePin, login, logout, recoverAdmin, setup } from './auth.js';
@@ -54,8 +54,10 @@ async function handle(req, env, url) {
   if (r0 === 'change-pin' && method === 'POST') return changePin(req, env, user);
   if (user.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
 
-  const ALL = ['admin', 'thukho', 'nguoidem'];
+  const ALL = ROLES;
   const need = (roles) => { if (!roles.includes(user.role)) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này'); };
+  // cấp duyệt tối thiểu (xem CAP ở core.js). Duyệt được việc CỦA AI thì từng hàm tự kiểm theo người báo.
+  const needCap = (n) => { if (capOf(user.role) < n) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này'); };
 
   if (r0 === 'bootstrap' && method === 'GET') return json(await bootstrap(env, user));
   if (r0 === 'counts' && method === 'PUT') { need(ALL); return putCounts(req, env, user); }
@@ -63,47 +65,43 @@ async function handle(req, env, url) {
   if (r0 === 'day' && method === 'GET') return dayView(env, url);
 
   if (r0 === 'receipts') {
-    need(['admin', 'thukho']);
+    need(LAP_PHIEU);
     if (method === 'POST' && p.length === 1) return postReceipt(req, env, user);
     if (method === 'DELETE' && p.length === 2) return voidReceipt(env, user, Number(p[1]));
-    // duyệt phiếu: chỉ admin. Mọi phiếu đều phải qua một lần bấm duyệt, kể cả phiếu admin tự nhập.
-    if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { need(['admin']); return duyetReceipt(env, user, Number(p[1])); }
+    /* Duyệt phiếu kho: chỉ cấp chỉ huy (Trung đội trưởng, Đại đội trưởng, admin). Mọi phiếu đều phải
+       qua một lần bấm duyệt, kể cả phiếu cấp chỉ huy tự nhập. */
+    if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { needCap(2); return duyetReceipt(env, user, Number(p[1])); }
   }
-  if (r0 === 'transfers' && method === 'POST') { need(['admin', 'thukho']); return postTransfer(req, env, user); }
-  /* Điều chỉnh tồn: LẬP được thì admin và thủ kho, vì người phát hiện sổ sai thường là thủ kho và
-     phiếu chưa vào tồn cho tới khi được duyệt. DUYỆT thì chỉ admin, như mọi phiếu khác (chốt chặn
-     nằm ở nhánh receipts/duyet bên trên). Muốn siết lại chỉ admin được lập thì bỏ 'thukho' ở đây. */
-  if (r0 === 'adjust' && method === 'POST') { need(['admin', 'thukho']); return postAdjust(req, env, user); }
-  if (r0 === 'xuat' && method === 'POST') { need(['admin', 'thukho']); return postXuat(req, env, user); }
-  if (r0 === 'report' && method === 'GET') { need(['admin', 'thukho']); return report(env, url); }
-  /* Vay mượn ngoài bãi: GHI và XEM mở cho mọi vai trò (kể cả người đếm), vì mục đích là nhiều
-     người cùng chép lại ngay lúc phát sinh. DUYỆT chỉ admin, như mọi phiếu khác. Hủy/rút lại thì
-     tự voidLoan kiểm quyền bên trong (người ghi hoặc admin), giống voidReceipt. */
+  if (r0 === 'transfers' && method === 'POST') { need(LAP_PHIEU); return postTransfer(req, env, user); }
+  /* Điều chỉnh tồn: LẬP được thì mọi vai trò lập phiếu, vì người phát hiện sổ sai thường là
+     CVKTHT và phiếu chưa vào tồn cho tới khi được duyệt. DUYỆT thì chỉ cấp chỉ huy, như mọi phiếu
+     khác (chốt chặn nằm ở nhánh receipts/duyet bên trên). */
+  if (r0 === 'adjust' && method === 'POST') { need(LAP_PHIEU); return postAdjust(req, env, user); }
+  if (r0 === 'xuat' && method === 'POST') { need(LAP_PHIEU); return postXuat(req, env, user); }
+  if (r0 === 'report' && method === 'GET') { need(LAP_PHIEU); return report(env, url); }
+  /* Vay mượn ngoài bãi: GHI và XEM mở cho mọi vai trò (kể cả Tiểu đội trưởng), vì mục đích là nhiều
+     người cùng chép lại ngay lúc phát sinh. DUYỆT theo cấp bậc, như mọi phiếu khác. Hủy/rút lại thì
+     tự voidLoan kiểm quyền bên trong (người ghi hoặc người duyệt được), giống voidReceipt. */
   if (r0 === 'loans') {
     need(ALL);
     if (method === 'GET' && p.length === 1) return loansView(env, url);
     if (method === 'POST' && p.length === 1) return postLoan(req, env, user);
     if (method === 'DELETE' && p.length === 2) return voidLoan(env, user, Number(p[1]));
-    if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { need(['admin']); return duyetLoan(env, user, Number(p[1])); }
+    if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { needCap(1); return duyetLoan(env, user, Number(p[1])); }
   }
-  // Danh bạ đối tác: tạo mở cho mọi vai trò (thêm tên mới khi cần), sửa tên/ẩn chỉ admin + thủ kho
+  // Danh bạ đối tác: tạo mở cho mọi vai trò (thêm tên mới khi cần), sửa tên/ẩn thì trừ Tiểu đội trưởng
   if (r0 === 'doitac') {
     need(ALL);
     if (method === 'POST' && p.length === 1) return doitacCreate(req, env, user);
-    if (method === 'PATCH' && p.length === 2) { need(['admin', 'thukho']); return doitacUpdate(req, env, user, p[1]); }
+    if (method === 'PATCH' && p.length === 2) { need(LAP_PHIEU); return doitacUpdate(req, env, user, p[1]); }
   }
 
-  // --- chỉ admin ---
-  need(['admin']);
+  /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---
+     Vào được màn Duyệt chưa có nghĩa là duyệt được mọi thứ trên đó: reviewDuyet và huyBaoCao kiểm
+     tiếp theo người báo (CVKTHT chỉ duyệt/huỷ báo cáo của cấp dưới). */
+  needCap(1);
   if (r0 === 'review' && method === 'GET') return json(await computeReview(env, vnDay()));
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
-  // không còn chốt tay (sổ tự chốt sau nửa đêm, xem hourly); "mở lại" chỉ còn để hoàn tác đặt lại số liệu
-  if (r0 === 'reopen' && method === 'POST') return reopenDay(req, env, user);
-  // đặt lại số liệu thép: chỉ admin đầu tiên (chốt chặn thật nằm trong resetData)
-  if (r0 === 'reset' && method === 'POST') return resetData(req, env, user);
-  // sao lưu / nạp lại: chốt chặn thật nằm trong backupData / restoreData
-  if (r0 === 'backup' && method === 'GET') return backupData(env, user);
-  if (r0 === 'restore' && method === 'POST') return restoreData(req, env, user);
   // huỷ báo cáo đang chờ duyệt của một khu, kèm lý do. Giữ đường dẫn /recount: bản app cũ còn trong
   // cache gọi tới sẽ bị đòi lý do (400) thay vì lặng lẽ treo một lá cờ không còn ai đọc.
   if (r0 === 'recount' && method === 'POST') return huyBaoCao(req, env, user);
@@ -111,9 +109,21 @@ async function handle(req, env, url) {
   if (r0 === 'conflict' && p[1] === 'resolve' && method === 'POST') return conflictResolve(req, env, user);
   if (r0 === 'submissions' && method === 'GET') return submissionsView(env, url);
   if (r0 === 'audit' && method === 'GET') return auditList(env, url);
-  // chấm công báo cáo: ai báo, ai không báo, khu thiếu buổi nào (chỉ admin)
+  // chấm công báo cáo: ai báo, ai không báo, khu thiếu buổi nào
   if (r0 === 'cham-cong' && method === 'GET') return chamCong(env, url);
   if (r0 === 'export' && method === 'GET') return exportCsv(env, url);
+
+  /* --- HỆ THỐNG: chỉ vai trò admin (việc của người quản lý app, như IT) ---
+     Tài khoản, khu và phân công, phi, quy tắc, dữ liệu. Cấp chỉ huy duyệt được hết nhưng không
+     đụng tới phần này. */
+  need(['admin']);
+  // không còn chốt tay (sổ tự chốt sau nửa đêm, xem hourly); "mở lại" chỉ còn để hoàn tác đặt lại số liệu
+  if (r0 === 'reopen' && method === 'POST') return reopenDay(req, env, user);
+  // đặt lại số liệu thép: chỉ admin đầu tiên (chốt chặn thật nằm trong resetData)
+  if (r0 === 'reset' && method === 'POST') return resetData(req, env, user);
+  // sao lưu / nạp lại: chốt chặn thật nằm trong backupData / restoreData
+  if (r0 === 'backup' && method === 'GET') return backupData(env, user);
+  if (r0 === 'restore' && method === 'POST') return restoreData(req, env, user);
   if (r0 === 'users') {
     if (method === 'GET' && p.length === 1) return listUsers(env);
     if (method === 'POST' && p.length === 1) return createUser(req, env, user);

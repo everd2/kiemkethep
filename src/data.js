@@ -76,7 +76,7 @@ export async function resetData(req, env, user) {
      từng ô. Không có ảnh chụp thì hoàn tác chỉ còn cách lùi về tồn chuẩn cũ — và ngày chưa có
      lần chốt nào trước đó thì không có tồn chuẩn nào, số liệu gốc mất hẳn. */
   const [snapC, snapR] = await env.DB.batch([
-    env.DB.prepare(`SELECT khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name
+    env.DB.prepare(`SELECT khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name, cap
                     FROM counts WHERE day = ?`).bind(day),
     env.DB.prepare('SELECT khu_id, user_id, ts, conflict, resolved, recount FROM khu_report WHERE day = ?').bind(day),
   ]);
@@ -94,15 +94,15 @@ export async function resetData(req, env, user) {
          Người dùng bấm "Đặt tồn về 0" mà không thấy gì đổi là hỏng hẳn ý nghĩa của nút.
          kind 'dem' vì đây là một lần KIỂM KÊ THẬT do admin khai, không phải ô để trống. */
       env.DB.prepare(
-        `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name)
-         SELECT ?1, kx.khu_id, kx.phi_id, 0, 'dem', 0, 0, ?2, ?3, 0, 'dem', ?3, ?3, ?2, ?4
+        `INSERT INTO counts (day, khu_id, phi_id, v, kind, bo, le, user_id, ts, duyet_v, duyet_kind, duyet_ts, duyet_at, duyet_by, duyet_name, cap)
+         SELECT ?1, kx.khu_id, kx.phi_id, 0, 'dem', 0, 0, ?2, ?3, 0, 'dem', ?3, ?3, ?2, ?4, 2
          FROM (${KHU_X_PHI}
                UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?5
                UNION SELECT khu_id, phi_id FROM counts WHERE day > ?5 AND day <= ?1) kx
          WHERE 1
          ON CONFLICT(day, khu_id, phi_id) DO UPDATE SET
            v = 0, kind = 'dem', bo = 0, le = 0, user_id = ?2, ts = ?3,
-           duyet_v = 0, duyet_kind = 'dem', duyet_ts = ?3, duyet_at = ?3, duyet_by = ?2, duyet_name = ?4`
+           duyet_v = 0, duyet_kind = 'dem', duyet_ts = ?3, duyet_at = ?3, duyet_by = ?2, duyet_name = ?4, cap = 2`
       ).bind(day, user.id, ts, user.name, last),
       /* Đánh dấu MỌI KHU đã báo, do chính admin: lần đặt lại là một cuộc kiểm kê toàn bãi, admin
          khai số cho từng khu. Thiếu dòng này thì các khu chưa báo hôm nay vẫn hiện "Chưa báo"
@@ -114,8 +114,8 @@ export async function resetData(req, env, user) {
       ).bind(day, user.id, ts),
       // lịch sử đếm là bảng chỉ-ghi-thêm: lần kiểm kê này cũng phải để lại dấu ở đó
       env.DB.prepare(
-        `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts)
-         SELECT ?1, kx.khu_id, kx.phi_id, NULL, 0, 'dem', ?2, ?3
+        `INSERT INTO counts_log (day, khu_id, phi_id, prev_v, v, kind, user_id, ts, cap)
+         SELECT ?1, kx.khu_id, kx.phi_id, NULL, 0, 'dem', ?2, ?3, 2
          FROM (${KHU_X_PHI}
                UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?4) kx`
       ).bind(day, user.id, ts, last),
@@ -167,7 +167,10 @@ export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts',
 export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy'];
 // bản 18 chỉ thêm một bảng tạm không nằm trong bản sao; bản 19 thêm cột daily_summary.bt có mặc định 0
 // (tệp cũ thiếu cột thì nạp ra 0 = ngày bình thường, đúng như cách các ngày đó đã được tính)
-export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20], 22: [15, 16, 17, 18, 19, 20, 21] };
+export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20], 22: [15, 16, 17, 18, 19, 20, 21],
+  /* Bản 23 ĐỔI NGHĨA dữ liệu cũ (mã vai trò, cấp người báo ghi trong từng dòng), không chỉ thêm bảng:
+     bản sao của bản 22 trở về trước không nạp vào được. Đúng luật ghi ở trên. */
+  23: [] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
