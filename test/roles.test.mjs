@@ -132,7 +132,7 @@ async function main() {
       asUser(bt, { id: u.id, name: u.name, role: u.role });
       const home = R('vHome()');
       const choBan = new Set();
-      const m = home.match(/<b style="font-size:17px">([^<]*) chờ bạn duyệt<\/b>/g) || [];
+      const m = home.match(/<b style="font-size:18px">([^<]*) chờ bạn duyệt<\/b>/g) || [];
       for (const x of m) {
         const t = x.replace(/<[^>]+>/g, '').replace(' chờ bạn duyệt', '');
         // chỉ thẻ KHU chờ duyệt (thẻ phiếu kho, sổ vay là thẻ khác)
@@ -152,7 +152,7 @@ async function main() {
         }
       }
       // 2a'. thẻ "cần xem lại": cấp chỉ huy thấy đúng những khu server đánh dấu recheck (và không còn báo cáo chờ)
-      const xl = (home.match(/<b style="font-size:17px">([^<]*) cần xem lại<\/b>/) || [])[1] || '';
+      const xl = (home.match(/<b style="font-size:18px">([^<]*) cần xem lại<\/b>/) || [])[1] || '';
       const nenXl = CORE.capOf(u.role) >= 2 ? rv.khus.filter((k) => k.recheck && !k.waiting) : [];
       const thayXl = nenXl.length === 0 ? '' : nenXl.length === 1 ? nenXl[0].name : nenXl.length + ' khu';
       if (xl !== thayXl) loi(`${who}: thẻ "cần xem lại" là "${xl}", đúng phải là "${thayXl}"`);

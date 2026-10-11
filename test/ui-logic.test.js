@@ -1165,7 +1165,7 @@ const run = async () => {
      không phụ trách A thì không được nhắc gì về A. */
   const nhacBoot = (extra) => `var NB = _boot(); NB.khuUser = [{ khu_id: 'A', user_id: 2, name: 'An' }];
     NB.lastClosed = '${yday}'; ${extra || ''} indexBoot(NB); S.boot = NB; S.screen = 'home';`;
-  const theNhac = (h) => (h.match(/<b style="font-size:17px">[^<]*<\/b><span class="sm">[^<]*/g) || []).join(' || ');
+  const theNhac = (h) => (h.match(/<b style="font-size:18px">[^<]*<\/b><span class="sm">[^<]*/g) || []).join(' || ');
   r(`${nhacBoot()} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('An (phụ trách A): được nhắc A, và B vì B chưa giao ai', /2 khu chưa báo<\/b><span class="sm">Khu A, Khu B/.test(r('vHome()')), theNhac(r('vHome()')));
   r(`S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
@@ -1239,7 +1239,7 @@ const run = async () => {
   r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   const HH = r('vHome()');
   ok('An (người gửi): thẻ đỏ nói báo cáo bị huỷ, kèm lý do, bấm mở thẳng khu A',
-    /class="alertbtn bad" data-a="nav" data-s="dem" data-k="A"><span class="f1 col" style="gap:2px"><b style="font-size:17px">Báo cáo Khu A của bạn đã bị huỷ<\/b><span class="sm">Lý do: D16 đếm thiếu 2 bó/.test(HH), theNhac(HH));
+    /class="alertbtn bad" data-a="nav" data-s="dem" data-k="A"><span class="f1 col" style="gap:2px"><b style="font-size:18px">Báo cáo Khu A của bạn đã bị huỷ<\/b><span class="sm">Lý do: D16 đếm thiếu 2 bó/.test(HH), theNhac(HH));
   ok('khu trở về như chưa báo', r("khuStatus(S.boot.khuBy.A).label") === 'Bị huỷ' && !r("daBaoHomNay('A')") && /chưa báo/.test(theNhac(HH)), r("JSON.stringify(khuStatus(S.boot.khuBy.A))"));
   r(`S.khu = 'A'; loadDraft(true); S.sel = null; S.screen = 'dem';`);
   const DH = r('demView()').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');

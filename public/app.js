@@ -230,7 +230,7 @@ const busyHtml = () => (S.busy ? `<div class="busy" role="status" aria-live="pol
 function panelWait(screen) {
   const e = S.loadErr[screen];
   if (!e) return '<div class="pad muted">Đang tải...</div>';
-  return `<div class="pad col gap8"><div class="card bad col gap6"><b style="font-size:17px">Không tải được dữ liệu</b><span class="sm">${esc(e)}</span></div><button class="btn full" data-a="retry" data-s="${esc(screen)}">THỬ LẠI</button></div>`;
+  return `<div class="pad col gap8"><div class="card bad col gap6"><b style="font-size:18px">Không tải được dữ liệu</b><span class="sm">${esc(e)}</span></div><button class="btn full" data-a="retry" data-s="${esc(screen)}">THỬ LẠI</button></div>`;
 }
 
 function indexBoot(b) {
@@ -555,7 +555,7 @@ function huyCard(kid) {
   const h = huyOf(kid);
   if (!h) return '';
   const cua = S.me && h.user_id === S.me.id ? 'của bạn' : 'của ' + esc(h.uname || '');
-  return `<div class="card bad col" style="gap:4px;line-height:1.4"><b style="font-size:17px">Báo cáo ${esc(kName(kid))} ${cua} đã bị huỷ</b>
+  return `<div class="card bad col" style="gap:4px;line-height:1.4"><b style="font-size:18px">Báo cáo ${esc(kName(kid))} ${cua} đã bị huỷ</b>
     <span class="sm">Gửi lúc ${hhmm(h.rep_ts)} · ${esc(h.huy_name || 'Admin')} huỷ lúc ${hhmm(h.ts)}</span>
     <span><b>Lý do:</b> ${esc(h.ly_do)}</span>
     <span class="sm">Số trong báo cáo đó không vào tồn và khu đang tính là <b>chưa báo</b>. Hãy đếm thực tế rồi gửi lại.</span></div>`;
@@ -765,7 +765,7 @@ function pendingHtml() {
   const q = all.filter(ofMe);
   const waiting = q.filter((j) => !j.err).length;
   return (waiting ? `<div class="card warn sm b">${waiting} báo cáo đang chờ gửi (mất mạng), sẽ tự gửi khi có mạng.</div>` : '') +
-    q.map((j) => (j.err ? `<div class="card bad col gap8"><b style="font-size:17px">Báo cáo ${esc(kn(j.khu))}${j.day ? ' đếm ngày ' + esc(fmtDay(j.day)) : ''} chưa gửi được</b>
+    q.map((j) => (j.err ? `<div class="card bad col gap8"><b style="font-size:18px">Báo cáo ${esc(kn(j.khu))}${j.day ? ' đếm ngày ' + esc(fmtDay(j.day)) : ''} chưa gửi được</b>
       <span class="sm">${esc(j.err)}</span>
       <div class="row gap6"><button class="btn s f1" data-a="pendsend" data-j="${esc(pendKey(j))}">Gửi làm số hôm nay</button><button class="btn s bad f1" data-a="pendrm" data-j="${esc(pendKey(j))}">Bỏ báo cáo</button></div></div>` : '')).join('') + khacHtml;
 }
@@ -780,7 +780,7 @@ function lastPhone() { try { return localStorage.getItem('kt:phone') || ''; } ca
 function vLogin() {
   return `<div class="login f1 scroll">
     <div class="col gap8"><div class="logo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
-      <div style="font-size:30px;font-weight:700;line-height:1.2">Kho Thép Bãi</div>
+      <div style="font-size:32px;font-weight:700;line-height:1.2">Kho Thép Bãi</div>
       <div class="muted" style="font-size:18px">Đăng nhập bằng số điện thoại và PIN 4 số</div></div>
     <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric" autocomplete="username" data-model="phone" data-enter="login" value="${esc(S.form.phone || lastPhone())}"></label>
     <label class="field">PIN 4 số<input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="current-password" data-enter="login"></label>
@@ -792,8 +792,8 @@ function vLogin() {
 }
 function vForcePin() {
   return `<div class="login f1 scroll">
-    <div style="font-size:26px;font-weight:700">Đổi PIN lần đầu</div>
-    <div class="muted" style="font-size:17px;line-height:1.5">Chào ${esc(S.me.name)}. Hãy tự chọn PIN 4 số mới (không dùng 1234, 0000...).</div>
+    <div style="font-size:24px;font-weight:700">Đổi PIN lần đầu</div>
+    <div class="muted" style="font-size:18px;line-height:1.5">Chào ${esc(S.me.name)}. Hãy tự chọn PIN 4 số mới (không dùng 1234, 0000...).</div>
     <label class="field">PIN hiện tại (admin đã đưa)<input id="pin0" type="password" inputmode="numeric" maxlength="4"></label>
     <label class="field">PIN mới<input id="pin1" type="password" inputmode="numeric" maxlength="4"></label>
     <label class="field">Nhập lại PIN mới<input id="pin2" type="password" inputmode="numeric" maxlength="4" data-enter="changepin"></label>
@@ -970,7 +970,7 @@ function vHome() {
   return `<div class="f1 scroll" id="body">
     <div class="hero">
       <div class="row" style="justify-content:space-between"><span>Tổng quan · ${esc(b.today.split('-').reverse().join('/'))}</span><span class="badge" style="background:#fff;color:var(--pri)">${esc(roleTen(S.me.role))}</span></div>
-      <div class="row" style="justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:15px">Tồn toàn bãi</span><span class="big">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px;padding-bottom:6px">${cayTxt(T.cay)}</span></div>
+      <div class="row" style="justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:16px">Tồn toàn bãi</span><span class="big">${fmtT(T.kg)} tấn</span></div><span style="font-size:18px;padding-bottom:6px">${cayTxt(T.cay)}</span></div>
       <div class="sm" style="color:#D6E0EE">${note}</div>
       <div class="mini"><div><span>Nhập hôm nay</span><b>${fmtT(T.inKg)} tấn</b></div><div><span>${usedLabel}</span><b>${usedTxt}</b></div></div>
     </div>
@@ -978,14 +978,14 @@ function vHome() {
     <div class="pad col gap12">
       ${pendingHtml()}
       ${alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => {
-        const inner = `<span class="f1 col" style="gap:2px"><b style="font-size:17px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>`;
+        const inner = `<span class="f1 col" style="gap:2px"><b style="font-size:18px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>`;
         return a.to
           ? `<button class="alertbtn ${a.bad ? 'bad' : 'warn'}" data-a="nav" data-s="${a.to}"${a.k ? ` data-k="${esc(a.k)}"` : ''}>${inner}${IC.chev}</button>`
           : `<div class="alertbtn ${a.bad ? 'bad' : 'warn'}">${inner}</div>`;
       }).join('') : ''}
       <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px"><h2 class="sec" style="min-width:0">Tồn theo khu và người báo</h2><span class="sm muted" style="white-space:nowrap;flex:none">${reportedCount()}/${b.khuAct.length} khu đã báo</span></div>
       ${khuCards}
-      <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px"><h2 class="sec" style="min-width:0">Tồn theo đường kính</h2><button class="b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;font-size:15px;padding:8px 0;white-space:nowrap;flex:none" data-a="nav" data-s="ton">Xem chi tiết</button></div>
+      <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px"><h2 class="sec" style="min-width:0">Tồn theo đường kính</h2><button class="b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;font-size:16px;padding:8px 0;white-space:nowrap;flex:none" data-a="nav" data-s="ton">Xem chi tiết</button></div>
       <div class="sm muted">Vạch đen là mức báo động. Thanh đỏ là tồn đã xuống dưới mức báo động.</div>
       <div class="bars">${bars}</div>
     </div></div>`;
@@ -1084,7 +1084,7 @@ function vKhu() {
 function demView() {
   const b = S.boot, k = S.khu, kname = b.khuBy[k].name;
   if (!b.phiAct.length) return `${head('Báo cáo ' + esc(kname), '', 'home')}<div class="pad muted">Chưa có phi thép nào trong hệ thống. Admin vào Thêm → Cài đặt → "Khôi phục phi mặc định".</div>`;
-  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Khu này đã giao cho người khác. Hãy chọn khu của bạn, hoặc nhờ admin giao khu.</span><button class="btn s full" data-a="nav" data-s="khu">CHỌN KHU KHÁC</button></div></div>`;
+  if (!canCount(k)) return `${head('Báo cáo ' + esc(kname), 'Không có quyền', 'khu')}<div class="pad"><div class="card warn col gap6"><b style="font-size:18px">Bạn không phụ trách ${esc(kname)}</b><span class="sm" style="line-height:1.4">Khu này đã giao cho người khác. Hãy chọn khu của bạn, hoặc nhờ admin giao khu.</span><button class="btn s full" data-a="nav" data-s="khu">Chọn khu khác</button></div></div>`;
   const zk =S.zoomK && S.zoomK !== k ? S.zoomK : null;
   const others = b.khuAct.filter((x) => x.id !== k);
   const shown = zk ? others.filter((x) => x.id === zk) : others;
@@ -1189,7 +1189,7 @@ function demView() {
   }
   const pendingNote = readPending().filter(ofMe).length;
 
-  return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về danh sách khu" data-a="nav" data-s="khu">${IC.back}</button><div class="t"><h1>Báo cáo ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" data-a="nav" data-s="khu">Chọn khu khác</button></div>
+  return `<div class="top" style="padding-bottom:2px"><button class="iconbtn" aria-label="Về danh sách khu" data-a="nav" data-s="khu">${IC.back}</button><div class="t"><h1>Báo cáo ${esc(kname)}</h1><small>${slotNow() ? 'Lần đếm ' + esc(slotNow().label) + ((b.slotDone[k] || new Set()).has(slotNow().i) ? ' · khu này đã đếm' : ' · khu này chưa đếm') : 'Bảng toàn bãi, nhập ngay trong bảng'}</small></div><button class="btn s" style="font-size:14px;flex:none" data-a="nav" data-s="khu">Chọn khu khác</button></div>
     <div class="mxhead"><div style="min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(kname)} (bạn)</span><b>${fmtT(T.ownKg)} tấn</b></div><div style="text-align:center;flex:none"><span>Phi chưa nhập</span><b>${pend.length}</b></div><div style="text-align:right;flex:none"><span>Tổng bãi (tạm tính)</span><b>${fmtT(T.allKg)} tấn</b></div></div>
     ${S.toast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}
     ${b.closed ? `<div class="toast err">${ngayKhoaMsg()}</div>` : ''}
@@ -1201,7 +1201,7 @@ function demView() {
       ${S.legend ? '<div class="sm muted" style="line-height:1.4">Xanh lá: đã đếm · Dấu =: giữ nguyên · Dấu — : để trống, gửi đi sẽ ghi 0 · Viền cam đậm: lệch lớn so với dự kiến, hoặc để trống phi đang có thép. Phi khu không có thì cứ để trống. Chạm chữ cái khu để phóng to.</div>' : ''}
       ${nBlank ? `<div class="sm b" style="color:var(--bad);line-height:1.4">${nBlank} phi đang có thép mà còn để trống: ${blankWithStock().slice(0, 6).map((p) => p.id).join(', ')}${nBlank > 6 ? '…' : ''}. Gửi là ghi 0.</div>` : ''}</div>`}
     <div class="f1" id="mx"><div class="mxw">
-      <div class="mxl"><div class="mxh"><div class="mxp" style="font-size:13px">ɸ</div><div class="mxo" style="font-size:13px;font-weight:700;color:var(--pri)">Bạn đếm</div><div class="mxv" style="font-size:13px">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div class="mxp" style="font-size:12px;line-height:1.1">Tổng<br>(tấn)</div><div class="mxo" style="font-weight:700;color:var(--pri)">${fmtT(T.ownKg)}</div><div class="mxv">${fmtT(T.allKg)}</div></div></div>
+      <div class="mxl"><div class="mxh"><div class="mxp" style="font-size:14px">ɸ</div><div class="mxo" style="font-size:14px;font-weight:700;color:var(--pri)">Bạn đếm</div><div class="mxv" style="font-size:14px">Tổng bãi</div></div>${lrows.join('')}<div class="mxtot"><div class="mxp" style="font-size:12px;line-height:1.1">Tổng<br>(tấn)</div><div class="mxo" style="font-weight:700;color:var(--pri)">${fmtT(T.ownKg)}</div><div class="mxv">${fmtT(T.allKg)}</div></div></div>
       <div class="mxr"><div class="mxh">${hdrs}</div>${rrows.join('')}<div class="mxtot">${tots}</div></div>
     </div></div>
     ${S.sel ? sheet : `<div class="sendbar">${pendingNote ? '<div class="sm b" style="color:var(--bad);margin-bottom:6px">Có báo cáo chưa gửi được, xem ở Tổng quan.</div>' : ''}<button class="btn full ${canSend && !b.closed ? 'pri' : 'dis'}" data-a="send">${canSend ? 'GỬI BÁO CÁO ' + esc(cut(kname, 20).toUpperCase()) : 'CHƯA CÓ PHI THÉP NÀO'}</button></div>`}`;
@@ -1345,9 +1345,9 @@ function vNhap() {
   <div class="f1 scroll pad col gap12" id="body">
     <div class="row gap6"><button class="chip s f1 ${N.mode === 'nhap' ? 'on' : ''}" data-a="nmode" data-v="nhap">Nhập thép về</button><button class="chip s f1 ${chuyen ? 'on' : ''}" data-a="nmode" data-v="chuyen">Chuyển khu</button><button class="chip s f1 ${xuat ? 'on' : ''}" data-a="nmode" data-v="xuat">Xuất kho</button><button class="chip s f1 ${dc ? 'on' : ''}" data-a="nmode" data-v="dc">Điều chỉnh</button></div>
     <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:2px 0;text-decoration:underline" data-a="nav" data-s="vaymuon">Cho đối tác mượn hoặc đi vay thép? Ghi ở Vay mượn ngoài bãi →</button>
-    ${N.done ? `<div class="card warn col gap8"><b style="font-size:18px">Đã lưu phiếu · chờ cấp trên duyệt</b><span style="font-size:17px">${esc(N.done.text)}</span><span class="sm" style="line-height:1.4">Phiếu chỉ tính vào tồn sau khi được duyệt. Chứng từ ghi cả ngày nhập và ngày duyệt.</span><button class="btn s full" data-a="void" data-id="${N.done.id}">RÚT LẠI CẢ PHIẾU</button></div>` : ''}
-    ${xuat ? `<div class="card col gap6" style="border:2px solid var(--pri)"><b style="font-size:17px">Phiếu xuất: không bắt buộc</b><span class="sm" style="line-height:1.45">Ghi để biết thép đi đâu; không ghi thì lượng dùng vẫn được tính. Phiếu cần cấp trên duyệt.</span></div>` : ''}
-    ${dc ? `<div class="card bad col gap6"><b style="font-size:17px">Việc này SỬA SỔ, không phải ghi thép ra vào</b><span class="sm" style="line-height:1.45">Chỉ dùng khi số trong sổ sai mà không phiếu nào giải thích được. Thép về hoặc dời khu: dùng <b>Nhập thép về</b>, <b>Chuyển khu</b>. Thép dùng hết: để khu đếm lại. Phiếu cần cấp trên duyệt; lý do lưu trong nhật ký.</span></div>` : ''}
+    ${N.done ? `<div class="card warn col gap8"><b style="font-size:18px">Đã lưu phiếu · chờ cấp trên duyệt</b><span style="font-size:18px">${esc(N.done.text)}</span><span class="sm" style="line-height:1.4">Phiếu chỉ tính vào tồn sau khi được duyệt. Chứng từ ghi cả ngày nhập và ngày duyệt.</span><button class="btn s full" data-a="void" data-id="${N.done.id}">RÚT LẠI CẢ PHIẾU</button></div>` : ''}
+    ${xuat ? `<div class="card col gap6" style="border:2px solid var(--pri)"><b style="font-size:18px">Phiếu xuất: không bắt buộc</b><span class="sm" style="line-height:1.45">Ghi để biết thép đi đâu; không ghi thì lượng dùng vẫn được tính. Phiếu cần cấp trên duyệt.</span></div>` : ''}
+    ${dc ? `<div class="card bad col gap6"><b style="font-size:18px">Việc này SỬA SỔ, không phải ghi thép ra vào</b><span class="sm" style="line-height:1.45">Chỉ dùng khi số trong sổ sai mà không phiếu nào giải thích được. Thép về hoặc dời khu: dùng <b>Nhập thép về</b>, <b>Chuyển khu</b>. Thép dùng hết: để khu đếm lại. Phiếu cần cấp trên duyệt; lý do lưu trong nhật ký.</span></div>` : ''}
     ${chuyen
       ? `<div class="col gap8"><b style="font-size:18px">1. Từ khu</b>${khuChips(N.from, 'from')}</div><div class="col gap8"><b style="font-size:18px">2. Sang khu</b>${khuChips(N.to, 'to', N.from)}</div>`
       : `<div class="col gap8"><b style="font-size:18px">1. ${dc ? 'Sửa tồn của khu' : xuat ? 'Lấy thép từ khu' : 'Để vào khu'}</b>${khuChips(N.khu, 'khu')}</div>`}
@@ -1404,7 +1404,7 @@ function vTon() {
     return `<button class="tonrow ${low ? 'low' : ''}" data-a="expand" data-p="${p.id}"><span class="col" style="gap:2px"><b style="font-size:24px">${p.id}</b><span class="sm" style="${low ? 'color:var(--bad);font-weight:700' : short ? 'color:var(--warn);font-weight:700' : 'color:#5F6670'}">${sub}</span></span><span class="col" style="align-items:flex-end;text-align:right;min-width:0"><b style="font-size:24px;line-height:1.15;white-space:nowrap">${curTxt}</b><span class="sm muted">${qSub(v, p)}</span></span></button>${det}`;
   }).join('');
   return `${head('Tồn bãi', 'Tồn hiện tại (số đã duyệt)' + (b.lastClosed ? ' · chốt gần nhất ' + fmtDay(b.lastClosed) : ' · chưa chốt ngày nào') + ' · chạm phi để xem từng khu', 'home')}
-    <div class="hero tbar" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:15px">Tổng toàn bãi</span><span style="font-size:30px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:17px">${cayTxt(T.cay)}</span></div></div>
+    <div class="hero tbar" style="margin:4px 16px;border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div class="col"><span style="font-size:16px">Tổng toàn bãi</span><span style="font-size:32px;font-weight:700">${fmtT(T.kg)} tấn</span></div><span style="font-size:18px">${cayTxt(T.cay)}</span></div></div>
     <div class="f1 scroll pad col gap8" id="body">${rows}</div>`;
 }
 
@@ -1428,7 +1428,7 @@ function renderSubsPanel(khu, R) {
   const hdrs = subData.map((s, i) => {
     const cur = i === subData.length - 1;
     const khung = defs.length ? '<br><span style="font-weight:400;font-size:12px">' + esc(defs[khungOf(s.ts)].label.split(' (')[0]) + '</span>' : '';
-    return `<th style="text-align:center;${cur ? 'color:var(--pri)' : ''};white-space:nowrap;font-size:13px">${esc(s.uname)}<br><span style="font-weight:400">${hhmm(s.ts)}${cur ? ' ✓' : ''}</span>${khung}</th>`;
+    return `<th style="text-align:center;${cur ? 'color:var(--pri)' : ''};white-space:nowrap;font-size:14px">${esc(s.uname)}<br><span style="font-weight:400">${hhmm(s.ts)}${cur ? ' ✓' : ''}</span>${khung}</th>`;
   }).join('');
   const bodyRows = phiList.map((p) => {
     const lastV = lastSub.vals[p.id]; // undefined nếu lần cuối là admin-pick chỉ ghi phi thay đổi
@@ -1529,7 +1529,7 @@ function vDuyet() {
       : xuat ? '<span class="sm b" style="line-height:1.4">Duyệt là lượng này rời bãi: tồn dự kiến của khu hạ xuống đúng bằng đó.</span>'
       // phiếu kho của sổ vay mượn: duyệt bên này là duyệt luôn sổ, và nó không tính là nhập hay dùng
       : vay ? '<span class="sm b" style="line-height:1.4">Phiếu kho của sổ vay mượn: duyệt là duyệt luôn lần ghi sổ. Thép này đổi tồn khu nhưng không tính là nhập, cũng không tính là dùng.</span>' : '';
-    return `<div class="card ${dc ? 'bad' : 'warn'} col gap8"><div class="col" style="gap:2px"><b style="font-size:17px">${title}</b>
+    return `<div class="card ${dc ? 'bad' : 'warn'} col gap8"><div class="col" style="gap:2px"><b style="font-size:18px">${title}</b>
       <span style="font-size:16px">${esc(what)} · ${fmtT(kg)} tấn</span>
       <span class="sm muted">${esc(v.uname)} · ${hhmm(v.ts)}${cuNgay}${v.note ? ' · ' + esc(v.note) : ''}</span>${canhBao}</div>
       ${R.closed ? '' : duyetCap(v.cap) ? `<div class="row gap6"><button class="btn s ok f1" data-a="pduyet" data-id="${v.id}">DUYỆT PHIẾU</button><button class="btn s bad f1" data-a="preject" data-id="${v.id}">TỪ CHỐI</button></div>` : choCapTren('Phiếu kho')}</div>`;
@@ -1646,7 +1646,7 @@ function vDuyet() {
       const blank = x.blank ? ' <b style="color:var(--bad)">để trống</b>' : '';
       return `<div class="li" style="gap:6px"><b style="width:46px">${x.phi}</b>
         <span class="sm" style="flex:1">${fmtQe(x.exp, p)} → <b>${cnTxt}</b>${blank}</span>
-        <b class="sm" style="color:${x.d ? col : 'var(--ink)'};white-space:nowrap;${x.big ? 'font-size:15px' : ''}">${dTxt}</b></div>`;
+        <b class="sm" style="color:${x.d ? col : 'var(--ink)'};white-space:nowrap;${x.big ? 'font-size:16px' : ''}">${dTxt}</b></div>`;
     };
     const lech = k.items.filter((x) => x.d || x.cnt === null);
     const khop = k.items.length - lech.length;
@@ -1762,7 +1762,7 @@ function vLichSu() {
     : `<div class="card warn col" style="gap:4px"><b>Ngày này chưa chốt</b><span class="sm">Số tồn lấy theo báo cáo đếm trong ngày; khu không báo tạm lấy tồn chuẩn trước đó.</span></div>`;
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${status}
-    <div class="hero" style="border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:15px">Tồn cuối ngày ${esc(fmtDay(D.day))}</span><span style="font-size:30px;font-weight:700">${fmtT(totKg)} tấn</span></div>${closed ? `<div class="col" style="align-items:flex-end;font-size:15px"><span>Nhập ${fmtT(totIn)} tấn</span>${totDc ? `<span>Điều chỉnh ${totDc > 0 ? '+' : '−'}${fmtT(Math.abs(totDc))} tấn</span>` : ''}${totVay ? `<span>Vay mượn ${totVay > 0 ? '+' : '−'}${fmtT(Math.abs(totVay))} tấn</span>` : ''}<span>Dùng ${fmtT(totUse)} tấn</span>${totX ? `<span class="sm">trong đó ${fmtT(totX)} tấn có phiếu xuất</span>` : ''}</div>` : ''}</div></div>
+    <div class="hero" style="border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:16px">Tồn cuối ngày ${esc(fmtDay(D.day))}</span><span style="font-size:32px;font-weight:700">${fmtT(totKg)} tấn</span></div>${closed ? `<div class="col" style="align-items:flex-end;font-size:16px"><span>Nhập ${fmtT(totIn)} tấn</span>${totDc ? `<span>Điều chỉnh ${totDc > 0 ? '+' : '−'}${fmtT(Math.abs(totDc))} tấn</span>` : ''}${totVay ? `<span>Vay mượn ${totVay > 0 ? '+' : '−'}${fmtT(Math.abs(totVay))} tấn</span>` : ''}<span>Dùng ${fmtT(totUse)} tấn</span>${totX ? `<span class="sm">trong đó ${fmtT(totX)} tấn có phiếu xuất</span>` : ''}</div>` : ''}</div></div>
     <h2 class="sec">Theo đường kính (chạm để xem từng khu)</h2>
     <div class="card" style="padding:0;overflow:hidden">${rows}</div>
     <h2 class="sec">Người báo</h2><div class="sm">${reps || '<span class="muted">Không có báo cáo đếm</span>'}</div>
@@ -2172,7 +2172,7 @@ function vUsers() {
       <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div class="col" style="gap:2px;min-width:0"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:18px">${esc(u.name)}</b>${tags}</div>
           <span class="sm muted">${esc(u.phone)}</span></div>
-        <select class="inp s" style="width:168px;font-size:15px" data-change="role" data-id="${u.id}" ${first ? 'disabled' : ''}>${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
+        <select class="inp s" style="width:168px;font-size:16px" data-change="role" data-id="${u.id}" ${first ? 'disabled' : ''}>${Object.keys(ROLE).map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></div>
       ${renameBox}
       <div class="row gap6">${first && !own ? '' : `<button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>`}
         ${me || first ? '' : `<button class="btn s f1 ${u.locked ? '' : 'bad'}" data-a="ulock" data-id="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khoá' : 'Khoá'}</button>`}
@@ -2184,7 +2184,7 @@ function vUsers() {
   const goneSec = !gone.length ? '' : `<h2 class="sec">Tài khoản đã xoá (${gone.length})</h2>
     <div class="sm muted" style="line-height:1.4">Không đăng nhập được và không nhận phân công khu. Mọi số đếm, phiếu và báo cáo họ đã làm vẫn giữ nguyên tên — đó là lý do dòng tài khoản không bị xoá hẳn.</div>
     ${gone.map((u) => `<div class="card col gap8" style="opacity:.75">
-      <div class="col" style="gap:2px"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:17px">${esc(u.name)}</b>${u.locked ? '<span class="badge bad">Đã khoá</span>' : ''}</div><span class="sm muted">${esc(u.phone)} · ${ROLE[u.role] || u.role}</span></div>
+      <div class="col" style="gap:2px"><div class="row gap6" style="align-items:center;flex-wrap:wrap"><b style="font-size:18px">${esc(u.name)}</b>${u.locked ? '<span class="badge bad">Đã khoá</span>' : ''}</div><span class="sm muted">${esc(u.phone)} · ${ROLE[u.role] || u.role}</span></div>
       ${u.locked ? '<span class="sm muted" style="line-height:1.4">Bị khoá trước khi xoá nên khôi phục xong vẫn còn khoá — nhớ mở khoá nếu cho dùng lại.</span>' : ''}
       ${own ? `<button class="btn s f1" data-a="urestore" data-id="${u.id}">KHÔI PHỤC</button>` : '<span class="sm muted">Chỉ admin đầu tiên khôi phục được.</span>'}</div>`).join('')}`;
   return `${head('Người dùng', own ? 'Bạn là admin đầu tiên: tạo, sửa tên và xoá tài khoản' : 'Admin tạo tài khoản, PIN và xếp cấp bậc', 'more')}<div class="f1 scroll pad col gap12" id="body">
@@ -2327,7 +2327,7 @@ function vVayMuon() {
     const hanHtml = (qh.length ? `<span class="sm" style="color:var(--bad);line-height:1.4"><b>⚠ Quá hạn:</b> ${esc(qh.map((l) => l.phi_id + ' ' + fmtQs(l.con, l.phi_id) + ' (hẹn ' + ngayNgan(l.han) + ')').join(' · '))}</span>` : '')
       + (toi ? `<span class="sm muted">Hạn trả gần nhất: ${ngayNgan(toi.han)} · ${esc(toi.phi_id + ' ' + fmtQs(toi.con, toi.phi_id))}</span>` : '');
     return `<button class="card col gap6" style="text-align:left;width:100%;align-items:stretch" data-a="ldtview" data-id="${d.id}">
-      <div class="row" style="justify-content:space-between;gap:8px"><b style="font-size:17px">${esc(d.name)}${d.active ? '' : ' <span class="sm muted">(đã ẩn)</span>'}</b>${choBy[d.id] ? `<span class="badge warn">${choBy[d.id]} chờ duyệt</span>` : ''}</div>
+      <div class="row" style="justify-content:space-between;gap:8px"><b style="font-size:18px">${esc(d.name)}${d.active ? '' : ' <span class="sm muted">(đã ẩn)</span>'}</b>${choBy[d.id] ? `<span class="badge warn">${choBy[d.id]} chờ duyệt</span>` : ''}</div>
       ${noi || '<span class="sm muted">Đã tất toán</span>'}${hanHtml}
       <span class="sm" style="color:var(--pri);text-decoration:underline">Xem chi tiết ›</span></button>`;
   };
@@ -2360,7 +2360,7 @@ function vVayMuon() {
     : '<span class="sm muted" style="line-height:1.4">Chỉ ghi công nợ, tồn bãi không đổi (thép giao thẳng, không qua bãi).</span>'}`;
   const lines = (F.lines || []).length ? `<div class="card" style="padding:0;overflow:hidden">${F.lines.map((l, i) => `<div class="li"><span><b>${l.phi}</b> · ${fmtQ(l.qty, l.phi)}</span><button class="btn s bad" data-a="lrm" data-i="${i}">Xoá</button></div>`).join('')}</div>` : '';
   const form = `<div class="card col gap8">
-    <b style="font-size:17px">Ghi sổ vay mượn</b>
+    <b style="font-size:18px">Ghi sổ vay mượn</b>
     <b class="sm">1. Đối tác</b>${dtChips}
     <div class="row gap6"><input class="inp s f1" id="ldtnew" maxlength="60" placeholder="Tên đối tác mới" data-model="ldtnew" value="${esc(S.form.ldtnew || '')}"><button class="btn s" data-a="ldtadd">Thêm</button></div>
     <b class="sm">2. Loại</b><div class="row gap6" style="flex-wrap:wrap">${kindChips}</div>
@@ -2397,7 +2397,7 @@ function vVayMuon() {
     : `<div class="li" style="${d.active ? '' : 'opacity:.6'}"><span>${esc(d.name)}${d.active ? '' : ' (đã ẩn)'}</span><span class="row gap6"><button class="btn s" data-a="ldtedit" data-id="${d.id}">Sửa tên</button><button class="btn s ${d.active ? 'bad' : ''}" data-a="ldthide" data-id="${d.id}" data-v="${d.active ? 0 : 1}">${d.active ? 'Ẩn' : 'Hiện'}</button></span></div>`)).join('')}</div>`;
 
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${F.done ? `<div class="card warn col gap6"><b style="font-size:17px">Đã ghi sổ · chờ cấp trên duyệt</b><span>${esc(F.done)}</span><span class="sm">Chỉ tính vào dư nợ sau khi được duyệt.</span></div>` : ''}
+    ${F.done ? `<div class="card warn col gap6"><b style="font-size:18px">Đã ghi sổ · chờ cấp trên duyệt</b><span>${esc(F.done)}</span><span class="sm">Chỉ tính vào dư nợ sau khi được duyệt.</span></div>` : ''}
     <h2 class="sec">Công nợ hiện tại</h2>${duNo}
     ${form}
     ${cho.length ? `<h2 class="sec">Chờ duyệt (${cho.length})</h2><div class="card" style="padding:0;overflow:hidden">${cho.map(loanCard).join('')}</div>` : ''}
@@ -2604,12 +2604,12 @@ function vReset() {
   const dangCo = fmtT(T.kg);
   const go = (S.form.wipeword || '').trim().toUpperCase() === 'XOA SACH';
   return `<h2 class="sec">Dữ liệu thép</h2>
-  <div class="card col gap8"><b style="font-size:17px">Đang có trong bãi: ${dangCo} tấn</b>
+  <div class="card col gap8"><b style="font-size:18px">Đang có trong bãi: ${dangCo} tấn</b>
     <span class="sm muted" style="line-height:1.45">Nên tải một bản sao trước khi đặt lại. Nhật ký và lịch sử đếm không bao giờ bị xoá.</span>
     <div class="row gap6"><button class="btn s f1" data-a="exportday" data-d="${esc(b.today)}">Tải tồn theo khu (CSV)</button>
       <button class="btn s f1" data-a="dlall">Tải báo cáo từ ngày đầu (CSV)</button></div>
   </div>
-  <div class="card col gap8"><b style="font-size:17px">Sao lưu toàn bộ</b>
+  <div class="card col gap8"><b style="font-size:18px">Sao lưu toàn bộ</b>
     <span class="sm" style="line-height:1.45">Một tệp chứa <b>tất cả</b> số liệu, tài khoản và nhật ký. Chỉ tệp này <b>nạp lại được</b> (hai tệp CSV ở trên thì không). Nên tải định kỳ và cất ra ngoài máy.</span>
     <button class="btn s pri full" data-a="dlbackup">TẢI BẢN SAO TOÀN BỘ</button>
     <div style="border-top:1px solid var(--line);padding-top:8px" class="col gap6">
@@ -2621,11 +2621,11 @@ function vReset() {
       <button class="btn s full ${(S.form.napword || '').trim().toUpperCase() === 'NAP LAI' ? 'bad' : 'dis'}" data-a="dorestore">NẠP LẠI TỪ BẢN SAO</button>` : ''}
     </div>
   </div>
-  <div class="card col gap8"><b style="font-size:17px">Đặt tồn về 0 (kiểm kê lại)</b>
+  <div class="card col gap8"><b style="font-size:18px">Đặt tồn về 0 (kiểm kê lại)</b>
     <span class="sm" style="line-height:1.45">Đặt <b>cả bãi = 0</b> từ hôm nay, như vừa kiểm kê lại. Lịch sử và báo cáo cũ <b>vẫn xem được</b>. Hôm nay thành <b>đã chốt</b>, từ mai đếm và nhập bình thường.<br>Bấm nhầm: trong ngày vào Duyệt → <i>Hoàn tác đặt lại số liệu</i>, mọi thứ trở lại <b>đúng như trước</b>.</span>
     <button class="btn s full" style="border:2px solid var(--warn)" data-a="resetzero">ĐẶT TỒN VỀ 0</button>
   </div>
-  <div class="card bad col gap8"><b style="font-size:17px">Xoá sạch dữ liệu thép</b>
+  <div class="card bad col gap8"><b style="font-size:18px">Xoá sạch dữ liệu thép</b>
     <span class="sm" style="line-height:1.45">Xoá <b>mọi</b> số đếm, phiếu, ngày đã chốt và báo cáo theo kỳ; bãi trở lại như mới. <b>KHÔNG hoàn tác được.</b> Dùng khi chạy thử xong, bắt đầu dùng thật.</span>
     <label class="sm">Gõ <b>XOA SACH</b> để mở nút<input class="inp s" style="width:100%" id="wipeword" placeholder="XOA SACH" data-model="wipeword" value="${esc(S.form.wipeword || '')}"></label>
     <button class="btn s full ${go ? 'bad' : 'dis'}" data-a="resetwipe">XOÁ SẠCH DỮ LIỆU THÉP</button>
