@@ -4,7 +4,13 @@
 
 ## Cách hệ thống tính
 
-- **Nhắc đúng người phụ trách**: thẻ *chưa báo*, *báo cáo bị huỷ*, *chưa đếm buổi…* chỉ hiện cho người phụ trách khu đó (và cấp duyệt, từ CVKTHT trở lên); khu **chưa giao ai** thì ai cũng được nhắc, nên Admin thấy thẻ *"N khu chưa giao người phụ trách"* để đi giao ở **Cài đặt → Khu bãi**. Thẻ *chưa báo* của cấp duyệt ghi kèm tên người phụ trách từng khu. Khu trống (không có thép, không có phiếu) không bị nhắc. App chỉ nhắc khi người đó **mở app** — chưa có thông báo đẩy.
+- **Mỗi người chỉ thấy thẻ nhắc về việc của mình** — việc mình phải làm, việc mình có quyền làm, hoặc tin về chính báo cáo / phiếu mình đã gửi:
+  - **Tiểu đội trưởng**: khu mình đếm được *chưa báo* hoặc *chưa đếm buổi…*, báo cáo của mình *bị huỷ* (bấm là mở màn đếm) hoặc *đang chờ duyệt*, hai người báo khác số ở khu mình. Không thấy phiếu kho, cảnh báo tồn, việc của người khác.
+  - **CVKTHT** (quản lý việc đếm cả bãi): mọi khu *chưa báo* (kèm tên người phụ trách để biết nhắc ai), *thiếu buổi*, *chưa đếm buổi đang diễn ra*, báo cáo bị huỷ đang chờ báo lại; *khu chờ bạn duyệt* và *lần ghi vay mượn chờ bạn duyệt* — chỉ những cái mình duyệt được; phiếu và báo cáo **của mình** đang chờ cấp trên; tồn thấp, vay mượn quá hạn.
+  - **Trung đội trưởng, Đại đội trưởng**: mọi thứ chờ duyệt (họ duyệt được hết: khu, phiếu kho, sổ vay), tồn thấp, vay mượn quá hạn. Không bị nhắc việc đếm — đó là việc của CVKTHT.
+  - **Admin**: như cấp chỉ huy, cộng việc hệ thống: *N khu chưa giao người phụ trách* (khu chưa giao ai thì Tiểu đội trưởng nào cũng được nhắc đếm), đi giao ở **Cài đặt → Khu bãi**.
+  - Ở màn **Duyệt**, con số *Còn N việc cần xử lý* cũng chỉ đếm việc người xem làm được; hết việc của mình mà cấp trên còn việc thì màn hình nói *Không còn việc của bạn*.
+  - Khu trống (không có thép, không có phiếu) không bị nhắc. App chỉ nhắc khi người đó **mở app** — chưa có thông báo đẩy.
 - **Tổng quan**: chạm vào thẻ một khu để xem thép của khu đó với **đủ mọi đường kính** (phi không có thép ghi 0), và bấm **Đếm / báo cáo** ngay ở đó (chỉ hiện với người đếm được khu đó, khi ngày chưa chốt).
 - Mỗi ô **(ngày × khu × phi)** là đơn vị gốc. Mọi thống kê (toàn bãi, theo khu, theo phi) tính từ các ô này.
 - Hằng ngày mỗi khu báo số đếm thực tế (bó + cây lẻ). **Mọi khu luôn hiện đủ phi D6 → D36**; phi khu không có thì cứ **để trống**, hệ thống hiểu là 0. Không phải gõ 0 cho chín phi không có.

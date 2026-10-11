@@ -731,8 +731,8 @@ const run = async () => {
     SB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];
     ${extra || ''}
     indexBoot(SB); S.boot = SB; S.me = { id: 1, name: 'A', role: 'admin' };`;
-  r(`${slotBoot({ A: [0] })} var H1 = vHome();`);
-  ok('Tổng quan: khu thiếu buổi chiều có thẻ đỏ, câu ngắn', /Khu A thiếu buổi chiều<\/b>/.test(r('H1')), (r('H1').match(/thiếu buổi.{0,80}/) || [''])[0]);
+  r(`${slotBoot({ A: [0] })} S.me = { id: 8, name: 'Cv', role: 'cvktht' }; var H1 = vHome();`);
+  ok('Tổng quan (CVKTHT quản lý việc đếm): khu thiếu buổi chiều có thẻ đỏ, câu ngắn', /Khu A thiếu buổi chiều<\/b>/.test(r('H1')), (r('H1').match(/thiếu buổi.{0,80}/) || [''])[0]);
   ok('thẻ nói lần đếm sau không bù được', /Không bù được/.test(r('H1')));
   ok('khu chưa báo hôm nay không bị nhắc trùng với thẻ "chưa báo"', !/Khu B thiếu buổi/.test(r('H1')));
   ok('nhãn khu đổi thành Thiếu lần đếm, không mang nhãn xanh', r('khuStatus(S.boot.khuBy.A).label') === 'Thiếu lần đếm', r('khuStatus(S.boot.khuBy.A).label'));
@@ -864,6 +864,15 @@ const run = async () => {
   r(`S.me = { id: 9, name: 'Trung', role: 'trungdoi' }; var DT = vDuyet();`);
   ok('trung đội trưởng: duyệt được cả bốn khu và có "Duyệt tất cả"',
     /data-a="khuduyet" data-k="A"/.test(r('DT')) && /data-a="khuduyet" data-k="B"/.test(r('DT')) && /data-a="khuduyet" data-k="C"/.test(r('DT')) && /data-a="khuduyet" data-k="D"/.test(r('DT')) && /DUYỆT TẤT CẢ 4 KHU</.test(r('DT')));
+  // số "việc cần xử lý" chỉ đếm việc của người xem
+  r(`S.review.exceptions = [{ type: 'khu_pending', khu: 'A', name: 'Khu A', n: 1 }, { type: 'khu_pending', khu: 'B', name: 'Khu B', n: 1 }, { type: 'receipt_pending', key: 'g9', id: 9, kind: 'nhap' }]; S.review.pending = 3;`);
+  ok('trung đội trưởng: "Còn 3 việc"', /Còn 3 việc cần xử lý/.test(r('vDuyet()')));
+  r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  ok('CVKTHT: chỉ đếm khu mình duyệt được: "Còn 1 việc"', /Còn 1 việc cần xử lý/.test(r('vDuyet()')));
+  ok('CVKTHT: không bày mục phiếu kho chờ duyệt', !/<span class="sec">Phiếu chờ duyệt/.test(r('vDuyet()')));
+  r(`S.review.exceptions = [{ type: 'khu_pending', khu: 'B', name: 'Khu B', n: 1 }]; S.review.pending = 1;`);
+  ok('CVKTHT: không còn việc của mình thì nói rõ còn việc của cấp trên', /Không còn việc của bạn/.test(r('vDuyet()')) && /Còn 1 việc chờ/.test(r('vDuyet()')));
+  r(`S.me = { id: 9, name: 'Trung', role: 'trungdoi' };`);
   // sổ vay mượn chờ duyệt: nút theo cấp GHI TRONG DÒNG (cap), thiếu thì coi là việc cấp 2
   r(`S.review.loans = [{ id: 31, grp: 'l1', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 5, ts: Date.now(), user_id: 2, uname: 'An', cap: 0 },
        { id: 32, grp: 'l2', doitac_id: 5, doitac_name: 'Cty A', phi_id: 'D10', kind: 'vay', qty: 6, ts: Date.now(), user_id: 8, uname: 'Cv', cap: 1 },
@@ -947,8 +956,10 @@ const run = async () => {
   // khung ĐÃ HẾT mà thiếu: người đếm không làm gì được, nên không thấy thẻ đỏ; admin thì thấy
   r(`${slotBoot({ A: [0] })} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('người đếm: không thấy thẻ đỏ thiếu khung đã qua', !/thiếu buổi/.test(r('vHome()')));
+  r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  ok('CVKTHT: thấy thẻ thiếu khung', /Khu A thiếu buổi/.test(r('vHome()')));
   r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
-  ok('admin: vẫn thấy thẻ thiếu khung', /Khu A thiếu buổi/.test(r('vHome()')));
+  ok('admin: không bị nhắc thiếu khung (việc đếm là của CVKTHT)', !/thiếu buổi/.test(r('vHome()')));
   r(`S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
   // Cài đặt: 1 lần/ngày thì không bày ô giờ làm; khi đó lưu không gửi giờ làm
@@ -1163,10 +1174,56 @@ const run = async () => {
   ok('một khu chưa báo: bấm mở thẳng khu đó', /data-s="dem" data-k="B"/.test(HB));
   r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
   const HA = r('vHome()');
-  ok('admin: thẻ chưa báo nói ai phụ trách từng khu', /Khu A \(An\) · Khu B \(chưa giao ai\)/.test(HA), theNhac(HA));
+  ok('admin: không bị nhắc khu chưa báo (việc đếm là của CVKTHT)', !/chưa báo<\/b>/.test(HA), theNhac(HA));
+  r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  const HQ = r('vHome()');
+  ok('CVKTHT: thẻ chưa báo nói ai phụ trách từng khu', /Khu A \(An\) · Khu B \(chưa giao ai\)/.test(HQ), theNhac(HQ));
+  ok('CVKTHT: không thấy thẻ việc hệ thống (khu chưa giao)', !/chưa giao người phụ trách/.test(HQ));
+  r(`S.me = { id: 1, name: 'A', role: 'admin' };`);
   ok('admin: được nhắc có khu chưa giao người phụ trách', /1 khu chưa giao người phụ trách<\/b><span class="sm">Khu B/.test(HA) && /data-s="settings"/.test(HA));
+  /* Mỗi người chỉ thấy việc của mình: khu chờ duyệt theo quyền duyệt, phiếu kho theo người lập,
+     cảnh báo tồn chỉ cho người lo nhập thép. */
+  {
+    const T0 = 'Date.now() - 3600e3';
+    const bao = (cap, uid) => `NB.reports = [{ khu_id: 'A', user_id: ${uid}, uname: 'X', ts: ${T0}, conflict: 0, resolved: 0, recount: 0 }];
+      NB.counts = [{ khu_id: 'A', phi_id: 'D16', v: 5, kind: 'dem', user_id: ${uid}, uname: 'X', ts: ${T0}, duyet_v: null, duyet_ts: null, duyet_at: null, cap: ${cap} }];`;
+    const pk = (o) => JSON.stringify({ id: 1, phi_id: 'D10', khu_id: 'B', qty: 10, kind: 'nhap', grp: null, ts: Date.now(), user_id: 7, uname: 'K', day: today, duyet_day: null, duyet_ts: null, voided: 0, ...o });
+    const the = () => theNhac(r('vHome()'));
+    r(`${nhacBoot(bao(0, 2) + ' NB.receipts = [];')} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    ok('CVKTHT: báo cáo của tiểu đội trưởng → "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
+    r(`S.me = { id: 9, name: 'Dai', role: 'daidoi' };`);
+    ok('đại đội trưởng: cũng "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
+    r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
+    ok('người gửi: "báo cáo của bạn chờ duyệt", không phải việc duyệt', /Báo cáo Khu A của bạn chờ duyệt/.test(the()) && !/chờ bạn duyệt/.test(the()), the());
+    r(`S.me = { id: 3, name: 'Bình', role: 'tieudoi' };`);
+    ok('tiểu đội trưởng khác: không thấy gì về báo cáo của người khác', !/chờ duyệt|chờ bạn duyệt/.test(the()), the());
+    ok('tiểu đội trưởng: không thấy cảnh báo tồn (không phải việc của họ)', !/dưới mức báo động|đủ dùng/.test(the()), the());
+    r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    ok('CVKTHT: thấy cảnh báo tồn', /dưới mức báo động/.test(the()), the());
+
+    r(`${nhacBoot(bao(1, 8) + ' NB.receipts = [];')} S.me = { id: 10, name: 'Cv2', role: 'cvktht' };`);
+    ok('CVKTHT khác: số do CVKTHT báo thì không phải việc của mình', !/chờ bạn duyệt|chờ duyệt/.test(the()), the());
+    r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    ok('CVKTHT đã báo: "báo cáo của bạn chờ duyệt"', /Báo cáo Khu A của bạn chờ duyệt/.test(the()), the());
+    r(`S.me = { id: 11, name: 'Trung', role: 'trungdoi' };`);
+    ok('trung đội trưởng: "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
+
+    // phiếu kho duyệt SAU lần báo: CVKTHT không duyệt được khu đó nên không bị nhắc
+    r(`${nhacBoot(bao(0, 2) + ` NB.receipts = [${pk({ khu_id: 'A', duyet_day: today, duyet_ts: Date.now() })}];`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    ok('CVKTHT: khu đếm trước lúc phiếu kho vào tồn → không nhắc duyệt', !/chờ bạn duyệt/.test(the()), the());
+
+    // phiếu kho chờ duyệt: cấp chỉ huy thấy tất cả, người lập chỉ thấy phiếu của mình
+    r(`${nhacBoot(`NB.receipts = [${pk({ id: 21, user_id: 8 })}, ${pk({ id: 22, user_id: 7, grp: 'g2' })}];`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    ok('CVKTHT: chỉ thấy phiếu của mình đang chờ', /1 phiếu của bạn chờ duyệt/.test(the()) && !/phiếu chờ bạn duyệt/.test(the()), the());
+    r(`S.me = { id: 12, name: 'Cv3', role: 'cvktht' };`);
+    ok('CVKTHT không lập phiếu nào: không có thẻ phiếu', !/phiếu/.test(the()), the());
+    r(`S.me = { id: 9, name: 'Dai', role: 'daidoi' };`);
+    ok('đại đội trưởng: "2 phiếu chờ bạn duyệt"', /2 phiếu chờ bạn duyệt/.test(the()), the());
+    r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
+    ok('tiểu đội trưởng: không có thẻ phiếu', !/phiếu/.test(the()), the());
+  }
   // khu trống (không tồn, không phiếu, chưa đếm ra gì) thì không bị nhắc báo — khớp với server
-  r(`${nhacBoot("NB.baseline = NB.baseline.filter((x) => x.khu_id !== 'B');")} S.me = { id: 1, name: 'A', role: 'admin' };`);
+  r(`${nhacBoot("NB.baseline = NB.baseline.filter((x) => x.khu_id !== 'B');")} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
   ok('khu trống: không bị nhắc chưa báo', !/Khu B \(/.test(r('vHome()')) && /Khu A chưa báo/.test(r('vHome()')), theNhac(r('vHome()')));
   // ngày đầu tiên (chưa có tồn chuẩn nào): khu nào cũng phải báo để lập sổ
   r(`${nhacBoot("NB.baseline = []; NB.innKhu = []; NB.mvNew = [];")} NB.lastClosed = null; S.me = { id: 1, name: 'A', role: 'admin' };`);
@@ -1189,7 +1246,9 @@ const run = async () => {
   ok('màn đếm: nói bị huỷ, ai huỷ, lý do, và phải báo lại', /Báo cáo Khu A của bạn đã bị huỷ/.test(DH) && /Sếp huỷ lúc/.test(DH) && /Lý do: D16 đếm thiếu 2 bó/.test(DH) && /đếm thực tế rồi gửi lại/.test(DH), (DH.match(/Báo cáo Khu A của bạn.{0,220}/) || [''])[0]);
   ok('màn đếm: không còn câu "đang chờ admin duyệt", bảng không có sẵn số', !/đang chờ admin duyệt/.test(DH) && r('Object.keys(S.draft.cells).length') === 0);
   r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'home';`);
-  ok('admin: thấy khu đang chờ báo lại sau khi huỷ', /Khu A: đã huỷ báo cáo, chờ báo lại<\/b><span class="sm">Của An · lý do: D16 đếm thiếu 2 bó/.test(r('vHome()')), theNhac(r('vHome()')));
+  ok('admin: không có thẻ huỷ báo cáo (không phải việc của admin)', !/đã huỷ báo cáo|đã bị huỷ/.test(r('vHome()')), theNhac(r('vHome()')));
+  r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  ok('CVKTHT: thấy khu đang chờ báo lại sau khi huỷ', /Khu A: đã huỷ báo cáo, chờ báo lại<\/b><span class="sm">Của An · lý do: D16 đếm thiếu 2 bó/.test(r('vHome()')), theNhac(r('vHome()')));
   // khu đã báo lại (lần báo mới hơn lúc huỷ): thông báo hết việc
   r(`${nhacBoot(huyA + " NB.reports = [{ khu_id: 'A', user_id: 2, uname: 'An', ts: Date.now(), conflict: 0, resolved: 0, recount: 0 }];")} S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('đã báo lại sau khi bị huỷ: không nhắc nữa', !/bị huỷ/.test(r('vHome()')) && r("huyOf('A')") === null);

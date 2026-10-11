@@ -456,6 +456,18 @@ function totals() {
 /* Một ô của khu đang CHỜ DUYỆT nếu lần báo mới nhất chưa được duyệt. Mốc duyet_ts giữ ts của
    lần báo đã duyệt, nên "đã duyệt" là phép so BẰNG — xem chú thích counts trong schema.sql. */
 const khuWaiting = (id) => S.boot.counts.some((c) => c.khu_id === id && !(c.duyet_ts != null && c.duyet_ts === c.ts));
+/* Người đang xem có DUYỆT ĐƯỢC khu này không — cùng luật với reviewDuyet ở server, tính trên bootstrap
+   để Tổng quan chỉ nhắc việc của đúng người: cấp chỉ huy duyệt được mọi khu; CVKTHT chỉ khi mọi ô do
+   cấp 0 báo (cap ghi trong dòng), khu không còn phiếu kho chờ, và không có phiếu kho nào được duyệt
+   SAU lần báo của khu. (Phiếu bị huỷ sau lần báo thì bootstrap không có — màn Duyệt và server vẫn
+   chặn đúng; ở đây chỉ là chọn có nhắc hay không.) */
+const khuDuyetDuoc = (id) => {
+  if (isCH()) return true;
+  if (capMe() !== 1) return false;
+  const b = S.boot, rp = b.rm[id];
+  if (b.counts.some((c) => c.khu_id === id && (c.cap == null ? 2 : c.cap) !== 0)) return false;
+  return !(b.receipts || []).some((r) => r.khu_id === id && !r.voided && (!r.duyet_day || (rp && r.duyet_ts > rp.ts)));
+};
 /* ===== Khung giờ đếm (mỗi khu đếm nhiều lần/ngày) =====
    Cùng luật với server (slotOf/slotsDue): khung ĐÃ KẾT THÚC mà khu chưa đếm là thiếu, và lần đếm
    khung sau không bù cho khung trước. Màn Duyệt lấy kết quả thẳng từ server; mấy hàm này chỉ để
@@ -789,16 +801,26 @@ function vForcePin() {
 function vHome() {
   const b = S.boot, T = totals();
   const alerts = [];
-  /* Khu chưa báo: admin theo dõi cả bãi nên thấy mọi khu; người dưới cấp duyệt chỉ thấy khu mình
-     đếm được — khu người khác phụ trách thì họ không làm gì được, nhắc chỉ thành nhiễu.
-     Dòng "Tạm tính: N khu chưa báo" ở đầu trang vẫn tính cả bãi, vì đó là nói về con số tồn. */
+  /* MỖI NGƯỜI CHỈ THẤY VIỆC CỦA MÌNH: thẻ nào cũng phải là việc người đang xem PHẢI làm hoặc ĐƯỢC
+     QUYỀN làm, hoặc tin về chính việc họ đã báo. Theo vai trò:
+       - Tiểu đội trưởng: đếm khu mình (chưa báo, chưa đếm buổi, báo cáo bị huỷ), báo cáo của mình
+         đang chờ duyệt, hai người báo khác số ở khu mình.
+       - CVKTHT: quản lý việc đếm của cả bãi (khu chưa báo kèm tên người phụ trách, thiếu buổi, báo cáo
+         bị huỷ chờ báo lại), những gì mình DUYỆT ĐƯỢC, phiếu và lần ghi sổ của chính mình đang chờ,
+         tồn thấp, vay mượn quá hạn.
+       - Trung đội trưởng, Đại đội trưởng: những gì chờ duyệt (họ duyệt được hết), tồn, vay mượn.
+       - Admin: như cấp chỉ huy, cộng việc hệ thống (khu chưa giao người phụ trách).
+     Việc đếm của cả bãi là của CVKTHT, nên cấp chỉ huy không bị nhắc khu chưa báo / thiếu buổi. */
+  const qlDem = capMe() === 1; // người quản lý việc đếm cả bãi
+  /* Khu chưa báo: Tiểu đội trưởng chỉ thấy khu mình đếm được; CVKTHT thấy cả bãi, kèm tên người phụ
+     trách từng khu để biết nhắc ai. Dòng "Tạm tính: N khu chưa báo" ở đầu trang vẫn tính cả bãi, vì
+     đó là nói về con số tồn. */
   const miss = b.khuAct.filter((k) => !daBaoHomNay(k.id));
   // chỉ nhắc khu có gì để đếm (khớp với server); dòng "Tạm tính" đầu trang vẫn tính mọi khu
   const missViec = miss.filter((k) => khuCoViec(k.id));
-  const missMine = isQL() ? missViec : missViec.filter((k) => canCount(k.id));
-  /* Admin cần biết NHẮC AI: kèm tên người phụ trách từng khu; khu chưa giao ai thì nói thẳng. */
+  const missMine = isCH() ? [] : qlDem ? missViec : missViec.filter((k) => canCount(k.id));
   const ai = (k) => (b.kuTen[k.id] && b.kuTen[k.id].length ? b.kuTen[k.id].join(', ') : 'chưa giao ai');
-  const missS = isQL() ? missMine.map((k) => k.name + ' (' + ai(k) + ')').join(' · ') : missMine.map((k) => k.name).join(', ');
+  const missS = qlDem ? missMine.map((k) => k.name + ' (' + ai(k) + ')').join(' · ') : missMine.map((k) => k.name).join(', ');
   // một khu và người này đếm được: bấm là mở thẳng khu đó
   const missK = missMine.length === 1 && canCount(missMine[0].id) ? missMine[0].id : null;
   if (missMine.length) alerts.push({ bad: false, t: (missMine.length === 1 ? missMine[0].name : missMine.length + ' khu') + ' chưa báo', s: missS, to: 'dem', k: missK });
@@ -808,57 +830,54 @@ function vHome() {
     const chuaGiao = b.khuAct.filter((k) => !(b.ku[k.id] && b.ku[k.id].length));
     if (chuaGiao.length) alerts.push({ bad: false, t: chuaGiao.length + ' khu chưa giao người phụ trách', s: chuaGiao.map((k) => k.name).join(', ') + ' · ai cũng được nhắc đếm các khu này. Giao ở Cài đặt → Khu bãi', to: 'settings' });
   }
+  /* Hai người báo khác số: cấp duyệt chọn số (việc của họ); Tiểu đội trưởng của khu đó thấy để biết
+     số của mình đang bị đem so. */
   b.reports.forEach((r) => {
     const k = b.khuBy[r.khu_id];
-    if (!k || !k.active) return;
-    // chỉ người liên quan: admin, và người đếm được khu đó — khu của người khác thì không có việc gì cho họ
-    if (!isQL() && !canCount(k.id)) return;
-    if (r.conflict && !r.resolved) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: isQL() ? 'Vào Duyệt để chọn số' : 'Cấp trên đang xem', to: isQL() ? 'duyet' : null });
+    if (!k || !k.active || !(r.conflict && !r.resolved)) return;
+    if (isQL()) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: 'Vào Duyệt để chọn số', to: 'duyet' });
+    else if (canCount(k.id)) alerts.push({ bad: false, t: k.name + ': 2 người báo số khác nhau', s: 'Cấp trên đang xem', to: null });
   });
-  /* Báo cáo bị huỷ: người GỬI phải thấy ngay ở Tổng quan (kèm lý do), cả người đếm được khu đó vì ai
-     trong số họ cũng báo lại được. Admin thấy để biết khu đó còn đang chờ báo lại. */
+  /* Báo cáo bị huỷ: người GỬI và Tiểu đội trưởng đếm được khu đó phải đi đếm lại (thẻ đỏ, bấm là mở
+     màn đếm). CVKTHT quản lý việc đếm nên thấy khu nào đang chờ báo lại. Cấp chỉ huy không có việc gì ở
+     đây (chính họ hoặc CVKTHT là người huỷ). */
   b.khuAct.forEach((k) => {
     const h = huyOf(k.id);
     if (!h) return;
-    const cuaToi = h.user_id === S.me.id, demDuoc = canCount(k.id);
-    if (isQL() && !cuaToi) alerts.push({ bad: false, t: k.name + ': đã huỷ báo cáo, chờ báo lại', s: 'Của ' + (h.uname || '') + ' · lý do: ' + cut(h.ly_do, 70), to: null });
-    else if (cuaToi || demDuoc) {
+    const cuaToi = h.user_id === S.me.id, demLai = !isQL() && canCount(k.id);
+    if (cuaToi || demLai) {
       alerts.push({ bad: true, t: 'Báo cáo ' + k.name + (cuaToi ? ' của bạn' : '') + ' đã bị huỷ',
-        s: 'Lý do: ' + cut(h.ly_do, 90) + (demDuoc ? ' · bấm để đếm và báo lại' : ''), to: demDuoc ? 'dem' : null, k: demDuoc ? k.id : null });
-    }
+        s: 'Lý do: ' + cut(h.ly_do, 90) + (canCount(k.id) ? ' · bấm để đếm và báo lại' : ''), to: canCount(k.id) ? 'dem' : null, k: canCount(k.id) ? k.id : null });
+    } else if (qlDem) alerts.push({ bad: false, t: k.name + ': đã huỷ báo cáo, chờ báo lại', s: 'Của ' + (h.uname || '') + ' · lý do: ' + cut(h.ly_do, 70), to: null });
   });
-  /* Việc chờ duyệt phải hiện ngay ở Tổng quan, cho cả hai phía: admin biết còn phải duyệt, còn
-     người đếm biết báo cáo của mình đã tới chứ chưa được tính vào tồn. */
+  /* Khu chờ duyệt, hai phía:
+     - người DUYỆT ĐƯỢC khu đó (cùng luật với server, xem khuDuyetDuoc): "N khu chờ bạn duyệt";
+     - người đã gửi báo cáo mà mình không tự duyệt được: "báo cáo của bạn đang chờ duyệt", để biết số
+       đã tới nhưng chưa vào tồn. Báo cáo của người khác thì không phải việc của họ. */
   // ngày đã chốt thì không còn gì "chờ duyệt" nữa: nhãn khu đã nói số đó không vào tồn
-  // người không phải admin: chỉ khu mình đếm được (báo cáo của mình đang chờ), không phải cả bãi
-  const cho = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id) && (isQL() || canCount(k.id)));
-  if (cho.length) {
-    alerts.push({
-      bad: false,
-      t: (cho.length === 1 ? cho[0].name : cho.length + ' khu') + ' chờ duyệt',
-      s: isQL() ? 'Vào Duyệt để xem số và duyệt theo từng khu' : 'Đã gửi, chờ cấp trên duyệt mới tính vào tồn',
-      to: isQL() ? 'duyet' : null,
-    });
+  const choKhu = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id));
+  const choToiDuyet = isQL() ? choKhu.filter((k) => khuDuyetDuoc(k.id)) : [];
+  const choCuaToi = choKhu.filter((k) => !choToiDuyet.includes(k) && b.rm[k.id].user_id === S.me.id);
+  if (choToiDuyet.length) {
+    alerts.push({ bad: false, t: (choToiDuyet.length === 1 ? choToiDuyet[0].name : choToiDuyet.length + ' khu') + ' chờ bạn duyệt', s: 'Vào Duyệt để xem số và duyệt theo từng khu', to: 'duyet' });
   }
-  /* Admin bắt mỗi khu đếm nhiều lần/ngày (Cài đặt → Quy tắc). Đây là việc BẮT BUỘC: khung đã qua
-     mà khu chưa đếm thì màn Duyệt tính là việc chưa xử lý và ghi vào nhật ký lúc sổ tự chốt, không
-     chốt — nên thẻ màu đỏ. Chỉ nhắc khu ĐÃ báo hôm nay: khu chưa báo gì thì thẻ "chưa báo" ở trên
-     đã nói, nhắc thêm nữa thành hai thẻ trùng ý cho cùng một khu. Nhiều khu thì gom một thẻ. */
-  /* Khung ĐÃ HẾT mà thiếu: chỉ admin cần biết (để nhắc khu, việc thiếu ghi vào nhật ký chốt). Người
-     đếm không bù được khung đã qua — thẻ đỏ không bấm được chỉ làm họ quen bỏ qua cảnh báo. */
-  // daBaoHomNay chứ không phải b.rm: báo cáo chưa duyệt chuyển từ hôm qua sang không phải "đã báo hôm nay",
-  // khu đó đã có thẻ "chưa báo" ở trên — nhắc thêm thiếu khung là hai thẻ trùng ý cho một khu
-  const thieuSlot = !isQL() ? [] : b.khuAct.filter((k) => daBaoHomNay(k.id)).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
+  if (choCuaToi.length) {
+    alerts.push({ bad: false, t: 'Báo cáo ' + choCuaToi.map((k) => k.name).join(', ') + ' của bạn chờ duyệt', s: 'Đã gửi, chờ cấp trên duyệt mới tính vào tồn', to: null });
+  }
+  /* Khung ĐÃ HẾT mà thiếu: không bù được nữa, việc thiếu ghi vào nhật ký lúc chốt. Người quản lý việc
+     đếm (CVKTHT) cần biết để nhắc khu; Tiểu đội trưởng không bù được khung đã qua — thẻ đỏ không bấm
+     được chỉ làm họ quen bỏ qua cảnh báo.
+     daBaoHomNay chứ không phải b.rm: báo cáo chưa duyệt chuyển từ hôm qua sang không phải "đã báo hôm
+     nay", khu đó đã có thẻ "chưa báo" ở trên — nhắc thêm thiếu khung là hai thẻ trùng ý cho một khu. */
+  const thieuSlot = !qlDem ? [] : b.khuAct.filter((k) => daBaoHomNay(k.id)).map((k) => ({ k, m: slotMissing(k.id) })).filter((x) => x.m.length);
   const slotHint = 'Không bù được, ghi vào nhật ký khi chốt sổ';
-  if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: isQL() ? 'duyet' : null });
-  else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu ' + slotTenNgan(x.m), s: slotHint, to: isQL() ? 'duyet' : null }));
+  if (thieuSlot.length > 2) alerts.push({ bad: true, t: thieuSlot.length + ' khu thiếu lần đếm', s: thieuSlot.map((x) => x.k.name).join(', ') + ' · ' + slotHint, to: 'duyet' });
+  else thieuSlot.forEach((x) => alerts.push({ bad: true, t: x.k.name + ' thiếu ' + slotTenNgan(x.m), s: slotHint, to: 'duyet' }));
   /* Khung ĐANG DIỄN RA mà khu chưa đếm: đây mới là lời nhắc có ích — còn kịp đếm. Chỉ khu đã báo
-     hôm nay (khu chưa báo gì thì thẻ "chưa báo" ở trên đã nói) và khu người này được đếm. */
+     hôm nay (khu chưa báo gì thì thẻ "chưa báo" ở trên đã nói). Tiểu đội trưởng: khu họ đếm được;
+     CVKTHT: mọi khu; cấp chỉ huy: không nhắc. */
   const curS = slotNow(), hNow = curS ? vnHourNow() : 0;
   if (curS && !b.closed && hNow >= curS.from && hNow < curS.to) {
-    /* Tiểu đội trưởng: nhắc các khu họ đếm được. CVKTHT quản lý chung cả bãi và là người đi đếm khi
-       khu thiếu người, nên được nhắc MỌI khu. Cấp chỉ huy đếm được mọi khu nhưng không đi đếm: không
-       nhắc, họ thấy khu thiếu buổi ở thẻ đỏ phía trên khi khung đã hết. */
     const cuaToi = isCH() ? [] : myKhu();
     const chua = cuaToi.filter((k) => daBaoHomNay(k.id) && slotNeed(k.id) && !(b.slotDone[k.id] || new Set()).has(curS.i));
     const con = 'Còn tới ' + fmtGio(curS.to);
@@ -873,25 +892,24 @@ function vHome() {
   }
   // sổ vay mượn chờ duyệt: nhắc đúng số lần ghi NGƯỜI NÀY duyệt được (server đếm sẵn theo cấp bậc)
   if (isQL() && b.loanDuyet) alerts.push({ bad: false, t: b.loanDuyet + ' lần ghi vay mượn chờ bạn duyệt', s: 'Chưa tính vào dư nợ với đối tác', to: 'vaymuon' });
+  /* Phiếu kho chờ duyệt: cấp chỉ huy duyệt được mọi phiếu nên thấy tất cả; người khác chỉ thấy phiếu
+     CỦA MÌNH đang chờ (phiếu của người khác không phải việc của họ). */
   const choP = (b.receipts || []).filter((r) => !r.duyet_day && !r.voided);
-  // người đếm không lập phiếu, cũng không duyệt: thẻ phiếu chờ không có gì cho họ làm
-  if (choP.length && canIn()) {
-    const nP = new Set(choP.map((r) => r.grp || 'id' + r.id)).size;
-    alerts.push({
-      bad: false,
-      t: nP + ' phiếu chờ duyệt',
-      // phiếu kho chỉ cấp chỉ huy duyệt: CVKTHT lập được nhưng chỉ chờ, nên dẫn về màn Nhập
-      s: isCH() ? 'Chưa tính vào tồn. Vào Duyệt để duyệt hoặc từ chối' : 'Chưa tính vào tồn, chờ ' + CAP_TREN + ' duyệt',
-      to: isCH() ? 'duyet' : canIn() ? 'nhap' : null,
-    });
+  const nPhieu = (list) => new Set(list.map((r) => r.grp || 'id' + r.id)).size;
+  if (isCH() && choP.length) {
+    alerts.push({ bad: false, t: nPhieu(choP) + ' phiếu chờ bạn duyệt', s: 'Chưa tính vào tồn. Vào Duyệt để duyệt hoặc từ chối', to: 'duyet' });
+  } else if (canIn()) {
+    const cuaToi = choP.filter((r) => r.user_id === S.me.id);
+    if (cuaToi.length) alerts.push({ bad: false, t: nPhieu(cuaToi) + ' phiếu của bạn chờ duyệt', s: 'Chưa tính vào tồn, chờ ' + CAP_TREN + ' duyệt', to: 'nhap' });
   }
-  /* (Đã có thẻ "lần ghi vay mượn chờ duyệt" cho admin ở trên. Không bày thêm cho người khác: số này là
-     của CẢ BÃI, không phải lần ghi của người đang xem — trạng thái từng lần ghi đã có ở màn Vay mượn.) */
   // Gom các phi cùng một loại cảnh báo vào MỘT thẻ khi có nhiều hơn 2:
   // ngày đầu chưa có tồn chuẩn, cả 15 phi đều dưới mức tối thiểu sẽ đẩy hết nội dung khác xuống dưới.
   const rateTxt = (p) => (b.rate[p.id] ? (isCuon(p) ? fmtDec(b.rate[p.id] / p.bo_size) + ' cuộn/ngày' : fmtInt(b.rate[p.id]) + ' cây/ngày') : '');
   const neg = [], low = [], shortp = [];
-  b.phiAct.forEach((p) => {
+  /* Cảnh báo theo phi: "đã dùng âm" là số liệu cần soi lại — việc của người duyệt (huỷ báo cáo sai);
+     tồn thấp / sắp hết là việc của người lo nhập thép (từ CVKTHT trở lên). Tiểu đội trưởng không làm gì
+     được với các thẻ này nên không thấy. */
+  if (canIn()) b.phiAct.forEach((p) => {
     // cùng ngưỡng kg với màn Duyệt: lệch vài cây là sai số đếm thường ngày, báo đỏ ở đây thì
     // bấm sang Duyệt lại không có việc gì để xử lý, và người dùng mất tin vào cảnh báo
     if (b.lastClosed && T.used[p.id] * p.kg_per_cay < -LIM('negKg')) neg.push(p);
@@ -899,7 +917,8 @@ function vHome() {
     if (T.perPhi[p.id] < p.min_stock) low.push(p);
     else if (dl !== null && dl < 3) shortp.push({ p, dl });
   });
-  const toDuyet = isQL() ? 'duyet' : null; // người không phải admin: thẻ chỉ để đọc, không bấm được
+  const toDuyet = 'duyet';
+  if (!isQL()) neg.length = 0;
   if (neg.length > 2) alerts.push({ bad: true, t: neg.length + ' phi có số "đã dùng" âm', s: neg.map((p) => p.id).join(', ') + ' · nhập sót phiếu hoặc đếm sai?', to: toDuyet });
   else neg.forEach((p) => alerts.push({ bad: true, t: p.id + ' đã dùng âm (' + qMain(T.used[p.id], p) + ')', s: 'Nhập sót phiếu hoặc đếm sai?', to: toDuyet }));
   if (low.length > 2) alerts.push({ bad: true, t: low.length + ' phi dưới mức báo động', s: low.map((p) => p.id).join(', '), to: 'ton' });
@@ -1405,7 +1424,7 @@ const choCapTren = (gi) => `<span class="sm b" style="color:var(--warn);line-hei
    khác chỉ để duyệt sổ vay là để nó nằm chờ mãi. Lần ghi có kèm phiếu kho thì server đã bỏ khỏi
    danh sách này, vì phiếu kho đi kèm nằm ở mục Phiếu chờ duyệt và duyệt phiếu là duyệt luôn sổ. */
 function loanSec(R) {
-  const L = R.loans || [];
+  const L = (R.loans || []).filter((r) => duyetDuoc(r));
   if (!L.length) return '';
   const by = {}, order = [];
   L.forEach((r) => { const g = r.grp || 'id' + r.id; if (!by[g]) { by[g] = []; order.push(g); } by[g].push(r); });
@@ -1482,7 +1501,8 @@ function vDuyet() {
       <span class="sm muted">${esc(v.uname)} · ${hhmm(v.ts)}${cuNgay}${v.note ? ' · ' + esc(v.note) : ''}</span>${canhBao}</div>
       ${R.closed ? '' : duyetCap(v.cap) ? `<div class="row gap6"><button class="btn s ok f1" data-a="pduyet" data-id="${v.id}">DUYỆT PHIẾU</button><button class="btn s bad f1" data-a="preject" data-id="${v.id}">TỪ CHỐI</button></div>` : choCapTren('Phiếu kho')}</div>`;
   };
-  const phieuSec = !phieu.length ? '' : `<div class="col gap8">
+  // phiếu kho chỉ cấp chỉ huy duyệt: người khác không có việc gì ở mục này (khu bị vướng phiếu đã tự nói)
+  const phieuSec = !phieu.length || !isCH() ? '' : `<div class="col gap8">
     <div class="row" style="justify-content:space-between;align-items:baseline"><span class="sec">Phiếu chờ duyệt</span><span class="sm b" style="color:var(--warn)">${phieu.length} phiếu chưa vào tồn</span></div>
     <div class="sm muted" style="line-height:1.4">Phiếu chỉ tính vào tồn kể từ ngày được duyệt. Duyệt khu cũng duyệt luôn phiếu của khu đó.</div>
     ${phieu.map(phieuCard).join('')}</div>`;
@@ -1526,11 +1546,24 @@ function vDuyet() {
       ${canRe ? `<button class="btn s bad full" data-a="recount" data-k="${esc(r.topKhu)}">HUỶ BÁO CÁO CỦA ${esc(cut(kname(r.topKhu), 14).toUpperCase())}</button>` : ''}</div>`;
   }).join('');
 
-  const pend = R.pending != null ? R.pending : R.exceptions.length;
+  /* Số việc CỦA NGƯỜI ĐANG XEM, đếm theo lần bấm như server (R.pending): khu mình duyệt được, phiếu kho
+     (chỉ cấp chỉ huy), hai người báo khác số và phi bất thường (cấp duyệt nào cũng xử lý được), khu chưa
+     báo / thiếu buổi (việc nhắc đếm của CVKTHT). Việc chỉ cấp trên làm được thì không tính vào đây. */
+  const khuOf = (id) => khus.find((k) => k.khu === id);
+  const viec = new Set(R.exceptions.filter((e) => {
+    if (e.type === 'receipt_pending') return isCH();
+    if (e.type === 'khu_pending' || e.type === 'recheck') return !!khuOf(e.khu) && khuDuoc(khuOf(e.khu));
+    if (e.type === 'khu_missing' || e.type === 'slot_missing') return capMe() === 1;
+    return true;
+  }).map((e) => (e.type === 'receipt_pending' ? 'phieu|' + e.key : e.type === 'khu_pending' || e.type === 'recheck' ? 'khu|' + e.khu : e.type + '|' + (e.khu || e.phi))));
+  const pend = viec.size;
+  const tong = R.pending != null ? R.pending : R.exceptions.length;
   const allOk = pend === 0;
-  const verdict = allOk
+  const verdict = allOk && tong
+    ? `<div class="card ok col" style="gap:4px"><b style="font-size:19px">Không còn việc của bạn</b><span style="font-size:16px;line-height:1.4">Còn ${tong} việc chờ ${CAP_TREN} xử lý. Sổ hôm nay tự chốt sau 0h.</span></div>`
+    : allOk
     ? `<div class="card ok col" style="gap:4px"><b style="font-size:19px">Đã duyệt hết</b><span style="font-size:16px;line-height:1.4">Mọi khu đã báo đều đã duyệt và không còn phiếu nào chờ. Sổ hôm nay tự chốt sau 0h; khu nào báo lại số khác sẽ phải duyệt lại.</span></div>`
-    : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Còn ${pend} việc cần xử lý</b><span class="sm" style="line-height:1.4">Duyệt từng khu${khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length > 1 ? ', hoặc "Duyệt tất cả"' : ''}. Sổ hôm nay <b>tự chốt sau 0h</b> theo số đã duyệt: báo cáo chưa duyệt chuyển sang ngày mai chờ duyệt tiếp, việc còn treo được ghi vào nhật ký.</span></div>`;
+    : `<div class="card warn col" style="gap:4px"><b style="font-size:19px">Còn ${pend} việc cần xử lý</b><span class="sm" style="line-height:1.4">Duyệt từng khu${khus.filter((k) => (k.waiting || k.phieu.length || k.recheck) && khuDuoc(k)).length > 1 ? ', hoặc "Duyệt tất cả"' : ''}. Sổ hôm nay <b>tự chốt sau 0h</b> theo số đã duyệt: báo cáo chưa duyệt chuyển sang ngày mai chờ duyệt tiếp, việc còn treo được ghi vào nhật ký.</span></div>`;
   const gap = R.span > 1 && !R.closed ? `<div class="card warn col" style="gap:4px"><b>Có ${R.span - 1} ngày chưa tự chốt xong</b><span class="sm" style="line-height:1.4">Lượng dùng dưới đây gộp ${R.span} ngày kể từ ngày chốt ${esc(fmtDay(R.last))}. Cảnh báo "dùng nhiều" đã chia theo số ngày.</span></div>` : '';
   const first = !R.last ? `<div class="card col" style="gap:4px"><b>Ngày đầu tiên</b><span class="sm muted">Chưa có tồn chuẩn cũ. Sau 0h, số đã duyệt hôm nay tự trở thành tồn chuẩn đầu tiên.</span></div>` : '';
 
