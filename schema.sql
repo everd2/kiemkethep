@@ -490,7 +490,26 @@ INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', j.value, j.key + 1 FROM json_e
 INSERT INTO gc_muc (loai, ten, sort) SELECT 'vg', j.value, j.key + 1 FROM json_each('["Thiếu thép","Chưa có bản vẽ","Bản vẽ sai","Máy hỏng","Thiếu người","Chờ mặt bằng"]') j
   WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'vg');
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 30);
+-- BÁO CÁO CA gửi cấp trên (xem src/baocao.js). Một dòng cho mỗi ca đã soạn: data = JSON các mục người soạn đã sửa
+-- (mục nào không sửa thì app tự ghép lại từ quân số và gia công lúc mở), van_ban = đúng bản chữ đã chép đi gửi.
+CREATE TABLE IF NOT EXISTS bao_cao_ca (
+  ngay TEXT NOT NULL,
+  ca INTEGER NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  van_ban TEXT,
+  ts INTEGER NOT NULL,
+  by_id INTEGER NOT NULL,
+  PRIMARY KEY (ngay, ca)
+);
+-- Mẫu báo cáo ca: một dòng duy nhất (id = 1). data = JSON phần đầu (đơn vị, chỉ huy, dự án...), máy móc, dòng kiểm tra.
+CREATE TABLE IF NOT EXISTS bc_mau (
+  id INTEGER PRIMARY KEY,
+  data TEXT NOT NULL DEFAULT '{}',
+  ts INTEGER NOT NULL,
+  by_id INTEGER
+);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 31);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

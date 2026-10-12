@@ -176,7 +176,10 @@ const S = {
   gc: null, gcF: 'mo', gcId: null, gcDetail: null, gcForm: null, gcPct: null,
   /* Quân số đầu ca: S.qs = quân số của ca đang xem (nạp riêng khi vào màn), qsCa = ca đang chọn (null = ca
      đang diễn ra, server quyết), qsF = tổ đang ghi { uid, nghi, kia, lamTay }; ô đang gõ nằm ở S.form (qstong, qslam, qsnote) */
-  qs: null, qsCa: null, qsF: null, qsH: null, // qsH: thẻ báo quân số trên Tổng quan (qsTheHome)
+  qs: null, qsCa: null, qsF: null, qsH: null, qsHanMo: false,
+  /* Báo cáo ca: S.bcc = số liệu của ca đang soạn (nạp riêng), bcCa = ca chọn (null = ca đang diễn ra), bcM = các mục
+     người soạn đã sửa tay { s3..s8 }, bcDau = phần đầu đang sửa, bcDauMo = mở phần đầu */
+  bcc: null, bcCa: null, bcM: {}, bcDau: null, bcDauMo: false, // qsH: thẻ báo quân số trên Tổng quan (qsTheHome)
   hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, legend: false, draftWarn: null, cmp: null, busy: false,
   stale: null, subs: {}, // subs: khu_id -> null (đang tải) | mảng lần báo
   kuEdit: null, kuPick: [], // đang gán người phụ trách cho khu nào, và danh sách đang chọn
@@ -2026,6 +2029,7 @@ function fmtAudit(a) {
       + (d.ca_kia ? ', ' + CA_TEN[d.ca === 1 ? 2 : 1] + ' ' + d.ca_kia : '')
       + (qsSoNghi(d.nghi) ? ', nghỉ ' + qsSoNghi(d.nghi) + ' (' + QS_LY_DO.filter((l) => (d.nghi || {})[l[0]]).map((l) => d.nghi[l[0]] + ' ' + l[1]).join(', ') + ')' : '')
       + (d.ghi_chu ? ' — ' + d.ghi_chu : ''), 'qs'],
+    bc_luu: ['chép báo cáo ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ' gửi cấp trên' + (d.kt_mau ? ' (đặt lại mẫu kiểm tra)' : ''), 'qs'],
     qs_han: ['đổi hạn báo quân số: ca ngày trước ' + phutGio(d.ca1 || 0) + ', ca đêm trước ' + phutGio(d.ca2 || 0), 'qs'],
     doitac_create: ['thêm đối tác ' + d.name, 'vay'],
     doitac_update: ['sửa đối tác ' + d.name + (d.active ? '' : ' (ẩn)'), 'vay'],
@@ -2205,6 +2209,7 @@ function vMore() {
   const a = isAdmin();
   return `${head('Thêm', esc(S.me.name) + ' · ' + esc(roleTen(S.me.role)))}
   <div class="f1 scroll pad col gap8" id="body">
+    ${isQL() ? '<button class="menu" data-a="nav" data-s="baocaoca">Báo cáo ca gửi cấp trên</button>' : ''}
     <button class="menu" data-a="nav" data-s="quanso">Quân số đầu ca</button>
     <button class="menu" data-a="nav" data-s="stats">Thống kê theo khu / toàn bãi</button>
     <button class="menu" data-a="nav" data-s="ton">Tồn bãi theo đường kính</button>
@@ -3265,11 +3270,12 @@ function vQuanSo() {
       <span class="sm">${da}/${ds.length - ngoai} tổ đã báo${ngoai ? ` · ${ngoai} tổ làm ${CA_TEN[kiaCa]}` : ''} · nghỉ ${nghi} · hạn báo ${hhmm(Q.han)}${doan ? ` · tổng quân số gồm ${doan} tổ lấy theo lần báo gần nhất` : ''}</span></div>` : ''}
     ${the || '<div class="muted">Chưa có tài khoản Tiểu đội trưởng nào. Admin tạo ở Thêm → Người dùng và PIN.</div>'}
     ${ds.length ? `<span class="sm muted" style="line-height:1.4">${Q.suaDuoc ? 'Chạm một tổ để ghi thay hoặc sửa. Dòng ghi thay có ghi tên người ghi.' : 'Ca này đã quá 7 ngày: chỉ xem.'}</span>` : ''}
-    <div class="card col gap6"><b>Hạn báo quân số</b>
+    ${ds.length ? `<button class="btn full" data-a="bcmo" data-v="${caKhoa(Q)}">Soạn báo cáo ${esc(caGoi(Q))} gửi cấp trên</button>` : ''}
+    ${!S.qsHanMo ? `<div class="row gap8 sm muted"><span class="f1">Hạn báo: ca ngày trước ${phutGio(Q.hanPhut[0])}, ca đêm trước ${phutGio(Q.hanPhut[1])}</span><button class="chip s" style="flex:none" data-a="qshanmo">Đổi</button></div>` : `<div class="card col gap6"><b>Hạn báo quân số</b>
       <div class="row gap8"><div class="col f1" style="gap:4px"><span class="sm">Ca ngày, trước</span><input class="inp s" type="time" id="qsh1" data-model="qsh1" value="${esc(fv('qsh1', phutGio(Q.hanPhut[0])))}"></div>
         <div class="col f1" style="gap:4px"><span class="sm">Ca đêm, trước</span><input class="inp s" type="time" id="qsh2" data-model="qsh2" value="${esc(fv('qsh2', phutGio(Q.hanPhut[1])))}"></div></div>
-      <button class="btn s" data-a="qshan">Lưu hạn báo</button>
-      <span class="sm muted" style="line-height:1.4">Quá giờ này mà tổ chưa báo thì thẻ nhắc ở Tổng quan chuyển đỏ. Báo muộn vẫn ghi được.</span></div>
+      <div class="row gap6"><button class="btn s f1" data-a="qshan">Lưu hạn báo</button><button class="btn s" style="flex:none" data-a="qshanmo">Thôi</button></div>
+      <span class="sm muted" style="line-height:1.4">Quá giờ này mà tổ chưa báo thì thẻ nhắc ở Tổng quan chuyển đỏ. Báo muộn vẫn ghi được.</span></div>`}
   </div>`;
 }
 // CVKTHT trở lên ghi thay / sửa cho một tổ
@@ -3318,6 +3324,179 @@ function gcVgHtml() {
   </div></div>`;
 }
 const gcVgMo = (id) => { S.gcVg = { id, loai: null, dung: false }; delete S.form.gcvgnote; render(); };
+
+/* --- Báo cáo ca gửi cấp trên ---
+   CVKTHT trở lên soạn "BÁO CÁO QUÂN SỐ CA" theo đúng mẫu của đơn vị rồi chép dán vào Zalo. Mục tiêu: soát và chép
+   trong vài phút. Mỗi mục là một ô chữ ĐIỀN SẴN từ số liệu app:
+     - phần đầu (đơn vị, chỉ huy, dự án, khu vực) và máy móc: lấy từ mẫu, lần chép trước lưu lại;
+     - 3. quân số: từ quân số đầu ca các tổ đã báo (tổ chia ca, tổ làm ca kia, tổ chưa báo đều có dòng);
+     - 4. công việc: đơn gia công đang làm (kèm %) và đơn xong trong giờ ca;
+     - 6. kiểm tra: các dòng mặc định của mẫu; 7. vướng mắc, 8. tiến độ: từ đơn đang vướng / trễ hạn.
+   Người soạn sửa thẳng trong ô; mục đã sửa giữ nguyên chữ của họ (có nút lấy lại số từ app). Bấm CHÉP là chép bản
+   chữ và lưu báo cáo của ca đó. Nháp đang sửa lưu trên máy theo ca, mất mạng hay lỡ thoát cũng không mất. */
+const BC_DAU = [['don_vi', 'Đơn vị', 'Trung đoàn XD 01, Tiểu đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1'], ['ddt', 'Đại đội trưởng', '', 'daidoi'],
+  ['tdtr', 'Trung đội trưởng', '', 'trungdoi'], ['cbpt', 'CBPT', '', 'cvktht'], ['du_an', 'Dự án', 'Tên dự án'], ['khu_vuc', 'Khu vực thi công', 'Ví dụ: Bãi gia công trung đoàn']];
+const BC_MUC = [['s3', '3. Quân số'], ['s4', '4. Công việc trong ngày'], ['s5', '5. Máy móc thiết bị (MMTB)'], ['s6', '6. Kiểm tra, giám sát'], ['s7', '7. Vướng mắc'], ['s8', '8. Đánh giá tiến độ']];
+const bcKey = (B) => 'kt:bc:' + B.ngay + ':' + B.ca;
+const gioH = (ms) => { const m = ((ms + 7 * 3600e3) % 864e5) / 60e3; return Math.floor(m / 60) + 'h' + (m % 60 ? two(m % 60) : ''); };
+// "Dầm D3 tầng 5 trục X12-X17 / Y3-Y5 KDC": đủ để đọc ra cấu kiện nằm ở đâu
+const bcDon = (d) => [d.cau_kien, d.tang ? 'tầng ' + d.tang : '', d.cote ? 'cote ' + d.cote : '', d.truc ? 'trục ' + d.truc : '', d.phan_khu || '', d.hang_muc ? '(' + d.hang_muc + ')' : ''].filter(Boolean).join(' ');
+// lý do nghỉ đọc thành câu; "lý do khác" thay bằng chính ghi chú tổ đã ghi
+function bcLyDo(r, lyDo) {
+  const n = r.nghi || {}, ds = lyDo.filter((l) => n[l[0]] && l[0] !== 'khac').map((l) => n[l[0]] + ' ' + l[1]);
+  if (n.khac) ds.push(n.khac + ' ' + (r.ghi_chu || 'lý do khác'));
+  else if (r.ghi_chu) ds.push(r.ghi_chu);
+  return ds.join(', ');
+}
+/* Mục 3: dòng tổng + một dòng mỗi tổ. Tổ có trong danh sách Tiểu đội trưởng, cộng tổ đã báo mà người đứng tên vừa
+   thôi làm Tiểu đội trưởng. Tổng quân số tính cả tổ làm ca kia và tổ chưa báo (lấy theo lần báo gần nhất), như bảng
+   quân số. */
+function bcQuanSo(B) {
+  const ca = B.ca, kia = ca === 1 ? 2 : 1, caNay = CA_TEN[ca], caKia = CA_TEN[kia];
+  const ds = B.tdt.concat(B.qs.filter((x) => !B.tdt.some((u) => u.id === x.user_id)).map((x) => ({ id: x.user_id, name: x.uname })))
+    .filter((u, i, a) => a.findIndex((v) => v.id === u.id) === i);
+  let lam = 0, tong = 0;
+  const chua = [], dong = ds.map((u) => {
+    const r = B.qs.find((x) => x.user_id === u.id && x.ca === ca), k = B.qs.find((x) => x.user_id === u.id && x.ca === kia);
+    const tr = B.truoc.find((x) => x.user_id === u.id);
+    tong += (r || k || tr || { tong: 0 }).tong;
+    if (r) {
+      lam += r.lam;
+      const n1 = qsSoNghi(r.nghi), n2 = k ? qsSoNghi(k.nghi) : 0;
+      if (!r.lam && !n1 && r.ca_kia) return `Tổ ${u.name} (làm ${caKia})`;
+      const p = [`${caNay} ${r.lam}/${r.tong} cn`], kiaLam = k ? k.lam : r.ca_kia;
+      if (kiaLam > 0) p.push(`${caKia} ${kiaLam}/${r.tong} cn`);
+      if (n1 + n2) p.push(`nghỉ ${n1 + n2} cn`);
+      const ly = n1 && n2 ? `${caNay}: ${bcLyDo(r, B.lyDo)}; ${caKia}: ${bcLyDo(k, B.lyDo)}` : n2 ? `${caKia}: ${bcLyDo(k, B.lyDo)}` : bcLyDo(r, B.lyDo);
+      return `Tổ ${u.name}: ${p.join(', ')}${ly ? ' — ' + ly : ''}`;
+    }
+    // chưa báo ca này: tổ làm ca kia (theo dòng ca kia trong ngày, hoặc lần báo gần nhất) thì ghi "(làm ca kia)"
+    const thuoc = qsCaCua(k ? [k] : tr ? [tr] : []);
+    if (thuoc.length && !thuoc.includes(ca)) return `Tổ ${u.name} (làm ${caKia})`;
+    chua.push(u.name);
+    return `Tổ ${u.name}: chưa báo quân số ${caNay}`;
+  });
+  return { dong, chua, lam, tong, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
+}
+const bcTre = (B, d) => gcMo(d) && (d.han < B.ngay || (d.han === B.ngay && B.ca === 2));
+// chữ app tự ghép cho một mục
+function bcAuto(B, k) {
+  if (k === 's3') { const Q = bcQuanSo(B); return [Q.dau].concat(Q.dong).join('\n'); }
+  if (k === 's4') {
+    const lam = B.don.filter((d) => gcMo(d) && d.pct > 0).map((d) => `${bcDon(d)}: đang gia công ${d.pct}%`);
+    const xong = B.don.filter((d) => d.tt === 'xong').map((d) => `${bcDon(d)}: hoàn thành`);
+    return lam.concat(xong).join('\n');
+  }
+  if (k === 's5') return B.mau.mmtb || '';
+  if (k === 's6') return (B.mau.kt || []).join('\n');
+  if (k === 's7') { const v = B.don.filter((d) => gcMo(d) && d.vuong).map((d) => `${bcDon(d)}: ${d.vuong}`); return v.length ? v.join('\n') : 'Hiện tại chưa có'; }
+  const t = B.don.filter((d) => bcTre(B, d));
+  return t.length ? [`Nguy cơ chậm tiến độ: ${t.length} đơn trễ hạn`].concat(t.map((d) => `${bcDon(d)}: hạn ${ngayNgan(d.han)}, đang ${d.pct}%`)).join('\n') : 'Nguy cơ chậm tiến độ: Không có';
+}
+const bcGet = (k) => (typeof S.bcM[k] === 'string' ? S.bcM[k] : bcAuto(S.bcc, k));
+// dòng của một mục, bỏ dấu đầu dòng người soạn tự gõ (app tự thêm "• ")
+const bcDong = (t) => String(t || '').split('\n').map((l) => l.replace(/^\s*[•\-*+]\s*/, '').trim()).filter(Boolean);
+// bản chữ đúng mẫu để dán vào Zalo
+function bcTao() {
+  const B = S.bcc, D = S.bcDau || {}, Q = bcQuanSo(B), g = (k) => (D[k] || '').trim();
+  const L = [`BÁO CÁO QUÂN SỐ CA ${B.ca} Từ ${gioH(B.gio.tu)} đến ${gioH(B.gio.den)} ngày ${fmtDay(B.ngay)}`];
+  const dau = [g('don_vi'), g('ddt') && 'Đại đội trưởng: ' + g('ddt'), g('tdtr') && 'Trung Đội trưởng: ' + g('tdtr'), g('cbpt') && 'CBPT: ' + g('cbpt'),
+    g('du_an') && 'Dự Án: ' + g('du_an'), g('khu_vuc') && 'Khu vực thi công: ' + g('khu_vuc'), `Tổng số tổ: ${Q.soTo} tổ`].filter(Boolean);
+  dau.forEach((x) => L.push('• ' + x));
+  const s3 = bcDong(bcGet('s3'));
+  L.push('3. ' + (s3[0] || Q.dau)); s3.slice(1).forEach((x) => L.push('• ' + x));
+  const s4 = bcDong(bcGet('s4'));
+  L.push('4. Nội dung công việc thực hiện trong ngày'); (s4.length ? s4 : ['Chưa có']).forEach((x) => L.push('• ' + x));
+  L.push('5. Tổng hợp MMTB: ' + bcDong(bcGet('s5')).join(' – '));
+  L.push('6. Kiểm tra, giám sát'); bcDong(bcGet('s6')).forEach((x) => L.push('• ' + x));
+  L.push('7. Các vướng mắc ảnh hưởng đến tiến độ thi công:'); (bcDong(bcGet('s7')).length ? bcDong(bcGet('s7')) : ['Hiện tại chưa có']).forEach((x) => L.push('• ' + x));
+  L.push('8. Đánh giá tiến độ'); (bcDong(bcGet('s8')).length ? bcDong(bcGet('s8')) : ['Nguy cơ chậm tiến độ: Không có']).forEach((x) => L.push('• ' + x));
+  return L.join('\n');
+}
+function bcNhap() { try { localStorage.setItem(bcKey(S.bcc), JSON.stringify({ muc: S.bcM, dau: S.bcDau, ts: Date.now() })); } catch (e) { /* đầy bộ nhớ */ } }
+async function bcTai() {
+  const c = S.bcCa;
+  const B = await api('GET', '/baocao' + (c ? `?ngay=${c.ngay}&ca=${c.ca}` : ''));
+  S.bcc = B;
+  // nháp trên máy (mới hơn lần lưu trên server) thắng; không thì lấy các mục đã lưu
+  let n = null;
+  try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
+  const dung = n && (!B.bao || n.ts >= B.bao.ts) ? n : null;
+  S.bcM = { ...((dung && dung.muc) || (B.bao && B.bao.muc) || {}) };
+  S.bcDau = { ...B.mau.dau, ...((dung && dung.dau) || {}) };
+  // phần đầu còn trống (lần đầu dùng): mở sẵn cho điền
+  S.bcDauMo = !S.bcDau.don_vi && !S.bcDau.du_an;
+  // dọn nháp báo cáo của các ca hơn một tuần trước
+  try {
+    const cu = congNgay(S.boot.today, -7);
+    for (let i = localStorage.length - 1; i >= 0; i--) { const m = /^kt:bc:(\d{4}-\d{2}-\d{2}):/.exec(localStorage.key(i) || ''); if (m && m[1] < cu) localStorage.removeItem(localStorage.key(i)); }
+  } catch (e) { /* bỏ qua */ }
+}
+function vBaoCaoCa() {
+  const B = S.bcc;
+  const top = head('Báo cáo ca', B ? esc(hoa(caGoi(B))) + ' · ' + gioH(B.gio.tu) + '–' + gioH(B.gio.den) : '', 'more');
+  if (!B) return `${top}${panelWait('baocaoca')}`;
+  const Q = bcQuanSo(B), on = caKhoa(B), dinh = 'style="flex:none;white-space:nowrap"';
+  const tr = B.ca === 2 ? { ngay: B.ngay, ca: 1 } : { ngay: congNgay(B.ngay, -1), ca: 2 };
+  const chips = `<div class="col gap6 tbar" style="padding:6px 16px"><div class="row gap6" style="overflow-x:auto">
+    <button class="chip s" ${dinh} data-a="bcca" data-v="${caKhoa(tr)}">‹ Ca trước</button>
+    <button class="chip s on" ${dinh}>${esc(hoa(caGoi(B)))}</button>
+    ${on !== caKhoa(B.hien) ? `<button class="chip s" ${dinh} data-a="bcca" data-v="${caKhoa(B.hien)}">Ca đang diễn ra</button>` : ''}</div></div>`;
+  const D = S.bcDau || {};
+  const trong = BC_DAU.filter((f) => !(D[f[0]] || '').trim()).length;
+  const tinh = `<div class="card ${Q.chua.length ? 'warn' : 'ok'} col" style="gap:4px">
+    <b style="font-size:17px">Đi làm ${Q.lam} / ${Q.tong} công nhân · ${Q.soTo} tổ</b>
+    <span class="sm" style="line-height:1.4">${Q.chua.length ? `${Q.chua.length} tổ chưa báo quân số ${CA_TEN[B.ca]}: ${esc(Q.chua.join(', '))}. ` : 'Các tổ đã báo đủ quân số. '}<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="bcqs">Xem quân số</button></span>
+    ${B.bao ? `<span class="sm muted">Đã chép lúc ${dmy(B.bao.ts)} · ${esc(B.bao.by_name)}</span>` : ''}</div>`;
+  // phần đầu: thu gọn thành một dòng, vì ngày nào cũng giống nhau
+  const dauHtml = !S.bcDauMo
+    ? `<div class="card row gap8"><span class="f1 sm" style="line-height:1.4"><b>Phần đầu</b>: ${esc([D.don_vi, D.ddt && 'ĐĐT ' + D.ddt, D.tdtr && 'TĐT ' + D.tdtr, D.cbpt && 'CBPT ' + D.cbpt].filter(Boolean).join(' · ') || 'chưa điền')}${trong ? ` <span style="color:var(--warn)">(${trong} ô trống)</span>` : ''}</span><button class="chip s" style="flex:none" data-a="bcdau">Sửa</button></div>`
+    : `<div class="card col gap6"><div class="row gap8"><b class="f1">Phần đầu báo cáo</b><button class="chip s" style="flex:none" data-a="bcdau">Thu gọn</button></div>
+      ${BC_DAU.map(([k, ten, goiY, role]) => {
+        const chon = role ? B.nguoi.filter((u) => u.role === role) : [];
+        return `<span class="sm">${ten}</span>${chon.length ? `<div class="row gap6" style="overflow-x:auto">${chon.map((u) => `<button class="chip s ${D[k] === u.name ? 'on' : ''}" ${dinh} data-a="bcpick" data-k="${k}" data-v="${esc(u.name)}">${esc(u.name)}</button>`).join('')}</div>` : ''}
+          <input class="inp s" id="bcd_${k}" maxlength="120" autocomplete="off" placeholder="${esc(goiY || 'Họ tên')}" data-model="bcd_${k}" value="${esc(D[k] || '')}">`;
+      }).join('')}
+      <span class="sm muted">Lưu làm mẫu khi chép báo cáo, các ca sau điền sẵn.</span></div>`;
+  const muc = BC_MUC.map(([k, ten]) => {
+    const t = bcGet(k), sua = typeof S.bcM[k] === 'string';
+    // đủ cao để thấy cả mục: tính cả dòng dài tự xuống hàng (khoảng 34 chữ một hàng ở màn 360–390px)
+    const dong = Math.max(2, Math.min(18, t.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 34)), 0) + 1));
+    const nguon = { s3: 'quân số các tổ', s4: 'đơn gia công', s5: 'mẫu, lần chép trước', s6: 'mẫu', s7: 'đơn đang vướng', s8: 'đơn trễ hạn' }[k];
+    return `<div class="card col gap6"><div class="row gap8"><b class="f1">${ten}</b>
+        ${sua ? `<button class="chip s" style="flex:none;white-space:nowrap" data-a="bclay" data-k="${k}">Lấy lại từ app</button>` : `<span class="sm muted" style="flex:none">tự lấy từ ${nguon}</span>`}</div>
+      <textarea class="inp s" id="bc_${k}" rows="${dong}" style="height:auto;padding:8px 10px;font:inherit;font-size:16px;line-height:1.4;resize:vertical" data-model="bc_${k}">${esc(t)}</textarea>
+      ${k === 's6' && sua ? '<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="bcktmau">Đặt các dòng này làm mẫu cho các ca sau</button>' : ''}</div>`;
+  }).join('');
+  const share = typeof navigator !== 'undefined' && navigator.share;
+  return `${top}${chips}<div class="f1 scroll pad col gap8" id="body">${tinh}${dauHtml}
+    <span class="sm muted" style="line-height:1.4">Mỗi dòng là một gạch đầu dòng. Sửa thẳng trong ô; mục đã sửa giữ nguyên chữ của bạn.</span>
+    ${muc}
+    <b>Bản sẽ gửi</b><div class="card"><pre id="bcprev" style="white-space:pre-wrap;word-break:break-word;margin:0;font:inherit;font-size:15px;line-height:1.45">${esc(bcTao())}</pre></div>
+  </div>
+  <div class="sendbar row gap6">${share ? '<button class="btn" style="flex:1" data-a="bcchiase">CHIA SẺ</button>' : ''}<button class="btn pri" style="flex:2" data-a="bcchep">CHÉP BÁO CÁO</button></div>`;
+}
+// chép chữ vào bộ nhớ tạm; máy / trình duyệt cũ không có clipboard API thì chép bằng ô ẩn
+async function bcChepChu(t) {
+  try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(t); return true; } } catch (e) { /* thử cách cũ */ }
+  try {
+    const a = document.createElement('textarea');
+    a.value = t; a.setAttribute('readonly', ''); a.style.position = 'fixed'; a.style.opacity = '0';
+    document.body.appendChild(a); a.select(); const ok = document.execCommand('copy'); document.body.removeChild(a);
+    return ok;
+  } catch (e) { return false; }
+}
+// lưu báo cáo của ca (và phần đầu, máy móc vào mẫu); xong thì bỏ nháp trên máy
+function bcLuu(van_ban, them, okMsg) {
+  const B = S.bcc;
+  return act(async () => {
+    const r = await api('PUT', '/baocao', { ngay: B.ngay, ca: B.ca, van_ban, muc: S.bcM, dau: S.bcDau, mmtb: bcDong(bcGet('s5')).join(' – '), ...(them || {}) });
+    try { localStorage.removeItem(bcKey(B)); } catch (e) { /* bỏ qua */ }
+    B.bao = { muc: { ...S.bcM }, van_ban, ts: r.ts, by_name: S.me.name };
+    B.mau = { ...B.mau, dau: { ...S.bcDau }, mmtb: bcDong(bcGet('s5')).join(' – ') };
+    if (them && them.kt_mau) B.mau.kt = bcDong(S.bcM.s6);
+  }, okMsg);
+}
 
 /* --- Cài đặt (admin) --- */
 const numIn = (s) => { const x = parseFloat(String(s).trim().replace(',', '.')); return Number.isFinite(x) ? x : NaN; };
@@ -3491,7 +3670,7 @@ function vReset() {
 
 /* ===================== KHUNG CHÍNH ===================== */
 function tabsHtml() {
-  const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more', giacong: 'giacong', gcdon: 'giacong', gcform: 'giacong', gcsetup: 'giacong', quanso: 'more', qsform: 'more' }[S.screen];
+  const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more', giacong: 'giacong', gcdon: 'giacong', gcform: 'giacong', gcsetup: 'giacong', quanso: 'more', qsform: 'more', baocaoca: 'more' }[S.screen];
   const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Báo cáo', IC.count, true], ['giacong', 'Gia công', IC.gc, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isQL()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
   // đủ 6 tab (CVKTHT trở lên) thì chữ nhỏ lại một cỡ cho vừa màn hình hẹp
   return `<nav class="tabs${T.length > 5 ? ' n6' : ''}">${T.map((t) => `<button class="tab ${on === t[0] ? 'on' : ''}" data-a="nav" data-s="${t[0]}">${t[2]}${t[1]}</button>`).join('')}</nav>`;
@@ -3522,6 +3701,7 @@ function vMain() {
     case 'gcsetup': body = vGcSetup(); break;
     case 'quanso': body = vQuanSo(); break;
     case 'qsform': body = vQsForm(); break;
+    case 'baocaoca': body = vBaoCaoCa(); break;
     default: body = vHome();
   }
   const showToast = S.toast && S.screen !== 'dem';
@@ -3620,6 +3800,7 @@ async function go(screen, noPush, khu) {
     else if (screen === 'gcform') { if (!S.gc) S.gc = await api('GET', '/giacong'); }
     else if (screen === 'gcsetup') { S.gc = await api('GET', '/giacong'); }
     else if (screen === 'quanso') { await qsTai(); }
+    else if (screen === 'baocaoca') { await bcTai(); }
     else if (['home', 'ton', 'khu', 'nhap', 'dem'].includes(screen)) {
       await loadBoot();
       /* Nháp ở trên dựng từ boot ĐANG CÓ để màn hình lên ngay, mà boot đó có thể là của hôm qua (app
@@ -4681,6 +4862,28 @@ const ACTIONS = {
   },
   qhthoi() { qhBo(); render(); },
   qhthem() { qhState().them = true; render(); },
+  qshanmo() { S.qsHanMo = !S.qsHanMo; delete S.form.qsh1; delete S.form.qsh2; render(); },
+  // báo cáo ca
+  bcmo(d) { const [ngay, ca] = String(d.v).split(':'); S.bcCa = { ngay, ca: Number(ca) }; S.bcc = null; go('baocaoca'); },
+  bcca(d) { const [ngay, ca] = String(d.v).split(':'); S.bcCa = { ngay, ca: Number(ca) }; S.bcc = null; go('baocaoca', true); },
+  bcqs() { const B = S.bcc; if (!B) return; S.qsCa = { ngay: B.ngay, ca: B.ca }; S.qs = null; go('quanso'); },
+  bcdau() { S.bcDauMo = !S.bcDauMo; render(); },
+  bcpick(d) { S.bcDau[d.k] = d.v; bcNhap(); render(); },
+  bclay(d) { delete S.bcM[d.k]; bcNhap(); render(); },
+  async bcchep() {
+    if (!S.bcc) return;
+    const t = bcTao();
+    // chép TRƯỚC khi gọi mạng: trình duyệt chỉ cho chép ngay sau lần bấm
+    const ok = await bcChepChu(t);
+    bcLuu(t, null, ok ? 'Đã chép báo cáo. Mở Zalo và dán vào nhóm.' : 'Máy không cho chép tự động: chạm giữ vào "Bản sẽ gửi" để chép tay. Báo cáo đã lưu.');
+  },
+  async bcchiase() {
+    if (!S.bcc) return;
+    const t = bcTao();
+    try { await navigator.share({ text: t }); } catch (e) { if (e && e.name === 'AbortError') return; }
+    bcLuu(t, null, 'Đã lưu báo cáo.');
+  },
+  bcktmau() { if (S.bcc) bcLuu(bcTao(), { kt_mau: true }, 'Đã đặt các dòng kiểm tra này làm mẫu.'); },
   async qhgui(d) {
     const cas = qhCas(), x = cas.find((c) => caKhoa(c.c) === d.v); if (!x) return;
     const H = qhState(), T = qhTinh(), note = String(S.form.qhnote || '').trim();
@@ -4759,6 +4962,13 @@ document.addEventListener('input', (e) => {
   if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucCua() || 'chưa nhập'; }
   /* Quân số đầu ca: gõ tổng thì số đi làm và dòng tóm tắt chạy theo ngay, không vẽ lại màn hình giữa lúc gõ.
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */
+  /* Báo cáo ca: gõ vào một mục là mục đó thành "đã sửa tay"; bản sẽ gửi chạy theo ngay, không vẽ lại màn hình
+     (vẽ lại giữa lúc gõ là mất vị trí con trỏ trong ô nhiều dòng). Nháp lưu xuống máy theo ca. */
+  if (m && S.bcc && S.screen === 'baocaoca' && (/^bc_sd$/.test(m) || /^bcd_/.test(m))) {
+    if (m.startsWith('bc_')) S.bcM[m.slice(3)] = e.target.value; else S.bcDau[m.slice(4)] = e.target.value;
+    const pv = document.getElementById('bcprev'); if (pv) pv.textContent = bcTao();
+    bcNhap();
+  }
   // thẻ báo quân số trên Tổng quan: dòng tóm tắt chạy theo ô đang gõ, không vẽ lại cả trang
   if ((m === 'qhtong' || m === 'qhlam') && S.boot && S.boot.qs && S.boot.qs.toi) {
     const T = qhTinh(), pv = document.getElementById('qhprev');

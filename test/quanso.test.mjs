@@ -393,6 +393,9 @@ async function main() {
     // hạn báo: Cv đổi ngay trên bảng quân số
     await vao('Cv', 'cvktht');
     R(`ACTIONS.nav({ s: 'quanso' })`); await cho();
+    ok('hạn báo thu gọn thành một dòng, chưa bày ô giờ', R('vQuanSo()').includes('Hạn báo: ca ngày trước 07:00, ca đêm trước 19:15') && !R('vQuanSo()').includes('id="qsh1"'));
+    ok('có nút soạn báo cáo ca này', R('vQuanSo()').includes('data-a="bcmo"'));
+    R('ACTIONS.qshanmo()');
     ok('bảng của Cv có ô đổi hạn báo, điền sẵn 07:00 và 19:15', /id="qsh1"[^>]*value="07:00"/.test(R('vQuanSo()')) && /id="qsh2"[^>]*value="19:15"/.test(R('vQuanSo()')));
     R(`S.form.qsh1 = '07:15'; S.form.qsh2 = '19:30'; ACTIONS.qshan()`); await cho();
     eq('lưu hạn báo mới', [S3.sql("SELECT key, value FROM settings WHERE key LIKE 'qs_han%' ORDER BY key"), R('S.qs.hanPhut')], [[{ key: 'qs_han1', value: '435' }, { key: 'qs_han2', value: '1170' }], [435, 1170]]);

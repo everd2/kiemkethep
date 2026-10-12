@@ -11,6 +11,7 @@ import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidRece
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
 import { gcCreate, gcList, gcMucAdd, gcMucXoa, gcUpdate, gcViec, gcView } from './giacong.js';
 import { qsHan, qsPut, qsView } from './quanso.js';
+import { bcPut, bcView } from './baocao.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -131,6 +132,9 @@ async function handle(req, env, url) {
      tiếp theo người báo (CVKTHT chỉ duyệt/huỷ báo cáo của cấp dưới). */
   needCap(1);
   if (r0 === 'review' && method === 'GET') return json(await computeReview(env, vnDay()));
+  // báo cáo ca gửi cấp trên: CVKTHT trở lên soạn (gom quân số đầu ca + gia công theo mẫu), xem src/baocao.js
+  if (r0 === 'baocao' && !p[1] && method === 'GET') return bcView(env, url);
+  if (r0 === 'baocao' && !p[1] && method === 'PUT') return bcPut(req, env, user);
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
   // huỷ báo cáo đang chờ duyệt của một khu, kèm lý do. Giữ đường dẫn /recount: bản app cũ còn trong
   // cache gọi tới sẽ bị đòi lý do (400) thay vì lặng lẽ treo một lá cờ không còn ai đọc.

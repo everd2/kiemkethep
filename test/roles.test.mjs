@@ -101,7 +101,7 @@ async function main() {
       ['PATCH', '/doitac/99999', {}, LAP], ['GET', '/loans/export', null, LAP],
       ['POST', '/receipts/99999/duyet', {}, C2],
       ['POST', '/loans/99999/duyet', {}, C1],
-      ['GET', '/review', null, C1], ['POST', '/review/duyet', { khu: 'ZZ' }, C1], ['POST', '/recount', { khu: 'ZZ' }, C1],
+      ['GET', '/review', null, C1], ['GET', '/baocao', null, C1], ['PUT', '/baocao', {}, C1], ['POST', '/review/duyet', { khu: 'ZZ' }, C1], ['POST', '/recount', { khu: 'ZZ' }, C1],
       ['GET', '/conflict?khu=A', null, C1], ['POST', '/conflict/resolve', { khu: 'ZZ' }, C1], ['GET', '/submissions?khu=A', null, C1],
       ['GET', '/audit', null, C1], ['GET', '/cham-cong', null, C1], ['GET', '/export?day=' + vnDay(), null, C1],
       ['POST', '/reopen', {}, AD], ['POST', '/reset', { mode: 'x' }, AD], ['GET', '/backup', null, AD], ['POST', '/restore', {}, AD],

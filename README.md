@@ -185,7 +185,7 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
   - **Tổ chia hai ca**: trong phần người nghỉ có dòng *Tổ chia hai ca*, mở ra ô số đi làm ca này.
   - Báo xong thẻ thành *Ca ngày …: đã báo lúc …* kèm nút **Sửa** (sửa tại chỗ). Thẻ vàng khi chưa báo trong hạn, đỏ khi quá hạn.
   - Màn **Thêm → Quân số đầu ca** vẫn còn (chọn ca rồi ghi), cho ai quen dùng.
-- **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ngay cuối bảng quân số (mục *Hạn báo quân số*); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
+- **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ở dòng *Hạn báo* cuối bảng quân số (thu gọn, bấm **Đổi** mới hiện ô giờ); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
 - **Tổ đang làm ca nào thì chỉ bị nhắc ca đó.** Một tổ thường làm cố định ca ngày (hoặc ca đêm) 15–30 ngày rồi mới đổi. App không bắt khai lịch đổi ca: lấy theo **lần báo gần nhất** của tổ. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Ngày tổ **đổi ca**, tổ trưởng chọn ca mới và báo một lần là app theo ca mới; sáng hôm đổi ca app chưa biết nên chưa nhắc — CVKTHT thấy tổ đó còn mang nhãn ca cũ và ghi thay được. Tổ chưa báo lần nào thì ca nào cũng được nhắc.
 - **Một lần báo gồm**: tổng quân số của tổ (điền sẵn theo lần báo trước), số nghỉ **theo từng lý do** (ốm, nghỉ phép năm, về quê, việc gia đình, OFF luân phiên, lý do khác — bấm + / −), số đi làm ca này, ghi chú. **OFF luân phiên nằm trong số nghỉ.** Có *lý do khác* thì bắt buộc ghi rõ ở ô ghi chú.
 - **Số luôn khớp nhau**: số nghỉ là tổng các lý do; số đi làm app tự tính bằng tổng trừ số nghỉ. **Tổ chia hai ca** thì gõ lại số đi làm ca này, phần còn lại app tính là người của ca kia; tới đầu ca kia, ô ghi điền sẵn đúng số người đó. Đi làm cộng nghỉ nhiều hơn tổng thì app không nhận.
@@ -201,8 +201,31 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
 - **Bảng của CVKTHT trở lên**: dòng tổng *Đi làm ca ngày: 70 / 171 công nhân · 7/9 tổ đã báo*, rồi mỗi tổ một thẻ (đã báo, chưa báo, làm ca kia). Tổ chưa báo vẫn tính vào tổng quân số theo lần báo gần nhất, và bảng nói rõ điều đó. Dòng do cấp trên ghi thay có ghi tên người ghi. Lùi xem ca trước bằng nút **‹ Ca trước**.
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào để xem hoặc ghi thay. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa, phải nhờ CVKTHT trở lên. Mọi lần báo và ghi thay nằm trong **nhật ký**, có chip lọc *Quân số*.
-- Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, và **màn soạn báo cáo ca** (ghép quân số, công việc gia công, máy móc, kiểm tra thành một bản chép gửi cấp trên) — phần này làm ở bước sau.
+- Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).
 - **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
+
+### Báo cáo ca gửi cấp trên
+
+Ở **Thêm → Báo cáo ca gửi cấp trên** (hoặc nút *Soạn báo cáo ca … gửi cấp trên* trên bảng Quân số đầu ca), từ CVKTHT trở lên. App ghép sẵn bản **BÁO CÁO QUÂN SỐ CA** đúng mẫu của đơn vị; người soạn soát lại, bấm **CHÉP BÁO CÁO** rồi dán vào nhóm Zalo (hoặc **CHIA SẺ** thẳng sang Zalo trên điện thoại).
+
+- **Chọn ca**: mở ra là ca đang diễn ra; *‹ Ca trước* để soạn ca vừa xong. Ca đêm dùng cùng mẫu, tiêu đề ghi *CA 2 Từ 18h30 đến 6h30*. Soạn được các ca trong 7 ngày gần đây.
+- **Phần đầu** (đơn vị, Đại đội trưởng, Trung đội trưởng, CBPT, dự án, khu vực thi công): điền một lần, ba ô chỉ huy có nút **chọn nhanh** từ tài khoản có sẵn (Đại đội trưởng, Trung đội trưởng, CVKTHT). Lần chép nào cũng lưu lại làm mẫu, các ca sau phần này thu gọn thành một dòng. *Tổng số tổ* = số Tiểu đội trưởng.
+- **Các mục điền sẵn từ số liệu app**:
+
+  | Mục | Lấy từ |
+  |---|---|
+  | 3. Quân số | Quân số đầu ca: dòng tổng *đi làm / tổng quân số*, mỗi tổ một dòng (tổ chia ca ghi cả hai ca, nghỉ theo lý do; tổ làm ca kia ghi *(làm ca đêm)*; tổ chưa báo ghi rõ *chưa báo*) |
+  | 4. Công việc trong ngày | Đơn gia công đang làm (*đang gia công 80%*) và đơn xác nhận xong trong giờ ca (*hoàn thành*) |
+  | 5. MMTB | Lần chép trước |
+  | 6. Kiểm tra, giám sát | Năm dòng mặc định của mẫu |
+  | 7. Vướng mắc | Đơn gia công đang báo vướng; không có thì *Hiện tại chưa có* |
+  | 8. Đánh giá tiến độ | Đơn gia công trễ hạn; không có thì *Nguy cơ chậm tiến độ: Không có* |
+
+- **Sửa thẳng trong ô**, mỗi dòng là một gạch đầu dòng (gõ thêm "•" cũng không bị thành hai dấu). Mục đã sửa giữ nguyên chữ của người soạn kể cả khi số liệu đổi sau đó; nút **Lấy lại từ app** để ghép lại theo số mới. Bản *sẽ gửi* hiện ở cuối màn và chạy theo từng chữ đang gõ.
+- **Dòng kiểm tra** sửa trong một ca không tự thành mẫu (để nhận xét xấu hôm nay không lặp lại hôm sau); muốn đổi mẫu thì bấm *Đặt các dòng này làm mẫu cho các ca sau*.
+- Đầu màn ghi *Đi làm … / … công nhân* và tổ nào chưa báo quân số, bấm *Xem quân số* để ghi thay.
+- Bấm chép là **lưu báo cáo của ca đó** (mở lại vẫn thấy, ghi *Đã chép lúc … · người chép*). Đang sửa dở mà thoát hay mất mạng thì nháp vẫn nằm trên máy. Lần chép nào cũng vào nhật ký (chip *Quân số*).
+- Máy không cho chép tự động thì app báo, chạm giữ vào *Bản sẽ gửi* để chép tay.
 
 ### Điều chỉnh tồn
 
@@ -402,6 +425,7 @@ src/counts.js        báo cáo đếm, hai người báo khác số, nhật ký,
 src/phieu.js         nhập, chuyển, xuất, điều chỉnh tồn
 src/loans.js         sổ vay mượn ngoài bãi
 src/quanso.js        quân số đầu ca của từng tổ (ca ngày, ca đêm)
+src/baocao.js        báo cáo ca gửi cấp trên (gom số liệu, lưu báo cáo và mẫu)
 src/review.js        màn Duyệt, tự chốt sổ sau 0h, hoàn tác đặt lại số liệu
 src/data.js          đặt lại số liệu, sao lưu, nạp lại
 src/admin.js         người dùng, khu, phi, cài đặt

@@ -15,6 +15,7 @@ const SUITES = [
   ['Mô phỏng bãi nhiều ngày + dữ liệu sai', 'sim.test.mjs'],
   ['Gia công cấu kiện: giao đơn, tiến độ, quyền từng việc', 'giacong.test.mjs'],
   ['Quân số đầu ca: báo theo ca, ca đêm vắt ngày, ghi thay, quyền', 'quanso.test.mjs'],
+  ['Báo cáo ca: ghép đúng mẫu, sửa tay, mẫu, chép', 'baocao.test.mjs'],
   ['Phân quyền: bảng quyền + mô phỏng ngẫu nhiên đối chiếu máy/server', 'roles.test.mjs'],
 ];
 
