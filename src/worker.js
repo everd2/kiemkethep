@@ -9,7 +9,8 @@ import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
-import { gcCreate, gcList, gcUpdate, gcViec, gcView } from './giacong.js';
+import { gcCreate, gcList, gcMucAdd, gcMucXoa, gcUpdate, gcViec, gcView } from './giacong.js';
+import { qsHan, qsPut, qsView } from './quanso.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -102,11 +103,27 @@ async function handle(req, env, url) {
      xong) hoặc CVKTHT trở lên (huỷ, mở lại). */
   if (r0 === 'giacong') {
     need(ALL);
+    // danh mục chọn nhanh (phân khu, hạng mục, loại cấu kiện): admin lập trước, mọi người nhận kèm trong gcList
+    if (p[1] === 'muc') {
+      need(['admin']);
+      if (method === 'POST' && p.length === 2) return gcMucAdd(req, env, user);
+      if (method === 'DELETE' && p.length === 3) return gcMucXoa(env, user, Number(p[2]));
+      throw new HttpError(404, 'Không tìm thấy');
+    }
     if (method === 'GET' && p.length === 1) return gcList(env);
     if (method === 'GET' && p.length === 2) return gcView(env, Number(p[1]));
     if (method === 'POST' && p.length === 1) { needCap(1); return gcCreate(req, env, user); }
     if (method === 'PATCH' && p.length === 2) { needCap(1); return gcUpdate(req, env, user, Number(p[1])); }
     if (method === 'POST' && p.length === 3) return gcViec(req, env, user, Number(p[1]), p[2]);
+  }
+  /* Quân số đầu ca: mọi vai trò vào được, nhưng Tiểu đội trưởng chỉ xem và ghi tổ mình; CVKTHT trở lên xem
+     mọi tổ và ghi thay được. qsView / qsPut tự kiểm (theo người, theo ca). */
+  if (r0 === 'quanso') {
+    need(ALL);
+    if (method === 'GET' && p.length === 1) return qsView(env, user, url);
+    if (method === 'PUT' && p.length === 1) return qsPut(req, env, user);
+    // hạn báo của hai ca: người gom quân số (CVKTHT trở lên) tự đặt, không phải chờ admin
+    if (method === 'PUT' && p.length === 2 && p[1] === 'han') { needCap(1); return qsHan(req, env, user); }
   }
 
   /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---

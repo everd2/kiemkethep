@@ -357,7 +357,8 @@ export async function phiBulk(req, env, admin) {
   return json({ ok: true, n: log.length });
 }
 
-export const SETTING_NAME = { work_from: 'Giờ bắt đầu làm việc', work_to: 'Giờ kết thúc làm việc', report_slots_per_day: 'Số lần đếm mỗi ngày' };
+export const SETTING_NAME = { work_from: 'Giờ bắt đầu làm việc', work_to: 'Giờ kết thúc làm việc', report_slots_per_day: 'Số lần đếm mỗi ngày',
+  ca1_tu: 'Giờ bắt đầu ca ngày', ca2_tu: 'Giờ bắt đầu ca đêm' };
 export async function settingsUpdate(req, env, admin) {
   const b = await readJson(req);
   const stmts = [];
@@ -368,6 +369,7 @@ export async function settingsUpdate(req, env, admin) {
     if (b[key] !== undefined) sau[key] = intIn(b[key], SETTING_RANGE[key][0], SETTING_RANGE[key][1], SETTING_NAME[key] || key);
   }
   if (sau.work_from >= sau.work_to) throw bad('Giờ kết thúc làm việc phải sau giờ bắt đầu');
+  if (sau.ca1_tu >= sau.ca2_tu) throw bad('Ca đêm phải bắt đầu sau ca ngày');
   /* Mỗi khung đếm ít nhất 1 tiếng. Giờ làm 3 tiếng mà đòi đếm 4 lần thì khung chỉ 45 phút: vừa
      đếm xong khu này đã sang khung sau, khu nào cũng thành thiếu. */
   if (sau.work_to - sau.work_from < sau.report_slots_per_day) {

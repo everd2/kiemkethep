@@ -392,8 +392,12 @@ CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 
 -- Đơn giao GIA CÔNG CẤU KIỆN (xem src/giacong.js). Không liên quan tồn kho, số đếm hay phiếu.
 -- user_id: Tiểu đội trưởng được giao — người duy nhất nhận đơn, cập nhật tiến độ và xác nhận xong.
--- truc: vị trí theo trục, chữ tự do (vd "X12-X17 / Y3-Y5"). han: ngày cần xong. buoi: 'sang' | 'chieu' | NULL.
--- tt: 'moi' vừa giao chưa nhận, 'nhan' đã nhận, 'lam' đang làm, 'xong', 'huy'. pct: 0, 25, 50, 75, 100 (100 = xong).
+-- Vị trí gồm: truc (BẮT BUỘC, chữ tự do, vd "X12-X17 / Y3-Y5"), phan_khu (theo danh mục gc_muc, bắt buộc khi đã
+-- có danh mục), tang và cote (cao độ; phải có ít nhất một, đã ghi tầng thì cote không bắt buộc), hang_muc (tuỳ chọn).
+-- Huỷ ('huy') nghĩa là KHÔNG CẦN LÀM NỮA, không xoá đơn: huy_by / huy_ts / huy_ly_do = ai huỷ, lúc nào, vì sao;
+-- huy_tt = trạng thái trước khi huỷ (để khôi phục đơn huỷ nhầm về đúng chỗ); biet_ts = lúc người giữ đơn bấm "đã biết";
+-- pct giữ nguyên số lúc huỷ ("dừng ở 50%"). han: ngày cần xong. buoi: 'sang' | 'chieu' | NULL.
+-- tt: 'moi' vừa giao chưa nhận, 'nhan' đã nhận, 'lam' đang làm, 'xong', 'huy'. pct: nấc 10 từ 0 tới 90, và 100 = xong (đơn trước bản 28 còn có thể mang 25 / 75).
 -- vuong: lý do đang kẹt; NULL = không vướng. Là cờ đi kèm chứ không phải một trạng thái.
 -- giao_by, ts: ai giao, lúc nào. cap_ts: lần cập nhật gần nhất, cũng là dấu để chặn hai người ghi đè nhau.
 -- mo_lai: lý do đơn bị mở lại sau khi đã báo xong; xoá khi đơn xong lần nữa hoặc bị huỷ.
@@ -415,7 +419,14 @@ CREATE TABLE IF NOT EXISTS don_gc (
   cap_ts INTEGER NOT NULL,
   xong_ts INTEGER,
   huy_ly_do TEXT,
-  mo_lai TEXT
+  mo_lai TEXT,
+  phan_khu TEXT,
+  tang TEXT,
+  cote TEXT,
+  huy_by INTEGER,
+  huy_ts INTEGER,
+  huy_tt TEXT,
+  biet_ts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
 
@@ -432,7 +443,42 @@ CREATE TABLE IF NOT EXISTS don_gc_log (
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_log_don ON don_gc_log(don_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 27);
+-- QUÂN SỐ ĐẦU CA (xem src/quanso.js). Mỗi tổ (= một Tiểu đội trưởng) báo một dòng cho MỖI CA mình có người làm.
+-- Không liên quan tồn kho. ngay: ngày của ca — ca đêm thuộc ngày BẮT ĐẦU ca (báo lúc 2h sáng 13/10 vẫn là ca
+-- đêm 12/10). ca: 1 = ca ngày, 2 = ca đêm. user_id: Tiểu đội trưởng của tổ.
+-- tong: tổng quân số của tổ lúc báo. lam: số đi làm ca này. nghi: JSON {mã lý do: số người} (xem QS_LY_DO),
+-- OFF luân phiên cũng là một lý do nghỉ. ca_kia: số người của tổ thuộc ca còn lại = tong - lam - tổng nghỉ,
+-- server tự tính; lam = 0 mà ca_kia > 0 nghĩa là cả tổ làm ca kia.
+-- by_id: người ghi; khác user_id là CVKTHT trở lên nhập thay. Báo lại thì ghi đè dòng của ca đó.
+CREATE TABLE IF NOT EXISTS quan_so (
+  ngay TEXT NOT NULL,
+  ca INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  tong INTEGER NOT NULL,
+  lam INTEGER NOT NULL,
+  ca_kia INTEGER NOT NULL DEFAULT 0,
+  nghi TEXT NOT NULL DEFAULT '{}',
+  ghi_chu TEXT,
+  ts INTEGER NOT NULL,
+  by_id INTEGER NOT NULL,
+  PRIMARY KEY (ngay, ca, user_id)
+);
+-- lần báo gần nhất của một tổ (điền sẵn tổng quân số cho lần báo sau) tìm thẳng theo tổ, không quét cả bảng
+CREATE INDEX IF NOT EXISTS idx_quan_so_u ON quan_so(user_id, ngay, ca);
+
+-- Danh mục chọn nhanh của đơn gia công, admin lập trước. loai: 'khu' phân khu, 'hm' hạng mục, 'ck' loại cấu kiện.
+-- Đơn lưu TÊN của mục (don_gc.phan_khu, hang_muc, cau_kien) chứ không lưu id: xoá một mục không đụng tới đơn đã giao.
+CREATE TABLE IF NOT EXISTS gc_muc (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  loai TEXT NOT NULL,
+  ten TEXT NOT NULL,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', x.ten, x.sort FROM
+  (SELECT 'Dầm' ten, 1 sort UNION ALL SELECT 'Cột', 2 UNION ALL SELECT 'Sàn', 3 UNION ALL SELECT 'Móng', 4 UNION ALL SELECT 'Vách', 5 UNION ALL SELECT 'Cầu thang', 6) x
+  WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck');
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 29);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

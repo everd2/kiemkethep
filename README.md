@@ -133,7 +133,9 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia công** cho các Tiểu đội trưởng: gia công thép của cấu kiện nào, ở vị trí trục nào, cần xong khi nào, đang làm tới đâu. **Không liên quan tới đếm thép**: đơn gia công không đổi tồn, không sinh phiếu kho.
 
 - **Ai cũng xem được mọi đơn của mọi Tiểu đội trưởng.** Đây là chỗ duy nhất trong app không theo nguyên tắc "mỗi người chỉ thấy việc của mình": bảng đơn là bảng chung của cả đơn vị, gom theo từng Tiểu đội trưởng (đang giữ mấy đơn, mấy đơn trễ, mấy đơn vướng). Cuối bảng ghi ai đang không có đơn nào mở.
-- **Một đơn gồm**: cấu kiện (bắt buộc), hạng mục / tầng, vị trí trục (chữ tự do, ví dụ `X12-X17 / Y3-Y5`), giao cho ai, ngày cần xong (kèm buổi sáng / chiều nếu cần), nội dung và khối lượng (chữ tự do). Mỗi đơn giao cho **một** Tiểu đội trưởng.
+- **Một đơn gồm**: cấu kiện (chọn loại trong danh mục — Dầm, Cột, Sàn… — hoặc **Khác** rồi ghi tên; số hiệu như D3 thì tuỳ), **vị trí trục (bắt buộc)**, **phân khu** (chọn trong danh mục; bắt buộc khi admin đã lập danh mục phân khu), **tầng hoặc cote** (cao độ, ví dụ `+3.600`; phải ghi ít nhất một — đã ghi tầng thì cote không bắt buộc), hạng mục (chọn trong danh mục, không bắt buộc), giao cho ai, ngày cần xong (kèm buổi sáng / chiều nếu cần), nội dung và khối lượng (chữ tự do). Mỗi đơn giao cho **một** Tiểu đội trưởng.
+- **Danh mục do admin lập trước** (tab Gia công → nút **⚙** → *Thiết lập gia công*, chỉ Admin): **phân khu**, **hạng mục**, **loại cấu kiện**. Lập một lần, sau đó người giao chỉ việc bấm chọn — và cả đơn vị gọi một khu bằng đúng một tên, nên gom theo khu và tìm kiếm mới đúng. Sáu loại cấu kiện thường gặp có sẵn; *Khác* luôn có. Xoá một mục không đổi gì ở đơn đã giao (đơn giữ tên cũ), muốn đổi tên thì xoá rồi thêm lại. Khi chưa có danh mục phân khu thì app chưa đòi phân khu.
+- **Nhập trục nhanh**: bốn ô số *X từ – đến, Y từ – đến* với bàn phím số; app tự ghép thành `X12-X17 / Y3-Y5` (chỉ X, chỉ Y hay một trục đơn đều được). Các trục vừa dùng ở cùng phân khu hiện thành nút bấm lại. Trục không theo dạng X / Y (ví dụ `A-D / 1-5`, *lõi thang T2*) thì bấm **Gõ tự do**.
 - **Ai làm được gì**:
 
   | Việc | Ai làm |
@@ -143,18 +145,51 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
   | Mở lại đơn đã xong | CVKTHT trở lên, bắt buộc ghi lý do |
   | Xem mọi đơn và lịch sử từng đơn | Tất cả |
 
-- **Giao đơn nhanh**: nút **+ Giao đơn** nằm ngay đầu bảng. Màn soạn điền sẵn hạn = ngày mai, người nhận và hạng mục = của lần giao trước; có nút bấm cho loại cấu kiện (Dầm, Cột, Sàn…), hạng mục vừa dùng và hạn (Hôm nay / Mai / +2 / +3 / +7). Giao cả loạt thì bấm **GIAO + ĐƠN TIẾP**: app giữ người nhận, hạn, hạng mục, chỉ còn gõ cấu kiện và trục của đơn sau. Ở màn một đơn có **Giao đơn mới giống đơn này**.
-- **Theo dõi nhanh**: đầu bảng là ô tìm (gõ không dấu cũng ra: `dam d3`, `x12`, tên người) và các mục lọc kèm số đơn — *Đang mở, Của tôi, Trễ, Vướng, Chưa nhận, Xong / huỷ*. Mỗi đơn hai dòng: cấu kiện · vị trí · trạng thái, rồi thanh tiến độ · hạn.
-- **Làm nhanh trên bảng**: đơn của chính mình có sẵn nút **NHẬN ĐƠN**, rồi **25% / 50% / 75% / XONG** ngay trên thẻ — một chạm là lưu, không phải mở từng đơn (riêng XONG hỏi lại một lần). Ghi chú kèm tiến độ và báo vướng thì mở đơn.
-- **Vòng đời**: *Mới giao* → *Đã nhận* → *Đang làm* (25 / 50 / 75%) → *Đã xong*. **Không có bước cấp trên duyệt**: người được giao bấm *Xác nhận đã xong* là đơn xong. Vì không ai kiểm lại, CVKTHT trở lên có nút **Mở lại đơn** khi đơn báo xong mà thực tế chưa xong; đơn về *Đang làm* 75% và lý do nằm trong lịch sử đơn.
+- **Giao đơn nhanh**: nút **+ Giao đơn** nằm ngay đầu bảng. Màn soạn điền sẵn hạn = ngày mai; loại cấu kiện, phân khu, tầng, hạng mục và người nhận = của lần giao trước; hạn có nút Hôm nay / Mai / +2 / +3 / +7. Giao cả loạt thì bấm **GIAO + ĐƠN TIẾP**: app giữ lại tất cả trừ số hiệu, trục và nội dung, nên đơn sau chỉ còn gõ mấy con số của trục. Ở màn một đơn có **Giao đơn mới giống đơn này**.
+- **Đơn trùng thì app hỏi lại**: người nhận đang giữ một đơn còn mở giống hệt (cùng cấu kiện, phân khu, tầng, cote, trục) thì app dừng lại hỏi trước khi giao thêm — tránh bấm lại khi mạng chập chờn, hoặc chép đơn mà quên sửa trục.
+- **Theo dõi nhanh**: đầu bảng (đứng yên khi cuộn) có ô tìm — gõ không dấu cũng ra: `dam d3`, `x12`, `khu a tang 5`, tên người — và các mục lọc kèm số đơn: *Đang mở, Của tôi, Trễ, Vướng, Chưa nhận, Xong / huỷ*. Dưới đó là **ba cách gom cùng một bộ đơn**: **Theo tổ** (ai đang giữ gì, ai đang rảnh), **Theo hạn** (Trễ hạn → Hôm nay → Ngày mai → Trong 7 ngày tới → Sau 7 ngày), **Theo khu** (từng phân khu đang làm tới đâu). Mỗi nhóm ghi số đơn, số trễ, số vướng. Mỗi đơn ba dòng: cấu kiện · trạng thái; **trục** · phân khu · tầng (kèm tên người giữ khi không gom theo tổ); thanh tiến độ · hạn.
+- **Làm nhanh trên bảng**: đơn của chính mình có sẵn nút **NHẬN ĐƠN**, rồi **+10%** (lên nấc kế tiếp) và **XONG** ngay trên thẻ — một chạm là lưu, không phải mở từng đơn (riêng XONG hỏi lại một lần). Chọn thẳng một mức khác, ghi chú kèm tiến độ và báo vướng thì mở đơn.
+- **Vòng đời**: *Mới giao* → *Đã nhận* → *Đang làm* (theo nấc 10%, từ 10 tới 90%) → *Đã xong*. Nấc 10% để báo cáo ca gửi cấp trên lấy thẳng được con số ("đang gia công 80%"); đơn giao trước bản 28 đang ở 25% / 75% giữ nguyên số cho tới lần cập nhật sau. **Không có bước cấp trên duyệt**: người được giao bấm *Xác nhận đã xong* là đơn xong. Vì không ai kiểm lại, CVKTHT trở lên có nút **Mở lại đơn** khi đơn báo xong mà thực tế chưa xong; đơn về *Đang làm* 90% và lý do nằm trong lịch sử đơn.
 - **Đang vướng** là cờ đi kèm, không phải một trạng thái: Tiểu đội trưởng ghi đang kẹt gì (thiếu thép, chưa có bản vẽ…), đơn vẫn giữ tiến độ. Hết kẹt thì bấm *Đã hết vướng*.
 - **Trễ hạn** do app tự tính: qua ngày cần xong mà đơn còn mở; đơn hạn **buổi sáng** thì trễ từ 12h trưa hôm đó. Đơn trễ viền đỏ, đơn vướng viền vàng, cả hai xếp lên đầu. Ngày cần xong không được trước hôm nay và không xa quá một năm.
-- **Đơn bị mở lại** mang lý do ngay trên thẻ (viền đỏ, xếp lên đầu) cho tới khi xong lần nữa. **Đơn bị huỷ** được nhắc cho người đang giữ nó trong 2 ngày, để họ thôi làm.
+- **Đơn bị mở lại** mang lý do ngay trên thẻ (viền đỏ, xếp lên đầu) cho tới khi xong lần nữa.
+- **Huỷ đơn nghĩa là "không cần làm nữa" — không ai xoá được đơn**, kể cả cấp chỉ huy: xoá là mất dấu ai giao, ai làm tới đâu. CVKTHT trở lên huỷ đơn còn mở, bắt buộc ghi lý do (chỉ bớt khối lượng thì dùng *Sửa đơn*). Sau khi huỷ:
+  - đơn bị khoá: không ai nhận, cập nhật hay sửa được; thẻ đơn ghi **Không làm nữa**, lý do, ai huỷ, lúc nào, và **dừng ở mấy %**;
+  - **người giữ đơn phải bấm "ĐÃ BIẾT, DỪNG LÀM"**. Chưa bấm thì đơn nằm đầu danh sách của họ, Tổng quan của họ có thẻ đỏ gọi đúng tên đơn (*KHÔNG LÀM NỮA: Dầm D3 · X12-X17*), và người giao thấy *"… chưa xem"* cùng thẻ nhắc *đơn đã huỷ mà người giữ đơn chưa xem*. App chưa có thông báo đẩy, nên đây là cách để người huỷ chắc chắn bên kia đã dừng tay;
+  - **huỷ nhầm thì khôi phục được trong 7 ngày** (CVKTHT trở lên, ghi lý do): đơn về đúng trạng thái trước khi huỷ, giữ nguyên tiến độ và lịch sử. Quá 7 ngày thì giao đơn mới giống đơn đó;
+  - **tìm kiếm tìm trên mọi đơn**, kể cả đã huỷ và đã xong, dù đang ở mục lọc nào — để không ai tưởng đơn chưa được giao rồi giao lại.
 - **Lịch sử đơn** ghi mọi lần nhận, cập nhật tiến độ, báo vướng, sửa, huỷ, mở lại (ai, lúc nào). Dời hạn thì ghi rõ hạn cũ → hạn mới. Giao lại cho người khác thì đơn về *Mới giao*: người mới phải tự nhận.
 - **Tổng quan nhắc đúng người, mỗi người một thẻ**: người giữ đơn thấy *Đơn gia công của bạn* kèm đếm từng loại (bị mở lại, trễ hạn, vừa bị huỷ, chưa nhận, hạn hôm nay); CVKTHT trở lên thấy *N đơn trễ hạn · N đơn đang vướng* của cả đơn vị. Như mọi lời nhắc khác, chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Đơn đã xong hoặc đã huỷ nằm lại bảng chung **30 ngày** (mục *Xong / huỷ*), sau đó rời bảng nhưng không bị xoá. Các mốc giao, sửa, xong, huỷ, mở lại nằm trong **nhật ký**, có chip lọc *Gia công*.
 - Người được giao bị đổi vai trò hoặc xoá tài khoản thì **đơn không mất**, vẫn đứng tên người đó; bảng ghi rõ các đơn còn mở của người này **cần giao lại**, và CVKTHT trở lên giao lại cho Tiểu đội trưởng khác.
 - Chưa có: ảnh đính kèm (gửi qua Zalo như biên bản), cập nhật tiến độ khi mất mạng, danh sách thép theo phi. **Xoá sạch dữ liệu thép không xoá đơn gia công**; bản sao toàn bộ có chứa đơn, nạp lại bản sao cũ chưa có đơn thì đơn hiện tại được giữ nguyên.
+
+### Quân số đầu ca
+
+Ở **Thêm → Quân số đầu ca**, mọi vai trò đều có. Mỗi tổ báo quân số ở **đầu mỗi ca**; đây là nguồn số cho mục quân số của báo cáo ca gửi cấp trên. **Không liên quan tới đếm thép.**
+
+- **Một tổ = một Tiểu đội trưởng.** Có bao nhiêu tài khoản Tiểu đội trưởng đang dùng thì có bấy nhiêu tổ.
+- **Hai ca**: ca ngày 6h30 → 18h30, ca đêm 18h30 → 6h30 sáng hôm sau. **Ca đêm thuộc ngày bắt đầu ca**: báo lúc 2h sáng ngày 13 vẫn là ca đêm ngày 12. Ca tính theo giờ Việt Nam của máy chủ.
+- **Báo theo ca**: tổ làm cả hai ca thì báo hai lần, tổ chỉ làm ca đêm thì chỉ báo ca đêm. Báo được cho ca đang diễn ra, và báo sớm cho ca kế tiếp. Báo lại là ghi đè số của ca đó.
+- **Tiểu đội trưởng phải chọn ca trước khi báo.** Vào màn Quân số là ra hai thẻ *Ca ngày* và *Ca đêm* (kèm giờ ca, hạn báo, ca nào đã báo); chạm ca tổ đang làm mới mở ô ghi. App không tự chọn hộ theo giờ, để tổ ca đêm mở app lúc 17h không báo nhầm vào ca ngày.
+- **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ngay cuối bảng quân số (mục *Hạn báo quân số*); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
+- **Tổ đang làm ca nào thì chỉ bị nhắc ca đó.** Một tổ thường làm cố định ca ngày (hoặc ca đêm) 15–30 ngày rồi mới đổi. App không bắt khai lịch đổi ca: lấy theo **lần báo gần nhất** của tổ. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Ngày tổ **đổi ca**, tổ trưởng chọn ca mới và báo một lần là app theo ca mới; sáng hôm đổi ca app chưa biết nên chưa nhắc — CVKTHT thấy tổ đó còn mang nhãn ca cũ và ghi thay được. Tổ chưa báo lần nào thì ca nào cũng được nhắc.
+- **Một lần báo gồm**: tổng quân số của tổ (điền sẵn theo lần báo trước), số nghỉ **theo từng lý do** (ốm, nghỉ phép năm, về quê, việc gia đình, OFF luân phiên, lý do khác — bấm + / −), số đi làm ca này, ghi chú. **OFF luân phiên nằm trong số nghỉ.** Có *lý do khác* thì bắt buộc ghi rõ ở ô ghi chú.
+- **Số luôn khớp nhau**: số nghỉ là tổng các lý do; số đi làm app tự tính bằng tổng trừ số nghỉ. **Tổ chia hai ca** thì gõ lại số đi làm ca này, phần còn lại app tính là người của ca kia; tới đầu ca kia, ô ghi điền sẵn đúng số người đó. Đi làm cộng nghỉ nhiều hơn tổng thì app không nhận.
+- **Cả tổ không làm ca này** (cả tổ làm ca kia): một nút bấm, để bảng quân số ghi *làm ca đêm* thay vì *chưa báo*.
+- **Ai làm được gì**:
+
+  | Việc | Ai làm |
+  |---|---|
+  | Báo quân số tổ mình, cho ca đang diễn ra hoặc ca kế tiếp | Tiểu đội trưởng của tổ đó |
+  | Xem mọi tổ, **ghi thay** hoặc sửa cho bất kỳ tổ nào, lùi được 7 ngày; đổi hạn báo | CVKTHT trở lên |
+  | Xem quân số tổ khác | Chỉ CVKTHT trở lên — Tiểu đội trưởng chỉ thấy tổ mình |
+
+- **Bảng của CVKTHT trở lên**: dòng tổng *Đi làm ca ngày: 70 / 171 công nhân · 7/9 tổ đã báo*, rồi mỗi tổ một thẻ (đã báo, chưa báo, làm ca kia). Tổ chưa báo vẫn tính vào tổng quân số theo lần báo gần nhất, và bảng nói rõ điều đó. Dòng do cấp trên ghi thay có ghi tên người ghi. Lùi xem ca trước bằng nút **‹ Ca trước**.
+- **Tổng quan nhắc đúng người**: Tiểu đội trưởng thấy *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ mình chưa báo ca đang diễn ra, và được nhắc ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào để xem hoặc ghi thay. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
+- Ca đã qua thì Tiểu đội trưởng không sửa được nữa, phải nhờ CVKTHT trở lên. Mọi lần báo và ghi thay nằm trong **nhật ký**, có chip lọc *Quân số*.
+- Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, và **màn soạn báo cáo ca** (ghép quân số, công việc gia công, máy móc, kiểm tra thành một bản chép gửi cấp trên) — phần này làm ở bước sau.
+- **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
 
 ### Điều chỉnh tồn
 
@@ -302,6 +337,7 @@ Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên
 | Sổ sai một phi ở một khu | **Nhập → Điều chỉnh**, chọn tăng/giảm và lý do, rồi cấp chỉ huy duyệt. Không ảnh hưởng lượng dùng |
 | Xuất thép đi công trình | **Nhập → Xuất kho** (tuỳ chọn), ghi rõ nơi đến, rồi cấp chỉ huy duyệt. Không ghi cũng được — app vẫn tính lượng dùng |
 | Giao việc gia công cho tiểu đội | Tab **Gia công → Giao đơn mới** (CVKTHT trở lên): cấu kiện, trục, người nhận, ngày cần xong. Tiểu đội trưởng tự nhận, cập nhật tiến độ và xác nhận xong; ai cũng xem được |
+| Báo quân số đầu ca | **Thêm → Quân số đầu ca**: Tiểu đội trưởng báo tổ mình ở đầu mỗi ca (tổng, nghỉ theo lý do, đi làm). CVKTHT trở lên xem mọi tổ và ghi thay được |
 | Vay / cho đối tác vay thép | **Thêm → Vay mượn ngoài bãi** (hoặc lối tắt ở màn Nhập), chọn *thép qua bãi* + khu nếu thép đi qua cổng. Cấp chỉ huy duyệt. Không tính là nhập hay dùng |
 
 Nên sao lưu `backup.sql` định kỳ (ví dụ mỗi tuần) và cất ngoài Cloudflare.
@@ -319,7 +355,7 @@ Mở http://localhost:8787/setup để tạo admin thử.
 | Hạng mục | Miễn phí | Ứng dụng này dùng |
 |---|---|---|
 | Workers | 100.000 yêu cầu/ngày (reset 7:00 sáng giờ VN) | Dưới 15.000: máy hỏi số phiên bản mỗi 60 giây khi đang dùng, 5 phút khi để yên, 15 phút ngoài giờ (20:00–6:00), không hỏi khi app chạy nền |
-| D1 truy vấn mỗi yêu cầu | 50 | Hỏi phiên bản 1 câu; tải dữ liệu chung 24 câu trong 2 lượt gọi; gửi báo cáo cả khu 19; "Duyệt tất cả" khoảng 34, không tăng theo số khu hay số phiếu chờ (ghi hàng loạt bằng một câu lệnh `json_each`) |
+| D1 truy vấn mỗi yêu cầu | 50 | Hỏi phiên bản 1 câu; tải dữ liệu chung 26 câu trong 2 lượt gọi; gửi báo cáo cả khu 19; "Duyệt tất cả" khoảng 34, không tăng theo số khu hay số phiếu chờ (ghi hàng loạt bằng một câu lệnh `json_each`) |
 | Cron | 5 | 1 (mỗi giờ: tự chốt sổ ngày đã qua + dọn dẹp) |
 | D1 đọc | 5 triệu dòng/ngày | Khoảng 900 dòng mỗi lần tải dữ liệu chung, 200 dòng mỗi lần gửi báo cáo, không tăng theo số năm dữ liệu (riêng Tìm nhật ký theo chữ, báo cáo "từ ngày đầu" và Sao lưu đọc cả bảng) |
 | D1 ghi | 100.000 dòng/ngày | Vài trăm đến vài nghìn |
@@ -352,6 +388,7 @@ src/bootstrap.js     dữ liệu chung cho máy khách
 src/counts.js        báo cáo đếm, hai người báo khác số, nhật ký, tệp CSV ngày
 src/phieu.js         nhập, chuyển, xuất, điều chỉnh tồn
 src/loans.js         sổ vay mượn ngoài bãi
+src/quanso.js        quân số đầu ca của từng tổ (ca ngày, ca đêm)
 src/review.js        màn Duyệt, tự chốt sổ sau 0h, hoàn tác đặt lại số liệu
 src/data.js          đặt lại số liệu, sao lưu, nạp lại
 src/admin.js         người dùng, khu, phi, cài đặt

@@ -124,9 +124,18 @@ export const SETTINGS_SQL = 'SELECT key, value FROM settings';
    Mỗi số chỉ kiểm được phạm vi riêng ở đây; điều kiện giữa hai số (bắt đầu trước kết thúc, đủ
    chỗ cho số lần đếm) kiểm trong settingsUpdate vì phải xét cả số đang lưu. */
 export const WORK_DEFAULT = [6, 18];
-export const SETTING_RANGE = { max_keep_streak: [1, 30], report_slots_per_day: [1, 4], work_from: [0, 23], work_to: [1, 24] };
+/* ca1_tu / ca2_tu: giờ bắt đầu CA NGÀY và CA ĐÊM, tính bằng PHÚT trong ngày (6h30 = 390, 18h30 = 1110) vì ca
+   không bắt đầu giờ chẵn. Ca ngày chạy từ ca1_tu tới ca2_tu, ca đêm từ ca2_tu tới ca1_tu hôm sau. Dùng cho
+   quân số đầu ca (src/quanso.js), không liên quan khung giờ đếm thép ở trên. */
+export const CA_DEFAULT = [390, 1110];
+/* qs_han1 / qs_han2: HẠN BÁO QUÂN SỐ của ca ngày và ca đêm, cũng tính bằng phút trong ngày (7h = 420,
+   19h15 = 1155). Quá giờ này mà tổ chưa báo thì thẻ nhắc chuyển đỏ. CVKTHT trở lên đổi được ở màn Quân số
+   (qsHan trong src/quanso.js), nên không nằm trong SETTING_RANGE của màn Cài đặt dành cho admin. */
+export const QS_HAN_DEFAULT = [420, 1155];
+export const SETTING_RANGE = { max_keep_streak: [1, 30], report_slots_per_day: [1, 4], work_from: [0, 23], work_to: [1, 24], ca1_tu: [0, 1438], ca2_tu: [1, 1439] };
 export function parseSettings(rows) {
-  const o = { max_keep_streak: 3, report_slots_per_day: 1, work_from: WORK_DEFAULT[0], work_to: WORK_DEFAULT[1] };
+  const o = { max_keep_streak: 3, report_slots_per_day: 1, work_from: WORK_DEFAULT[0], work_to: WORK_DEFAULT[1], ca1_tu: CA_DEFAULT[0], ca2_tu: CA_DEFAULT[1],
+    qs_han1: QS_HAN_DEFAULT[0], qs_han2: QS_HAN_DEFAULT[1] };
   for (const r of rows) o[r.key] = Number(r.value);
   return o;
 }

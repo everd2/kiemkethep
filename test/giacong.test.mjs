@@ -26,7 +26,7 @@ async function main() {
   await mk('Cv', '0900000004', 'cvktht');
   await mk('Trung', '0900000005', 'trungdoi');
   const today = vnDay(), mai = vnDay(Date.now() + 864e5);
-  const don = (o = {}) => ({ cau_kien: 'Dầm D3', hang_muc: 'Khối A, tầng 5', truc: 'X12-X17 / Y3-Y5', noi_dung: '2,4 tấn', user: U.An, han: mai, buoi: 'chieu', ...o });
+  const don = (o = {}) => ({ cau_kien: 'Dầm D3', hang_muc: 'Khối A, tầng 5', tang: '5', truc: 'X12-X17 / Y3-Y5', noi_dung: '2,4 tấn', user: U.An, han: mai, buoi: 'chieu', ...o });
   const viec = (id, v, body, who) => S.call('POST', `/giacong/${id}/${v}`, body || {}, who);
   const xem = async (id, who = 'Admin') => (await S.call('GET', '/giacong/' + id, undefined, who)).data;
   const rev = () => S.one("SELECT value FROM meta WHERE key = 'rev'").value;
@@ -38,6 +38,8 @@ async function main() {
   eq('hạn không phải ngày: từ chối', (await S.call('POST', '/giacong', don({ han: 'mai' }), 'Cv')).status, 400);
   eq('ngày không có thật (31/02): từ chối', (await S.call('POST', '/giacong', don({ han: today.slice(0, 4) - -1 + '-02-31' }), 'Cv')).status, 400);
   eq('hạn xa quá một năm (gõ nhầm năm): từ chối', (await S.call('POST', '/giacong', don({ han: vnDay(Date.now() + 500 * 864e5) }), 'Cv')).status, 400);
+  eq('thiếu vị trí trục: từ chối', (await S.call('POST', '/giacong', don({ truc: '' }), 'Cv')).status, 400);
+  eq('không tầng, không cote: từ chối (phải có ít nhất một)', (await S.call('POST', '/giacong', don({ tang: '' }), 'Cv')).status, 400);
   eq('buổi lạ: từ chối', (await S.call('POST', '/giacong', don({ buoi: 'toi' }), 'Cv')).status, 400);
   eq('giao cho CVKTHT: từ chối (chỉ giao cho Tiểu đội trưởng)', (await S.call('POST', '/giacong', don({ user: U.Cv }), 'Cv')).status, 400);
   eq('giao cho người không có: từ chối', (await S.call('POST', '/giacong', don({ user: 99999 }), 'Cv')).status, 400);
@@ -74,7 +76,7 @@ async function main() {
   eq('An nhận đơn', (await viec(id, 'nhan', {}, 'An')).status, 200);
   eq('nhận lần hai: từ chối', (await viec(id, 'nhan', {}, 'An')).status, 409);
   eq('đơn thành đã nhận', (await xem(id)).don.tt, 'nhan');
-  eq('tiến độ ngoài nấc: từ chối', (await viec(id, 'tiendo', { pct: 30 }, 'An')).status, 400);
+  eq('tiến độ ngoài nấc 10%: từ chối', [(await viec(id, 'tiendo', { pct: 35 }, 'An')).status, (await viec(id, 'tiendo', { pct: 25 }, 'An')).status], [400, 400]);
   eq('100% không đi đường tiến độ (phải xác nhận xong)', (await viec(id, 'tiendo', { pct: 100 }, 'An')).status, 400);
   eq('tiến độ không đổi và không ghi chú: từ chối', (await viec(id, 'tiendo', { pct: 0 }, 'An')).status, 400);
   advance(1000);
@@ -121,7 +123,7 @@ async function main() {
   eq('mở lại phải có lý do', (await viec(id, 'molai', {}, 'Cv')).status, 400);
   eq('Cv mở lại đơn', (await viec(id, 'molai', { ly_do: 'thiếu 4 thanh đai trục X14' }, 'Cv')).status, 200);
   const dm = (await xem(id)).don;
-  eq('mở lại: về đang làm 75%, bỏ giờ xong', [dm.tt, dm.pct, dm.xong_ts], ['lam', 75, null]);
+  eq('mở lại: về đang làm 90%, bỏ giờ xong', [dm.tt, dm.pct, dm.xong_ts], ['lam', 90, null]);
   eq('lý do mở lại nằm trong lịch sử đơn và nhật ký', [(await xem(id)).log[0].note, JSON.parse(S.one("SELECT detail FROM audit WHERE action = 'gc_molai'").detail).ly_do], ['thiếu 4 thanh đai trục X14', 'thiếu 4 thanh đai trục X14']);
   eq('đơn mang lý do bị mở lại, và bootstrap gửi nó cho người giữ đơn', [dm.mo_lai, (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.find((x) => x.user_id === U.Binh && x.tt === 'lam').mo_lai], ['thiếu 4 thanh đai trục X14', 'thiếu 4 thanh đai trục X14']);
   eq('Binh xác nhận xong lần nữa', (await viec(id, 'xong', {}, 'Binh')).status, 200);
@@ -134,8 +136,40 @@ async function main() {
   eq('đơn đã huỷ giữ lý do', [(await xem(id2)).don.tt, (await xem(id2)).don.huy_ly_do], ['huy', 'Đổi thiết kế']);
   eq('đơn đã huỷ thì người được giao không nhận được nữa', (await viec(id2, 'nhan', {}, 'Binh')).status, 409);
   eq('huỷ lần hai: từ chối', (await viec(id2, 'huy', { ly_do: 'x' }, 'Cv')).status, 409);
-  eq('bootstrap: không còn đơn mở nào, chỉ còn đơn vừa huỷ để nhắc người giữ nó', (await S.call('GET', '/bootstrap', undefined, 'Cv')).data.gc.map((x) => [x.user_id, x.tt]), [[U.Binh, 'huy']]);
-  eq('đơn xong và đơn huỷ vẫn nằm trên bảng chung', (await S.call('GET', '/giacong', undefined, 'An')).data.items.map((x) => x.tt).sort(), ['huy', 'xong']);
+  /* --- huỷ = không cần làm nữa: ai huỷ, lúc nào; người giữ đơn bấm "đã biết"; huỷ nhầm thì khôi phục --- */
+  {
+    const h = (await xem(id2)).don;
+    ok('đơn huỷ ghi ai huỷ, lúc nào, và chưa ai biết', h.huy_name === 'Cv' && h.huy_ts > 0 && h.biet_ts === null, JSON.stringify(h));
+    const rv = await S.call('POST', '/giacong', don({ cau_kien: 'Lanh tô L1', user: U.Binh }), 'Cv');
+    await viec(rv.data.id, 'vuong', { ly_do: 'thiếu thép' }, 'Binh');
+    await viec(rv.data.id, 'huy', { ly_do: 'bỏ' }, 'Cv');
+    eq('đơn đang vướng mà bị huỷ thì hết cờ vướng', [(await xem(rv.data.id)).don.tt, (await xem(rv.data.id)).don.vuong], ['huy', null]);
+    await viec(rv.data.id, 'biet', {}, 'Binh');
+    eq('không phải người giữ đơn thì không bấm "đã biết" thay được', [(await viec(id2, 'biet', {}, 'An')).status, (await viec(id2, 'biet', {}, 'Cv')).status], [403, 403]);
+    eq('đơn chưa huỷ thì không có gì để "đã biết"', (await viec(id, 'biet', {}, 'Binh')).status, 409);
+    eq('bootstrap gửi đơn huỷ CHƯA được biết, kèm tên đơn và lý do', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.filter((x) => x.tt === 'huy').map((x) => [x.id, x.cau_kien, x.huy_ly_do]), [[id2, 'Cột C2', 'Đổi thiết kế']]);
+    eq('Tiểu đội trưởng không khôi phục được đơn', (await viec(id2, 'khoiphuc', { ly_do: 'x' }, 'Binh')).status, 403);
+    eq('khôi phục phải có lý do', (await viec(id2, 'khoiphuc', {}, 'Cv')).status, 400);
+    eq('đơn chưa huỷ thì không khôi phục được', (await viec(id, 'khoiphuc', { ly_do: 'x' }, 'Cv')).status, 409);
+    advance(1000);
+    eq('Cv khôi phục đơn huỷ nhầm', (await viec(id2, 'khoiphuc', { ly_do: 'huỷ nhầm đơn' }, 'Cv')).status, 200);
+    const k = (await xem(id2)).don;
+    eq('khôi phục: về đúng trạng thái trước khi huỷ, hết dấu huỷ, người giữ đơn thấy lý do', [k.tt, k.huy_ly_do, k.huy_ts, k.biet_ts, k.mo_lai], ['moi', null, null, null, 'Khôi phục sau khi huỷ: huỷ nhầm đơn']);
+    eq('đơn khôi phục làm tiếp được bình thường', (await viec(id2, 'nhan', {}, 'Binh')).status, 200);
+    advance(1000);
+    await viec(id2, 'tiendo', { pct: 40 }, 'Binh');
+    advance(1000);
+    eq('huỷ lại (lần này đúng)', (await viec(id2, 'huy', { ly_do: 'Đổi thiết kế' }, 'Cv')).status, 200);
+    eq('đơn huỷ giữ nguyên tiến độ lúc huỷ', (await xem(id2)).don.pct, 40);
+    advance(1000);
+    eq('Binh bấm đã biết', (await viec(id2, 'biet', {}, 'Binh')).status, 200);
+    ok('đơn ghi lúc người giữ đơn đã biết', (await xem(id2)).don.biet_ts > 0);
+    eq('bấm đã biết lần hai: từ chối', (await viec(id2, 'biet', {}, 'Binh')).status, 409);
+    eq('đã biết rồi thì bootstrap thôi nhắc', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.filter((x) => x.tt === 'huy').length, 0);
+    eq('lịch sử đơn ghi đủ: huỷ, khôi phục, huỷ, đã biết', (await xem(id2)).log.map((l) => l.viec).filter((v) => ['huy', 'khoiphuc', 'biet'].includes(v)).reverse(), ['huy', 'khoiphuc', 'huy', 'biet']);
+  }
+  eq('bootstrap: không còn đơn mở nào, đơn huỷ đã được biết cũng không còn', (await S.call('GET', '/bootstrap', undefined, 'Cv')).data.gc, []);
+  eq('đơn xong và đơn huỷ vẫn nằm trên bảng chung', (await S.call('GET', '/giacong', undefined, 'An')).data.items.map((x) => x.tt).sort(), ['huy', 'huy', 'xong']);
 
   /* ===== 8. Hai người ghi cùng lúc: lần ghi dựa trên bản cũ bị từ chối =====
      Người giao dời hạn đúng lúc người làm bấm lưu tiến độ. Dựng lại bằng cách để câu đọc đơn trả về
@@ -144,13 +178,21 @@ async function main() {
     const r = await S.call('POST', '/giacong', don({ cau_kien: 'Sàn S1' }), 'Cv');
     const id3 = r.data.id;
     await viec(id3, 'nhan', {}, 'An');
+    // đơn trùng: An đang giữ "Sàn S1" còn mở, giao thêm một đơn giống hệt (khác hoa/thường) thì dừng lại hỏi
+    const n8 = S.one('SELECT COUNT(*) n FROM don_gc').n;
+    const tr = await S.call('POST', '/giacong', don({ cau_kien: 'sàn s1' }), 'Trung');
+    eq('giao đơn giống hệt một đơn còn mở của cùng người: dừng lại hỏi, chưa ghi', [tr.status, tr.data.code, S.one('SELECT COUNT(*) n FROM don_gc').n], [409, 'trung', n8]);
+    ok('câu hỏi nói rõ ai đang giữ đơn nào', /An đang giữ một đơn còn mở giống hệt: sàn s1/.test(tr.data.error), tr.data.error);
+    eq('khác trục thì là đơn khác, giao bình thường', (await S.call('POST', '/giacong', don({ cau_kien: 'Sàn S1', truc: 'X20-X21' }), 'Trung')).status, 200);
+    eq('cùng nội dung nhưng giao cho người khác: không tính là trùng', (await S.call('POST', '/giacong', don({ cau_kien: 'Sàn S1', user: U.Binh }), 'Trung')).status, 200);
+    eq('đã hỏi và người giao vẫn muốn giao thêm: ghi', [(await S.call('POST', '/giacong', { ...don({ cau_kien: 'Sàn S1' }), trung: true }, 'Trung')).status, S.one('SELECT COUNT(*) n FROM don_gc').n], [200, n8 + 3]);
     const goc = S.DB.batch.bind(S.DB);
     let chen = true;
     S.DB.batch = async (stmts) => {
       if (chen) { chen = false; S.raw.exec('UPDATE don_gc SET cap_ts = cap_ts + 5 WHERE id = ' + id3); }
       return goc(stmts);
     };
-    const rr = await viec(id3, 'tiendo', { pct: 25 }, 'An');
+    const rr = await viec(id3, 'tiendo', { pct: 20 }, 'An');
     S.DB.batch = goc;
     eq('đơn vừa đổi giữa lúc đọc và lúc ghi: từ chối, bảo tải lại', [rr.status, rr.data.code], [409, 'changed']);
     eq('và không ghi nửa chừng: tiến độ giữ nguyên, lịch sử không thêm dòng', [(await xem(id3)).don.pct, (await xem(id3)).log.filter((l) => l.viec === 'tiendo').length], [0, 0]);
@@ -173,12 +215,14 @@ async function main() {
     addDays(2);
     advance(60e3);
     const bt2 = (await S.call('GET', '/bootstrap', undefined, 'Binh')).data;
-    ok('đơn huỷ quá 2 ngày thì thôi nhắc', !bt2.gc.some((x) => x.tt === 'huy'), JSON.stringify(bt2.gc));
+    ok('không còn đơn huỷ nào phải nhắc', !bt2.gc.some((x) => x.tt === 'huy'), JSON.stringify(bt2.gc));
     ok('qua hạn: đơn còn mở vẫn nằm trong bootstrap với hạn đã qua (máy tự tính trễ)', bt2.gc.some((x) => x.han < bt2.today), JSON.stringify(bt2.gc));
     const d = (await S.call('GET', '/giacong', undefined, 'Binh')).data.items.find((x) => x.cau_kien === 'Sàn S1');
-    eq('sửa đơn đã trễ mà giữ nguyên hạn cũ: được (chỉ đổi nội dung)', (await S.call('PATCH', '/giacong/' + d.id, { cau_kien: 'Sàn S1', truc: 'X1-X2', user: d.user_id, han: d.han }, 'Cv')).status, 200);
-    eq('nhưng đặt hạn MỚI vào ngày đã qua thì không', (await S.call('PATCH', '/giacong/' + d.id, { cau_kien: 'Sàn S1', user: d.user_id, han: vnDay(Date.now() - 2 * 864e5) }, 'Cv')).status, 400);
-    addDays(40);
+    eq('sửa đơn đã trễ mà giữ nguyên hạn cũ: được (chỉ đổi nội dung)', (await S.call('PATCH', '/giacong/' + d.id, { cau_kien: 'Sàn S1', tang: '5', truc: 'X1-X2', user: d.user_id, han: d.han }, 'Cv')).status, 200);
+    eq('nhưng đặt hạn MỚI vào ngày đã qua thì không', (await S.call('PATCH', '/giacong/' + d.id, { cau_kien: 'Sàn S1', tang: '5', truc: 'X1-X2', user: d.user_id, han: vnDay(Date.now() - 2 * 864e5) }, 'Cv')).status, 400);
+    addDays(6);
+    eq('huỷ đã quá 7 ngày: không khôi phục được nữa', (await viec(id2, 'khoiphuc', { ly_do: 'muộn' }, 'Cv')).status, 409);
+    addDays(34);
     // phiên đăng nhập sống 30 ngày: qua 40 ngày thì phải đăng nhập lại
     await S.login('Binh', '0900000003', '1357'); await S.login('Admin', '0900000001', '2468');
     const l = (await S.call('GET', '/giacong', undefined, 'Binh')).data.items;
@@ -247,37 +291,108 @@ async function main() {
       R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: id3[name], name, role })}; S.ask = null; S.form = {}; S.gcF = 'mo'; S.screen = 'giacong';`);
       R(`S.gc = ${JSON.stringify((await S3.call('GET', '/giacong', undefined, name)).data)};`);
     };
-    const don3 = () => S3.sql('SELECT cau_kien, truc, hang_muc, user_id, han, tt, pct FROM don_gc ORDER BY id');
+    const don3 = () => S3.sql('SELECT cau_kien, truc, phan_khu, tang, hang_muc, user_id, han, tt, pct FROM don_gc ORDER BY id');
     const ngayMai = vnDay(Date.now() + 864e5);
 
+    /* --- danh mục do admin lập trước: phân khu, hạng mục, loại cấu kiện --- */
+    id3.Admin = S3.one("SELECT id FROM users WHERE name = 'Admin'").id;
+    const g0 = (await S3.call('GET', '/giacong', undefined, 'An')).data;
+    eq('cài mới: có sẵn sáu loại cấu kiện, chưa có phân khu / hạng mục', [g0.muc.ck.map((m) => m.ten), g0.muc.khu, g0.muc.hm], [['Dầm', 'Cột', 'Sàn', 'Móng', 'Vách', 'Cầu thang'], [], []]);
+    const d3 = (o = {}) => ({ cau_kien: 'Dầm', truc: 'X1-X2', cote: '+3.600', user: id3.An, han: ngayMai3, ...o });
+    const ngayMai3 = vnDay(Date.now() + 864e5);
+    eq('thiếu vị trí trục: từ chối (trục là bắt buộc)', (await S3.call('POST', '/giacong', d3({ truc: ' ' }), 'Cv')).status, 400);
+    const k0 = await S3.call('POST', '/giacong', d3({ cau_kien: 'Sàn S0', hang_muc: 'Phần cũ gõ tay' }), 'Cv');
+    eq('chưa lập danh mục phân khu thì chưa đòi phân khu; hạng mục nhận chữ tự do', k0.status, 200);
+    eq('CVKTHT không sửa được danh mục', [(await S3.call('POST', '/giacong/muc', { loai: 'khu', ten: 'Khu A' }, 'Cv')).status, (await S3.call('DELETE', '/giacong/muc/1', undefined, 'Cv')).status], [403, 403]);
+    eq('loại danh mục lạ / tên trống: từ chối', [(await S3.call('POST', '/giacong/muc', { loai: 'xx', ten: 'A' }, 'Admin')).status, (await S3.call('POST', '/giacong/muc', { loai: 'khu', ten: '  ' }, 'Admin')).status], [400, 400]);
+    for (const [loai, ten] of [['khu', 'Khu A'], ['khu', 'Khu B'], ['hm', 'Phần thân']]) eq(`admin thêm ${loai} "${ten}"`, (await S3.call('POST', '/giacong/muc', { loai, ten }, 'Admin')).status, 200);
+    eq('trùng tên (khác hoa/thường, có dấu): từ chối', [(await S3.call('POST', '/giacong/muc', { loai: 'khu', ten: 'khu a' }, 'Admin')).status, (await S3.call('POST', '/giacong/muc', { loai: 'hm', ten: 'PHẦN THÂN' }, 'Admin')).status], [400, 400]);
+    eq('"Khác" luôn có sẵn, không thêm vào danh mục loại cấu kiện', (await S3.call('POST', '/giacong/muc', { loai: 'ck', ten: 'Khác' }, 'Admin')).status, 400);
+    eq('có danh mục phân khu rồi: giao đơn thiếu phân khu bị từ chối', (await S3.call('POST', '/giacong', d3(), 'Cv')).status, 400);
+    eq('phân khu / hạng mục ngoài danh mục: từ chối', [(await S3.call('POST', '/giacong', d3({ phan_khu: 'Khu Z' }), 'Cv')).status, (await S3.call('POST', '/giacong', d3({ phan_khu: 'Khu A', hang_muc: 'Lạ' }), 'Cv')).status], [400, 400]);
+    const k1 = await S3.call('POST', '/giacong', d3({ phan_khu: 'khu a', tang: ' 5 ', hang_muc: 'phần thân' }), 'Cv');
+    eq('giao đủ: phân khu và hạng mục ghi đúng cách viết trong danh mục, tầng được lưu', [k1.status, S3.one('SELECT phan_khu, tang, hang_muc, truc FROM don_gc WHERE id = ?', k1.data.id)], [200, { phan_khu: 'Khu A', tang: '5', hang_muc: 'Phần thân', truc: 'X1-X2' }]);
+    eq('cùng cấu kiện, cùng trục nhưng khác tầng: không tính là đơn trùng', (await S3.call('POST', '/giacong', d3({ phan_khu: 'Khu A', tang: '6' }), 'Cv')).status, 200);
+    eq('giống hệt cả phân khu, tầng, trục: dừng lại hỏi', (await S3.call('POST', '/giacong', d3({ phan_khu: 'Khu A', tang: '5' }), 'Cv')).data.code, 'trung');
+    const idKhuA = (await S3.call('GET', '/giacong', undefined, 'An')).data.muc.khu.find((m) => m.ten === 'Khu A').id;
+    eq('admin xoá phân khu "Khu A"', (await S3.call('DELETE', '/giacong/muc/' + idKhuA, undefined, 'Admin')).status, 200);
+    eq('đơn đã giao vẫn giữ tên phân khu đã xoá', S3.one('SELECT phan_khu FROM don_gc WHERE id = ?', k1.data.id).phan_khu, 'Khu A');
+    eq('sửa đơn đó mà giữ nguyên phân khu cũ: được; đơn MỚI thì không chọn được nữa', [(await S3.call('PATCH', '/giacong/' + k1.data.id, d3({ phan_khu: 'Khu A', tang: '5', hang_muc: 'Phần thân', truc: 'X1-X3' }), 'Cv')).status, (await S3.call('POST', '/giacong', d3({ phan_khu: 'Khu A', truc: 'X9' }), 'Cv')).status], [200, 400]);
+    ok('lịch sử đơn ghi trục mới', (await S3.call('GET', '/giacong/' + k1.data.id, undefined, 'An')).data.log[0].note.includes('trục: X1-X3'));
+    eq('đơn cũ gõ tay hạng mục (trước khi có danh mục) vẫn sửa được nếu giữ nguyên, chỉ cần bổ sung phân khu', (await S3.call('PATCH', '/giacong/' + k0.data.id, d3({ cau_kien: 'Sàn S0', hang_muc: 'Phần cũ gõ tay', phan_khu: 'Khu B', truc: 'X1-X2' }), 'Cv')).status, 200);
+    await S3.call('POST', '/giacong/muc', { loai: 'khu', ten: 'Khu A' }, 'Admin');
+    // dọn các đơn vừa tạo để phần giao diện bên dưới bắt đầu từ bảng trống
+    S3.raw.exec('DELETE FROM don_gc; DELETE FROM don_gc_log');
+
     await vao('Cv', 'cvktht');
-    ok('CVKTHT thấy nút giao đơn ngay trên bảng', R('vGiaCong()').includes('data-a="gcnew"'));
+    ok('CVKTHT thấy nút giao đơn ngay trên bảng, không thấy nút thiết lập (chỉ admin)', R('vGiaCong()').includes('data-a="gcnew"') && !R('vGiaCong()').includes('data-s="gcsetup"'));
     R('ACTIONS.gcnew()'); await cho();
     eq('mở màn soạn đơn: hạn điền sẵn ngày mai', [R('S.screen'), R('S.form.gchan')], ['gcform', ngayMai]);
-    ok('nút GIAO đứng yên ở đáy, có cả "giao + đơn tiếp"', /class="sendbar[^"]*">.*data-v="tiep".*GIAO ĐƠN/s.test(R('vGcForm()')));
-    R(`ACTIONS.gcckq({ v: 'Dầm' })`);
-    eq('bấm loại cấu kiện: điền sẵn chữ đầu', R('S.form.gcck'), 'Dầm ');
+    const fm = R('vGcForm()');
+    ok('nút GIAO đứng yên ở đáy, có cả "giao + đơn tiếp"', /class="sendbar[^"]*">.*data-v="tiep".*GIAO ĐƠN/s.test(fm));
+    ok('loại cấu kiện, "Khác" và phân khu là nút bấm lấy từ danh mục', ['data-a="gcckq" data-v="Dầm"', 'data-a="gcckq" data-v="khac"', 'data-a="gckhu" data-v="Khu A"', 'data-a="gchmq" data-v="Phần thân"'].every((x) => fm.includes(x)));
+    ok('trục nhập bằng bốn ô số', ['id="gcx1"', 'id="gcx2"', 'id="gcy1"', 'id="gcy2"'].every((x) => fm.includes(x)) && fm.includes('inputmode="numeric"'));
     R(`ACTIONS.gcuser({ v: '${id3.Binh}' }); ACTIONS.gcsave({ v: 'tiep' })`); await cho();
-    eq('mới có chữ "Dầm" mà chưa ghi cấu kiện nào: chưa giao', don3().length, 0);
-    R(`S.form.gcck = 'Dầm D9'; S.form.gctruc = 'X1-X2'; S.form.gchm = 'Khối A'; ACTIONS.gcsave({ v: 'tiep' })`); await cho();
-    eq('giao + đơn tiếp: đơn đã vào server', don3(), [{ cau_kien: 'Dầm D9', truc: 'X1-X2', hang_muc: 'Khối A', user_id: id3.Binh, han: ngayMai, tt: 'moi', pct: 0 }]);
-    eq('vẫn ở màn soạn, giữ người nhận / hạn / hạng mục, xoá cấu kiện và trục', [R('S.screen'), R('S.gcForm.user'), R('S.form.gchan'), R('S.form.gchm'), R('S.form.gcck') || '', R('S.form.gctruc') || ''], ['gcform', id3.Binh, ngayMai, 'Khối A', '', '']);
-    ok('hạng mục vừa dùng thành nút gợi ý', R('vGcForm()').includes('data-a="gchmq" data-v="Khối A"'));
-    R(`S.form.gcck = 'Cột C9'; ACTIONS.gcsave({})`); await cho();
-    eq('giao đơn thứ hai chỉ gõ thêm tên cấu kiện', don3().map((d) => [d.cau_kien, d.hang_muc, d.user_id]), [['Dầm D9', 'Khối A', id3.Binh], ['Cột C9', 'Khối A', id3.Binh]]);
+    eq('chưa chọn loại cấu kiện: chưa giao', don3().length, 0);
+    R(`ACTIONS.gcckq({ v: 'Dầm' }); ACTIONS.gcsave({ v: 'tiep' })`); await cho();
+    eq('chưa nhập trục: chưa giao', don3().length, 0);
+    R(`S.form.gcx1 = '1'; S.form.gcx2 = '2';`);
+    eq('bốn ô ghép thành chữ trục', [R('gcTrucGhep()'), R(`S.form.gcy1 = '3'; S.form.gcy2 = '5'; gcTrucGhep()`), R(`S.form.gcy1 = ''; S.form.gcy2 = ''; S.form.gcx2 = '1'; gcTrucGhep()`)], ['X1-X2', 'X1-X2 / Y3-Y5', 'X1']);
+    R(`S.form.gcx2 = '2'; ACTIONS.gcsave({ v: 'tiep' })`); await cho();
+    eq('chưa chọn phân khu: chưa giao', don3().length, 0);
+    R(`ACTIONS.gckhu({ v: 'Khu A' }); S.form.gctang = ''; ACTIONS.gcsave({ v: 'tiep' })`); await cho();
+    eq('chưa ghi tầng lẫn cote: chưa giao', don3().length, 0);
+    ok('màn soạn có ô tầng và ô cote', ['id="gctang"', 'id="gccote"'].every((x) => R('vGcForm()').includes(x)));
+    R(`S.form.gctang = '5'; ACTIONS.gcsave({ v: 'tiep' })`); await cho();
+    eq('giao + đơn tiếp: đơn đã vào server, đủ cấu kiện, trục, phân khu, tầng', don3(), [{ cau_kien: 'Dầm', truc: 'X1-X2', phan_khu: 'Khu A', tang: '5', hang_muc: null, user_id: id3.Binh, han: ngayMai, tt: 'moi', pct: 0 }]);
+    eq('vẫn ở màn soạn; giữ loại cấu kiện, phân khu, tầng, người nhận, hạn; xoá trục', [R('S.screen'), R('S.gcForm.ck'), R('S.gcForm.khu'), R('S.form.gctang'), R('S.gcForm.user'), R('S.form.gchan'), R('gcTrucGhep()')], ['gcform', 'Dầm', 'Khu A', '5', id3.Binh, ngayMai, '']);
+    ok('trục vừa dùng thành nút gợi ý', R('vGcForm()').includes('data-a="gctrucq" data-v="X1-X2"'));
+    // bấm giao lại đúng đơn vừa giao (mạng chập chờn, hoặc quên sửa trục): app hỏi lại chứ không lặng lẽ sinh đơn trùng
+    R(`ACTIONS.gctrucq({ v: 'X1-X2' }); ACTIONS.gcsave({ v: 'tiep' })`); await cho();
+    eq('giao trùng: hộp hỏi mở ra, server chưa ghi thêm, trục đang nhập còn nguyên', [!!R('S.ask'), don3().length, R('gcTrucGhep()')], [true, 1, 'X1-X2']);
+    R('ACTIONS.askno()'); await cho();
+    eq('bấm Quay lại: không có đơn thứ hai', don3().length, 1);
+    // cấu kiện ngoài danh mục: chọn Khác rồi ghi tên
+    R(`ACTIONS.gcckq({ v: 'khac' }); S.form.gcx1 = '7'; S.form.gcx2 = ''; S.form.gcy1 = '3'; ACTIONS.gcsave({})`); await cho();
+    eq('chọn Khác mà chưa ghi tên cấu kiện: chưa giao', don3().length, 1);
+    R(`S.form.gcck = 'Bể nước'; ACTIONS.gcsave({})`); await cho();
+    eq('cấu kiện Khác: giao được với tên tự ghi', don3().map((d) => [d.cau_kien, d.truc, d.phan_khu, d.tang]), [['Dầm', 'X1-X2', 'Khu A', '5'], ['Bể nước', 'X7 / Y3', 'Khu A', '5']]);
     eq('giao xong về bảng đơn', [R('S.screen'), R('S.gcForm')], ['giacong', null]);
-    R('ACTIONS.gcnew()'); await cho();
-    eq('lần giao sau: người nhận và hạng mục điền sẵn theo lần trước', [R('S.gcForm.user'), R('S.form.gchm')], [id3.Binh, 'Khối A']);
-    R(`S.screen = 'giacong'; S.form.gcq = 'cot c9';`);
-    const the = R('vGiaCong()').split('data-gcq="').slice(1);
-    eq('tìm không dấu "cot c9": chỉ còn thẻ Cột C9 hiện', the.map((x) => [x.split('"')[0].split(' ').slice(0, 2).join(' '), x.split('>')[0].includes('display:none')]), [['dam d9', true], ['cot c9', false]]);
-    ok('người giao không có nút làm nhanh trên đơn của người khác', !/data-a="gcq(nhan|pct|xong)"/.test(R(`S.form.gcq = ''; vGiaCong()`)));
+    R('ACTIONS.gcnew()'); await cho(); R('vGcForm()');
+    eq('lần giao sau: loại cấu kiện, phân khu, tầng, người nhận điền sẵn theo lần trước', [R('S.gcForm.ck'), R('S.gcForm.khu'), R('S.form.gctang'), R('S.gcForm.user')], ['khac', 'Khu A', '5', id3.Binh]);
+    eq('chữ trục có sẵn tách về bốn ô; trục không theo dạng X / Y thì để ô gõ tự do', [R(`gcTrucDat('X12-X17 / Y3-Y5'); [S.form.gcx1, S.form.gcx2, S.form.gcy1, S.form.gcy2, S.gcForm.trucTu].join()`), R(`gcTrucDat('Y4'); [S.form.gcx1 || '', S.form.gcy1, S.gcForm.trucTu].join()`), R(`gcTrucDat('lõi thang T2'); [S.gcForm.trucTu, S.form.gctruc, gcTrucCua()].join()`)], ['12,17,3,5,false', ',4,false', 'true,lõi thang T2,lõi thang T2']);
+    // sửa một đơn: loại cấu kiện và số hiệu tách lại đúng từ tên đã lưu
+    R(`gcSoan({ id: 99, cau_kien: 'Cầu thang CT2', truc: 'X3-X4', phan_khu: 'Khu B', tang: '2', hang_muc: null, user_id: ${id3.An}, uname: 'An', han: '${ngayMai}', buoi: 'sang' }, true); vGcForm();`);
+    eq('mở sửa đơn "Cầu thang CT2": loại = Cầu thang, số hiệu = CT2, trục về ô', [R('S.gcForm.ck'), R('S.form.gcck'), R('gcTrucGhep()'), R('S.gcForm.khu'), R('gcCauKien(S.gcForm)')], ['Cầu thang', 'CT2', 'X3-X4', 'Khu B', 'Cầu thang CT2']);
+    R(`S.gcForm = null; S.screen = 'giacong'; S.form.gcq = 'be nuoc';`);
+    const bang = R('vGiaCong()').split('data-gctim="1"');
+    ok('đang tìm thì danh sách theo mục lọc ẩn, khối kết quả tìm hiện', /data-gcds="1" style="display:none"/.test(bang[0]) && !bang[1].startsWith(' style="display:none"'), bang[1].slice(0, 40));
+    const the = bang[1].split('data-gcq="').slice(1);
+    eq('tìm không dấu "be nuoc": chỉ còn thẻ Bể nước hiện', the.map((x) => [x.split('"')[0].split(' ').slice(0, 2).join(' '), x.split('>')[0].includes('display:none')]), [['dam x1-x2', true], ['be nuoc', false]]);
+    ok('tìm được theo khu và tầng', R(`gcTuKhoa(S.gc.items[0])`).includes('khu a tang 5'));
+    R(`S.form.gcq = '';`);
+    const nhomTen = () => (R('vGiaCong()').split('data-gctim')[0].match(/<h2 class="sec"[^>]*>([^<]*) </g) || []).map((x) => x.replace(/<[^>]+>/g, '').replace(/<$/, '').trim());
+    eq('gom theo tổ / theo hạn / theo khu', [R(`ACTIONS.gcxem({ v: 'to' })`) || nhomTen(), R(`ACTIONS.gcxem({ v: 'han' })`) || nhomTen(), R(`ACTIONS.gcxem({ v: 'khu' })`) || nhomTen()], [['Binh'], ['Ngày mai'], ['Khu A']]);
+    ok('không gom theo tổ thì thẻ đơn ghi tên người giữ đơn', />X1-X2<\/b> · Khu A · Tầng 5 · Binh</.test(R('vGiaCong()')), (R('vGiaCong()').match(/X1-X2<\/b>[^<]*/) || [''])[0]);
+    R(`ACTIONS.gcxem({ v: 'to' })`);
+    ok('người giao không có nút làm nhanh trên đơn của người khác', !/data-a="gcq(nhan|pct|xong)"/.test(R('vGiaCong()')));
+
+    // admin thiết lập danh mục ngay trong app
+    await vao('Admin', 'admin');
+    ok('admin thấy nút thiết lập trên bảng', R('vGiaCong()').includes('data-s="gcsetup"'));
+    R(`S.screen = 'gcsetup'; S.form.gcmkhu = 'Khu C'; ACTIONS.gcmucadd({ v: 'khu' })`); await cho();
+    eq('thêm phân khu từ màn Thiết lập', [S3.sql("SELECT ten FROM gc_muc WHERE loai = 'khu' ORDER BY sort, id").map((m) => m.ten), R('S.gc.muc.khu.length'), R('S.form.gcmkhu') || ''], [['Khu B', 'Khu A', 'Khu C'], 3, '']);
+    const idC3 = S3.one("SELECT id FROM gc_muc WHERE ten = 'Khu C'").id;
+    R(`ACTIONS.gcmucxoa({ id: '${idC3}' })`); await cho();
+    eq('xoá thì hỏi lại trước', [!!R('S.ask'), S3.sql("SELECT 1 x FROM gc_muc WHERE ten = 'Khu C'").length], [true, 1]);
+    R('ACTIONS.askyes()'); await cho();
+    eq('đồng ý: mục bị xoá khỏi danh mục', [S3.sql("SELECT 1 x FROM gc_muc WHERE ten = 'Khu C'").length, R('S.gc.muc.khu.length')], [0, 2]);
 
     await vao('An', 'tieudoi');
-    ok('Tiểu đội trưởng khác xem được cả hai đơn nhưng không có nút nào', R('vGiaCong()').split('data-a="gcview"').length === 3 && !/data-a="gc(new|qnhan|qpct|qxong)"/.test(R('vGiaCong()')));
+    ok('Tiểu đội trưởng khác xem được cả hai đơn nhưng không có nút nào', R('vGiaCong()').split('data-gctim')[0].split('data-a="gcview"').length === 3 && !/data-a="gc(new|qnhan|qpct|qxong|qbiet)"/.test(R('vGiaCong()')));
 
     await vao('Binh', 'tieudoi');
-    const idD = S3.one("SELECT id FROM don_gc WHERE cau_kien = 'Dầm D9'").id;
+    const idD = S3.one("SELECT id FROM don_gc WHERE cau_kien = 'Dầm'").id;
     ok('người được giao thấy nút NHẬN ĐƠN ngay trên bảng', R('vGiaCong()').includes(`data-a="gcqnhan" data-id="${idD}"`));
     R(`ACTIONS.gcqnhan({ id: '${idD}' })`); await cho();
     eq('bấm nhận trên bảng: server ghi đã nhận, bảng tải lại', [S3.one('SELECT tt FROM don_gc WHERE id = ?', idD).tt, R(`S.gc.items.find((x) => x.id === ${idD}).tt`)], ['nhan', 'nhan']);
@@ -289,9 +404,10 @@ async function main() {
     eq('đồng ý: đơn xong 100%', S3.one('SELECT tt, pct FROM don_gc WHERE id = ?', idD), { tt: 'xong', pct: 100 });
     await vao('Binh', 'tieudoi');
     const nhac = () => (R('vHome()').match(/<b style="font-size:18px">Đơn gia công của bạn[^<]*<\/b><span class="sm">([^<]*)</) || [])[1] || '';
+    ok('thẻ nhắc mở thẳng mục "Của tôi" và bỏ chữ đang tìm dở', (() => { R(`S.gcF = 'dong'; S.form.gcq = 'abc'; ACTIONS.nav({ s: 'more', f: 'toi' })`); return R('vHome()').includes('data-s="giacong" data-f="toi"') && R('S.gcF') === 'toi' && !R('S.form.gcq'); })());
     eq('Tổng quan của Binh: MỘT thẻ, nói đúng còn một đơn chưa nhận', [(R('vHome()').match(/Đơn gia công của bạn/g) || []).length, nhac()], [1, '1 chưa nhận · bấm để xem']);
     // hạn buổi sáng: trước 12h là "hạn hôm nay", từ 12h là trễ. Chỉnh giờ server giả qua độ lệch đồng hồ.
-    const idC = S3.one("SELECT id FROM don_gc WHERE cau_kien = 'Cột C9'").id;
+    const idC = S3.one("SELECT id FROM don_gc WHERE cau_kien = 'Bể nước'").id;
     S3.raw.exec(`UPDATE don_gc SET han = '${vnDay()}', buoi = 'sang', tt = 'nhan' WHERE id = ${idC}`);
     await vao('Binh', 'tieudoi');
     R('S.boot.skew = 0; S.boot.skew = (9 - vnHourNow()) * 3600e3;');
@@ -302,7 +418,25 @@ async function main() {
     await S3.call('POST', `/giacong/${idD}/molai`, { ly_do: 'thiếu 2 thanh' }, 'Cv');
     await S3.call('POST', `/giacong/${idC}/huy`, { ly_do: 'đổi thiết kế' }, 'Cv');
     await vao('Binh', 'tieudoi');
-    eq('đơn bị mở lại và đơn vừa bị huỷ đều được nhắc cho người giữ đơn', nhac(), '1 bị mở lại · 1 vừa bị huỷ · bấm để xem');
+    eq('đơn bị mở lại được nhắc trong thẻ chung', nhac(), '1 bị mở lại · bấm để xem');
+    const tq = R('vHome()');
+    ok('đơn vừa bị huỷ có thẻ đỏ RIÊNG gọi đúng tên, bấm là mở thẳng đơn đó', new RegExp('class="alertbtn bad" data-a="nav" data-s="gcdon" data-gid="' + idC + '">.*KHÔNG LÀM NỮA: Bể nước · X7 / Y3.*Lý do: đổi thiết kế', 's').test(tq), (tq.match(/KHÔNG LÀM NỮA[^<]*/) || [''])[0]);
+    const bg = R(`S.screen = 'giacong'; S.gcF = 'mo'; vGiaCong()`);
+    ok('trên bảng: đơn vừa bị huỷ đứng đầu mục đơn còn mở của người giữ nó, có nút ĐÃ BIẾT', bg.indexOf('Không làm nữa <span') > 0 && bg.indexOf('Không làm nữa <span') < bg.indexOf('data-a="gcview"') && bg.includes(`data-a="gcqbiet" data-id="${idC}"`));
+    ok('thẻ đơn huỷ ghi: không làm nữa, lý do, ai huỷ, người giữ đơn chưa xem', ['<b>Không làm nữa:</b> đổi thiết kế', 'Cv huỷ', 'Binh chưa xem'].every((x) => bg.includes(x)), bg.slice(bg.indexOf('Không làm nữa:'), bg.indexOf('Không làm nữa:') + 200));
+    // tìm một đơn đã huỷ khi đang ở mục "Đang mở": vẫn phải ra
+    eq('tìm "be nuoc" ở mục Đang mở vẫn ra đơn đã huỷ', R(`S.form.gcq = 'be nuoc'; vGiaCong()`).split('data-gctim="1"')[1].split('data-gcq="').slice(1).filter((x) => !x.split('>')[0].includes('display:none')).map((x) => x.split('"')[0].split(' ').slice(0, 2).join(' ')), ['be nuoc']);
+    R(`S.form.gcq = ''`);
+    await vao('Cv', 'cvktht');
+    ok('người giao được nhắc: đơn đã huỷ mà người giữ đơn chưa xem', /1 đơn gia công đã huỷ mà người giữ đơn chưa xem/.test(R('vHome()')));
+    R(`S.gcId = ${idC}; S.gcDetail = ${JSON.stringify((await S3.call('GET', '/giacong/' + idC, undefined, 'Cv')).data)}; S.screen = 'gcdon'`);
+    ok('màn đơn huỷ: người giao có nút khôi phục, không có nút đã biết', R('vGcDon()').includes('data-a="gckhoiphuc"') && !R('vGcDon()').includes('data-a="gcbiet"') && R('vGcDon()').includes('không cần làm nữa'));
+    await vao('Binh', 'tieudoi');
+    R(`S.screen = 'giacong'; ACTIONS.gcqbiet({ id: '${idC}' })`); await cho();
+    ok('người giữ đơn bấm ĐÃ BIẾT: server ghi giờ, thẻ nhắc và nút biến mất', S3.one('SELECT biet_ts FROM don_gc WHERE id = ?', idC).biet_ts > 0 && !R('vHome()').includes('KHÔNG LÀM NỮA') && !R('vGiaCong()').includes('data-a="gcqbiet"'));
+    await vao('Cv', 'cvktht');
+    ok('người giao hết bị nhắc, và thấy "đã biết" trên thẻ đơn', !/chưa xem/.test(R('vHome()')) && R(`S.screen = 'giacong'; S.gcF = 'dong'; vGiaCong()`).includes('Binh đã biết'));
+    await vao('Binh', 'tieudoi');
     ok('thẻ đơn trên bảng ghi rõ lý do bị mở lại', R('vGiaCong()').includes('<b>Bị mở lại:</b> thiếu 2 thanh'));
     await vao('An', 'tieudoi');
     eq('người khác không bị nhắc việc không phải của mình', (R('vHome()').match(/Đơn gia công của bạn/g) || []).length, 0);

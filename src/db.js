@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 29;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -358,6 +358,37 @@ export const MIGRATIONS = {
        id INTEGER PRIMARY KEY AUTOINCREMENT, don_id INTEGER NOT NULL, ts INTEGER NOT NULL, user_id INTEGER,
        viec TEXT NOT NULL, pct INTEGER NOT NULL DEFAULT 0, note TEXT)`,
     'CREATE INDEX IF NOT EXISTS idx_don_gc_log_don ON don_gc_log(don_id)',
+  ],
+  /* QUÂN SỐ ĐẦU CA: mỗi tổ báo quân số ở đầu mỗi ca (xem src/quanso.js). Một bảng mới, tách khỏi tồn kho.
+     Nấc tiến độ gia công đổi từ 25% sang 10% ở cùng bản này nhưng không đổi dữ liệu: đơn cũ đang 25% / 75%
+     giữ nguyên số cho tới lần cập nhật sau. */
+  28: [
+    `CREATE TABLE IF NOT EXISTS quan_so (
+       ngay TEXT NOT NULL, ca INTEGER NOT NULL, user_id INTEGER NOT NULL, tong INTEGER NOT NULL, lam INTEGER NOT NULL,
+       ca_kia INTEGER NOT NULL DEFAULT 0, nghi TEXT NOT NULL DEFAULT '{}', ghi_chu TEXT, ts INTEGER NOT NULL,
+       by_id INTEGER NOT NULL, PRIMARY KEY (ngay, ca, user_id))`,
+    'CREATE INDEX IF NOT EXISTS idx_quan_so_u ON quan_so(user_id, ngay, ca)',
+  ],
+  /* GIA CÔNG: vị trí của đơn tách thành phân khu + tầng + trục (trục thành bắt buộc), và DANH MỤC do admin
+     lập trước để chọn nhanh — phân khu ('khu'), hạng mục ('hm'), loại cấu kiện ('ck'). Đơn lưu TÊN của mục
+     chứ không lưu id, nên xoá một mục không đụng tới đơn đã giao. Sáu loại cấu kiện thường gặp nạp sẵn; đơn
+     cũ không có phân khu / tầng thì để trống. */
+  29: [
+    'ALTER TABLE don_gc ADD COLUMN phan_khu TEXT',
+    'ALTER TABLE don_gc ADD COLUMN tang TEXT',
+    'ALTER TABLE don_gc ADD COLUMN cote TEXT',
+    /* Huỷ = "không cần làm nữa": ai huỷ, lúc nào, đơn đang ở trạng thái gì lúc huỷ (để khôi phục về đúng chỗ),
+       và lúc người giữ đơn bấm "đã biết". Đơn đã huỷ từ trước bản này coi như đã được biết, không nhắc lùi. */
+    'ALTER TABLE don_gc ADD COLUMN huy_by INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN huy_ts INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN huy_tt TEXT',
+    'ALTER TABLE don_gc ADD COLUMN biet_ts INTEGER',
+    "UPDATE don_gc SET huy_ts = cap_ts, biet_ts = cap_ts WHERE tt = 'huy' AND huy_ts IS NULL",
+    `CREATE TABLE IF NOT EXISTS gc_muc (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, loai TEXT NOT NULL, ten TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0)`,
+    `INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', x.ten, x.sort FROM
+       (SELECT 'Dầm' ten, 1 sort UNION ALL SELECT 'Cột', 2 UNION ALL SELECT 'Sàn', 3 UNION ALL SELECT 'Móng', 4 UNION ALL SELECT 'Vách', 5 UNION ALL SELECT 'Cầu thang', 6) x
+     WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck')`,
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
