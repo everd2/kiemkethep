@@ -176,7 +176,7 @@ const S = {
   gc: null, gcF: 'mo', gcId: null, gcDetail: null, gcForm: null, gcPct: null,
   /* Quân số đầu ca: S.qs = quân số của ca đang xem (nạp riêng khi vào màn), qsCa = ca đang chọn (null = ca
      đang diễn ra, server quyết), qsF = tổ đang ghi { uid, nghi, kia, lamTay }; ô đang gõ nằm ở S.form (qstong, qslam, qsnote) */
-  qs: null, qsCa: null, qsF: null,
+  qs: null, qsCa: null, qsF: null, qsH: null, // qsH: thẻ báo quân số trên Tổng quan (qsTheHome)
   hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, legend: false, draftWarn: null, cmp: null, busy: false,
   stale: null, subs: {}, // subs: khu_id -> null (đang tải) | mảng lần báo
   kuEdit: null, kuPick: [], // đang gán người phụ trách cho khu nào, và danh sách đang chọn
@@ -945,12 +945,7 @@ function vHome() {
      báo; còn trong hạn thì thẻ vàng, quá hạn thì đỏ. */
   const qc = qsCaNay();
   if (qc) {
-    const toi = b.qs.to.find((t) => t.id === S.me.id);
-    if (S.me.role === 'tieudoi' && toi) {
-      [qc, qc.sap].forEach((k) => {
-        if (k && qsLamCa(toi, k.ca.ca) && !k.da(toi)) alerts.push({ bad: k.tre, t: (k.tre ? 'Quá hạn báo quân số ' : 'Chưa báo quân số ') + caGoi(k.ca), s: 'Hạn báo ' + hhmm(k.han) + ' · tổ đi làm mấy người, nghỉ mấy, vì sao · bấm để báo', to: 'quanso' });
-      });
-    }
+    // Tiểu đội trưởng không có thẻ nhắc ở đây: thẻ BÁO QUÂN SỐ nằm ngay đầu trang (qsTheHome) vừa nhắc vừa là chỗ báo
     const phai = qlDem ? b.qs.to.filter((t) => qsLamCa(t, qc.ca.ca)) : [], chua = phai.filter((t) => !qc.da(t));
     if (chua.length) alerts.push({ bad: qc.tre, t: chua.length + '/' + phai.length + ' tổ chưa báo quân số ' + caGoi(qc.ca) + (qc.tre ? ', đã quá hạn' : ''), s: chua.map((t) => t.name).join(', ') + ' · hạn báo ' + hhmm(qc.han) + ' · bấm để xem hoặc ghi thay', to: 'quanso' });
   }
@@ -1033,6 +1028,7 @@ function vHome() {
     </div>
     ${b.closed ? `<div class="toast" style="margin-top:12px">${b.closedReset ? 'Hôm nay admin vừa đặt lại số liệu, ngày đã khoá.' : 'Sổ hôm nay đã chốt.'}</div>` : ''}
     <div class="pad col gap12">
+      ${qsTheHome()}
       ${pendingHtml()}
       ${alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => {
         const inner = `<span class="f1 col" style="gap:2px"><b style="font-size:18px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>`;
@@ -2965,6 +2961,79 @@ function qsDong(r, lyDo) {
   if (!r.lam && !n && r.ca_kia) return 'cả tổ làm ' + kia;
   return [`đi làm ${r.lam}/${r.tong}`, r.ca_kia ? `${kia} ${r.ca_kia}` : '', n ? `nghỉ ${n}: ${qsLyDoTxt(r.nghi, lyDo)}` : 'không ai nghỉ', r.ghi_chu || ''].filter(Boolean).join(' · ');
 }
+/* THẺ BÁO QUÂN SỐ TRÊN TỔNG QUAN (chỉ Tiểu đội trưởng). Ngày thường — đủ quân, không ai nghỉ — báo xong bằng
+   MỘT chạm ngay khi mở app, không qua màn nào:
+   - hai nút gửi chính là hai ca, nên chọn ca và gửi là một chạm (vẫn là tự chọn ca, app không chọn hộ). Nút của
+     ca tổ đang làm to hơn; bấm sang ca khác lần trước thì hỏi lại một lần — tổ chỉ đổi ca 15–30 ngày một lần;
+   - tổng quân số lấy theo lần báo trước; có người nghỉ thì mở tại chỗ, chạm lý do là thêm một người;
+   - "Như hôm qua" lấy lại danh sách nghỉ của lần báo trước (nghỉ phép, về quê thường kéo dài vài ngày). Là nút
+     phải tự bấm chứ không điền sẵn: điền sẵn thì người đã đi làm lại vẫn bị báo nghỉ mà không ai để ý;
+   - báo xong thẻ đổi thành dòng "đã báo" kèm nút Sửa.
+   Trạng thái thẻ ở S.qsH { mo, nghi, chia, doiTong, sua }; ô đang gõ ở S.form (qhtong, qhlam, qhnote). */
+const qhState = () => S.qsH || (S.qsH = { mo: false, nghi: {}, chia: false, doiTong: false, sua: null });
+const qhBo = () => { S.qsH = null; ['qhtong', 'qhlam', 'qhnote'].forEach((k) => delete S.form[k]); };
+function qhTinh() {
+  const H = qhState(), tong = soTu(fv('qhtong', S.boot.qs.toi.tong || '')), nghi = qsSoNghi(H.nghi);
+  const lam = H.chia ? soTu(S.form.qhlam) : tong - nghi;
+  const loi = !tong ? 'Ghi tổng quân số của tổ.' : lam < 0 || lam + nghi > tong ? `Đi làm ${Math.max(lam, 0)} + nghỉ ${nghi} nhiều hơn tổng quân số ${tong}.` : '';
+  return { tong, nghi, lam, kia: tong - nghi - lam, loi };
+}
+const qhPrevTxt = (T) => T.loi || [`Đi làm ${T.lam}/${T.tong}`, T.nghi ? `nghỉ ${T.nghi}: ${qsLyDoTxt(qhState().nghi, S.boot.qs.lyDo || QS_LY_DO)}` : 'không ai nghỉ', T.kia > 0 ? `ca còn lại ${T.kia}` : ''].filter(Boolean).join(' · ');
+/* Các ca báo được lúc này (ca ngày đứng trước), kèm dòng đã báo, hạn, và lần báo trước của ca đó. Qua giờ giao
+   ca mà bản đang có chưa kịp tải lại thì chỉ còn ca kế: ca cũ đã hết hạn sửa với Tiểu đội trưởng. */
+function qhCas() {
+  const q = S.boot.qs, t = q.toi, qua = Date.now() + (S.boot.skew || 0) >= q.den;
+  const ke = { c: q.ke, row: t.ke, han: q.hanKe, truoc: t.truocKe };
+  return (qua ? [ke] : [{ c: q.hien, row: t.hien, han: q.han, truoc: t.truocHien }, ke]).sort((a, z) => a.c.ca - z.c.ca);
+}
+// ca tổ đang làm (theo lần báo gần nhất) trong các ca báo được; chưa biết hoặc tổ làm cả hai ca thì là ca sớm hơn
+function qhChinh(cas, to) {
+  return cas.find((x) => to.ca && to.ca.length === 1 && to.ca[0] === x.c.ca) || cas.slice().sort((a, z) => (caKhoa(a.c) < caKhoa(z.c) ? -1 : 1))[0];
+}
+function qsTheHome() {
+  const q = S.boot && S.boot.qs;
+  if (!q || !q.toi || S.me.role !== 'tieudoi') return '';
+  const H = qhState(), lyDo = q.lyDo || QS_LY_DO, qc = qsCaNay();
+  const to = q.to.find((t) => t.id === S.me.id) || { ca: [] };
+  const cas = qhCas(), chinh = qhChinh(cas, to);
+  // việc phải làm ngay: ca tổ đang làm mà chưa báo (ca đang diễn ra, hoặc ca kế trong một tiếng trước giờ vào ca)
+  const can = [qc, qc.sap].filter((k) => k && qsLamCa(to, k.ca.ca) && !k.da(to));
+  const tre = can.some((k) => k.tre);
+  const dau = can.length
+    ? `<span class="col" style="gap:2px"><b style="font-size:18px">${can[0].tre ? 'Quá hạn báo quân số ' : 'Chưa báo quân số '}${esc(caGoi(can[0].ca))}</b><span class="sm">Hạn báo ${hhmm(can[0].han)}${can[1] ? ' · ' + esc(caGoi(can[1].ca)) + ' cũng chưa báo, hạn ' + hhmm(can[1].han) : ''}</span></span>`
+    : '<b style="font-size:18px">Quân số tổ</b>';
+  const daBao = cas.filter((x) => x.row && H.sua !== caKhoa(x.c)).map((x) => `<div class="row gap8"><span class="f1 sm" style="line-height:1.4"><b>${esc(hoa(caGoi(x.c)))}: đã báo</b> lúc ${hhmm(x.row.ts)}<br>${esc(hoa(qsDong(x.row, lyDo)))}</span>
+    ${H.sua ? '' : `<button class="chip s" style="flex:none" data-a="qhsua" data-v="${caKhoa(x.c)}">Sửa</button>`}</div>`).join('');
+  // ca còn báo được trên thẻ: đang sửa thì chỉ ca đang sửa, không thì các ca chưa báo
+  const gui = cas.filter((x) => (H.sua ? H.sua === caKhoa(x.c) : !x.row));
+  if (!gui.length) return `<div class="card col gap8">${dau}${daBao}</div>`;
+  const T = qhTinh(), toi = q.toi;
+  const tongO = H.doiTong || !toi.tong
+    ? `<div class="row gap8"><span class="f1">Tổng quân số của tổ</span><input class="inp s" style="width:96px;flex:none;text-align:center" id="qhtong" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="Ví dụ 21" data-model="qhtong" value="${esc(fv('qhtong', toi.tong || ''))}"></div>`
+    : `<div class="row gap8"><span class="f1">Tổng quân số của tổ: <b>${T.tong}</b> người</span><button class="chip s" style="flex:none" data-a="qhtong">Đổi</button></div>`;
+  // "Như hôm qua": danh sách nghỉ của lần báo trước của ca tổ đang làm; chỉ bày khi lần đó có người nghỉ và ô nghỉ còn trống
+  const ng = (H.sua ? gui[0] : chinh).truoc;
+  const homQua = ng && ng.ngay === congNgay((H.sua ? gui[0] : chinh).c.ngay, -1);
+  const nhu = ng && qsSoNghi(ng.nghi) && !T.nghi ? `<button class="chip s" style="white-space:nowrap" data-a="qhnhu">${homQua ? 'Như hôm qua' : 'Như lần trước'}: ${esc(qsLyDoTxt(ng.nghi, lyDo))}</button>` : '';
+  const nghiO = `<div class="wrap" style="gap:6px;align-items:center"><span>Nghỉ: <b>${T.nghi ? T.nghi + ' người' : 'không ai'}</b></span>
+      <button class="chip s" style="white-space:nowrap" data-a="qhmo">${H.mo ? 'Thu gọn' : T.nghi ? 'Sửa người nghỉ' : 'Có người nghỉ'}</button>${nhu}</div>`;
+  const mo = !H.mo ? '' : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${lyDo.map(([ma, ten]) => `<div class="row gap6" style="min-width:0">
+        <button class="chip s f1 ${H.nghi[ma] ? 'on' : ''}" style="min-width:0;padding:6px 6px;border-radius:12px" data-a="qhnghi" data-k="${ma}" data-v="1">${esc(hoa(ten))}${H.nghi[ma] ? ' · ' + H.nghi[ma] : ''}</button>
+        ${H.nghi[ma] ? `<button class="chip s" style="flex:none;width:44px;padding:6px 0;font-size:20px" data-a="qhnghi" data-k="${ma}" data-v="-1" aria-label="Bớt một người ${esc(ten)}">−</button>` : ''}</div>`).join('')}</div>
+      <span class="sm muted">Chạm một lý do là thêm một người nghỉ; nút − để bớt.</span>
+      ${H.nghi.khac || S.form.qhnote ? `<input class="inp s" id="qhnote" maxlength="200" autocomplete="off" placeholder="Ghi rõ lý do khác, ví dụ: chăm bố ốm" data-model="qhnote" value="${esc(S.form.qhnote || '')}">` : ''}
+      ${H.chia ? `<div class="row gap8"><span class="f1">Đi làm ca này (tổ chia hai ca)</span><input class="inp s" style="width:96px;flex:none;text-align:center" id="qhlam" inputmode="numeric" maxlength="3" autocomplete="off" data-model="qhlam" value="${esc(S.form.qhlam || '')}"></div>` : ''}
+      <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:4px 0;text-align:left" data-a="qhchia">${H.chia ? 'Cả tổ làm một ca' : 'Tổ chia hai ca: ghi riêng số đi làm ca này'}</button>`;
+  const nut = gui.map((x) => {
+    const to2 = gui.length === 1 || x === chinh;
+    return `<button class="btn ${to2 ? 'pri' : ''}" style="flex:${to2 ? 2 : 1};min-width:0;padding:8px 6px;white-space:nowrap${to2 ? '' : ';font-size:15px'}" data-a="qhgui" data-v="${caKhoa(x.c)}">${x.row ? 'GỬI LẠI ' : 'BÁO '}${esc(caGoi(x.c).toUpperCase())}</button>`;
+  }).join('');
+  return `<div class="card ${tre ? 'bad' : can.length ? 'warn' : ''} col gap8">${dau}${daBao}
+    ${tongO}${nghiO}${mo}
+    <b id="qhprev" style="font-size:17px${T.loi ? ';color:var(--bad)' : ''}">${esc(qhPrevTxt(T))}</b>
+    <div class="row gap6">${nut}${H.sua ? '<button class="btn" style="flex:1;min-width:0;padding:8px 6px" data-a="qhthoi">Thôi</button>' : ''}</div>
+  </div>`;
+}
 async function qsTai() {
   const c = S.qsCa;
   S.qs = await api('GET', '/quanso' + (c ? `?ngay=${c.ngay}&ca=${c.ca}` : ''));
@@ -3560,7 +3629,7 @@ const ACTIONS = {
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
     render();
   },
-  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.err = ''; render(); },
+  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.qsH = null; S.err = ''; render(); },
   async changepin() {
     if (S.busy) return;
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
@@ -4428,6 +4497,57 @@ const ACTIONS = {
     go('quanso', true);
   },
   qsmo(d) { if (!S.qs) return; qsMo(Number(d.id)); go('qsform'); },
+  // thẻ báo quân số trên Tổng quan (qsTheHome)
+  qhmo() { const H = qhState(); H.mo = !H.mo; render(); },
+  qhtong() { qhState().doiTong = true; S.form.qhtong = String(S.boot.qs.toi.tong || ''); render(); gcFocus('qhtong'); },
+  qhchia() { const H = qhState(); H.chia = !H.chia; if (H.chia) S.form.qhlam = String(Math.max(0, qhTinh().tong - qsSoNghi(H.nghi))); else delete S.form.qhlam; render(); if (H.chia) gcFocus('qhlam'); },
+  qhnghi(d) {
+    const H = qhState(), T = qhTinh(), them = Number(d.v) > 0, n = (H.nghi[d.k] || 0) + (them ? 1 : -1);
+    if (n < 0) return;
+    if (them && T.tong && T.nghi >= T.tong) return say('Số nghỉ đã bằng tổng quân số của tổ.', true), render();
+    if (n) H.nghi[d.k] = n; else delete H.nghi[d.k];
+    // tổ chia hai ca: người vừa nghỉ là người của ca này, số đi làm giảm theo
+    if (H.chia) S.form.qhlam = String(Math.max(0, soTu(S.form.qhlam) + (them ? -1 : 1)));
+    render();
+    if (d.k === 'khac' && them && n === 1) gcFocus('qhnote');
+  },
+  qhnhu() {
+    const H = qhState(), cas = qhCas(), to = S.boot.qs.to.find((t) => t.id === S.me.id) || { ca: [] };
+    const x = H.sua ? cas.find((c) => caKhoa(c.c) === H.sua) : qhChinh(cas, to);
+    if (!x || !x.truoc) return;
+    H.nghi = { ...x.truoc.nghi }; H.mo = true;
+    if (x.truoc.ghi_chu && !S.form.qhnote) S.form.qhnote = x.truoc.ghi_chu;
+    render();
+  },
+  qhsua(d) {
+    const x = qhCas().find((c) => caKhoa(c.c) === d.v); if (!x || !x.row) return;
+    qhBo();
+    const r = x.row, H = qhState(), sn = qsSoNghi(r.nghi);
+    Object.assign(H, { sua: d.v, nghi: { ...r.nghi }, mo: true, doiTong: true, chia: r.lam + sn < r.tong && r.lam > 0 });
+    S.form.qhtong = String(r.tong);
+    if (H.chia) S.form.qhlam = String(r.lam);
+    if (r.ghi_chu) S.form.qhnote = r.ghi_chu;
+    render();
+  },
+  qhthoi() { qhBo(); render(); },
+  async qhgui(d) {
+    const cas = qhCas(), x = cas.find((c) => caKhoa(c.c) === d.v); if (!x) return;
+    const H = qhState(), T = qhTinh(), note = String(S.form.qhnote || '').trim();
+    if (T.loi) { say(T.loi, true); render(); return gcFocus(T.tong ? 'qhlam' : 'qhtong'); }
+    if (H.nghi.khac && !note) { say('Có người nghỉ vì lý do khác: ghi rõ lý do.', true); H.mo = true; render(); return gcFocus('qhnote'); }
+    /* Tổ đang làm một ca (theo lần báo gần nhất) mà bấm báo ca kia: hỏi lại một lần. Đổi ca thật thì chỉ 15–30
+       ngày một lần; còn lại gần như chắc chắn là bấm nhầm nút. */
+    const to = S.boot.qs.to.find((t) => t.id === S.me.id) || { ca: [] };
+    if (!H.sua && to.ca && to.ca.length === 1 && to.ca[0] !== x.c.ca
+      && !(await ask(`Lần báo trước tổ làm ${CA_TEN[to.ca[0]]}.\n\nTổ chuyển sang ${CA_TEN[x.c.ca]} từ ${caGoi(x.c)}?`, 'ĐÚNG, BÁO ' + CA_TEN[x.c.ca].toUpperCase()))) return;
+    act(async () => {
+      await api('PUT', '/quanso', { ngay: x.c.ngay, ca: x.c.ca, tong: T.tong, lam: T.lam, nghi: H.nghi, ghi_chu: note });
+      // đã ghi: bỏ thẻ đang gõ TRƯỚC, tải lại SAU và bỏ qua lỗi mạng lúc tải lại (như qsGui)
+      qhBo();
+      say(`Đã báo quân số ${caGoi(x.c)}: đi làm ${T.lam}/${T.tong}${T.nghi ? ', nghỉ ' + T.nghi : ''}.`);
+      try { await loadBoot(); } catch (e) { /* vòng tự làm mới sẽ tải lại */ }
+    });
+  },
   qshan() {
     const Q = S.qs; if (!Q) return;
     const ca1 = gioPhut(fv('qsh1', phutGio(Q.hanPhut[0]))), ca2 = gioPhut(fv('qsh2', phutGio(Q.hanPhut[1])));
@@ -4488,6 +4608,11 @@ document.addEventListener('input', (e) => {
   if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucGhep() || 'chưa nhập'; }
   /* Quân số đầu ca: gõ tổng thì số đi làm và dòng tóm tắt chạy theo ngay, không vẽ lại màn hình giữa lúc gõ.
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */
+  // thẻ báo quân số trên Tổng quan: dòng tóm tắt chạy theo ô đang gõ, không vẽ lại cả trang
+  if ((m === 'qhtong' || m === 'qhlam') && S.boot && S.boot.qs && S.boot.qs.toi) {
+    const T = qhTinh(), pv = document.getElementById('qhprev');
+    if (pv) { pv.textContent = qhPrevTxt(T); pv.style.color = T.loi ? 'var(--bad)' : ''; }
+  }
   if ((m === 'qstong' || m === 'qslam') && S.qsF && S.qs) {
     if (m === 'qslam') { S.qsF.lamTay = e.target.value.trim() !== ''; if (!S.qsF.lamTay) delete S.form.qslam; }
     const T = qsTinh(), pv = document.getElementById('qsprev'), lam = document.getElementById('qslam');

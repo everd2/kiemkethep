@@ -182,7 +182,19 @@ export const qsBootStmt = (env) => env.DB.prepare(
    FROM users u LEFT JOIN quan_so q ON q.user_id = u.id AND q.ngay >= ?
    LEFT JOIN quan_so l ON l.rowid = (SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
    WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY u.name`).bind(vnDay(Date.now() - NGAY));
-export function qsBoot(rows, st, user) {
+/* Mấy lần báo gần nhất của CHÍNH người đang xem (mới nhất trước), cho thẻ báo quân số ngay trên Tổng quan của
+   Tiểu đội trưởng: dòng đã báo ở ca đang diễn ra / ca kế, tổng quân số lần trước, và lần báo trước của từng ca
+   để nút "Như hôm qua" lấy lại danh sách nghỉ. Sáu dòng là đủ cả với tổ báo hai ca mỗi ngày. */
+export const qsToiStmt = (env, user) => env.DB.prepare(
+  'SELECT ngay, ca, tong, lam, ca_kia, nghi, ghi_chu, ts FROM quan_so WHERE user_id = ? ORDER BY ngay DESC, ca DESC LIMIT 6').bind(user.id);
+function qsToi(mine, hien, ke) {
+  const cua = mine.map((r) => ({ ...r, nghi: docNghi(r.nghi) }));
+  const tim = (c) => cua.find((r) => caKhoa(r) === caKhoa(c)) || null;
+  // lần báo trước của CÙNG ca; tổ vừa đổi ca thì chưa có, lấy lần báo trước bất kỳ
+  const truoc = (c) => cua.find((r) => r.ca === c.ca && caKhoa(r) < caKhoa(c)) || cua.find((r) => caKhoa(r) < caKhoa(c)) || null;
+  return { tong: cua.length ? cua[0].tong : 0, hien: tim(hien), ke: tim(ke), truocHien: truoc(hien), truocKe: truoc(ke) };
+}
+export function qsBoot(rows, st, user, mine = []) {
   const hien = caLuc(st), ke = caKe(hien), to = new Map();
   for (const r of rows) {
     const t = to.get(r.id) || { id: r.id, name: r.name, da: false, daKe: false, ds: r.lngay ? [{ ngay: r.lngay, ca: r.lca, lam: r.llam, ca_kia: r.lkia }] : [] };
@@ -192,5 +204,6 @@ export function qsBoot(rows, st, user) {
     to.set(r.id, t);
   }
   const ds = [...to.values()].map(({ ds: d, ...t }) => ({ ...t, ca: caCua(d.filter((r) => r.ngay === d[0].ngay)) }));
-  return { hien, ke, den: caGio(st, hien).den, han: caHan(st, hien), hanKe: caHan(st, ke), to: capOf(user.role) >= 1 ? ds : ds.filter((t) => t.id === user.id) };
+  return { hien, ke, den: caGio(st, hien).den, han: caHan(st, hien), hanKe: caHan(st, ke), to: capOf(user.role) >= 1 ? ds : ds.filter((t) => t.id === user.id),
+    lyDo: QS_LY_DO, toi: user.role === 'tieudoi' ? qsToi(mine, hien, ke) : undefined };
 }

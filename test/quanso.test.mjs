@@ -217,17 +217,21 @@ async function main() {
     const vao = async (name, role) => {
       who = name;
       const bt = (await S3.call('GET', '/bootstrap', undefined, name)).data;
-      R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: id3[name], name, role })}; S.ask = null; S.form = {}; S.qs = null; S.qsCa = null; S.qsF = null; S.screen = 'home';`);
+      R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: id3[name], name, role })}; S.ask = null; S.form = {}; S.qs = null; S.qsCa = null; S.qsF = null; S.qsH = null; S.screen = 'home';`);
     };
     const nhac = () => (R('vHome()').match(/<b style="font-size:18px">([^<]*quân số[^<]*)<\/b><span class="sm">([^<]*)</) || []).slice(1);
     const cua = (uid, ca = 1) => S3.one('SELECT tong, lam, ca_kia, nghi, by_id FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?', ngay, ca, uid);
 
     await vao('An', 'tieudoi');
-    ok('6h45, trước hạn 7h: Tổng quan của An nhắc vàng chưa báo quân số ca ngày, có giờ hạn', /^Chưa báo quân số ca ngày/.test(nhac()[0] || '') && (nhac()[1] || '').startsWith('Hạn báo ' + R('hhmm(S.boot.qs.han)')) && /class="alertbtn warn"[^>]*data-s="quanso"/.test(R('vHome()')), nhac().join(' | '));
+    const the = () => (R('vHome()').match(/<div class="card[^"]*"[^>]*>(?:(?!<div class="card).)*?data-a="qhgui".*?<\/div>\s*<\/div>/s) || [''])[0];
+    ok('6h45, trước hạn 7h: thẻ BÁO QUÂN SỐ vàng ngay đầu Tổng quan, có giờ hạn', /^Chưa báo quân số ca ngày/.test(nhac()[0] || '') && (nhac()[1] || '').startsWith('Hạn báo ' + R('hhmm(S.boot.qs.han)')) && /^<div class="card warn/.test(the()), nhac().join(' | '));
     R('S.boot.skew = 30 * 60e3');
-    ok('7h15, quá hạn: thẻ chuyển đỏ', /^Quá hạn báo quân số ca ngày/.test(nhac()[0] || '') && /class="alertbtn bad"[^>]*data-s="quanso"/.test(R('vHome()')), nhac().join(' | '));
+    ok('7h15, quá hạn: thẻ chuyển đỏ', /^Quá hạn báo quân số ca ngày/.test(nhac()[0] || '') && /^<div class="card bad/.test(the()), nhac().join(' | '));
     R('S.boot.skew = 0');
-    ok('thẻ nhắc mở màn Quân số', R('vHome()').includes('data-a="nav" data-s="quanso"'));
+    ok('không còn thẻ nhắc "bấm để báo" dẫn sang màn khác: báo ngay trên thẻ', !R('vHome()').includes('data-a="nav" data-s="quanso"') && the().includes('data-a="qhgui"'));
+    ok('tổ chưa báo lần nào: hỏi tổng quân số ngay trên thẻ, có hai nút gửi theo ca', the().includes('id="qhtong"') && (the().match(/data-a="qhgui"/g) || []).length === 2 && the().indexOf('BÁO CA NGÀY') < the().indexOf('BÁO CA ĐÊM'), the().slice(0, 200));
+    R(`ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();
+    eq('chưa ghi tổng: chưa gửi', S3.one('SELECT COUNT(*) n FROM quan_so').n, 0);
     R(`ACTIONS.nav({ s: 'quanso' })`); await cho();
     eq('vào màn Quân số: PHẢI chọn ca trước, app không tự mở ô ghi', [R('S.screen'), R('S.qsF'), R('S.qsCa')], ['quanso', null, null]);
     const chon = R('vQuanSo()');
@@ -255,11 +259,66 @@ async function main() {
     R('S.boot.skew = 0');
     await vao('Binh', 'tieudoi');
     R(`S.boot.skew = S.boot.qs.den - Date.now() - 30 * 60e3`);
-    const hai = R('vHome()').match(/<b style="font-size:18px">[^<]*quân số[^<]*<\/b>/g) || [];
-    ok('tổ chưa báo lần nào, 18h: nhắc cả ca ngày (quá hạn) lẫn ca đêm sắp tới', hai.length === 2 && /Quá hạn báo quân số ca ngày/.test(hai[0]) && /Chưa báo quân số ca đêm/.test(hai[1]), hai.join(' | '));
+    ok('tổ chưa báo lần nào, 18h: thẻ đỏ nói ca ngày quá hạn và ca đêm cũng chưa báo', /^Quá hạn báo quân số ca ngày/.test(nhac()[0] || '') && /ca đêm .* cũng chưa báo/.test(nhac()[1] || ''), nhac().join(' | '));
     R(`S.boot.skew = S.boot.qs.den - Date.now() + 60e3`);
     ok('app nằm mở qua giờ giao ca: nhắc theo ca đêm, không theo ca cũ', /^Chưa báo quân số ca đêm/.test(nhac()[0] || ''), nhac().join(' | '));
     R('S.boot.skew = 0');
+
+    /* ===== Báo nhanh trên thẻ Tổng quan =====
+       Tổ Dung (mới) báo lần đầu, rồi các ngày sau: đủ quân = một chạm; "Như hôm qua"; báo nhầm ca thì hỏi lại. */
+    {
+      const r0 = await S3.call('POST', '/users', { name: 'Dung', phone: '0900000009', role: 'tieudoi' }, 'Admin');
+      await S3.login('Dung', '0900000009', r0.data.pin); await S3.call('POST', '/change-pin', { pin: r0.data.pin, newPin: '1357' }, 'Dung');
+      id3.Dung = r0.data.id;
+      const dung = (n = ngay, ca = 1) => S3.one('SELECT tong, lam, ca_kia, nghi, ghi_chu FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?', n, ca, id3.Dung);
+      await vao('Dung', 'tieudoi');
+      R(`S.form.qhtong = '20'; ACTIONS.qhmo(); ACTIONS.qhnghi({ k: 'phep', v: '1' }); ACTIONS.qhnghi({ k: 'que', v: '1' }); ACTIONS.qhnghi({ k: 'que', v: '1' }); ACTIONS.qhnghi({ k: 'que', v: '-1' })`);
+      eq('mở "Có người nghỉ" tại chỗ, chạm lý do là thêm một người', [R('qsTheHome()').includes('data-a="qhnghi"'), R('S.qsH.nghi'), R('qhPrevTxt(qhTinh())')], [true, { phep: 1, que: 1 }, 'Đi làm 18/20 · nghỉ 2: 1 nghỉ phép năm, 1 về quê']);
+      R(`ACTIONS.qhnghi({ k: 'khac', v: '1' })`);
+      ok('chọn "lý do khác" thì ô ghi chú tự hiện', R('qsTheHome()').includes('id="qhnote"'));
+      R(`ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();
+      eq('lý do khác chưa ghi rõ: chưa gửi', dung(), undefined);
+      R(`S.form.qhnote = 'đi khám'; ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();
+      eq('gửi ngay trên Tổng quan, không đổi màn', [dung(), R('S.screen'), R('S.qsH.nghi'), R('S.form.qhnote')], [{ tong: 20, lam: 17, ca_kia: 0, nghi: '{"phep":1,"que":1,"khac":1}', ghi_chu: 'đi khám' }, 'home', {}, undefined]);
+      await vao('Dung', 'tieudoi');
+      ok('báo xong: thẻ thành dòng "đã báo" kèm nút Sửa, còn nút báo ca đêm', R('qsTheHome()').includes('Ca ngày ' + ngay.slice(8) + '/' + ngay.slice(5, 7) + ': đã báo') && R('qsTheHome()').includes('data-a="qhsua"') && R('qsTheHome()').includes('BÁO CA ĐÊM'));
+      R(`ACTIONS.qhsua({ v: '${ngay}:1' })`);
+      eq('Sửa: điền lại đúng số đã báo, chỉ còn nút gửi lại ca đó', [R('S.form.qhtong'), R('S.qsH.nghi'), R('S.form.qhnote'), (R('qsTheHome()').match(/data-a="qhgui"/g) || []).length, R('qsTheHome()').includes('GỬI LẠI CA NGÀY')], ['20', { phep: 1, que: 1, khac: 1 }, 'đi khám', 1, true]);
+      R(`ACTIONS.qhnghi({ k: 'khac', v: '-1' }); S.form.qhnote = ''; ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();
+      eq('gửi lại ca ngày', dung(), { tong: 20, lam: 18, ca_kia: 0, nghi: '{"phep":1,"que":1}', ghi_chu: null });
+
+      // sang hôm sau
+      advance(864e5);
+      const mai = vnDay();
+      await vao('Dung', 'tieudoi');
+      const t1 = R('qsTheHome()');
+      ok('hôm sau: tổng quân số điền sẵn 20, có nút "Như hôm qua" kèm danh sách nghỉ hôm qua', t1.includes('Tổng quân số của tổ: <b>20</b>') && t1.includes('Như hôm qua: 1 nghỉ phép năm, 1 về quê') && !t1.includes('id="qhtong"'), t1.slice(0, 400));
+      ok('nút ca tổ đang làm (ca ngày) to hơn: là nút chính', /class="btn pri"[^>]*data-v="[^"]*:1">BÁO CA NGÀY/.test(t1) && /class="btn "[^>]*data-v="[^"]*:2">BÁO CA ĐÊM/.test(t1), (t1.match(/<button class="btn[^>]*data-a="qhgui"[^>]*>[^<]*/g) || []).join(' | '));
+      eq('"Như hôm qua" KHÔNG điền sẵn: chưa bấm thì nghỉ vẫn là không ai', R('qhTinh().nghi'), 0);
+      R('ACTIONS.qhnhu()');
+      eq('bấm "Như hôm qua": lấy lại 2 người nghỉ', [R('S.qsH.nghi'), R('qhTinh().lam')], [{ phep: 1, que: 1 }, 18]);
+      R(`ACTIONS.qhgui({ v: '${mai}:1' })`); await cho();
+      eq('2 chạm là báo xong ngày có người nghỉ như hôm qua', dung(mai), { tong: 20, lam: 18, ca_kia: 0, nghi: '{"phep":1,"que":1}', ghi_chu: null });
+
+      advance(864e5);
+      const mot = vnDay();
+      await vao('Dung', 'tieudoi');
+      R('ACTIONS.qhtong()');
+      ok('nút Đổi tổng quân số mở ô gõ ngay trên thẻ, điền sẵn số cũ', R('qsTheHome()').includes('id="qhtong"') && R('S.form.qhtong') === '20');
+      R('ACTIONS.qhthoi()');
+      R(`ACTIONS.qhgui({ v: '${mot}:1' })`); await cho();
+      eq('ngày đủ quân: MỘT chạm là báo xong', dung(mot), { tong: 20, lam: 20, ca_kia: 0, nghi: '{}', ghi_chu: null });
+      await vao('Dung', 'tieudoi');
+      R(`ACTIONS.qhgui({ v: '${mot}:2' })`); await cho();
+      eq('tổ đang làm ca ngày mà bấm báo ca đêm: hỏi lại, chưa ghi', [!!R('S.ask'), /Tổ chuyển sang ca đêm/.test(R('S.ask.msg')), dung(mot, 2)], [true, true, undefined]);
+      R('ACTIONS.askno()'); await cho();
+      eq('bấm Quay lại: không ghi ca đêm', dung(mot, 2), undefined);
+      R(`ACTIONS.qhgui({ v: '${mot}:2' })`); await cho(); R('ACTIONS.askyes()'); await cho();
+      eq('đồng ý đổi ca: ghi ca đêm', dung(mot, 2).lam, 20);
+      advance(-2 * 864e5);
+      S3.raw.exec(`DELETE FROM quan_so WHERE user_id = ${id3.Dung}`);
+      await S3.call('POST', `/users/${id3.Dung}/delete`, {}, 'Admin');
+    }
 
     // tổ chia hai ca: Binh gõ đè số đi làm ca ngày, phần còn lại là người của ca đêm
     await vao('Binh', 'tieudoi');
