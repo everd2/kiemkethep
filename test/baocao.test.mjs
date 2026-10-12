@@ -85,13 +85,15 @@ async function main() {
   let who = CV, chep = null;
   const el = () => ({ value: '', dataset: {}, style: {}, focus() {}, remove() {}, select() {}, setAttribute() {}, setSelectionRange() {}, querySelector: () => null, querySelectorAll: () => [], appendChild() {}, closest: () => null, set innerHTML(v) {}, get innerHTML() { return ''; } });
   const store = {};
+  // bộ bắt sự kiện thật của app (input, click...) để phát sự kiện gõ như trên điện thoại; ô xem trước giữ một đối tượng cố định
+  const nghe = {}, prev = { textContent: '' };
   const ctx = {
     console, Date, Math, JSON, String, Number, Object, Array, Set, Map, parseInt, parseFloat, isNaN, Promise, RegExp, Error, TypeError, encodeURIComponent,
     setTimeout: () => 0, clearTimeout: () => {},
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; }, key: (n) => Object.keys(store)[n] || null, get length() { return Object.keys(store).length; } },
     navigator: { onLine: true, clipboard: { writeText: async (t) => { chep = t; } } },
     history: { state: null, pushState() {}, replaceState() {} },
-    document: { activeElement: null, hidden: false, body: { appendChild() {}, removeChild() {} }, createElement: el, getElementById: () => el(), querySelectorAll: () => [], addEventListener() {}, execCommand: () => false },
+    document: { activeElement: null, hidden: false, body: { appendChild() {}, removeChild() {} }, createElement: el, getElementById: (id) => (id === 'bcprev' ? prev : el()), querySelectorAll: () => [], addEventListener(t, fn) { (nghe[t] = nghe[t] || []).push(fn); }, execCommand: () => false },
     window: { addEventListener() {} },
     fetch: async (url, o = {}) => {
       if (!/^\/api\/(baocao|bootstrap|quanso)/.test(String(url))) return new Promise(() => {});
@@ -134,7 +136,7 @@ async function main() {
     '• Vách W1 cote 18.5-21.5m trục X27-X28 / 13: đang gia công 50%',
     '• Thang bộ TB12 tầng 2-3 trục 13: đang gia công 30%',
     '• Sàn tầng 4 trục 5-7: hoàn thành',
-    '5. Tổng hợp MMTB: ',
+    '5. Tổng hợp MMTB:',
     '6. Kiểm tra, giám sát',
     '• Quản lý máy 3 ca: bố trí việc hợp lý, đúng; ký nhật trình đúng',
     '• Dọn dẹp cuối ca: tốt; các tổ dọn dẹp cuối giờ, có ảnh báo cáo',
@@ -150,6 +152,24 @@ async function main() {
   mong.forEach((l, n) => { if (thuc[n] !== l) ok(`dòng ${n + 1} đúng mẫu`, false, `mong: ${l}\n    thực: ${thuc[n]}`); });
   eq('bản chữ đúng số dòng của mẫu', thuc.length, mong.length);
   ok('tổ chưa báo được nêu tên ở đầu màn để nhắc', R('vBaoCaoCa()').includes('1 tổ chưa báo quân số ca ngày: Lê Hải Nam'));
+
+  /* GÕ THẬT vào từng ô (sự kiện input qua bộ bắt sự kiện của app, như trên điện thoại): mục phải thành "đã sửa",
+     bản sẽ gửi đổi ngay, và bản CHÉP đi mang đúng chữ vừa gõ. Trước đây gán thẳng S.bcM nên không bắt được lỗi
+     điều kiện nhận ô bị hỏng: gõ vào mục 3–8 không có tác dụng gì, chép đi vẫn là chữ app tự ghép. */
+  const go_ = (model, value) => (nghe.input || []).forEach((fn) => fn({ target: { dataset: { model }, value, id: model } }));
+  for (const k of ['s3', 's4', 's5', 's6', 's7', 's8']) {
+    const moi = 'Dòng thử ' + k + ' do người soạn gõ';
+    go_('bc_' + k, moi);
+    ok('gõ vào mục ' + k + ': mục thành đã sửa, bản sẽ gửi đổi ngay', R('S.bcM.' + k) === moi && prev.textContent.includes(moi) && prev.textContent === R('bcTao()'), prev.textContent.slice(0, 120));
+    R(`delete S.bcM.${k}`);
+  }
+  go_('bcd_du_an', 'Dự án gõ tay');
+  ok('gõ vào ô phần đầu: bản sẽ gửi đổi ngay', prev.textContent.includes('• Dự Án: Dự án gõ tay'));
+  go_('bcd_du_an', 'Khu đô thị thể thao quốc tế OLYMPIC');
+  go_('bc_s7', 'Chờ bản vẽ trục X14');
+  R('ACTIONS.bcchep()'); await cho();
+  ok('chép sau khi gõ: bản chép đi và bản lưu có đúng chữ vừa gõ', String(chep).includes('7. Các vướng mắc ảnh hưởng đến tiến độ thi công:\n• Chờ bản vẽ trục X14') && S.one('SELECT van_ban FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D).van_ban === chep, String(chep).split('\n').slice(-4).join(' | '));
+  R("delete S.bcM.s7");
 
   // sửa tay: mục 5 máy móc, mục 4 thêm một dòng; số liệu đổi sau đó thì mục đã sửa giữ nguyên
   R(`S.bcM.s5 = '7 – 3 Kato TMC 0221, TMC 0235, TMC 0280 – 4 cẩu thùng TXC 0443, TXC 0209, TXC 0259, TXC 0003'`);

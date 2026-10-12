@@ -3411,7 +3411,8 @@ function bcTao() {
   L.push('6. Kiểm tra, giám sát'); bcDong(bcGet('s6')).forEach((x) => L.push('• ' + x));
   L.push('7. Các vướng mắc ảnh hưởng đến tiến độ thi công:'); (bcDong(bcGet('s7')).length ? bcDong(bcGet('s7')) : ['Hiện tại chưa có']).forEach((x) => L.push('• ' + x));
   L.push('8. Đánh giá tiến độ'); (bcDong(bcGet('s8')).length ? bcDong(bcGet('s8')) : ['Nguy cơ chậm tiến độ: Không có']).forEach((x) => L.push('• ' + x));
-  return L.join('\n');
+  // không để dấu cách thừa cuối dòng ("5. Tổng hợp MMTB: " khi mục trống): server cắt đi, bản lưu sẽ lệch bản đã chép
+  return L.map((l) => l.trimEnd()).join('\n');
 }
 function bcNhap() { try { localStorage.setItem(bcKey(S.bcc), JSON.stringify({ muc: S.bcM, dau: S.bcDau, ts: Date.now() })); } catch (e) { /* đầy bộ nhớ */ } }
 async function bcTai() {
@@ -4964,7 +4965,7 @@ document.addEventListener('input', (e) => {
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */
   /* Báo cáo ca: gõ vào một mục là mục đó thành "đã sửa tay"; bản sẽ gửi chạy theo ngay, không vẽ lại màn hình
      (vẽ lại giữa lúc gõ là mất vị trí con trỏ trong ô nhiều dòng). Nháp lưu xuống máy theo ca. */
-  if (m && S.bcc && S.screen === 'baocaoca' && (/^bc_sd$/.test(m) || /^bcd_/.test(m))) {
+  if (m && S.bcc && S.screen === 'baocaoca' && (/^bc_s[3-8]$/.test(m) || /^bcd_/.test(m))) {
     if (m.startsWith('bc_')) S.bcM[m.slice(3)] = e.target.value; else S.bcDau[m.slice(4)] = e.target.value;
     const pv = document.getElementById('bcprev'); if (pv) pv.textContent = bcTao();
     bcNhap();
