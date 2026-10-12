@@ -93,7 +93,8 @@ const hasFlexNone = (cls) => {
 };
 
 vm.runInContext("S.loans = { doitac: [{ id: 1, name: 'Cty A', active: 1 }], items: [], agg: [] }; S.loanDt = 1; S.loanDetail = { chiTiet: true, doitac: [{ id: 1, name: 'Cty A', active: 1 }], items: [], agg: [] };", ctx);
-const SCREENS = ['home', 'khu', 'dem', 'nhap', 'ton', 'duyet', 'nhatky', 'lichsu', 'baocao', 'stats', 'more', 'pin', 'users', 'settings', 'vaymuon', 'vaychitiet'];
+vm.runInContext("S.gc = { tdt: [{ id: 2, name: 'B' }], items: [{ id: 1, cau_kien: 'Dầm D3', hang_muc: null, truc: 'X1-X2', noi_dung: null, user_id: 2, uname: 'B', han: S.boot.today, buoi: null, tt: 'lam', pct: 25, vuong: null, giao_by: 1, giao_name: 'A', ts: 1, cap_ts: 1, xong_ts: null, huy_ly_do: null }] }; S.gcId = 1; S.gcDetail = { don: S.gc.items[0], log: [] }; S.gcForm = { id: null, user: 2, buoi: '' };", ctx);
+const SCREENS = ['home', 'khu', 'dem', 'nhap', 'ton', 'duyet', 'nhatky', 'lichsu', 'baocao', 'stats', 'more', 'pin', 'users', 'settings', 'vaymuon', 'vaychitiet', 'giacong', 'gcdon', 'gcform'];
 for (const sc of SCREENS) {
   vm.runInContext(`S.screen = '${sc}'; S.sel = null;`, ctx);
   const kids = topLevel(vm.runInContext('vMain()', ctx));

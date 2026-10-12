@@ -13,6 +13,7 @@ const SUITES = [
   ['Giao diện: bố cục cuộn từng màn', 'layout.test.js'],
   ['Giao diện: hành vi các thao tác', 'ui-logic.test.js'],
   ['Mô phỏng bãi nhiều ngày + dữ liệu sai', 'sim.test.mjs'],
+  ['Gia công cấu kiện: giao đơn, tiến độ, quyền từng việc', 'giacong.test.mjs'],
   ['Phân quyền: bảng quyền + mô phỏng ngẫu nhiên đối chiếu máy/server', 'roles.test.mjs'],
 ];
 

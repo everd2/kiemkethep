@@ -128,6 +128,34 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 - Mọi lần ghi, duyệt, huỷ nằm trong **nhật ký**, có chip lọc *Vay mượn* riêng.
 - **Xoá sạch dữ liệu thép không xoá sổ vay**: đây là công nợ với bên ngoài, không phải số liệu của bãi. Bản sao toàn bộ có chứa sổ vay; nạp lại một bản sao **cũ chưa có sổ vay** thì sổ vay hiện tại được **giữ nguyên**.
 
+### Gia công cấu kiện
+
+Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia công** cho các Tiểu đội trưởng: gia công thép của cấu kiện nào, ở vị trí trục nào, cần xong khi nào, đang làm tới đâu. **Không liên quan tới đếm thép**: đơn gia công không đổi tồn, không sinh phiếu kho.
+
+- **Ai cũng xem được mọi đơn của mọi Tiểu đội trưởng.** Đây là chỗ duy nhất trong app không theo nguyên tắc "mỗi người chỉ thấy việc của mình": bảng đơn là bảng chung của cả đơn vị, gom theo từng Tiểu đội trưởng (đang giữ mấy đơn, mấy đơn trễ, mấy đơn vướng). Cuối bảng ghi ai đang không có đơn nào mở.
+- **Một đơn gồm**: cấu kiện (bắt buộc), hạng mục / tầng, vị trí trục (chữ tự do, ví dụ `X12-X17 / Y3-Y5`), giao cho ai, ngày cần xong (kèm buổi sáng / chiều nếu cần), nội dung và khối lượng (chữ tự do). Mỗi đơn giao cho **một** Tiểu đội trưởng.
+- **Ai làm được gì**:
+
+  | Việc | Ai làm |
+  |---|---|
+  | Giao đơn, sửa đơn, dời hạn, giao lại cho người khác, huỷ đơn | CVKTHT trở lên |
+  | **Nhận đơn, cập nhật tiến độ, báo vướng, xác nhận đã xong** | **Chỉ Tiểu đội trưởng được giao đơn đó** — cấp trên cũng không làm thay |
+  | Mở lại đơn đã xong | CVKTHT trở lên, bắt buộc ghi lý do |
+  | Xem mọi đơn và lịch sử từng đơn | Tất cả |
+
+- **Giao đơn nhanh**: nút **+ Giao đơn** nằm ngay đầu bảng. Màn soạn điền sẵn hạn = ngày mai, người nhận và hạng mục = của lần giao trước; có nút bấm cho loại cấu kiện (Dầm, Cột, Sàn…), hạng mục vừa dùng và hạn (Hôm nay / Mai / +2 / +3 / +7). Giao cả loạt thì bấm **GIAO + ĐƠN TIẾP**: app giữ người nhận, hạn, hạng mục, chỉ còn gõ cấu kiện và trục của đơn sau. Ở màn một đơn có **Giao đơn mới giống đơn này**.
+- **Theo dõi nhanh**: đầu bảng là ô tìm (gõ không dấu cũng ra: `dam d3`, `x12`, tên người) và các mục lọc kèm số đơn — *Đang mở, Của tôi, Trễ, Vướng, Chưa nhận, Xong / huỷ*. Mỗi đơn hai dòng: cấu kiện · vị trí · trạng thái, rồi thanh tiến độ · hạn.
+- **Làm nhanh trên bảng**: đơn của chính mình có sẵn nút **NHẬN ĐƠN**, rồi **25% / 50% / 75% / XONG** ngay trên thẻ — một chạm là lưu, không phải mở từng đơn (riêng XONG hỏi lại một lần). Ghi chú kèm tiến độ và báo vướng thì mở đơn.
+- **Vòng đời**: *Mới giao* → *Đã nhận* → *Đang làm* (25 / 50 / 75%) → *Đã xong*. **Không có bước cấp trên duyệt**: người được giao bấm *Xác nhận đã xong* là đơn xong. Vì không ai kiểm lại, CVKTHT trở lên có nút **Mở lại đơn** khi đơn báo xong mà thực tế chưa xong; đơn về *Đang làm* 75% và lý do nằm trong lịch sử đơn.
+- **Đang vướng** là cờ đi kèm, không phải một trạng thái: Tiểu đội trưởng ghi đang kẹt gì (thiếu thép, chưa có bản vẽ…), đơn vẫn giữ tiến độ. Hết kẹt thì bấm *Đã hết vướng*.
+- **Trễ hạn** do app tự tính: qua ngày cần xong mà đơn còn mở; đơn hạn **buổi sáng** thì trễ từ 12h trưa hôm đó. Đơn trễ viền đỏ, đơn vướng viền vàng, cả hai xếp lên đầu. Ngày cần xong không được trước hôm nay và không xa quá một năm.
+- **Đơn bị mở lại** mang lý do ngay trên thẻ (viền đỏ, xếp lên đầu) cho tới khi xong lần nữa. **Đơn bị huỷ** được nhắc cho người đang giữ nó trong 2 ngày, để họ thôi làm.
+- **Lịch sử đơn** ghi mọi lần nhận, cập nhật tiến độ, báo vướng, sửa, huỷ, mở lại (ai, lúc nào). Dời hạn thì ghi rõ hạn cũ → hạn mới. Giao lại cho người khác thì đơn về *Mới giao*: người mới phải tự nhận.
+- **Tổng quan nhắc đúng người, mỗi người một thẻ**: người giữ đơn thấy *Đơn gia công của bạn* kèm đếm từng loại (bị mở lại, trễ hạn, vừa bị huỷ, chưa nhận, hạn hôm nay); CVKTHT trở lên thấy *N đơn trễ hạn · N đơn đang vướng* của cả đơn vị. Như mọi lời nhắc khác, chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
+- Đơn đã xong hoặc đã huỷ nằm lại bảng chung **30 ngày** (mục *Xong / huỷ*), sau đó rời bảng nhưng không bị xoá. Các mốc giao, sửa, xong, huỷ, mở lại nằm trong **nhật ký**, có chip lọc *Gia công*.
+- Người được giao bị đổi vai trò hoặc xoá tài khoản thì **đơn không mất**, vẫn đứng tên người đó; bảng ghi rõ các đơn còn mở của người này **cần giao lại**, và CVKTHT trở lên giao lại cho Tiểu đội trưởng khác.
+- Chưa có: ảnh đính kèm (gửi qua Zalo như biên bản), cập nhật tiến độ khi mất mạng, danh sách thép theo phi. **Xoá sạch dữ liệu thép không xoá đơn gia công**; bản sao toàn bộ có chứa đơn, nạp lại bản sao cũ chưa có đơn thì đơn hiện tại được giữ nguyên.
+
 ### Điều chỉnh tồn
 
 Ở **Nhập → Điều chỉnh**. Dùng khi **sổ sai** mà không phiếu nào giải thích được: kỳ trước đếm sai, ghi nhầm phiếu, hoặc hụt thép không rõ nguyên nhân. Từ CVKTHT trở lên **lập** được, chỉ cấp 2 (Trung đội trưởng, Đại đội trưởng, Admin) **duyệt**.
@@ -273,6 +301,7 @@ Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên
 | Đặt lại số liệu nhầm | **Duyệt → Hoàn tác đặt lại số liệu**, trong cùng ngày |
 | Sổ sai một phi ở một khu | **Nhập → Điều chỉnh**, chọn tăng/giảm và lý do, rồi cấp chỉ huy duyệt. Không ảnh hưởng lượng dùng |
 | Xuất thép đi công trình | **Nhập → Xuất kho** (tuỳ chọn), ghi rõ nơi đến, rồi cấp chỉ huy duyệt. Không ghi cũng được — app vẫn tính lượng dùng |
+| Giao việc gia công cho tiểu đội | Tab **Gia công → Giao đơn mới** (CVKTHT trở lên): cấu kiện, trục, người nhận, ngày cần xong. Tiểu đội trưởng tự nhận, cập nhật tiến độ và xác nhận xong; ai cũng xem được |
 | Vay / cho đối tác vay thép | **Thêm → Vay mượn ngoài bãi** (hoặc lối tắt ở màn Nhập), chọn *thép qua bãi* + khu nếu thép đi qua cổng. Cấp chỉ huy duyệt. Không tính là nhập hay dùng |
 
 Nên sao lưu `backup.sql` định kỳ (ví dụ mỗi tuần) và cất ngoài Cloudflare.

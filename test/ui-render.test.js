@@ -222,13 +222,28 @@ S.loans = { doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để t
   agg: [{ doitac_id: 5, phi_id: 'D8', kind: 'vay', q: 330 }, { doitac_id: 6, phi_id: 'D10', kind: 'cho_vay', q: 20 }] };
 S.loan.doitac = 5; S.loan.lines = [{ phi: 'D10', qty: 30 }];
 S.boot.loanPending = 1; S.boot.loanDuyet = 1;
+// gia công cấu kiện: đơn đủ trạng thái (mới giao, đang làm và đang vướng, trễ hạn, đã xong, đã huỷ), một đơn đang mở, một đơn đang soạn
+S.gc = { tdt: [{ id: 2, name: 'Trần B' }, { id: 7, name: 'Vũ E chưa có đơn' }], items: [
+  { id: 31, cau_kien: 'Dầm D3 tên rất dài để thử tràn dòng trên màn hình hẹp', hang_muc: 'Khối A, tầng 5', truc: 'X12-X17 / Y3-Y5', noi_dung: '2,4 tấn; D16 × 120 thanh', user_id: 2, uname: 'Trần B', han: '${today}', buoi: 'chieu', tt: 'lam', pct: 50, vuong: 'Thiếu D16', giao_by: 1, giao_name: 'Nguyễn Văn A', ts: Date.now() - 864e5, cap_ts: Date.now(), xong_ts: null, huy_ly_do: null },
+  { id: 32, cau_kien: 'Cột C2', hang_muc: null, truc: null, noi_dung: null, user_id: 2, uname: 'Trần B', han: '${yday}', buoi: null, tt: 'moi', pct: 0, vuong: null, giao_by: 1, giao_name: 'Nguyễn Văn A', ts: Date.now() - 2 * 864e5, cap_ts: Date.now() - 2 * 864e5, xong_ts: null, huy_ly_do: null },
+  { id: 33, cau_kien: 'Sàn tầng 4', hang_muc: 'Khối B', truc: 'X1-X4', noi_dung: null, user_id: 1, uname: 'Nguyễn Văn A', han: '${yday}', buoi: 'sang', tt: 'xong', pct: 100, vuong: null, giao_by: 3, giao_name: 'Phạm D', ts: Date.now() - 3 * 864e5, cap_ts: Date.now() - 3600e3, xong_ts: Date.now() - 3600e3, huy_ly_do: null },
+  { id: 34, cau_kien: 'Móng M1', hang_muc: null, truc: 'X2 / Y2', noi_dung: null, user_id: 2, uname: 'Trần B', han: '${today}', buoi: null, tt: 'huy', pct: 25, vuong: null, giao_by: 1, giao_name: 'Nguyễn Văn A', ts: Date.now() - 864e5, cap_ts: Date.now() - 7200e3, xong_ts: null, huy_ly_do: 'Đổi thiết kế' },
+] };
+S.gcId = 31;
+S.gcDetail = { don: S.gc.items[0], log: [
+  { id: 3, ts: Date.now(), viec: 'vuong', pct: 50, note: 'Thiếu D16', uname: 'Trần B' },
+  { id: 2, ts: Date.now() - 3600e3, viec: 'tiendo', pct: 50, note: null, uname: 'Trần B' },
+  { id: 1, ts: Date.now() - 7200e3, viec: 'nhan', pct: 0, note: null, uname: 'Trần B' },
+] };
+S.gcForm = { id: null, user: 2, buoi: 'sang' };
+S.boot.gc = S.gc.items.filter(gcMo).map((d) => ({ user_id: d.user_id, tt: d.tt, han: d.han, vuong: d.vuong }));
 
 // chi tiết công nợ một đối tác: có cả lần chờ, lần đã huỷ, hai chiều nợ
 S.loanDt = 5;
 S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }],
   agg: [{ phi_id: 'D8', kind: 'vay', q: 330 }, { phi_id: 'D8', kind: 'tra_vay', q: 110 }, { phi_id: 'D10', kind: 'cho_vay', q: 20 }, { phi_id: 'D10', kind: 'tra_no', q: 30 }],
   items: S.loans.items.map((x) => ({ ...x, voided: 0 })).concat([{ id: 8, doitac_id: 5, doitac_name: 'X', phi_id: 'D8', kind: 'vay', qty: 11, grp: 'g8', user_id: 2, uname: 'An', ts: Date.now() - 864e5, duyet_ts: null, voided: 1 }]) };
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet'];
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','giacong','gcdon','gcform'];
 const out = [];
 function one(label) {
   render();
@@ -317,7 +332,7 @@ S.screen = 'duyet'; render();
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }
 
 // trạng thái đang tải và tải lỗi
-for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail']]) {
+for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail'],['giacong','gc'],['gcdon','gcDetail'],['gcform','gc']]) {
   S.screen = sc; const bak = S[k]; S[k] = null;
   one(sc + '+dang-tai');
   S.loadErr[sc] = 'Không có kết nối mạng'; one(sc + '+loi-tai'); delete S.loadErr[sc];

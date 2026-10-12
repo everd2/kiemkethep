@@ -86,6 +86,9 @@ a{color:var(--pri)}
 .tab.on{border-top-color:var(--pri);color:var(--pri);font-weight:700}
 .tab{white-space:nowrap;min-width:0}
 /* máy nhỏ (≤ 360px): chữ tab và dòng phụ dưới tiêu đề không được xuống dòng */
+/* đủ 6 tab (CVKTHT trở lên, từ khi có tab Gia công): chữ nhỏ lại một cỡ cho vừa */
+.tabs.n6 .tab{font-size:12px}
+@media (max-width:370px){.tabs.n6 .tab{font-size:11px}}
 @media (max-width:370px){.tab{font-size:12px}.top small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 
 /* login */

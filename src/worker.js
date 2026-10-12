@@ -9,6 +9,7 @@ import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
+import { gcCreate, gcList, gcUpdate, gcViec, gcView } from './giacong.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -95,6 +96,17 @@ async function handle(req, env, url) {
     need(ALL);
     if (method === 'POST' && p.length === 1) return doitacCreate(req, env, user);
     if (method === 'PATCH' && p.length === 2) { need(LAP_PHIEU); return doitacUpdate(req, env, user, p[1]); }
+  }
+  /* Gia công cấu kiện: XEM mở cho mọi vai trò (bảng đơn là bảng chung của cả đơn vị). GIAO và SỬA đơn
+     từ CVKTHT trở lên. Việc trên từng đơn thì gcViec tự kiểm: người được giao (nhận, tiến độ, vướng,
+     xong) hoặc CVKTHT trở lên (huỷ, mở lại). */
+  if (r0 === 'giacong') {
+    need(ALL);
+    if (method === 'GET' && p.length === 1) return gcList(env);
+    if (method === 'GET' && p.length === 2) return gcView(env, Number(p[1]));
+    if (method === 'POST' && p.length === 1) { needCap(1); return gcCreate(req, env, user); }
+    if (method === 'PATCH' && p.length === 2) { needCap(1); return gcUpdate(req, env, user, Number(p[1])); }
+    if (method === 'POST' && p.length === 3) return gcViec(req, env, user, Number(p[1]), p[2]);
   }
 
   /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---

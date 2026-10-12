@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -343,6 +343,21 @@ export const MIGRATIONS = {
     'ALTER TABLE loans ADD COLUMN voided_name TEXT',
     'ALTER TABLE loans ADD COLUMN voided_note TEXT',
     ...LOAN_TRIGGERS,
+  ],
+  /* GIA CÔNG CẤU KIỆN: đơn giao cho Tiểu đội trưởng và lịch sử cập nhật của từng đơn (xem src/giacong.js).
+     Hai bảng mới, tách hẳn khỏi tồn kho, không đổi bảng cũ nào nên không cần backfill gì. */
+  27: [
+    `CREATE TABLE IF NOT EXISTS don_gc (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, cau_kien TEXT NOT NULL, hang_muc TEXT, truc TEXT, noi_dung TEXT,
+       user_id INTEGER NOT NULL, han TEXT NOT NULL, buoi TEXT, tt TEXT NOT NULL DEFAULT 'moi',
+       pct INTEGER NOT NULL DEFAULT 0, vuong TEXT, giao_by INTEGER NOT NULL, ts INTEGER NOT NULL,
+       cap_ts INTEGER NOT NULL, xong_ts INTEGER, huy_ly_do TEXT, mo_lai TEXT)`,
+    // (tt, cap_ts): đơn còn mở tìm theo tt; đơn xong / huỷ gần đây tìm theo tt rồi cap_ts — không câu nào phải quét cả bảng
+    'CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts)',
+    `CREATE TABLE IF NOT EXISTS don_gc_log (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, don_id INTEGER NOT NULL, ts INTEGER NOT NULL, user_id INTEGER,
+       viec TEXT NOT NULL, pct INTEGER NOT NULL DEFAULT 0, note TEXT)`,
+    'CREATE INDEX IF NOT EXISTS idx_don_gc_log_don ON don_gc_log(don_id)',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

@@ -390,7 +390,49 @@ CREATE TABLE IF NOT EXISTS bao_cao_huy (
 );
 CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 26);
+-- Đơn giao GIA CÔNG CẤU KIỆN (xem src/giacong.js). Không liên quan tồn kho, số đếm hay phiếu.
+-- user_id: Tiểu đội trưởng được giao — người duy nhất nhận đơn, cập nhật tiến độ và xác nhận xong.
+-- truc: vị trí theo trục, chữ tự do (vd "X12-X17 / Y3-Y5"). han: ngày cần xong. buoi: 'sang' | 'chieu' | NULL.
+-- tt: 'moi' vừa giao chưa nhận, 'nhan' đã nhận, 'lam' đang làm, 'xong', 'huy'. pct: 0, 25, 50, 75, 100 (100 = xong).
+-- vuong: lý do đang kẹt; NULL = không vướng. Là cờ đi kèm chứ không phải một trạng thái.
+-- giao_by, ts: ai giao, lúc nào. cap_ts: lần cập nhật gần nhất, cũng là dấu để chặn hai người ghi đè nhau.
+-- mo_lai: lý do đơn bị mở lại sau khi đã báo xong; xoá khi đơn xong lần nữa hoặc bị huỷ.
+-- Trễ hạn không lưu: han < hôm nay mà tt còn mở là trễ (hạn buổi sáng thì trễ từ 12h trưa hôm đó).
+CREATE TABLE IF NOT EXISTS don_gc (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cau_kien TEXT NOT NULL,
+  hang_muc TEXT,
+  truc TEXT,
+  noi_dung TEXT,
+  user_id INTEGER NOT NULL,
+  han TEXT NOT NULL,
+  buoi TEXT,
+  tt TEXT NOT NULL DEFAULT 'moi',
+  pct INTEGER NOT NULL DEFAULT 0,
+  vuong TEXT,
+  giao_by INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  cap_ts INTEGER NOT NULL,
+  xong_ts INTEGER,
+  huy_ly_do TEXT,
+  mo_lai TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
+
+-- Lịch sử của từng đơn: mỗi lần nhận, cập nhật tiến độ, báo vướng, sửa, huỷ, mở lại là một dòng.
+-- viec: 'nhan', 'tiendo', 'vuong', 'hetvuong', 'xong', 'sua', 'huy', 'molai'. pct: tiến độ SAU việc đó.
+CREATE TABLE IF NOT EXISTS don_gc_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  don_id INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  user_id INTEGER,
+  viec TEXT NOT NULL,
+  pct INTEGER NOT NULL DEFAULT 0,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_don_gc_log_don ON don_gc_log(don_id);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 27);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

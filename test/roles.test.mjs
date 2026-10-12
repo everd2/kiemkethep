@@ -90,6 +90,9 @@ async function main() {
       ['PUT', '/counts', {}, ALL],
       ['GET', '/loans', null, ALL], ['POST', '/loans', {}, ALL], ['DELETE', '/loans/99999', null, ALL],
       ['POST', '/doitac', {}, ALL],
+      // gia công: ai cũng xem; việc của người được giao thì ai cũng gọi được (đơn không có: 404); giao, sửa, huỷ, mở lại từ CVKTHT
+      ['GET', '/giacong', null, ALL], ['GET', '/giacong/99999', null, ALL], ['POST', '/giacong/99999/nhan', {}, ALL], ['POST', '/giacong/99999/xong', {}, ALL],
+      ['POST', '/giacong', {}, C1], ['PATCH', '/giacong/99999', {}, C1], ['POST', '/giacong/99999/huy', {}, C1], ['POST', '/giacong/99999/molai', {}, C1],
       ['POST', '/receipts', {}, LAP], ['DELETE', '/receipts/99999', null, LAP], ['POST', '/transfers', {}, LAP],
       ['POST', '/adjust', {}, LAP], ['POST', '/xuat', {}, LAP], ['GET', '/report?from=2020-01-01&to=2020-01-02', null, LAP],
       ['PATCH', '/doitac/99999', {}, LAP], ['GET', '/loans/export', null, LAP],
