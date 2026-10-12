@@ -474,9 +474,8 @@ CREATE TABLE IF NOT EXISTS gc_muc (
   ten TEXT NOT NULL,
   sort INTEGER NOT NULL DEFAULT 0
 );
-INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', x.ten, x.sort FROM
-  (SELECT 'Dầm' ten, 1 sort UNION ALL SELECT 'Cột', 2 UNION ALL SELECT 'Sàn', 3 UNION ALL SELECT 'Móng', 4 UNION ALL SELECT 'Vách', 5 UNION ALL SELECT 'Cầu thang', 6) x
-  WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck');
+INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', j.value, j.key + 1 FROM json_each('["Dầm","Cột","Sàn","Móng","Vách","Cầu thang"]') j
+     WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck');
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 29);
 

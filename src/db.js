@@ -371,7 +371,9 @@ export const MIGRATIONS = {
   ],
   /* GIA CÔNG: vị trí của đơn tách thành phân khu + tầng + trục (trục thành bắt buộc), và DANH MỤC do admin
      lập trước để chọn nhanh — phân khu ('khu'), hạng mục ('hm'), loại cấu kiện ('ck'). Đơn lưu TÊN của mục
-     chứ không lưu id, nên xoá một mục không đụng tới đơn đã giao. Sáu loại cấu kiện thường gặp nạp sẵn; đơn
+     chứ không lưu id, nên xoá một mục không đụng tới đơn đã giao. Nạp sẵn sáu loại bằng json_each chứ không
+     UNION ALL: D1 chỉ cho 5 vế trong một câu SELECT ghép (bản đầu dùng 6 vế đã làm hỏng lần nâng cấp trên máy thật;
+     SQLite của bộ test cho tới 500 vế nên không bắt được). Sáu loại cấu kiện thường gặp nạp sẵn; đơn
      cũ không có phân khu / tầng thì để trống. */
   29: [
     'ALTER TABLE don_gc ADD COLUMN phan_khu TEXT',
@@ -386,8 +388,7 @@ export const MIGRATIONS = {
     "UPDATE don_gc SET huy_ts = cap_ts, biet_ts = cap_ts WHERE tt = 'huy' AND huy_ts IS NULL",
     `CREATE TABLE IF NOT EXISTS gc_muc (
        id INTEGER PRIMARY KEY AUTOINCREMENT, loai TEXT NOT NULL, ten TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0)`,
-    `INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', x.ten, x.sort FROM
-       (SELECT 'Dầm' ten, 1 sort UNION ALL SELECT 'Cột', 2 UNION ALL SELECT 'Sàn', 3 UNION ALL SELECT 'Móng', 4 UNION ALL SELECT 'Vách', 5 UNION ALL SELECT 'Cầu thang', 6) x
+    `INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', j.value, j.key + 1 FROM json_each('["Dầm","Cột","Sàn","Móng","Vách","Cầu thang"]') j
      WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck')`,
   ],
 };
