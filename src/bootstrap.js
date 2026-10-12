@@ -86,8 +86,8 @@ export async function bootstrap(env, user) {
     /* Kèm đơn bị HUỶ mà người giữ đơn CHƯA bấm "đã biết" (tối đa 30 ngày): họ phải thấy để thôi làm, người giao
        thấy để biết bên kia chưa xem. Kèm tên đơn và lý do để thẻ nhắc gọi đúng tên. UNION ALL để cả hai nửa đi
        theo index (tt, cap_ts). */
-    env.DB.prepare(`SELECT id, user_id, tt, han, buoi, vuong, mo_lai, cau_kien, truc, huy_ly_do FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
-                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, mo_lai, cau_kien, truc, huy_ly_do FROM don_gc
+    env.DB.prepare(`SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
+                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do FROM don_gc
                       WHERE tt = 'huy' AND cap_ts > ? AND biet_ts IS NULL`).bind(Date.now() - GC_BAO_HUY_MS),
     // quân số đầu ca: tổ nào đã báo ca đang diễn ra và ca kế tiếp (xem qsBoot)
     qsBootStmt(env),

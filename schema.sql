@@ -396,7 +396,10 @@ CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 -- có danh mục), tang và cote (cao độ; phải có ít nhất một, đã ghi tầng thì cote không bắt buộc), hang_muc (tuỳ chọn).
 -- Huỷ ('huy') nghĩa là KHÔNG CẦN LÀM NỮA, không xoá đơn: huy_by / huy_ts / huy_ly_do = ai huỷ, lúc nào, vì sao;
 -- huy_tt = trạng thái trước khi huỷ (để khôi phục đơn huỷ nhầm về đúng chỗ); biet_ts = lúc người giữ đơn bấm "đã biết";
--- pct giữ nguyên số lúc huỷ ("dừng ở 50%"). han: ngày cần xong. buoi: 'sang' | 'chieu' | NULL.
+-- pct giữ nguyên số lúc huỷ ("dừng ở 50%").
+-- Báo vướng: vuong (chữ hiện ra), vuong_loai (lý do trong danh mục gc_muc loại 'vg'), vuong_dung (1 = dừng hẳn),
+-- vuong_ts (lúc báo), vuong_xem_by / vuong_xem_ts (người giao bấm "đã xem, đang xử lý").
+-- lam_ts: lần cuối người làm động tới đơn (nhận, tiến độ, vướng, xong) — đơn đứng yên lâu thì bảng tô vàng. han: ngày cần xong. buoi: 'sang' | 'chieu' | NULL.
 -- tt: 'moi' vừa giao chưa nhận, 'nhan' đã nhận, 'lam' đang làm, 'xong', 'huy'. pct: nấc 10 từ 0 tới 90, và 100 = xong (đơn trước bản 28 còn có thể mang 25 / 75).
 -- vuong: lý do đang kẹt; NULL = không vướng. Là cờ đi kèm chứ không phải một trạng thái.
 -- giao_by, ts: ai giao, lúc nào. cap_ts: lần cập nhật gần nhất, cũng là dấu để chặn hai người ghi đè nhau.
@@ -426,7 +429,13 @@ CREATE TABLE IF NOT EXISTS don_gc (
   huy_by INTEGER,
   huy_ts INTEGER,
   huy_tt TEXT,
-  biet_ts INTEGER
+  biet_ts INTEGER,
+  vuong_loai TEXT,
+  vuong_dung INTEGER NOT NULL DEFAULT 0,
+  vuong_ts INTEGER,
+  vuong_xem_by INTEGER,
+  vuong_xem_ts INTEGER,
+  lam_ts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
 
@@ -466,7 +475,8 @@ CREATE TABLE IF NOT EXISTS quan_so (
 -- lần báo gần nhất của một tổ (điền sẵn tổng quân số cho lần báo sau) tìm thẳng theo tổ, không quét cả bảng
 CREATE INDEX IF NOT EXISTS idx_quan_so_u ON quan_so(user_id, ngay, ca);
 
--- Danh mục chọn nhanh của đơn gia công, admin lập trước. loai: 'khu' phân khu, 'hm' hạng mục, 'ck' loại cấu kiện.
+-- Danh mục chọn nhanh của đơn gia công, admin lập trước. loai: 'khu' phân khu, 'hm' hạng mục, 'ck' loại cấu kiện,
+-- 'vg' lý do vướng.
 -- Đơn lưu TÊN của mục (don_gc.phan_khu, hang_muc, cau_kien) chứ không lưu id: xoá một mục không đụng tới đơn đã giao.
 CREATE TABLE IF NOT EXISTS gc_muc (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -477,7 +487,10 @@ CREATE TABLE IF NOT EXISTS gc_muc (
 INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', j.value, j.key + 1 FROM json_each('["Dầm","Cột","Sàn","Móng","Vách","Cầu thang"]') j
      WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck');
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 29);
+INSERT INTO gc_muc (loai, ten, sort) SELECT 'vg', j.value, j.key + 1 FROM json_each('["Thiếu thép","Chưa có bản vẽ","Bản vẽ sai","Máy hỏng","Thiếu người","Chờ mặt bằng"]') j
+  WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'vg');
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 30);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

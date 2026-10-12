@@ -42,8 +42,10 @@ const GC_KHOI_PHUC_MS = 7 * 864e5;
 const GC_HAN_MAX_MS = 366 * 864e5;
 const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.cote, d.truc, d.noi_dung, d.user_id, d.han, d.buoi, d.tt, d.pct, d.vuong,
     d.giao_by, d.ts, d.cap_ts, d.xong_ts, d.huy_ly_do, d.mo_lai, d.huy_ts, d.biet_ts,
-    COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name
-  FROM don_gc d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN users g ON g.id = d.giao_by LEFT JOIN users h ON h.id = d.huy_by`;
+    d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts,
+    COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name, x.name vuong_xem_name
+  FROM don_gc d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN users g ON g.id = d.giao_by LEFT JOIN users h ON h.id = d.huy_by
+    LEFT JOIN users x ON x.id = d.vuong_xem_by`;
 
 const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
 /* Tầng chỉ lưu phần riêng của nó: "1", "2", "B1", "Mái". Người giao gõ "Tầng 5" hay "5" đều thành "5", nên đơn
@@ -56,10 +58,10 @@ const khongThay = () => new HttpError(404, 'Không tìm thấy đơn gia công')
 const vuaDoi = () => new HttpError(409, 'Đơn vừa được người khác cập nhật. Màn hình đã tải lại, hãy xem rồi làm lại.', 'changed');
 
 // danh mục chọn nhanh, admin lập trước: phân khu, hạng mục, loại cấu kiện ("Khác" luôn có sẵn ở máy khách, không lưu)
-export const GC_MUC = { khu: 'phân khu', hm: 'hạng mục', ck: 'loại cấu kiện' };
+export const GC_MUC = { khu: 'phân khu', hm: 'hạng mục', ck: 'loại cấu kiện', vg: 'lý do vướng' };
 const GC_MUC_MAX = 40;
 const MUC_SQL = 'SELECT id, loai, ten FROM gc_muc ORDER BY loai, sort, id';
-const xepMuc = (rows) => { const o = { khu: [], hm: [], ck: [] }; rows.forEach((r) => { if (o[r.loai]) o[r.loai].push({ id: r.id, ten: r.ten }); }); return o; };
+const xepMuc = (rows) => { const o = { khu: [], hm: [], ck: [], vg: [] }; rows.forEach((r) => { if (o[r.loai]) o[r.loai].push({ id: r.id, ten: r.ten }); }); return o; };
 // so tên không phân hoa/thường (COLLATE NOCASE của SQLite chỉ biết chữ không dấu, nên so ở đây)
 const mucTen = (ds, v) => { const x = ds.find((m) => m.ten.toLowerCase() === String(v).toLowerCase()); return x ? x.ten : null; };
 
@@ -128,13 +130,14 @@ export async function gcList(env) {
 
 export async function gcView(env, id) {
   if (!Number.isInteger(id)) throw khongThay();
-  const [don, log] = await env.DB.batch([
+  const [don, log, muc] = await env.DB.batch([
     env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id),
     env.DB.prepare(`SELECT l.id, l.ts, l.viec, l.pct, l.note, COALESCE(u.name, '(đã xoá)') uname
                     FROM don_gc_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.don_id = ? ORDER BY l.id DESC`).bind(id),
+    env.DB.prepare(MUC_SQL),
   ]);
   if (!don.results.length) throw khongThay();
-  return json({ don: don.results[0], log: log.results });
+  return json({ don: don.results[0], log: log.results, muc: xepMuc(muc.results) });
 }
 
 // một đơn CÒN MỞ khác (id khác boQua) của cùng người, giống hệt cấu kiện + phân khu + tầng + cote + trục
@@ -211,7 +214,7 @@ export async function gcMucAdd(req, env, user) {
   if (!GC_MUC[loai]) throw bad('Loại danh mục không hợp lệ');
   const ten = chu(b.ten, loai === 'hm' ? 60 : 40);
   if (!ten) throw bad('Cần ghi tên ' + GC_MUC[loai]);
-  if (loai === 'ck' && ten.toLowerCase() === 'khác') throw bad('"Khác" luôn có sẵn, không cần thêm');
+  if ((loai === 'ck' || loai === 'vg') && ten.toLowerCase() === 'khác') throw bad('"Khác" luôn có sẵn, không cần thêm');
   const co = (await env.DB.prepare('SELECT ten FROM gc_muc WHERE loai = ?').bind(loai).all()).results;
   if (co.some((m) => m.ten.toLowerCase() === ten.toLowerCase())) throw bad('Đã có ' + GC_MUC[loai] + ' "' + ten + '"');
   if (co.length >= GC_MUC_MAX) throw bad('Danh mục ' + GC_MUC[loai] + ' đã đủ ' + GC_MUC_MAX + ' mục. Xoá bớt mục không dùng.');
@@ -236,9 +239,14 @@ export async function gcMucXoa(env, user, id) {
 /* Một việc trên đơn.
    Của NGƯỜI ĐƯỢC GIAO (và chỉ họ): nhan, tiendo, vuong, hetvuong, xong.
    Của NGƯỜI ĐƯỢC GIAO còn có: biet — bấm "đã biết" trên đơn vừa bị huỷ (xem luật huỷ ở đầu tệp).
-   Của CVKTHT trở lên: huy, molai (mở lại đơn đã xong), khoiphuc (khôi phục đơn huỷ nhầm) — đều bắt buộc ghi lý do.
+   Của CVKTHT trở lên: huy, molai (mở lại đơn đã xong), khoiphuc (khôi phục đơn huỷ nhầm) — đều bắt buộc ghi lý do;
+   xemvuong — "đã xem, đang xử lý" một lần báo vướng, để tổ biết báo đã tới người lo.
+   BÁO VƯỚNG: chọn lý do trong danh mục (loại 'vg', "Khác" thì phải ghi rõ), mức độ dung = 1 khi tổ DỪNG HẲN
+   (0 = vẫn làm được phần khác). Báo lại thì xoá dấu "đã xem" cũ: lần báo mới chưa ai xem. Bản app cũ gửi chữ tự do
+   (chỉ ly_do) vẫn nhận.
+   lam_ts: lần cuối NGƯỜI LÀM động tới đơn (nhận, tiến độ, vướng, xong) — để biết đơn nào đứng yên lâu.
    Kiểm quyền TRƯỚC khi tìm đơn, để người không có quyền nhận 403 chứ không dò được đơn nào có thật. */
-const VIEC_QL = ['huy', 'molai', 'khoiphuc'];
+const VIEC_QL = ['huy', 'molai', 'khoiphuc', 'xemvuong'];
 const VIEC_CUA = ['nhan', 'tiendo', 'vuong', 'hetvuong', 'xong', 'biet'];
 export async function gcViec(req, env, user, id, viec) {
   if (!VIEC_QL.includes(viec) && !VIEC_CUA.includes(viec)) throw new HttpError(404, 'Không tìm thấy');
@@ -256,6 +264,7 @@ export async function gcViec(req, env, user, id, viec) {
   if (viec === 'nhan') {
     if (d.tt !== 'moi') throw sai(dong || 'Đơn này đã nhận rồi.');
     set.tt = 'nhan';
+    set.lam_ts = ts;
   } else if (viec === 'tiendo') {
     if (d.tt === 'moi') throw sai('Hãy nhận đơn trước khi cập nhật tiến độ.');
     if (dong) throw sai(dong);
@@ -264,28 +273,44 @@ export async function gcViec(req, env, user, id, viec) {
     note = chu(b.note, 200) || null;
     if (pct === d.pct && !note) throw bad('Tiến độ chưa đổi. Chọn mức khác hoặc ghi chú thêm.');
     set.pct = pct;
+    set.lam_ts = ts;
     if (pct > 0) set.tt = 'lam';
   } else if (viec === 'vuong') {
     if (dong) throw sai(dong);
-    note = chu(b.ly_do, 200);
-    if (!note) throw bad('Cần ghi đang vướng gì');
-    set.vuong = note;
+    const ghi = chu(b.ly_do, 200), loai = chu(b.loai, 40);
+    let ten = null;
+    if (loai) {
+      ten = loai.toLowerCase() === 'khác' ? 'Khác' : mucTen(xepMuc((await env.DB.prepare(MUC_SQL).all()).results).vg, loai);
+      if (!ten) throw bad('Lý do vướng "' + loai + '" không có trong danh mục');
+      if (ten === 'Khác' && !ghi) throw bad('Ghi rõ đang vướng gì');
+      note = ten === 'Khác' ? ghi : ten + (ghi ? ': ' + ghi : '');
+    } else {
+      note = ghi;
+      if (!note) throw bad('Cần ghi đang vướng gì');
+    }
+    Object.assign(set, { vuong: note, vuong_loai: ten, vuong_dung: b.dung ? 1 : 0, vuong_ts: ts, vuong_xem_by: null, vuong_xem_ts: null, lam_ts: ts });
   } else if (viec === 'hetvuong') {
     if (dong) throw sai(dong);
     if (!d.vuong) throw sai('Đơn này không còn vướng.');
-    set.vuong = null;
+    Object.assign(set, { vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, lam_ts: ts });
+  } else if (viec === 'xemvuong') {
+    if (dong) throw sai(dong);
+    if (!d.vuong) throw sai('Đơn này không còn vướng.');
+    if (d.vuong_xem_ts) throw sai((d.vuong_xem_name || 'Người khác') + ' đã nhận xử lý lần báo vướng này rồi.');
+    note = chu(b.note, 200) || null;
+    Object.assign(set, { vuong_xem_by: user.id, vuong_xem_ts: ts });
   } else if (viec === 'xong') {
     if (d.tt === 'moi') throw sai('Hãy nhận đơn trước khi xác nhận xong.');
     if (dong) throw sai(dong);
     note = chu(b.note, 200) || null;
-    Object.assign(set, { tt: 'xong', pct: 100, vuong: null, mo_lai: null, xong_ts: ts });
+    Object.assign(set, { tt: 'xong', pct: 100, vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, mo_lai: null, xong_ts: ts, lam_ts: ts });
     audit = 'gc_xong';
   } else if (viec === 'huy') {
     if (dong) throw sai(dong + (d.tt === 'xong' ? ' Muốn làm lại thì mở lại đơn.' : ''));
     note = chu(b.ly_do, 200);
     if (!note) throw bad('Cần ghi lý do huỷ đơn');
     // giữ nguyên pct ("dừng ở 50%"); nhớ trạng thái trước khi huỷ để khôi phục về đúng chỗ; cờ vướng hết nghĩa
-    Object.assign(set, { tt: 'huy', huy_ly_do: note, huy_by: user.id, huy_ts: ts, huy_tt: d.tt, biet_ts: null, vuong: null, mo_lai: null });
+    Object.assign(set, { tt: 'huy', huy_ly_do: note, huy_by: user.id, huy_ts: ts, huy_tt: d.tt, biet_ts: null, vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, mo_lai: null });
     audit = 'gc_huy';
   } else if (viec === 'biet') {
     if (d.tt !== 'huy') throw sai('Đơn này không bị huỷ.');

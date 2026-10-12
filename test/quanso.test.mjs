@@ -230,8 +230,12 @@ async function main() {
     R('S.boot.skew = 0');
     ok('không còn thẻ nhắc "bấm để báo" dẫn sang màn khác: báo ngay trên thẻ', !R('vHome()').includes('data-a="nav" data-s="quanso"') && the().includes('data-a="qhgui"'));
     ok('tổ chưa báo lần nào: hỏi tổng quân số ngay trên thẻ, có hai nút gửi theo ca', the().includes('id="qhtong"') && (the().match(/data-a="qhgui"/g) || []).length === 2 && the().indexOf('BÁO CA NGÀY') < the().indexOf('BÁO CA ĐÊM'), the().slice(0, 200));
+    ok('hai nút cạnh nhau: chữ ngắn không kèm ngày, không ép một dòng (khỏi bị cắt chữ)', />BÁO CA NGÀY<\/button>/.test(the()) && />BÁO CA ĐÊM<\/button>/.test(the()) && !/data-a="qhgui"[^>]*nowrap|nowrap[^>]*data-a="qhgui"/.test(the()));
+    ok('chưa gõ tổng: dòng hướng dẫn chữ thường, KHÔNG đỏ', /id="qhprev" style="font-size:17px;font-weight:400">Gõ tổng quân số của tổ rồi bấm báo theo ca\./.test(the()), (the().match(/id="qhprev"[^<]*/) || [''])[0]);
     R(`ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();
     eq('chưa ghi tổng: chưa gửi', S3.one('SELECT COUNT(*) n FROM quan_so').n, 0);
+    ok('bấm gửi mà thiếu tổng: lúc đó mới đỏ', /id="qhprev" style="font-size:17px;color:var\(--bad\)">Ghi tổng quân số của tổ\./.test(the()), (the().match(/id="qhprev"[^<]*/) || [''])[0]);
+    R('S.qsH = null');
     R(`ACTIONS.nav({ s: 'quanso' })`); await cho();
     eq('vào màn Quân số: PHẢI chọn ca trước, app không tự mở ô ghi', [R('S.screen'), R('S.qsF'), R('S.qsCa')], ['quanso', null, null]);
     const chon = R('vQuanSo()');
@@ -281,7 +285,11 @@ async function main() {
       R(`S.form.qhnote = 'đi khám'; ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();
       eq('gửi ngay trên Tổng quan, không đổi màn', [dung(), R('S.screen'), R('S.qsH.nghi'), R('S.form.qhnote')], [{ tong: 20, lam: 17, ca_kia: 0, nghi: '{"phep":1,"que":1,"khac":1}', ghi_chu: 'đi khám' }, 'home', {}, undefined]);
       await vao('Dung', 'tieudoi');
-      ok('báo xong: thẻ thành dòng "đã báo" kèm nút Sửa, còn nút báo ca đêm', R('qsTheHome()').includes('Ca ngày ' + ngay.slice(8) + '/' + ngay.slice(5, 7) + ': đã báo') && R('qsTheHome()').includes('data-a="qhsua"') && R('qsTheHome()').includes('BÁO CA ĐÊM'));
+      ok('báo xong: thẻ thành dòng "đã báo" kèm nút Sửa', R('qsTheHome()').includes('Ca ngày ' + ngay.slice(8) + '/' + ngay.slice(5, 7) + ': đã báo') && R('qsTheHome()').includes('data-a="qhsua"'));
+      ok('tổ làm ca ngày đã báo: ca đêm KHÔNG mở sẵn form và nút gửi, chỉ còn dòng nhỏ "báo thêm"', !R('qsTheHome()').includes('data-a="qhgui"') && R('qsTheHome()').includes('data-a="qhthem"'));
+      R('ACTIONS.qhthem()');
+      ok('bấm "báo thêm": mở form ca đêm, có nút Thôi', R('qsTheHome()').includes('BÁO CA ĐÊM') && R('qsTheHome()').includes('data-a="qhthoi"'));
+      R('ACTIONS.qhthoi()');
       R(`ACTIONS.qhsua({ v: '${ngay}:1' })`);
       eq('Sửa: điền lại đúng số đã báo, chỉ còn nút gửi lại ca đó', [R('S.form.qhtong'), R('S.qsH.nghi'), R('S.form.qhnote'), (R('qsTheHome()').match(/data-a="qhgui"/g) || []).length, R('qsTheHome()').includes('GỬI LẠI CA NGÀY')], ['20', { phep: 1, que: 1, khac: 1 }, 'đi khám', 1, true]);
       R(`ACTIONS.qhnghi({ k: 'khac', v: '-1' }); S.form.qhnote = ''; ACTIONS.qhgui({ v: '${ngay}:1' })`); await cho();

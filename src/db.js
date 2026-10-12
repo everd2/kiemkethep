@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -390,6 +390,23 @@ export const MIGRATIONS = {
        id INTEGER PRIMARY KEY AUTOINCREMENT, loai TEXT NOT NULL, ten TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0)`,
     `INSERT INTO gc_muc (loai, ten, sort) SELECT 'ck', j.value, j.key + 1 FROM json_each('["Dầm","Cột","Sàn","Móng","Vách","Cầu thang"]') j
      WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'ck')`,
+  ],
+  /* GIA CÔNG: báo vướng nhanh và theo dõi đơn đứng yên.
+     vuong_loai: lý do chọn trong danh mục (gc_muc loại 'vg', nạp sẵn sáu lý do hay gặp), vuong_dung: 1 = tổ dừng hẳn,
+     vuong_ts: lúc báo, vuong_xem_by / vuong_xem_ts: người giao bấm "đã xem, đang xử lý".
+     lam_ts: lần cuối người làm động tới đơn (nhận, tiến độ, vướng, xong); đơn cũ lấy theo lần cập nhật gần nhất.
+     Nạp danh mục bằng json_each, không UNION ALL (D1 chỉ cho 5 vế, xem bản 29). */
+  30: [
+    'ALTER TABLE don_gc ADD COLUMN vuong_loai TEXT',
+    'ALTER TABLE don_gc ADD COLUMN vuong_dung INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE don_gc ADD COLUMN vuong_ts INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN vuong_xem_by INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN vuong_xem_ts INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN lam_ts INTEGER',
+    'UPDATE don_gc SET lam_ts = cap_ts WHERE lam_ts IS NULL',
+    'UPDATE don_gc SET vuong_ts = cap_ts WHERE vuong IS NOT NULL AND vuong_ts IS NULL',
+    `INSERT INTO gc_muc (loai, ten, sort) SELECT 'vg', j.value, j.key + 1 FROM json_each('["Thiếu thép","Chưa có bản vẽ","Bản vẽ sai","Máy hỏng","Thiếu người","Chờ mặt bằng"]') j
+     WHERE NOT EXISTS (SELECT 1 FROM gc_muc WHERE loai = 'vg')`,
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

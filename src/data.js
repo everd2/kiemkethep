@@ -183,7 +183,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 28 chỉ thêm bảng quân số đầu ca
   28: [23, 24, 25, 26, 27],
   // bản 29 thêm bảng danh mục gia công và hai cột phân khu / tầng của đơn (tệp cũ thiếu thì để trống)
-  29: [23, 24, 25, 26, 27, 28] };
+  29: [23, 24, 25, 26, 27, 28],
+  // bản 30 thêm các cột báo vướng / lần cuối người làm cập nhật của đơn gia công (tệp cũ thiếu thì để trống)
+  30: [23, 24, 25, 26, 27, 28, 29] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */

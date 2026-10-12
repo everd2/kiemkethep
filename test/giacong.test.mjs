@@ -95,6 +95,34 @@ async function main() {
   eq('Binh không gỡ vướng thay An', (await viec(id, 'hetvuong', {}, 'Binh')).status, 403);
   eq('An báo hết vướng', (await viec(id, 'hetvuong', {}, 'An')).status, 200);
   eq('hết vướng lần hai: từ chối', (await viec(id, 'hetvuong', {}, 'An')).status, 409);
+  /* --- báo vướng nhanh: lý do trong danh mục, mức độ, người giao nhận xử lý --- */
+  {
+    const v = await xem(id);
+    eq('danh mục lý do vướng nạp sẵn, màn một đơn nhận kèm danh mục', v.muc.vg.map((m) => m.ten), ['Thiếu thép', 'Chưa có bản vẽ', 'Bản vẽ sai', 'Máy hỏng', 'Thiếu người', 'Chờ mặt bằng']);
+    eq('lý do ngoài danh mục: từ chối', (await viec(id, 'vuong', { loai: 'Mưa to' }, 'An')).status, 400);
+    eq('"Khác" mà không ghi rõ: từ chối', (await viec(id, 'vuong', { loai: 'Khác' }, 'An')).status, 400);
+    advance(1000);
+    eq('báo vướng một chạm: chọn lý do, dừng hẳn, ghi thêm', (await viec(id, 'vuong', { loai: 'thiếu thép', dung: 1, ly_do: 'hết D16' }, 'An')).status, 200);
+    const d = (await xem(id)).don;
+    ok('đơn ghi lý do theo danh mục, mức dừng hẳn, lúc báo, chưa ai xem', d.vuong === 'Thiếu thép: hết D16' && d.vuong_loai === 'Thiếu thép' && d.vuong_dung === 1 && d.vuong_ts > 0 && d.vuong_xem_ts === null && d.lam_ts === d.vuong_ts, JSON.stringify(d));
+    eq('Tiểu đội trưởng không bấm "đã xem, đang xử lý"', (await viec(id, 'xemvuong', {}, 'Binh')).status, 403);
+    advance(1000);
+    eq('Cv nhận xử lý', (await viec(id, 'xemvuong', {}, 'Cv')).status, 200);
+    eq('đơn ghi ai đang xử lý', (await xem(id)).don.vuong_xem_name, 'Cv');
+    eq('nhận xử lý lần hai: từ chối, nói ai đã nhận', [(await viec(id, 'xemvuong', {}, 'Trung')).status, (await viec(id, 'xemvuong', {}, 'Trung')).data.error.startsWith('Cv đã nhận')], [409, true]);
+    advance(1000);
+    eq('báo vướng lại (lý do khác): lần báo mới chưa ai xem', [(await viec(id, 'vuong', { loai: 'Khác', ly_do: 'chờ cẩu' }, 'An')).status, (await xem(id)).don.vuong_xem_ts, (await xem(id)).don.vuong, (await xem(id)).don.vuong_dung], [200, null, 'chờ cẩu', 0]);
+    eq('bản app cũ gửi chữ tự do vẫn được nhận', [(await viec(id, 'vuong', { ly_do: 'máy uốn kẹt' }, 'An')).status, (await xem(id)).don.vuong], [200, 'máy uốn kẹt']);
+    advance(1000);
+    await viec(id, 'hetvuong', {}, 'An');
+    const h = (await xem(id)).don;
+    eq('hết vướng: xoá sạch lý do, mức độ, người xử lý', [h.vuong, h.vuong_loai, h.vuong_dung, h.vuong_xem_ts], [null, null, 0, null]);
+    eq('không còn vướng thì không có gì để nhận xử lý', (await viec(id, 'xemvuong', {}, 'Cv')).status, 409);
+    eq('admin thêm lý do vướng mới vào danh mục', (await S.call('POST', '/giacong/muc', { loai: 'vg', ten: 'Chờ cẩu' }, 'Admin')).status, 200);
+    eq('"Khác" không thêm vào danh mục lý do vướng', (await S.call('POST', '/giacong/muc', { loai: 'vg', ten: 'khác' }, 'Admin')).status, 400);
+    eq('lý do mới dùng được ngay', (await viec(id, 'vuong', { loai: 'Chờ cẩu' }, 'An')).status, 200);
+    await viec(id, 'hetvuong', {}, 'An');
+  }
   eq('việc lạ: 404', (await viec(id, 'xoa', {}, 'An')).status, 404);
 
   /* ===== 4. Bootstrap: đơn còn mở để Tổng quan nhắc ===== */
@@ -377,6 +405,7 @@ async function main() {
     eq('tìm không dấu "be nuoc": chỉ còn thẻ Bể nước hiện', the.map((x) => [x.split('"')[0].split(' ').slice(0, 2).join(' '), x.split('>')[0].includes('display:none')]), [['dam x1-x2', true], ['be nuoc', false]]);
     ok('tìm được theo khu và tầng', R(`gcTuKhoa(S.gc.items[0])`).includes('khu a tang 5'));
     /* --- tìm theo từng từ: mã cấu kiện khớp đúng mã, trục khớp theo dải --- */
+    const GC_KEYS = ['gcx1', 'gcx2', 'gcy1', 'gcy2', 'gct1', 'gct2'];
     const khop = (text, q) => R(`gcKhop(gcKhongDau(${JSON.stringify(text)}), gcKhongDau(${JSON.stringify(q)}))`);
     eq('gõ W23 ra mọi đơn của W23 (kể cả W23a), không ra W2 hay W230', ['Vách W23 · X1', 'Vách W23a', 'Vách W230', 'Vách W2'].map((t) => khop(t, 'W23')), [true, true, false, false]);
     eq('gõ cách hay gạch nối vẫn ra: "w 23", "w-23"', [khop('Vách W23', 'w 23'), khop('Vách W23', 'w-23')], [true, true]);
@@ -384,14 +413,21 @@ async function main() {
     eq('chữ không có số khớp đầu từ: "va" ra Vách', [khop('Vách W23', 'va'), khop('Dầm D3', 'am')], [true, false]);
     eq('d3 không ra D30', [khop('Dầm D3', 'd3'), khop('Dầm D30', 'd3')], [true, false]);
     eq('mã trục khớp theo dải: x14 ra đơn ghi X12-X17, x20 thì không', [khop('X12-X17 / Y3-Y5', 'x14'), khop('X12-X17 / Y3-Y5', 'y4'), khop('X12-X17 / Y3-Y5', 'x20')], [true, true, false]);
-    eq('trục 6 tìm bằng "truc 6" hoặc "6"', [khop('Dầm D1 · Trục 6 (A-D)', 'truc 6'), khop('Dầm D1 · Trục 6 (A-D)', '6'), khop('Dầm D1 · Trục 16', 'truc 6')], [true, true, false]);
-    /* --- trục: nhập "trên một trục" --- */
+    eq('trục tìm được: "truc 6" ra Trục 6, không ra Trục 16; "truc 2" ra đơn nằm giữa Trục 1-2', [khop('Dầm D1 · Trục 6', 'truc 6'), khop('Dầm D1 · Trục 16', 'truc 6'), khop('Dầm D1 · Trục 1-2', 'truc 2')], [true, false, true]);
+    /* --- trục: X, Y, Trục tuỳ ý kết hợp; một trục = nằm trên trục, hai trục = nằm giữa --- */
     R(`gcSoan(null); S.gcForm.ck = 'Dầm';`);
-    R(`ACTIONS.gctruck({ v: 'mot' }); S.form.gctm = '6';`);
-    eq('một trục: "Trục 6"; kèm đoạn: "Trục 6 (A-D)"; một đầu đoạn: "Trục C (2)"', [R('gcTrucCua()'), R(`S.form.gctm1 = 'a'; S.form.gctm2 = 'd'; gcTrucCua()`), R(`S.form.gctm = 'c'; S.form.gctm1 = '2'; S.form.gctm2 = ''; gcTrucCua()`)], ['Trục 6', 'Trục 6 (A-D)', 'Trục C (2)']);
-    eq('chữ "Trục 6 (A-D)" có sẵn tách về ô một trục', [R(`gcTrucDat('Trục 6 (A-D)')`), R('[S.form.gctm, S.form.gctm1, S.form.gctm2].join()')], ['mot', '6,A,D']);
-    eq('đổi sang Dải X / Y mà trục không theo dạng đó: giữ ô cũ, báo lại', [R(`ACTIONS.gctruck({ v: 'xy' }); gcTrucKieu()`), R('gcTrucCua()')], ['mot', 'Trục 6 (A-D)']);
-    eq('màn soạn có ba cách nhập trục', ['data-v="xy"', 'data-v="mot"', 'data-v="tu"'].map((x) => R('vGcForm()').includes('data-a="gctruck" ' + x)), [true, true, true]);
+    const ghep = (o) => R(`${GC_KEYS.map((k) => `S.form.${k} = ${JSON.stringify(o[k] || '')};`).join(' ')} gcTrucCua()`);
+    eq('ghép trục: chỉ trục, giữa hai trục, chỉ X/Y, X kèm trục, đủ ba phần', [
+      ghep({ gct1: '6' }), ghep({ gct1: '1', gct2: '2' }), ghep({ gct1: 'c', gct2: 'c' }), ghep({ gcx1: '12', gcx2: '17', gcy1: '3', gcy2: '5' }), ghep({ gcx1: '12', gct1: 'c' }), ghep({ gcx1: '12', gcx2: '17', gcy1: '3', gct1: '6', gct2: '7' }), ghep({ gct2: '4' })],
+      ['Trục 6', 'Trục 1-2', 'Trục C', 'X12-X17 / Y3-Y5', 'X12 / Trục C', 'X12-X17 / Y3 / Trục 6-7', 'Trục 4']);
+    eq('chữ trục có sẵn tách ngược về đúng ô', ['Trục 1-2', 'X12 / Trục C', 'X12-X17 / Y3 / Trục 6-7'].map((t) => [R(`gcTrucDat(${JSON.stringify(t)})`), R(`[${GC_KEYS.map((k) => 'S.form.' + k + " || ''").join(', ')}].join()`)]),
+      [['xy', ',,,,1,2'], ['xy', '12,,,,C,'], ['xy', '12,17,3,,6,7']]);
+    eq('chữ không tách được (lặp phần, cách ghi khác) thì về ô gõ tự do', [R(`gcTrucDat('X1 / X2')`), R(`gcTrucDat('lõi thang T2')`), R('gcTrucCua()')], ['tu', 'tu', 'lõi thang T2']);
+    eq('đổi về nhập theo ô mà chữ không tách được: giữ ô gõ tự do, báo lại', [R(`ACTIONS.gctruck({ v: 'xy' }); gcTrucKieu()`), R('gcTrucCua()')], ['tu', 'lõi thang T2']);
+    R(`gcTrucDat('')`);
+    const fm2 = R('vGcForm()');
+    ok('màn soạn: ô X, Y (số) và ô Trục (nhận cả chữ) cùng lúc, kèm giải thích một / hai trục', ['id="gcx1"', 'id="gcy2"', 'id="gct1"', 'id="gct2"', 'nằm trên trục', 'nằm giữa'].every((x) => fm2.includes(x)) && /id="gct1"[^>]*autocapitalize/.test(fm2));
+
     /* --- tầng chỉ cần số, gõ "Tầng 5" cũng thành "5" --- */
     eq('tầng: "tầng 5" → "5", "mái" → "Mái", "B1" giữ nguyên', ['tầng 5', ' Tang  3', 'mái', 'B1', '2'].map((x) => R(`gcTangChu(${JSON.stringify(x)})`)), ['5', '3', 'Mái', 'B1', '2']);
     /* --- gợi ý bỏ được: bỏ trên máy này, quay lại nếu có đơn mới dùng lại --- */
@@ -471,6 +507,38 @@ async function main() {
     ok('người giao hết bị nhắc, và thấy "đã biết" trên thẻ đơn', !/chưa xem/.test(R('vHome()')) && R(`S.screen = 'giacong'; S.gcF = 'dong'; vGiaCong()`).includes('Binh đã biết'));
     await vao('Binh', 'tieudoi');
     ok('thẻ đơn trên bảng ghi rõ lý do bị mở lại', R('vGiaCong()').includes('<b>Bị mở lại:</b> thiếu 2 thanh'));
+    /* --- báo vướng từ thẻ đơn, người giao nhận xử lý từ thẻ, đơn đứng yên --- */
+    await vao('Binh', 'tieudoi');
+    R(`S.screen = 'giacong'; S.gcF = 'toi';`);
+    const theD = () => R('vGiaCong()').split(`data-a="gcview" data-id="${idD}"`)[1].split('data-a="gcview"')[0];
+    ok('thẻ đơn của người làm: một hàng ba nút Lên %, Vướng, XONG', ['data-a="gcqvuong"', 'data-a="gcqxong"'].every((x) => theD().includes(x)));
+    R(`ACTIONS.gcqvuong({ id: '${idD}' })`);
+    const hop = R('gcVgHtml()');
+    ok('hộp báo vướng: lý do từ danh mục, Khác, hai mức độ', ['data-v="Thiếu thép"', 'data-v="Khác"', 'data-a="gcvgdung" data-v="1"'].every((x) => hop.includes(x)) && R('vMain()').includes('aria-label="Báo vướng"'));
+    R('ACTIONS.gcvggui()'); await cho();
+    eq('chưa chọn lý do: chưa gửi', S3.one('SELECT vuong FROM don_gc WHERE id = ?', idD).vuong, null);
+    R(`ACTIONS.gcvgloai({ v: 'Máy hỏng' }); ACTIONS.gcvgdung({ v: '1' }); ACTIONS.gcvggui()`); await cho();
+    eq('gửi: server ghi lý do và DỪNG HẲN, hộp đóng', [S3.one('SELECT vuong, vuong_dung FROM don_gc WHERE id = ?', idD), R('S.gcVg')], [{ vuong: 'Máy hỏng', vuong_dung: 1 }, null]);
+    ok('thẻ đơn ghi vướng · dừng hẳn, chưa ai nhận xử lý, và có nút Hết vướng', theD().includes('Vướng · DỪNG HẲN:</b> Máy hỏng') && theD().includes('chưa ai nhận xử lý') && theD().includes('data-a="gcqhetvuong"'));
+    await vao('Cv', 'cvktht');
+    ok('Tổng quan người giao: nói rõ dừng hẳn và chưa ai xử lý, bấm mở mục Vướng', /Gia công: .*1 đơn đang vướng \(1 dừng hẳn, 1 chưa ai xử lý\)/.test(R('vHome()')) && R('vHome()').includes('data-s="giacong" data-f="vuong"'));
+    R(`S.screen = 'giacong'; S.gcF = 'vuong';`);
+    ok('người giao có nút nhận xử lý ngay trên thẻ', R('vGiaCong()').includes(`data-a="gcqxemvuong" data-id="${idD}"`));
+    R(`ACTIONS.gcqxemvuong({ id: '${idD}' })`); await cho();
+    ok('nhận xử lý: server ghi, thẻ đổi thành "Cv đang xử lý", nút biến mất', S3.one('SELECT vuong_xem_ts FROM don_gc WHERE id = ?', idD).vuong_xem_ts > 0 && R('vGiaCong()').includes('Cv đang xử lý') && !R('vGiaCong()').includes('data-a="gcqxemvuong"'));
+    await vao('Binh', 'tieudoi');
+    R(`S.screen = 'giacong'; S.gcF = 'toi'; ACTIONS.gcqhetvuong({ id: '${idD}' })`); await cho();
+    eq('tổ bấm Hết vướng trên thẻ', S3.one('SELECT vuong FROM don_gc WHERE id = ?', idD).vuong, null);
+    // đơn đứng yên: 3 ngày không ai cập nhật
+    S3.raw.exec(`UPDATE don_gc SET lam_ts = lam_ts - 3 * 86400000, ts = ts - 3 * 86400000 WHERE id = ${idD}`);
+    await vao('Binh', 'tieudoi');
+    R(`S.screen = 'giacong'; S.gcF = 'toi';`);
+    ok('đơn 3 ngày không cập nhật: thẻ ghi "Đứng yên 3 ngày", người làm được nhắc', theD().includes('Đứng yên 3 ngày') && R('vHome()').includes('1 chưa cập nhật tiến độ từ 2 ngày'));
+    await vao('Cv', 'cvktht');
+    ok('người giao: mục lọc Đứng yên và thẻ nhắc', R(`S.screen = 'giacong'; vGiaCong()`).includes('data-v="dungyen">Đứng yên 1') && /1 đơn đứng yên/.test(R('vHome()')));
+    ok('gom theo hạn / khu: thẻ ghi tên gọi ngắn của người giữ đơn', R('gcViTri({ truc: "X1", uname: "Nguyễn Văn An" }, true)').endsWith(' · An'));
+    await vao('Binh', 'tieudoi');
+    R(`ACTIONS.gcqpct({ id: '${idD}', v: '90' })`); await cho();
     await vao('An', 'tieudoi');
     eq('người khác không bị nhắc việc không phải của mình', (R('vHome()').match(/Đơn gia công của bạn/g) || []).length, 0);
     await vao('Cv', 'cvktht');
