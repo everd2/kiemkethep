@@ -39,6 +39,12 @@ async function main() {
   eq('ngày không có thật (31/02): từ chối', (await S.call('POST', '/giacong', don({ han: today.slice(0, 4) - -1 + '-02-31' }), 'Cv')).status, 400);
   eq('hạn xa quá một năm (gõ nhầm năm): từ chối', (await S.call('POST', '/giacong', don({ han: vnDay(Date.now() + 500 * 864e5) }), 'Cv')).status, 400);
   eq('thiếu vị trí trục: từ chối', (await S.call('POST', '/giacong', don({ truc: '' }), 'Cv')).status, 400);
+  {
+    const rt = await S.call('POST', '/giacong', don({ cau_kien: 'Tầng thử', tang: 'tầng 7' }), 'Cv');
+    eq('gõ "tầng 7" thì server lưu "7"', S.one('SELECT tang FROM don_gc WHERE id = ?', rt.data.id).tang, '7');
+    eq('rồi giao "7" cho cùng việc là đơn trùng (không bị tách đôi vì chữ "Tầng")', (await S.call('POST', '/giacong', don({ cau_kien: 'Tầng thử', tang: '7' }), 'Cv')).data.code, 'trung');
+    S.raw.exec('DELETE FROM don_gc WHERE id = ' + rt.data.id);
+  }
   eq('không tầng, không cote: từ chối (phải có ít nhất một)', (await S.call('POST', '/giacong', don({ tang: '' }), 'Cv')).status, 400);
   eq('buổi lạ: từ chối', (await S.call('POST', '/giacong', don({ buoi: 'toi' }), 'Cv')).status, 400);
   eq('giao cho CVKTHT: từ chối (chỉ giao cho Tiểu đội trưởng)', (await S.call('POST', '/giacong', don({ user: U.Cv }), 'Cv')).status, 400);
@@ -370,6 +376,33 @@ async function main() {
     const the = bang[1].split('data-gcq="').slice(1);
     eq('tìm không dấu "be nuoc": chỉ còn thẻ Bể nước hiện', the.map((x) => [x.split('"')[0].split(' ').slice(0, 2).join(' '), x.split('>')[0].includes('display:none')]), [['dam x1-x2', true], ['be nuoc', false]]);
     ok('tìm được theo khu và tầng', R(`gcTuKhoa(S.gc.items[0])`).includes('khu a tang 5'));
+    /* --- tìm theo từng từ: mã cấu kiện khớp đúng mã, trục khớp theo dải --- */
+    const khop = (text, q) => R(`gcKhop(gcKhongDau(${JSON.stringify(text)}), gcKhongDau(${JSON.stringify(q)}))`);
+    eq('gõ W23 ra mọi đơn của W23 (kể cả W23a), không ra W2 hay W230', ['Vách W23 · X1', 'Vách W23a', 'Vách W230', 'Vách W2'].map((t) => khop(t, 'W23')), [true, true, false, false]);
+    eq('gõ cách hay gạch nối vẫn ra: "w 23", "w-23"', [khop('Vách W23', 'w 23'), khop('Vách W23', 'w-23')], [true, true]);
+    eq('mọi từ phải khớp, thứ tự tuỳ ý, không cần dấu', [khop('Vách W23 · Khu A · Tầng 5', 'tang 5 w23'), khop('Vách W23 · Khu A · Tầng 6', 'w23 tang 5')], [true, false]);
+    eq('chữ không có số khớp đầu từ: "va" ra Vách', [khop('Vách W23', 'va'), khop('Dầm D3', 'am')], [true, false]);
+    eq('d3 không ra D30', [khop('Dầm D3', 'd3'), khop('Dầm D30', 'd3')], [true, false]);
+    eq('mã trục khớp theo dải: x14 ra đơn ghi X12-X17, x20 thì không', [khop('X12-X17 / Y3-Y5', 'x14'), khop('X12-X17 / Y3-Y5', 'y4'), khop('X12-X17 / Y3-Y5', 'x20')], [true, true, false]);
+    eq('trục 6 tìm bằng "truc 6" hoặc "6"', [khop('Dầm D1 · Trục 6 (A-D)', 'truc 6'), khop('Dầm D1 · Trục 6 (A-D)', '6'), khop('Dầm D1 · Trục 16', 'truc 6')], [true, true, false]);
+    /* --- trục: nhập "trên một trục" --- */
+    R(`gcSoan(null); S.gcForm.ck = 'Dầm';`);
+    R(`ACTIONS.gctruck({ v: 'mot' }); S.form.gctm = '6';`);
+    eq('một trục: "Trục 6"; kèm đoạn: "Trục 6 (A-D)"; một đầu đoạn: "Trục C (2)"', [R('gcTrucCua()'), R(`S.form.gctm1 = 'a'; S.form.gctm2 = 'd'; gcTrucCua()`), R(`S.form.gctm = 'c'; S.form.gctm1 = '2'; S.form.gctm2 = ''; gcTrucCua()`)], ['Trục 6', 'Trục 6 (A-D)', 'Trục C (2)']);
+    eq('chữ "Trục 6 (A-D)" có sẵn tách về ô một trục', [R(`gcTrucDat('Trục 6 (A-D)')`), R('[S.form.gctm, S.form.gctm1, S.form.gctm2].join()')], ['mot', '6,A,D']);
+    eq('đổi sang Dải X / Y mà trục không theo dạng đó: giữ ô cũ, báo lại', [R(`ACTIONS.gctruck({ v: 'xy' }); gcTrucKieu()`), R('gcTrucCua()')], ['mot', 'Trục 6 (A-D)']);
+    eq('màn soạn có ba cách nhập trục', ['data-v="xy"', 'data-v="mot"', 'data-v="tu"'].map((x) => R('vGcForm()').includes('data-a="gctruck" ' + x)), [true, true, true]);
+    /* --- tầng chỉ cần số, gõ "Tầng 5" cũng thành "5" --- */
+    eq('tầng: "tầng 5" → "5", "mái" → "Mái", "B1" giữ nguyên', ['tầng 5', ' Tang  3', 'mái', 'B1', '2'].map((x) => R(`gcTangChu(${JSON.stringify(x)})`)), ['5', '3', 'Mái', 'B1', '2']);
+    /* --- gợi ý bỏ được: bỏ trên máy này, quay lại nếu có đơn mới dùng lại --- */
+    R(`S.gc.items = [{ truc: 'X1-X2', ts: 1000 }, { truc: 'X9 sai', ts: 2000 }, { truc: 'X3', ts: 3000 }];`);
+    eq('gợi ý trục theo đơn mới nhất', R(`gcGoiY(S.gc.items, 'truc', 'truc', 5)`), ['X3', 'X9 sai', 'X1-X2']);
+    R(`ACTIONS.gcanq({ l: 'truc', v: 'X9 sai' })`);
+    eq('bấm × thì gợi ý biến mất', R(`gcGoiY(S.gc.items, 'truc', 'truc', 5)`), ['X3', 'X1-X2']);
+    R(`S.gc.items.push({ truc: 'X9 sai', ts: Date.now() + 5000 })`);
+    eq('có đơn MỚI dùng lại đúng giá trị đó thì gợi ý quay lại', R(`gcGoiY(S.gc.items, 'truc', 'truc', 5)`)[0], 'X9 sai');
+    ok('chip gợi ý có nút ×', R(`gcChipGoiY('tang', '5', false, 'gctangq')`).includes('data-a="gcanq" data-l="tang" data-v="5"'));
+    R(`S.gcForm = null; S.gc = ${JSON.stringify((await S3.call('GET', '/giacong', undefined, 'Cv')).data)};`);
     R(`S.form.gcq = '';`);
     const nhomTen = () => (R('vGiaCong()').split('data-gctim')[0].match(/<h2 class="sec"[^>]*>([^<]*) </g) || []).map((x) => x.replace(/<[^>]+>/g, '').replace(/<$/, '').trim());
     eq('gom theo tổ / theo hạn / theo khu', [R(`ACTIONS.gcxem({ v: 'to' })`) || nhomTen(), R(`ACTIONS.gcxem({ v: 'han' })`) || nhomTen(), R(`ACTIONS.gcxem({ v: 'khu' })`) || nhomTen()], [['Binh'], ['Ngày mai'], ['Khu A']]);

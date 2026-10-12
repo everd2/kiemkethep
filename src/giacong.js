@@ -46,6 +46,12 @@ const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.co
   FROM don_gc d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN users g ON g.id = d.giao_by LEFT JOIN users h ON h.id = d.huy_by`;
 
 const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
+/* Tầng chỉ lưu phần riêng của nó: "1", "2", "B1", "Mái". Người giao gõ "Tầng 5" hay "5" đều thành "5", nên đơn
+   trùng, gom và tìm theo tầng không bị tách đôi; chữ "Tầng" do màn hình tự thêm khi hiện. */
+const chuTang = (v) => {
+  const t = chu(v, 20).replace(/^(tầng|tang)\s*/i, '');
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : null;
+};
 const khongThay = () => new HttpError(404, 'Không tìm thấy đơn gia công');
 const vuaDoi = () => new HttpError(409, 'Đơn vừa được người khác cập nhật. Màn hình đã tải lại, hãy xem rồi làm lại.', 'changed');
 
@@ -101,7 +107,7 @@ async function docDon(env, b, cu) {
   }
   /* Tầng hoặc cote: phải biết cấu kiện nằm ở cao độ nào. Có tầng rồi thì cote không bắt buộc. Đơn cũ (trước khi
      có luật này) không có cả hai thì vẫn sửa được nếu vẫn để trống cả hai. */
-  const tang = chu(b.tang, 20) || null, cote = chu(b.cote, 20) || null;
+  const tang = chuTang(b.tang), cote = chu(b.cote, 20) || null;
   if (!tang && !cote && !(cu && !cu.tang && !cu.cote)) throw bad('Cần ghi tầng hoặc cote (đã ghi tầng thì cote không bắt buộc)');
   return { cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung: chu(b.noi_dung, 300) || null, han, buoi, user_id: uid, uname: u.name };
 }

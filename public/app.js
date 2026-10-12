@@ -2586,7 +2586,9 @@ function gcHan(d) {
     : `Hạn ${t} (còn ${n} ngày)`;
 }
 // tầng người giao gõ gọn ("5", "B1"): hiện thành "Tầng 5"; đã là chữ đủ nghĩa ("Mái", "Hầm 2") thì để nguyên
-const gcTang = (t) => (!t ? '' : /^(tầng|mái|hầm|lửng|trệt|sân)/i.test(t) ? t : 'Tầng ' + t);
+const gcTang = (t) => (!t ? '' : /^(tầng|mái|hầm|lửng|trệt|sân|tum)/i.test(t) ? t : 'Tầng ' + t);
+// như server (chuTang): bỏ chữ "Tầng" người dùng lỡ gõ, viết hoa chữ đầu — "tầng 5" → "5", "mái" → "Mái"
+const gcTangChu = (v) => { const t = String(v || '').trim().replace(/\s+/g, ' ').replace(/^(tầng|tang)\s*/i, ''); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; };
 /* Vị trí của một đơn trên một dòng: TRỤC in đậm đứng đầu (thứ người làm tìm trước tiên), rồi phân khu, tầng;
    kemNguoi: thêm tên người giữ đơn, dùng khi bảng không gom theo tổ. */
 const gcViTri = (d, kemNguoi) => [d.truc ? `<b style="color:var(--ink)">${esc(d.truc)}</b>` : '', esc(d.phan_khu || ''), esc(gcTang(d.tang)), d.cote ? 'cote ' + esc(d.cote) : '', kemNguoi ? esc(d.uname) : ''].filter(Boolean).join(' · ');
@@ -2603,6 +2605,26 @@ function gcHanNgan(d) {
 }
 // tìm không cần gõ dấu: "dam d3" khớp "Dầm D3"
 const gcKhongDau = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');
+/* TÌM KIẾM theo TỪNG TỪ, không theo chuỗi con:
+   - mọi từ gõ vào đều phải khớp (gõ "w23 tang 5" là W23 ở tầng 5), thứ tự tuỳ ý, không cần dấu;
+   - từ có SỐ là mã (cấu kiện W23, trục X14, tầng 5) nên phải khớp ĐÚNG mã: "w23" ra "Vách W23", "W23a" nhưng
+     không ra "W230"; "d3" không ra "D30". Tìm chuỗi con thì gõ "w2" ra cả W2, W20…W29 — quá nhiều để dùng;
+   - từ không có số ("vach", "khu", tên người) khớp ĐẦU từ: "va" ra "Vách";
+   - mã trục còn khớp theo DẢI: "x14" ra đơn ghi X12-X17, "c" ra đơn trên Trục C (A-D)... vì cấu kiện ở trục 14
+     nằm trong dải đó;
+   - gõ liền hay cách ("w 23", "w-23") đều như nhau. */
+function gcKhop(text, q) {
+  if (!q) return true;
+  const tu = text.split(/[^a-z0-9]+/).filter(Boolean);
+  const dai = [...text.matchAll(/([a-z]*)(\d+)\s*-\s*([a-z]*)(\d+)/g)].filter((m) => !m[3] || m[3] === m[1]);
+  const mot = (x) => {
+    if (tu.some((w) => (/\d/.test(x) ? w === x || (w.startsWith(x) && !/\d/.test(w[x.length])) : w.startsWith(x)))) return true;
+    const m = /^([a-z]*)(\d+)$/.exec(x);
+    return !!m && dai.some((r) => r[1] === m[1] && Math.min(+r[2], +r[4]) <= +m[2] && +m[2] <= Math.max(+r[2], +r[4]));
+  };
+  const qs = q.split(/[^a-z0-9]+/).filter(Boolean);
+  return qs.every(mot) || (qs.length > 1 && mot(qs.join('')));
+}
 const gcTuKhoa = (d) => gcKhongDau([d.cau_kien, d.truc, d.phan_khu, gcTang(d.tang), d.cote ? 'cote ' + d.cote : '', d.hang_muc, d.uname, d.noi_dung].filter(Boolean).join(' '));
 /* Một đơn trên bảng: hai dòng (cấu kiện · vị trí · trạng thái, rồi tiến độ · hạn), bấm vào là mở đơn.
    Đơn CỦA NGƯỜI ĐANG XEM có thêm hàng nút làm ngay tại bảng — nhận đơn, bấm mức tiến độ, bấm xong —
@@ -2619,7 +2641,7 @@ function gcCard(d, q, kemNguoi) {
     : d.tt === 'moi' ? `<button class="btn s pri full" data-a="gcqnhan" data-id="${d.id}">NHẬN ĐƠN</button>`
     // mười nấc không vừa một hàng nút: trên thẻ chỉ có "lên một nấc" và XONG, chọn mức khác thì mở đơn
     : `<div class="row gap6">${d.pct < 90 ? `<button class="chip s f1" style="white-space:nowrap" data-a="gcqpct" data-id="${d.id}" data-v="${gcPctKe(d.pct)}">+10% (lên ${gcPctKe(d.pct)}%)</button>` : ''}<button class="btn s ok f1" data-a="gcqxong" data-id="${d.id}">XONG</button></div>`;
-  return `<div class="card col gap6" data-gcq="${esc(tk)}" style="padding:10px 12px;${vien}${d.tt === 'huy' && !canBiet ? 'opacity:.75;' : ''}${q && !tk.includes(q) ? 'display:none;' : ''}">
+  return `<div class="card col gap6" data-gcq="${esc(tk)}" style="padding:10px 12px;${vien}${d.tt === 'huy' && !canBiet ? 'opacity:.75;' : ''}${q && !gcKhop(tk, q) ? 'display:none;' : ''}">
     <button class="col" style="gap:4px;border:0;background:transparent;padding:0;margin:0;text-align:left;font:inherit;color:inherit;width:100%;align-items:stretch" data-a="gcview" data-id="${d.id}">
       <span class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="font-size:17px;min-width:0">${esc(d.cau_kien)}</b><span class="badge ${mau}" style="flex:none">${ten}</span></span>
       ${vt ? `<span class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${vt}</span>` : ''}
@@ -2639,9 +2661,11 @@ function gcLoc() {
   ds.style.display = q ? 'none' : '';
   tim.style.display = q ? '' : 'none';
   let con = 0;
-  tim.querySelectorAll('[data-gcq]').forEach((e) => { const khop = !!q && e.dataset.gcq.includes(q); e.style.display = khop ? '' : 'none'; if (khop) con++; });
+  tim.querySelectorAll('[data-gcq]').forEach((e) => { const khop = !!q && gcKhop(e.dataset.gcq, q); e.style.display = khop ? '' : 'none'; if (khop) con++; });
   const k = tim.querySelector('[data-gckhong]');
   if (k) k.style.display = con ? 'none' : '';
+  const dem = tim.querySelector('[data-gcdem]');
+  if (dem) dem.textContent = con + ' đơn';
 }
 
 /* Bảng chung: đơn của MỌI Tiểu đội trưởng. Phần đầu đứng yên khi cuộn, ba hàng:
@@ -2689,7 +2713,7 @@ function vGiaCong() {
   const khoiBiet = canBiet.length ? `<div class="col gap6"><h2 class="sec" style="font-size:16px;color:var(--bad)">Không làm nữa <span class="sm muted" style="font-weight:400">· ${canBiet.length} đơn của bạn vừa bị huỷ, bấm Đã biết</span></h2>${canBiet.map((d) => gcCard(d, '', false)).join('')}</div>` : '';
   // kết quả tìm: mọi đơn, đơn còn mở trước; mỗi thẻ ghi tên người giữ đơn
   const timDs = all.slice().sort((a, z) => gcMo(z) - gcMo(a) || (a.han < z.han ? -1 : a.han > z.han ? 1 : a.id - z.id));
-  const timKhop = q ? timDs.filter((d) => gcTuKhoa(d).includes(q)).length : 0;
+  const timKhop = q ? timDs.filter((d) => gcKhop(gcTuKhoa(d), q)).length : 0;
   cur[2].slice().sort(sx).forEach((d) => {
     const [k, ten, o] = gcNhom(d, xem, G, dong);
     if (!by[k]) { by[k] = { ten, o, ds: [], uid: d.user_id }; order.push(k); }
@@ -2712,12 +2736,12 @@ function vGiaCong() {
   const nho = 'style="flex:none;white-space:nowrap"';
   return `${top}
   <div class="col gap6 tbar" style="padding:6px 16px">
-    <div class="row gap6"><input class="inp s f1" id="gcq" style="min-width:0" placeholder="Tìm cấu kiện, trục, khu, người" autocomplete="off" data-model="gcq" value="${esc(S.form.gcq || '')}">${isQL() ? `<button class="btn s pri" ${nho} data-a="gcnew">+ Giao đơn</button>` : ''}${isAdmin() ? `<button class="btn s" ${nho} aria-label="Thiết lập danh mục" data-a="nav" data-s="gcsetup">⚙</button>` : ''}</div>
+    <div class="row gap6"><input class="inp s f1" id="gcq" style="min-width:0" placeholder="Tìm: W23, x14, khu a tang 5, tên" autocomplete="off" data-model="gcq" value="${esc(S.form.gcq || '')}">${isQL() ? `<button class="btn s pri" ${nho} data-a="gcnew">+ Giao đơn</button>` : ''}${isAdmin() ? `<button class="btn s" ${nho} aria-label="Thiết lập danh mục" data-a="nav" data-s="gcsetup">⚙</button>` : ''}</div>
     <div class="row gap6" style="overflow-x:auto">${F.map((f) => `<button class="chip s ${cur[0] === f[0] ? 'on' : ''}" ${nho} data-a="gcf" data-v="${f[0]}">${f[1]} ${f[2].length}</button>`).join('')}</div>
     <div class="row gap6">${GC_XEM.map((x) => `<button class="chip s ${xem === x[0] ? 'on' : ''}" style="flex:1;min-height:36px;padding:2px 4px;font-size:15px;white-space:nowrap" data-a="gcxem" data-v="${x[0]}">${x[1]}</button>`).join('')}</div></div>
   <div class="f1 scroll pad col gap12" id="body">
     <div class="col gap12" data-gcds="1"${q ? ' style="display:none"' : ''}>${khoiBiet}${nhom || (khoiBiet ? '' : `<div class="muted">${trong}</div>`)}</div>
-    <div class="col gap6" data-gctim="1"${q ? '' : ' style="display:none"'}><h2 class="sec" style="font-size:16px">Kết quả tìm <span class="sm muted" style="font-weight:400">· trên mọi đơn, kể cả đã xong và đã huỷ</span></h2>
+    <div class="col gap6" data-gctim="1"${q ? '' : ' style="display:none"'}><h2 class="sec" style="font-size:16px">Kết quả tìm: <span data-gcdem="1">${timKhop} đơn</span> <span class="sm muted" style="font-weight:400">· trên mọi đơn, kể cả đã xong và đã huỷ</span></h2>
       ${timDs.map((d) => gcCard(d, q || ' ', true)).join('')}<div class="muted" data-gckhong="1"${timKhop ? ' style="display:none"' : ''}>Không có đơn nào khớp.</div></div>
     ${ranh.length && !q ? `<div class="sm muted" style="line-height:1.4">Đang không có đơn nào mở: ${esc(ranh.map((u) => u.name).join(', '))}</div>` : ''}
   </div>`;
@@ -2789,15 +2813,43 @@ function gcTrucGhep() {
   const p = (c, a, z) => (a ? c + a + (z && z !== a ? '-' + c + z : '') : '');
   return [p('X', o('gcx1'), o('gcx2')), p('Y', o('gcy1'), o('gcy2'))].filter(Boolean).join(' / ');
 }
-const gcTrucCua = () => (S.gcForm && S.gcForm.trucTu ? String(S.form.gctruc || '').trim() : gcTrucGhep());
-// đưa một chữ trục có sẵn (đơn đang sửa, đơn mẫu, nút gợi ý) vào form: đúng dạng X / Y thì tách về bốn ô, không thì để ô gõ tự do
-function gcTrucDat(t) {
-  const F = S.gcForm, m = /^(?:X(\d+[A-Z]?)(?:\s*-\s*X?(\d+[A-Z]?))?)?(?:\s*\/\s*)?(?:Y(\d+[A-Z]?)(?:\s*-\s*Y?(\d+[A-Z]?))?)?$/i.exec(String(t || '').trim());
-  GC_O_TRUC.forEach((k) => delete S.form[k]); delete S.form.gctruc;
-  if (!t) { F.trucTu = false; return; }
-  if (m && (m[1] || m[3])) { F.trucTu = false; GC_O_TRUC.forEach((k, i) => { if (m[i + 1]) S.form[k] = m[i + 1].toUpperCase(); }); }
-  else { F.trucTu = true; S.form.gctruc = t; }
+/* Ba cách nhập trục (F.trucKieu):
+   - 'xy'  : dải X từ–đến / Y từ–đến bằng bốn ô số → "X12-X17 / Y3-Y5";
+   - 'mot' : cấu kiện nằm TRÊN MỘT TRỤC (dầm, vách chạy dọc trục) → "Trục 6", kèm đoạn nếu cần → "Trục 6 (A-D)";
+   - 'tu'  : gõ tự do cho mọi cách ghi khác (lõi thang T2...). */
+const GC_O_MOT = ['gctm', 'gctm1', 'gctm2'];
+function gcTrucMot() {
+  const o = (k) => String(S.form[k] || '').trim().toUpperCase().replace(/^TRỤC\s*/, '');
+  const a = o('gctm1'), z = o('gctm2');
+  return o('gctm') ? 'Trục ' + o('gctm') + (a ? ' (' + a + (z && z !== a ? '-' + z : '') + ')' : '') : '';
 }
+const gcTrucKieu = () => (S.gcForm && S.gcForm.trucKieu) || 'xy';
+const gcTrucCua = () => { const k = gcTrucKieu(); return k === 'tu' ? String(S.form.gctruc || '').trim() : k === 'mot' ? gcTrucMot() : gcTrucGhep(); };
+const gcTrucO1 = () => ({ tu: 'gctruc', mot: 'gctm', xy: 'gcx1' }[gcTrucKieu()]);
+/* Đưa một chữ trục có sẵn (đơn đang sửa, đơn mẫu, nút gợi ý) vào form, chọn đúng cách nhập: dạng X / Y về bốn ô,
+   dạng "Trục 6 (A-D)" về ô một trục, còn lại để ô gõ tự do. Trả về cách nhập đã chọn. */
+function gcTrucDat(t) {
+  const F = S.gcForm, v = String(t || '').trim();
+  GC_O_TRUC.concat(GC_O_MOT).forEach((k) => delete S.form[k]); delete S.form.gctruc;
+  const xy = /^(?:X(\d+[A-Z]?)(?:\s*-\s*X?(\d+[A-Z]?))?)?(?:\s*\/\s*)?(?:Y(\d+[A-Z]?)(?:\s*-\s*Y?(\d+[A-Z]?))?)?$/i.exec(v);
+  const mot = /^trục\s+([A-Z0-9']+)(?:\s*\(\s*([A-Z0-9']+)(?:\s*-\s*([A-Z0-9']+))?\s*\))?$/i.exec(v);
+  if (!v) F.trucKieu = F.trucKieu === 'mot' ? 'mot' : 'xy';
+  else if (xy && (xy[1] || xy[3])) { F.trucKieu = 'xy'; GC_O_TRUC.forEach((k, i) => { if (xy[i + 1]) S.form[k] = xy[i + 1].toUpperCase(); }); }
+  else if (mot) { F.trucKieu = 'mot'; GC_O_MOT.forEach((k, i) => { if (mot[i + 1]) S.form[k] = mot[i + 1].toUpperCase(); }); }
+  else { F.trucKieu = 'tu'; S.form.gctruc = v; }
+  F.trucTu = F.trucKieu === 'tu';
+  return F.trucKieu;
+}
+/* GỢI Ý BỎ ĐƯỢC. Trục và tầng gợi ý lấy từ các đơn đã giao, nên một lần gõ sai là gợi ý sai nằm đó mãi. Người
+   dùng bấm × để bỏ; bỏ chỉ trên máy mình (localStorage), không đụng đơn nào. Gợi ý quay lại nếu sau lúc bỏ lại có
+   đơn mới dùng đúng giá trị đó (tức là nó đúng). */
+const gcAnDoc = () => { try { return JSON.parse(localStorage.getItem('kt:gcan') || '{}'); } catch (e) { return {}; } };
+function gcGoiY(items, f, loai, n) {
+  const an = gcAnDoc()[loai] || {}, moi = {};
+  items.forEach((d) => { const v = d[f]; if (v && (!moi[v] || d.ts > moi[v])) moi[v] = d.ts; });
+  return Object.keys(moi).filter((v) => !(an[v] && an[v] >= moi[v])).sort((a, z) => moi[z] - moi[a]).slice(0, n);
+}
+const gcChipGoiY = (loai, v, on, a, nhan) => `<span class="row" style="flex:none;gap:0"><button class="chip s ${on ? 'on' : ''}" style="flex:none;white-space:nowrap;border-radius:999px 0 0 999px;padding-right:10px" data-a="${a}" data-v="${esc(v)}">${esc(nhan || v)}</button><button class="chip s" style="flex:none;border-radius:0 999px 999px 0;border-left:0;padding:6px 10px;color:var(--mut)" aria-label="Bỏ gợi ý ${esc(v)}" data-a="gcanq" data-l="${loai}" data-v="${esc(v)}">×</button></span>`;
 /* Mở màn soạn. d = đơn để lấy nội dung: đơn đang sửa (sua = true) hoặc đơn mẫu để chép; không có d thì điền
    sẵn theo lần giao trước. Loại cấu kiện chưa tách ở đây (F.ck để undefined): phải có danh mục mới tách được,
    mà danh mục đi kèm bảng đơn — vGcForm tách khi đã có. */
@@ -2805,7 +2857,8 @@ function gcSoan(d, sua) {
   const b = S.boot;
   S.gcForm = { id: sua ? d.id : null, user: d ? d.user_id : Number(gcNho('kt:gcuser')) || null, userCu: sua ? d.user_id : null, uname: d ? d.uname : '',
     buoi: d ? d.buoi || '' : '', khu: d ? d.phan_khu || '' : gcNho('kt:gckhu'), hm: d ? d.hang_muc || '' : gcNho('kt:gchm'),
-    thieuCaoDo: !!(sua && !d.tang && !d.cote), ckDay: d ? d.cau_kien : null, khuCu: sua ? d.phan_khu || '' : '', hmCu: sua ? d.hang_muc || '' : '', trucTu: false };
+    thieuCaoDo: !!(sua && !d.tang && !d.cote), ckDay: d ? d.cau_kien : null, khuCu: sua ? d.phan_khu || '' : '', hmCu: sua ? d.hang_muc || '' : '',
+    trucKieu: gcNho('kt:gctk') === 'mot' ? 'mot' : 'xy', trucTu: false };
   Object.assign(S.form, { gcck: '', gctang: d ? d.tang || '' : gcNho('kt:gctang'), gccote: d ? d.cote || '' : '', gcnd: d ? d.noi_dung || '' : '',
     gchan: d && (sua || d.han >= b.today) ? d.han : congNgay(b.today, 1) });
   gcTrucDat(d ? d.truc || '' : '');
@@ -2845,10 +2898,15 @@ function vGcForm() {
   const tuy = '<span class="muted" style="font-weight:400">(không bắt buộc)</span>';
   const chuaCo = (ten) => `<span class="sm muted" style="line-height:1.4">Chưa có danh mục ${ten}. ${isAdmin() ? '<button class="sm b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="nav" data-s="gcsetup">Thiết lập ngay</button>' : 'Nhờ admin thêm ở Gia công → nút ⚙.'}</span>`;
   // trục đã dùng gần đây (ưu tiên cùng phân khu đang chọn): loạt đơn liền nhau thường chung một dải trục
-  const trucGoiY = [...new Set((G.items || []).filter((d) => d.truc && (!F.khu || d.phan_khu === F.khu)).sort((a, z) => z.ts - a.ts).map((d) => d.truc))].slice(0, 4);
-  const tangGoiY = [...new Set((G.items || []).filter((d) => d.tang).sort((a, z) => z.ts - a.ts).map((d) => d.tang))].slice(0, 5);
+  const trucGoiY = gcGoiY((G.items || []).filter((d) => !F.khu || d.phan_khu === F.khu), 'truc', 'truc', 5);
+  const tangGoiY = gcGoiY(G.items || [], 'tang', 'tang', 6);
+  const kieu = gcTrucKieu();
+  const oMot = (k, sau, ph) => `<input class="inp s" id="${k}" style="flex:1;min-width:0;text-align:center;padding:0 2px" maxlength="5" placeholder="${ph}" autocomplete="off" autocapitalize="characters" enterkeyhint="${sau ? 'next' : 'done'}" data-enter="${sau ? 'gcden' + sau : 'gcblur'}" data-model="${k}" value="${esc(S.form[k] || '')}">`;
   const oTruc = (k, sau) => `<input class="inp s" id="${k}" style="flex:1;min-width:0;text-align:center;padding:0 2px" inputmode="numeric" maxlength="4" autocomplete="off" enterkeyhint="${sau ? 'next' : 'done'}" data-enter="${sau ? 'gcden' + sau : 'gcblur'}" data-model="${k}" value="${esc(S.form[k] || '')}">`;
-  const truc = F.trucTu
+  const truc = kieu === 'mot'
+    ? `<div class="row gap6"><b style="flex:none">Trục</b>${oMot('gctm', 'tm1', '6, C')}<span class="sm muted" style="flex:none;margin-left:4px">đoạn</span>${oMot('gctm1', 'tm2', 'từ')}<span class="muted" style="flex:none">–</span>${oMot('gctm2', '', 'đến')}</div>
+      <span class="sm">Ghi vào đơn: <b id="gctrucxem">${esc(gcTrucMot() || 'chưa nhập')}</b> <span class="muted">(đoạn không bắt buộc)</span></span>`
+    : kieu === 'tu'
     ? `<input class="inp s" id="gctruc" maxlength="60" placeholder="Ví dụ: A-D / 1-5, hoặc lõi thang T2" autocomplete="off" autocapitalize="characters" enterkeyhint="done" data-enter="gcblur" data-model="gctruc" value="${esc(S.form.gctruc || '')}">`
     : `<div class="row gap6"><b style="flex:none">X</b>${oTruc('gcx1', 'x2')}<span class="muted" style="flex:none">–</span>${oTruc('gcx2', 'y1')}<b style="flex:none;margin-left:6px">Y</b>${oTruc('gcy1', 'y2')}<span class="muted" style="flex:none">–</span>${oTruc('gcy2', '')}</div>
       <span class="sm">Ghi vào đơn: <b id="gctrucxem">${esc(gcTrucGhep() || 'chưa nhập')}</b></span>`;
@@ -2856,15 +2914,16 @@ function vGcForm() {
     <b class="sm">Cấu kiện</b>
     <div class="wrap">${cks.map((c) => `<button class="chip s ${F.ck === c ? 'on' : ''}" data-a="gcckq" data-v="${esc(c)}">${esc(c)}</button>`).join('')}<button class="chip s ${F.ck === 'khac' ? 'on' : ''}" data-a="gcckq" data-v="khac">Khác</button></div>
     <input class="inp s" id="gcck" maxlength="70" placeholder="${F.ck === 'khac' ? 'Tên cấu kiện (bắt buộc), ví dụ: Bể nước, ram dốc' : 'Số hiệu, ví dụ: D3 (không bắt buộc)'}" autocomplete="off" enterkeyhint="next" data-enter="gcnext" data-model="gcck" value="${esc(S.form.gcck || '')}">
-    <div class="row" style="justify-content:space-between;gap:8px"><b class="sm">Vị trí trục</b><button class="sm b" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:4px 0" data-a="gctructu">${F.trucTu ? 'Nhập theo ô X / Y' : 'Gõ tự do'}</button></div>
+    <b class="sm">Vị trí trục</b>
+    <div class="row gap6">${[['xy', 'Dải X / Y'], ['mot', 'Trên một trục'], ['tu', 'Gõ tự do']].map(([k, l]) => `<button class="chip s ${kieu === k ? 'on' : ''}" style="flex:1;min-height:38px;padding:2px 4px;font-size:15px;white-space:nowrap" data-a="gctruck" data-v="${k}">${l}</button>`).join('')}</div>
     ${truc}
-    ${trucGoiY.length ? `<div class="row gap6" ${cuon}>${trucGoiY.map((t) => `<button class="chip s" ${dinh} data-a="gctrucq" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+    ${trucGoiY.length ? `<div class="row gap6" ${cuon}>${trucGoiY.map((t) => gcChipGoiY('truc', t, t === gcTrucCua(), 'gctrucq')).join('')}</div>` : ''}
     <b class="sm">Phân khu</b>
     ${khus.length ? `<div class="wrap">${khus.map((k) => `<button class="chip s ${F.khu === k ? 'on' : ''}" data-a="gckhu" data-v="${esc(k)}">${esc(k)}</button>`).join('')}</div>` : chuaCo('phân khu')}
     <b class="sm">Tầng / Cote <span class="muted" style="font-weight:400">(ghi ít nhất một; có tầng thì cote không bắt buộc)</span></b>
-    <div class="row gap6"><input class="inp s" id="gctang" style="flex:1;min-width:0" maxlength="20" placeholder="Tầng: 5, B1, mái" autocomplete="off" enterkeyhint="next" data-enter="gcdencote" data-model="gctang" value="${esc(S.form.gctang || '')}">
+    <div class="row gap6"><input class="inp s" id="gctang" style="flex:1;min-width:0" maxlength="20" placeholder="Tầng: 1, 2, mái" autocomplete="off" enterkeyhint="next" data-enter="gcdencote" data-model="gctang" value="${esc(S.form.gctang || '')}">
       <input class="inp s" id="gccote" style="flex:1;min-width:0" maxlength="20" placeholder="Cote: +3.600" autocomplete="off" enterkeyhint="done" data-enter="gcblur" data-model="gccote" value="${esc(S.form.gccote || '')}"></div>
-    ${tangGoiY.length ? `<div class="row gap6" ${cuon}>${tangGoiY.map((t) => `<button class="chip s ${S.form.gctang === t ? 'on' : ''}" ${dinh} data-a="gctangq" data-v="${esc(t)}">${esc(gcTang(t))}</button>`).join('')}</div>` : ''}
+    ${tangGoiY.length ? `<div class="row gap6" ${cuon}>${tangGoiY.map((t) => gcChipGoiY('tang', t, gcTangChu(S.form.gctang) === t, 'gctangq')).join('')}</div>` : ''}
     <b class="sm">Hạng mục ${tuy}</b>
     ${hms.length ? `<div class="wrap">${hms.map((h) => `<button class="chip s ${F.hm === h ? 'on' : ''}" data-a="gchmq" data-v="${esc(h)}">${esc(h)}</button>`).join('')}</div>` : chuaCo('hạng mục')}
     <b class="sm">Giao cho</b>
@@ -4368,19 +4427,30 @@ const ACTIONS = {
   gcckq(d) { S.gcForm.ck = d.v; render(); if (d.v === 'khac') gcFocus('gcck'); },
   gckhu(d) { S.gcForm.khu = d.v; render(); },
   gchmq(d) { S.gcForm.hm = S.gcForm.hm === d.v ? '' : d.v; render(); },
-  gctangq(d) { S.form.gctang = S.form.gctang === d.v ? '' : d.v; render(); },
+  gctangq(d) { S.form.gctang = gcTangChu(S.form.gctang) === d.v ? '' : d.v; render(); },
   gctrucq(d) { gcTrucDat(d.v); render(); },
   // đổi cách nhập trục, mang theo chữ đang có
-  gctructu() {
+  // đổi cách nhập trục, mang theo chữ đang có (đổi được thì tách về đúng ô, không thì báo và giữ ô gõ tự do)
+  gctruck(d) {
     const F = S.gcForm, t = gcTrucCua();
-    if (F.trucTu) { gcTrucDat(t); if (F.trucTu && t) say('Trục này không theo dạng X / Y nên giữ ở ô gõ tự do.', true); }
-    else { F.trucTu = true; GC_O_TRUC.forEach((k) => delete S.form[k]); S.form.gctruc = t; }
-    render(); gcFocus(F.trucTu ? 'gctruc' : 'gcx1');
+    if (d.v === 'tu') { GC_O_TRUC.concat(GC_O_MOT).forEach((k) => delete S.form[k]); S.form.gctruc = t; F.trucKieu = 'tu'; F.trucTu = true; }
+    else if (!t) { F.trucKieu = d.v; F.trucTu = false; }
+    else if (gcTrucDat(t) !== d.v) say('Trục "' + t + '" không theo cách nhập này nên giữ ở ' + ({ xy: 'ô X / Y', mot: 'ô một trục', tu: 'ô gõ tự do' }[F.trucKieu]) + '.', true);
+    try { if (F.trucKieu !== 'tu') localStorage.setItem('kt:gctk', F.trucKieu); } catch (e) { /* đầy bộ nhớ */ }
+    render(); gcFocus(gcTrucO1());
+  },
+  gctructu() { ACTIONS.gctruck({ v: gcTrucKieu() === 'tu' ? 'xy' : 'tu' }); },
+  // bỏ một gợi ý trục / tầng trên máy này (xem gcGoiY)
+  gcanq(d) {
+    const an = gcAnDoc();
+    (an[d.l] = an[d.l] || {})[d.v] = Date.now();
+    try { localStorage.setItem('kt:gcan', JSON.stringify(an)); } catch (e) { /* đầy bộ nhớ */ }
+    say('Đã bỏ gợi ý "' + d.v + '" trên máy này.'); render();
   },
   gcsave(d, trung) {
     const F = S.gcForm, G = S.gc; if (!F) return;
     const t = (k) => String(S.form[k] || '').trim();
-    const oTruc = F.trucTu ? 'gctruc' : 'gcx1';
+    const oTruc = gcTrucO1();
     if (!F.ck) return say('Chọn loại cấu kiện (hoặc Khác).', true), render();
     if (F.ck === 'khac' && !t('gcck')) { say('Ghi tên cấu kiện.', true); render(); return gcFocus('gcck'); }
     const truc = gcTrucCua();
@@ -4389,7 +4459,7 @@ const ACTIONS = {
     if (!t('gctang') && !t('gccote') && !(F.id && F.thieuCaoDo)) { say('Ghi tầng hoặc cote (có tầng thì cote không bắt buộc).', true); render(); return gcFocus('gctang'); }
     if (!F.user) return say('Chọn Tiểu đội trưởng nhận đơn.', true), render();
     if (!t('gchan')) return say('Chọn ngày cần xong.', true), render();
-    const body = { cau_kien: gcCauKien(F), truc, phan_khu: F.khu || '', tang: t('gctang'), cote: t('gccote'), hang_muc: F.hm || '', noi_dung: t('gcnd'), user: F.user, han: t('gchan'), buoi: F.buoi || null };
+    const body = { cau_kien: gcCauKien(F), truc, phan_khu: F.khu || '', tang: gcTangChu(t('gctang')), cote: t('gccote'), hang_muc: F.hm || '', noi_dung: t('gcnd'), user: F.user, han: t('gchan'), buoi: F.buoi || null };
     const tiep = !F.id && d && d.v === 'tiep';
     const ten = (((G && G.tdt) || []).find((u) => u.id === F.user) || {}).name || '';
     let hoiTrung = null, xong = false;
@@ -4406,7 +4476,7 @@ const ACTIONS = {
         try { [['kt:gcuser', F.user], ['kt:gckhu', F.khu || ''], ['kt:gchm', F.hm || ''], ['kt:gctang', body.tang], ['kt:gcck', F.ck]].forEach(([k, v]) => localStorage.setItem(k, String(v))); }
         catch (e) { /* đầy bộ nhớ */ }
       }
-      const xoa = ['gcck', 'gctruc', 'gcnd'].concat(GC_O_TRUC);
+      const xoa = ['gcck', 'gctruc', 'gcnd'].concat(GC_O_TRUC, GC_O_MOT);
       if (tiep) {
         // soạn đơn tiếp: giữ loại cấu kiện, phân khu, tầng, hạng mục, người nhận, hạn; chỉ xoá những ô đơn nào cũng khác
         xoa.forEach((k) => delete S.form[k]);
@@ -4458,7 +4528,8 @@ const ACTIONS = {
     gcDo('xong', {}, 'Đã xác nhận xong.', x.id);
   },
   // phím Enter trên bàn phím điện thoại: số hiệu → trục (X từ → X đến → Y từ → Y đến) → đóng bàn phím cho lộ nút GIAO
-  gcnext() { gcFocus(S.gcForm && S.gcForm.trucTu ? 'gctruc' : 'gcx1'); },
+  gcnext() { gcFocus(gcTrucO1()); },
+  gcdentm1() { gcFocus('gctm1'); }, gcdentm2() { gcFocus('gctm2'); },
   gcdencote() { gcFocus('gccote'); },
   gcdenx2() { gcFocus('gcx2'); }, gcdeny1() { gcFocus('gcy1'); }, gcdeny2() { gcFocus('gcy2'); },
   gcblur() { const e = document.activeElement; if (e && e.blur) e.blur(); },
@@ -4605,7 +4676,7 @@ document.addEventListener('input', (e) => {
   const m = e.target.dataset && e.target.dataset.model;
   if (m) S.form[m] = e.target.value;
   if (m === 'gcq') gcLoc();
-  if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucGhep() || 'chưa nhập'; }
+  if (m && (GC_O_TRUC.includes(m) || GC_O_MOT.includes(m))) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucCua() || 'chưa nhập'; }
   /* Quân số đầu ca: gõ tổng thì số đi làm và dòng tóm tắt chạy theo ngay, không vẽ lại màn hình giữa lúc gõ.
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */
   // thẻ báo quân số trên Tổng quan: dòng tóm tắt chạy theo ô đang gõ, không vẽ lại cả trang
