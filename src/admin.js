@@ -304,6 +304,15 @@ export async function phiUpdate(req, env, admin, id) {
     const have = await tonCells(env, day, khus.map((k) => ({ khu: k.id, phi: id })), false);
     const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
     if (st && st.n > 0) throw bad(`Phi ${id} còn ${qtyWord(st.n, p)} trong bãi. Hãy đếm về 0 hoặc dùng hết trước khi ẩn`);
+    /* Sổ vay mượn chỉ ghi được phi đang hiện: ẩn một phi còn công nợ (hoặc còn lần ghi chờ duyệt) là
+       khoá luôn đường ghi TRẢ khoản đó, dư nợ treo mãi cho tới khi có người nhớ ra phải hiện lại phi. */
+    const no = (await env.DB.prepare(
+      `SELECT d.name FROM loans l LEFT JOIN doitac d ON d.id = l.doitac_id WHERE l.phi_id = ? AND l.voided = 0
+       GROUP BY l.doitac_id, (l.kind IN ('vay', 'tra_vay'))
+       HAVING SUM(l.duyet_ts IS NULL) > 0
+           OR SUM(CASE WHEN l.duyet_ts IS NULL THEN 0 WHEN l.kind IN ('vay', 'cho_vay') THEN l.qty ELSE -l.qty END) <> 0`
+    ).bind(id).all()).results;
+    if (no.length) throw bad(`Phi ${id} còn khoản vay mượn chưa tất toán với ${[...new Set(no.map((x) => x.name || '?'))].join(', ')}. Tất toán (hoặc huỷ lần ghi đang chờ) trước khi ẩn`);
   }
   /* Không còn gì phải làm với khu_phi khi bật/tắt một phi: từ bản 1.3 khu nào cũng hiện đủ phi
      đang bật, nên tắt phi là mọi khu thôi báo nó, bật lại là mọi khu hiện lại — tự động. Bản cũ

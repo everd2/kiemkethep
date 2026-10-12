@@ -1,7 +1,7 @@
 // Sổ vay mượn thép với đối tác ngoài bãi (không tính vào tồn).
-import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetCap, duyetCuaNguoi, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
-import { DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, UNAME, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn,
-  readJson, unitWord } from './helpers.js';
+import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetCap, duyetCuaNguoi, duyetPhieuDuoc, fmtDay, json, rand, vnDay } from './core.js';
+import { CSV_HEAD, DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, LOAN_AM_COND, UNAME, auditStmt, batchGuarded, bump, closedErr, csvDec, csvQty, csvRow, csvUnit, guardStmt, intIn,
+  loanAmErr, loanAmRows, qtyWord, readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
 import { checkTransferStock, receiptCtx } from './phieu.js';
 
@@ -29,31 +29,47 @@ const LOAN_VOID_DAYS = 7;
    đối tác × phi × chiều (mình nợ / họ nợ). Nhờ vậy biết đúng PHẦN NÀO đang quá hạn, chứ không chỉ
    một con số tổng: vay 100 hẹn 06/10, vay thêm 50 hẹn 30/10, đã trả 80 — thì còn 20 của lần đầu
    (quá hạn) và 50 của lần sau (chưa tới hạn).
-   rows: các dòng ĐÃ DUYỆT, chưa huỷ, xếp theo ngay rồi id. Trả dư (trả khi không còn lần vay nào
-   mở) thì bỏ qua ở đây — dư nợ âm đã được nói ở chỗ khác. */
+   rows: các dòng ĐÃ DUYỆT, chưa huỷ, xếp theo ngay rồi id.
+   TRẢ DƯ (trả khi không còn lần vay nào mở) được GIỮ LẠI và trừ vào lần vay kế tiếp, để tổng "còn
+   nợ theo từng lần" luôn bằng đúng dư nợ (SUM vay − SUM trả) mà thẻ đối tác đang hiện. Bỏ phần dư
+   đi thì vay 100, trả 120, vay tiếp 50 ra dư nợ 30 mà bảng này nói còn 50; và một lần trả ghi ngày
+   TRƯỚC lần vay (ghi bù, gõ nhầm ngày) làm khoản đã tất toán vẫn bị báo quá hạn. */
 export function loanLots(rows, today) {
-  const q = {};
+  const q = {}, du = {};
   for (const r of rows) {
     const no = r.kind === 'vay' || r.kind === 'tra_vay';
     const key = r.doitac_id + '|' + r.phi_id + '|' + (no ? 'no' : 'co');
     const arr = q[key] || (q[key] = []);
     if (r.kind === 'vay' || r.kind === 'cho_vay') {
-      arr.push({ id: r.id, grp: r.grp, doitac_id: r.doitac_id, phi_id: r.phi_id, chieu: no ? 'no' : 'co', ngay: r.ngay, han: r.han || null, so_bb: r.so_bb || null, con: r.qty });
+      const x = Math.min(du[key] || 0, r.qty);
+      if (x) du[key] -= x;
+      arr.push({ id: r.id, grp: r.grp, doitac_id: r.doitac_id, phi_id: r.phi_id, chieu: no ? 'no' : 'co', ngay: r.ngay, han: r.han || null, so_bb: r.so_bb || null, con: r.qty - x });
     } else {
       let t = r.qty;
       for (const lot of arr) { if (!t) break; const x = Math.min(lot.con, t); lot.con -= x; t -= x; }
+      if (t) du[key] = (du[key] || 0) + t;
     }
   }
   return Object.values(q).flat().filter((l) => l.con > 0).map((l) => ({ ...l, quaHan: !!(l.han && l.han < today) }));
 }
 export const LOAN_LOT_SQL = "SELECT id, grp, doitac_id, phi_id, kind, qty, ngay, han, so_bb FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL ORDER BY ngay, id";
 
+/* TRÙNG TÊN ĐỐI TÁC so bằng JavaScript, không bằng COLLATE NOCASE của SQLite: NOCASE chỉ gộp hoa/thường
+   của chữ KHÔNG DẤU, nên "Đức Anh" và "đức anh" (hay "Á Châu" / "á châu") thành hai đối tác và công nợ
+   bị tách đôi. Chuẩn hoá NFC để chữ gõ từ bàn phím tổ hợp và dựng sẵn cũng là một, gộp khoảng trắng thừa.
+   Danh bạ đối tác chỉ vài chục dòng nên đọc hết ra so là đủ. */
+const tenChuan = (s) => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim();
+const tenKhoa = (s) => tenChuan(s).toLowerCase();
+async function doitacTrung(env, name, tru) {
+  const ds = (await env.DB.prepare('SELECT id, name FROM doitac').all()).results;
+  return ds.some((d) => d.id !== tru && tenKhoa(d.name) === tenKhoa(name));
+}
+
 export async function doitacCreate(req, env, user) {
   const b = await readJson(req);
-  const name = String(b.name || '').trim().slice(0, 60);
+  const name = tenChuan(b.name).slice(0, 60);
   if (!name) throw bad('Cần nhập tên đối tác');
-  const dup = await env.DB.prepare('SELECT id FROM doitac WHERE name = ? COLLATE NOCASE').bind(name).first();
-  if (dup) throw bad('Đối tác này đã có trong danh sách');
+  if (await doitacTrung(env, name, 0)) throw bad('Đối tác này đã có trong danh sách');
   const res = await env.DB.batch([
     env.DB.prepare('INSERT INTO doitac (name, active) VALUES (?, 1)').bind(name),
     auditStmt(env, user, 'doitac_create', { name }),
@@ -66,11 +82,8 @@ export async function doitacUpdate(req, env, user, id) {
   const d = await env.DB.prepare('SELECT * FROM doitac WHERE id = ?').bind(Number(id)).first();
   if (!d) throw new HttpError(404, 'Không tìm thấy đối tác');
   const b = await readJson(req);
-  const name = b.name !== undefined ? String(b.name).trim().slice(0, 60) || d.name : d.name;
-  if (name.toLowerCase() !== d.name.toLowerCase()) {
-    const dup = await env.DB.prepare('SELECT id FROM doitac WHERE name = ? COLLATE NOCASE AND id <> ?').bind(name, d.id).first();
-    if (dup) throw bad('Tên này đã dùng cho một đối tác khác');
-  }
+  const name = b.name !== undefined ? tenChuan(b.name).slice(0, 60) || d.name : d.name;
+  if (name !== d.name && await doitacTrung(env, name, d.id)) throw bad('Tên này đã dùng cho một đối tác khác');
   const active = b.active !== undefined ? (b.active ? 1 : 0) : d.active;
   await env.DB.batch([
     env.DB.prepare('UPDATE doitac SET name = ?, active = ? WHERE id = ?').bind(name, active, d.id),
@@ -79,6 +92,9 @@ export async function doitacUpdate(req, env, user, id) {
   ]);
   return json({ ok: true });
 }
+
+// khoá so trùng số biên bản: chỉ giữ chữ và số, không phân hoa/thường; số chỉ toàn ký hiệu thì so nguyên văn
+const bbKhoa = (x) => { const v = String(x || '').normalize('NFC').toUpperCase(); return v.replace(/[^\p{L}\p{N}]/gu, '') || v.trim(); };
 
 // Đọc danh sách dòng { phi, qty } của một lần ghi — giống parseLines của receipts nhưng không cần ctx.khu
 export function parseLoanLines(b, phiBy) {
@@ -127,6 +143,28 @@ export async function postLoan(req, env, user) {
   }
   const soBB = String(b.so_bb || '').trim().slice(0, 40);
   if (!soBB) throw bad('Cần ghi số biên bản giao nhận');
+  /* TRÙNG BIÊN BẢN: cùng đối tác, cùng số biên bản, cùng loại và cùng phi với một lần ghi chưa huỷ
+     thì gần như chắc là ghi hai lần — sổ này mở cho nhiều người cùng chép, và mất mạng đúng lúc lưu
+     thì bấm lại là thành hai dòng. Không chặn hẳn (một biên bản có thể giao làm hai chuyến cùng phi):
+     dừng lại, nói rõ dòng đang có, máy khách hỏi rồi gửi lại kèm trung: true. Khác phi thì cho qua,
+     đó là ghi bổ sung phi còn thiếu của cùng biên bản. */
+  if (b.trung !== true) {
+    /* So theo KHOÁ đã bỏ dấu cách, gạch, chấm và hoa/thường: "BB 01", "bb-01", "BB.01" là cùng một tờ biên
+       bản do hai người gõ hai kiểu. So trong JavaScript vì SQLite không bỏ ký tự như vậy được; mỗi lần ghi
+       chỉ đọc các dòng cùng đối tác × loại × phi, mới nhất trước. */
+    const khoa = bbKhoa(soBB);
+    const tr = (await env.DB.prepare(
+      `SELECT l.phi_id, l.qty, l.ngay, l.duyet_ts, l.so_bb, ${UNAME} FROM loans l LEFT JOIN users u ON u.id = l.user_id
+       WHERE l.doitac_id = ?1 AND l.kind = ?2 AND l.voided = 0 AND l.so_bb IS NOT NULL
+         AND l.phi_id IN (SELECT ${J('phi')} FROM json_each(?3) j) ORDER BY l.id DESC LIMIT 2000`
+    ).bind(doitacId, kind, JSON.stringify(lines)).all()).results.filter((x) => bbKhoa(x.so_bb) === khoa).reverse();
+    if (tr.length) {
+      throw new HttpError(409, `Biên bản số ${tr[0].so_bb} đã có trong sổ: ${loanTitle(kind, d.name)} · `
+        + tr.map((x) => x.phi_id + ' ' + qtyWord(x.qty, phiBy[x.phi_id])).join(', ')
+        + ` (${tr[0].uname} ghi${tr[0].ngay ? ', giao nhận ' + fmtDay(tr[0].ngay) : ''}, ${tr[0].duyet_ts ? 'đã duyệt' : 'đang chờ duyệt'}).`
+        + ' Nếu đây đúng là một lần giao nhận khác thì xác nhận để ghi thêm.', 'trung_bb');
+    }
+  }
   /* Ngày giao nhận THẬT (ghi bù được): sổ phải khớp ngày trên biên bản, không phải ngày bấm ghi.
      Không được sau hôm nay; quá một năm trước thì gần như chắc là gõ nhầm năm. */
   const today = vnDay();
@@ -201,6 +239,19 @@ async function loanGroupInfo(env, r) {
   return { doitac: (dR.results[0] || {}).name || null, lines: lR.results };
 }
 
+/* Ghi một lần DUYỆT / HUỶ chỉ khi các điều kiện đọc lúc trước vẫn còn đúng ĐÚNG LÚC GHI. Kiểm rồi mới ghi ở
+   hai lượt khác nhau thì có khe hở: hai người cùng bấm duyệt (nhật ký ghi hai lần duyệt), hoặc người này
+   huỷ đúng lúc người kia duyệt (nhật ký ghi "duyệt" một lần ghi đã huỷ, hoặc "từ chối" một lần đã duyệt).
+   conds: [[điều kiện SQL làm HỎNG lần ghi, ...tham số]]; hỏng thì chan() đọc lại để nói đúng lý do. */
+async function batchLoan(env, conds, stmts, chan) {
+  const HONG = new HttpError(409, 'guard', 'guard');
+  try {
+    return await batchGuarded(env, guardStmt(env, conds.map((c) => '(' + c[0] + ')').join(' OR '), ...conds.flatMap((c) => c.slice(1))), stmts, HONG);
+  } catch (e) { if (e !== HONG) throw e; throw await chan(); }
+}
+const daDoi = () => new HttpError(409, 'Lần ghi này vừa được người khác duyệt hoặc huỷ. Xem lại rồi làm tiếp.', 'changed');
+const daChot = (env, day) => env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first();
+
 export async function duyetLoan(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ?').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
@@ -216,9 +267,10 @@ export async function duyetLoan(env, user, id) {
   if (kho.length && !duyetPhieuDuoc(user.role)) throw new HttpError(403, `Lần ghi này kèm phiếu kho: cần ${CAP_TREN} duyệt.`, 'cap');
   const day = vnDay();
   if (kho.length) await checkTransferStock(env, day, kho, { kind: 'vay' });
-  const run = kho.length
-    ? (stmts) => batchGuarded(env, guardStmt(env, IS_CLOSED, day), stmts, closedErr('Ngày hôm nay đã chốt, không duyệt được phiếu kho đi kèm'))
-    : (stmts) => env.DB.batch(stmts);
+  const run = (stmts) => batchLoan(env, [
+    ['NOT EXISTS (SELECT 1 FROM loans WHERE id = ? AND voided = 0 AND duyet_ts IS NULL)', id],
+    ...(kho.length ? [[IS_CLOSED, day]] : []),
+  ], stmts, async () => (kho.length && await daChot(env, day) ? closedErr('Ngày hôm nay đã chốt, không duyệt được phiếu kho đi kèm') : daDoi()));
   await run([
     ...(kho.length ? [env.DB.prepare("UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND kind = 'vay' AND voided = 0 AND duyet_day IS NULL")
       .bind(day, ts, user.id, user.name, r.grp)] : []),
@@ -233,10 +285,14 @@ export async function duyetLoan(env, user, id) {
   return json({ ok: true });
 }
 
-// Huỷ theo nhóm (grp), giống voidReceipt: chờ duyệt thì người ghi rút lại bất cứ lúc nào, đã
-// duyệt thì chỉ trong 10 phút kể từ lúc duyệt, sau đó nhờ admin. Không có khái niệm "ngày chốt"
-// ở đây nên không cần chốt chặn theo ngày như receipts.
-export async function voidLoan(env, user, id) {
+/* Huỷ theo nhóm (grp), giống voidReceipt: chờ duyệt thì người ghi rút lại bất cứ lúc nào; đã duyệt
+   thì người ghi chỉ huỷ trong 10 phút kể từ lúc duyệt, người duyệt được thì trong LOAN_VOID_DAYS ngày.
+   Lần ghi chỉ ghi sổ không dính "ngày chốt"; lần ghi kèm phiếu kho thì theo ngày duyệt của phiếu.
+   AI huỷ và lý do (tuỳ chọn, máy khách hỏi khi từ chối / huỷ lần đã duyệt) ghi ngay vào dòng. */
+export async function voidLoan(req, env, user, id) {
+  // bản app cũ gọi DELETE không có thân: coi như không ghi lý do
+  let ly = '';
+  try { ly = String((await req.json()).ly_do || '').trim().slice(0, 200); } catch (e) { /* không có thân */ }
   const r = await env.DB.prepare('SELECT * FROM loans WHERE id = ? AND voided = 0').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy dòng vay/mượn');
   const pending = !r.duyet_ts;
@@ -260,15 +316,26 @@ export async function voidLoan(env, user, id) {
   if (ngayDuyet && await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(ngayDuyet).first()) {
     throw new HttpError(409, 'Phiếu kho đi kèm đã vào ngày đã chốt, không huỷ được. Ghi một lần ngược lại (trả, hoặc vay) để sửa.', 'closed');
   }
-  const run = kho.length
-    ? (stmts) => batchGuarded(env, guardStmt(env, IS_CLOSED, ngayDuyet || vnDay()), stmts, closedErr())
-    : (stmts) => env.DB.batch(stmts);
+  /* Ba thứ phải còn đúng lúc ghi: lần ghi vẫn ở trạng thái vừa đọc (chưa ai duyệt / huỷ chen vào), ngày của
+     phiếu kho đi kèm chưa chốt, và — với lần đã duyệt — huỷ không làm dư nợ thành âm (xem LOAN_AM_COND). */
+  const ngayKho = ngayDuyet || vnDay();
+  const run = (stmts) => batchLoan(env, [
+    ['NOT EXISTS (SELECT 1 FROM loans WHERE id = ? AND voided = 0 AND COALESCE(duyet_ts, 0) = ?)', id, r.duyet_ts || 0],
+    ...(kho.length ? [[IS_CLOSED, ngayKho]] : []),
+    ...(pending ? [] : [[LOAN_AM_COND, r.grp, id]]),
+  ], stmts, async () => {
+    if (kho.length && await daChot(env, ngayKho)) return closedErr();
+    const nay = await env.DB.prepare('SELECT voided, duyet_ts FROM loans WHERE id = ?').bind(id).first();
+    if (!nay || nay.voided || (nay.duyet_ts || 0) !== (r.duyet_ts || 0)) return daDoi();
+    const am = pending ? [] : await loanAmRows(env, r.grp, id);
+    return am.length ? loanAmErr(am) : daDoi();
+  });
   await run([
     ...(kho.length ? [env.DB.prepare("UPDATE receipts SET voided = 1, voided_ts = ? WHERE grp = ? AND kind = 'vay' AND voided = 0").bind(Date.now(), r.grp)] : []),
     r.grp
-      ? env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)
-      : env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE id = ?').bind(Date.now(), id),
-    auditStmt(env, user, pending ? 'loan_reject' : 'loan_void', { id, kind: r.kind, doitac_id: r.doitac_id, grp: r.grp, ...info }),
+      ? env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ?, voided_by = ?, voided_name = ?, voided_note = ? WHERE grp = ? AND voided = 0').bind(Date.now(), user.id, user.name, ly || null, r.grp)
+      : env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ?, voided_by = ?, voided_name = ?, voided_note = ? WHERE id = ?').bind(Date.now(), user.id, user.name, ly || null, id),
+    auditStmt(env, user, pending ? 'loan_reject' : 'loan_void', { id, kind: r.kind, doitac_id: r.doitac_id, grp: r.grp, ...info, ...(ly ? { ly_do: ly } : {}) }),
     bump(env),
   ]);
   return json({ ok: true, pending });
@@ -288,6 +355,7 @@ export async function loansView(env, url) {
       env.DB.prepare('SELECT id, name, active FROM doitac WHERE id = ?').bind(dtId),
       env.DB.prepare(
         `SELECT l.id, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.grp, l.voided, l.voided_ts,
+           COALESCE((SELECT uv.name FROM users uv WHERE uv.id = l.voided_by), l.voided_name) voided_uname, l.voided_note,
            l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so,
            l.user_id, l.cap, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
            (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' LIMIT 1) kho
@@ -319,4 +387,66 @@ export async function loansView(env, url) {
   ]);
   const lotR = await env.DB.prepare(LOAN_LOT_SQL).all();
   return json({ doitac: dR.results, items: itemR.results, agg: aggR.results, lots: loanLots(lotR.results, vnDay()) });
+}
+
+/* TỆP EXCEL CỦA CẢ SỔ: mọi lần ghi từ trước tới nay (cả chờ duyệt và đã huỷ, có cột trạng thái), rồi
+   bảng dư nợ theo đối tác × phi. Đây là bản để mang đi đối chiếu công nợ với đối tác và để lưu ngoài
+   app — trước đây muốn có thì chỉ còn tệp sao lưu JSON mà riêng admin đầu tiên tải được. Số tấn tính
+   theo kg/cây HIỆN TẠI; con số gốc của công nợ là số cây / số cuộn. */
+export async function loansCsv(env) {
+  const [phiR, rowR] = await env.DB.batch([
+    env.DB.prepare('SELECT id, kg_per_cay, bo_size, unit FROM phi ORDER BY sort'),
+    env.DB.prepare(
+      `SELECT l.*, d.name doitac_name, ${UNAME}, ${DUYET_NAME_LOAN},
+         COALESCE((SELECT uv.name FROM users uv WHERE uv.id = l.voided_by), l.voided_name) voided_uname,
+         (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' LIMIT 1) kho
+       FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
+         ${DUYET_JOIN_LOAN}
+       ORDER BY l.ngay, l.id`
+    ),
+  ]);
+  const phiBy = Object.fromEntries(phiR.results.map((p) => [p.id, p]));
+  const esc = (x) => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
+  /* Chữ NGƯỜI DÙNG GÕ (số biên bản, biển số, tên người, ghi chú, tên đối tác) mà Excel tự "hiểu" thì hỏng:
+     số biên bản "01/10" thành ngày 1 tháng 10, "0123" mất số 0 đầu, số điện thoại "+849..." thành con số,
+     và ghi chú mở đầu bằng "=" chạy như công thức trên máy người mở tệp. Viết ô đó dạng ="..." thì Excel
+     giữ nguyên là chữ. Chỉ làm với ô có nguy cơ, để chữ bình thường vẫn là chữ bình thường khi mở bằng
+     phần mềm khác. */
+  const txt = (x) => {
+    const v = String(x == null ? '' : x);
+    if (!/^[=+\-@\t\r]/.test(v) && !/^[\d\s.,/:\-]+$/.test(v) && !/^\d+[eE]\d+$/.test(v)) return esc(v);
+    return esc('="' + v.replace(/"/g, '""') + '"');
+  };
+  const gio = (ms) => (ms ? fmtDay(vnDay(ms)) + ' ' + new Date(ms + 7 * 3600e3).toISOString().slice(11, 16) : '');
+  const TEN = { vay: 'Mình vay', tra_vay: 'Mình trả', cho_vay: 'Cho họ vay', tra_no: 'Họ trả' };
+  const tan = (q, p) => csvDec(q * (p ? p.kg_per_cay : 0) / 1000, 3);
+  const lines = [csvRow(['Ngày giao nhận', 'Đối tác', 'Loại', 'Phi', 'Đơn vị', 'Số lượng', 'Tấn', 'Số biên bản', 'Hạn trả', 'Người giao/nhận', 'Biển số xe',
+    'Ghi chú', 'Phiếu kho (khu)', 'Người ghi', 'Ghi lúc', 'Trạng thái', 'Người duyệt', 'Duyệt lúc', 'Người huỷ', 'Huỷ lúc', 'Lý do huỷ'].map(esc))];
+  const du = {};
+  for (const r of rowR.results) {
+    const p = phiBy[r.phi_id];
+    lines.push(csvRow([esc(r.ngay ? fmtDay(r.ngay) : ''), txt(r.doitac_name || '#' + r.doitac_id), esc(TEN[r.kind] || r.kind), esc(r.phi_id), esc(p ? csvUnit(p) : ''),
+      p ? csvQty(r.qty, p) : r.qty, tan(r.qty, p), txt(r.so_bb), esc(r.han ? fmtDay(r.han) : ''), txt(r.nguoi), txt(r.bien_so), txt(r.note), esc(r.kho),
+      esc(r.uname), esc(gio(r.ts)), esc(r.voided ? 'Đã huỷ' : r.duyet_ts ? 'Đã duyệt' : 'Chờ duyệt'), esc(r.duyet_ts ? r.duyet_uname : ''), esc(gio(r.duyet_ts)),
+      esc(r.voided ? r.voided_uname : ''), esc(r.voided ? gio(r.voided_ts) : ''), txt(r.voided_note)]));
+    if (r.voided || !r.duyet_ts) continue;
+    const k = r.doitac_id + '|' + r.phi_id;
+    const x = du[k] || (du[k] = { ten: r.doitac_name || '#' + r.doitac_id, phi: r.phi_id, vay: 0, tra_vay: 0, cho_vay: 0, tra_no: 0 });
+    x[r.kind] += r.qty;
+  }
+  lines.push('', csvRow([esc('DƯ NỢ (chỉ tính lần ghi đã duyệt, chưa huỷ)')]),
+    csvRow(['Đối tác', 'Phi', 'Đơn vị', 'Đã vay', 'Đã trả', 'Mình còn nợ', 'Mình còn nợ (tấn)', 'Đã cho vay', 'Họ đã trả', 'Họ còn nợ', 'Họ còn nợ (tấn)'].map(esc)));
+  const thuTu = Object.fromEntries(phiR.results.map((p, i) => [p.id, i]));
+  for (const x of Object.values(du).sort((a, z) => a.ten.localeCompare(z.ten, 'vi') || (thuTu[a.phi] ?? 99) - (thuTu[z.phi] ?? 99))) {
+    const p = phiBy[x.phi], q = (v) => (p ? csvQty(v, p) : v);
+    const no = x.vay - x.tra_vay, co = x.cho_vay - x.tra_no;
+    lines.push(csvRow([txt(x.ten), esc(x.phi), esc(p ? csvUnit(p) : ''), q(x.vay), q(x.tra_vay), q(no), tan(no, p), q(x.cho_vay), q(x.tra_no), q(co), tan(co, p)]));
+  }
+  return new Response(CSV_HEAD + lines.join('\r\n'), {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="so-vay-muon-${vnDay()}.csv"`,
+      'Cache-Control': 'no-store',
+    },
+  });
 }

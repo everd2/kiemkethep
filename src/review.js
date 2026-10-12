@@ -6,7 +6,7 @@ import { RATE_SQL } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
   guardStmt, parseSettings, readJson } from './helpers.js';
 import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
-import { checkTransferStock } from './phieu.js';
+import { checkTransferStock, rutCtx } from './phieu.js';
 
 /* ========================= DUYỆT / CHỐT NGÀY =========================
    Một quy tắc duy nhất: chưa duyệt thì không vào tồn. Màn Duyệt vì thế không còn là màn
@@ -85,7 +85,8 @@ export async function computeReview(env, day, opt = {}) {
     /* Sổ vay mượn chờ duyệt, để admin duyệt ngay ở màn Duyệt thay vì phải nhớ sang màn khác.
        Lần ghi có kèm phiếu kho thì KHÔNG lấy ở đây: phiếu đó đã nằm trong danh sách phiếu chờ
        duyệt, duyệt phiếu là duyệt luôn sổ — bày cả hai là một việc hiện thành hai. */
-    db.prepare(`SELECT l.id, l.grp, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.ts, l.user_id, l.cap, ${UNAME}
+    db.prepare(`SELECT l.id, l.grp, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.ts, l.user_id, l.cap,
+                  l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so, ${UNAME}
                 FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
                 WHERE l.voided = 0 AND l.duyet_ts IS NULL
                   AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay')
@@ -514,17 +515,16 @@ export async function reviewDuyet(req, env, user) {
   const last = rv.last || '';
   const ts = Date.now();
   const stmts = [];
-  for (const k of list) {
-    /* Cố ý KHÔNG lọc "duyet_ts <> ts": câu này phục vụ cả hai việc.
-       - Ô đang chờ duyệt: duyet_v = v, duyet_ts = ts là duyệt số mới.
-       - Ô đã duyệt rồi: hai phép trên là vô tác dụng (duyet_v đã bằng v, duyet_ts đã bằng ts),
-         chỉ còn duyet_at nhảy lên — tức "admin vừa xem lại và vẫn chấp nhận số này".
-       Chính nhờ duyet_at nhảy lên mà cảnh báo recheck gỡ được: nó so duyet_at với mốc phiếu. */
-    stmts.push(env.DB.prepare(
-      `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
-       WHERE khu_id = ?4 AND day > ?5 AND day <= ?6`
-    ).bind(ts, user.id, user.name, k.khu, last, day));
-  }
+  /* Cố ý KHÔNG lọc "duyet_ts <> ts": câu này phục vụ cả hai việc.
+     - Ô đang chờ duyệt: duyet_v = v, duyet_ts = ts là duyệt số mới.
+     - Ô đã duyệt rồi: hai phép trên là vô tác dụng (duyet_v đã bằng v, duyet_ts đã bằng ts),
+       chỉ còn duyet_at nhảy lên — tức "admin vừa xem lại và vẫn chấp nhận số này".
+     Chính nhờ duyet_at nhảy lên mà cảnh báo recheck gỡ được: nó so duyet_at với mốc phiếu.
+     MỘT câu cho mọi khu đang duyệt: mỗi khu một câu thì "Duyệt tất cả" đọc lại cả kỳ một lần cho mỗi khu. */
+  stmts.push(env.DB.prepare(
+    `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
+     WHERE day > ?5 AND day <= ?6 AND khu_id IN (SELECT value FROM json_each(?4))`
+  ).bind(ts, user.id, user.name, JSON.stringify(list.map((k) => k.khu)), last, day));
   // phiếu chờ duyệt có dòng thuộc các khu đang duyệt; phiếu chuyển khu nằm ở cả hai khu nên
   // duyệt từ phía nào cũng là duyệt cả phiếu, đúng như nó là một chứng từ
   const keys = new Set();
@@ -534,11 +534,13 @@ export async function reviewDuyet(req, env, user) {
      duyệt riêng từng phiếu.
      Kiểm TRƯỚC khi dựng batch: thà từ chối cả lần bấm còn hơn duyệt số của khu rồi mới phát hiện
      phiếu không duyệt được, vì lúc đó admin không biết nửa nào đã vào. */
-  for (const v of phieu) {
-    // mọi loại phiếu RÚT thép khỏi khu đều phải qua cùng một chốt chặn âm tồn
-    if (v.kind === 'chuyen' || v.kind === 'dc' || v.kind === 'xuat' || v.kind === 'vay') {
-      await checkTransferStock(env, day, v.lines.map((l) => ({ phi_id: l.phi, khu_id: l.khu, qty: l.qty })), { kind: v.kind });
-    }
+  // mọi loại phiếu RÚT thép khỏi khu đều phải qua cùng một chốt chặn âm tồn
+  const rut = phieu.filter((v) => v.kind === 'chuyen' || v.kind === 'dc' || v.kind === 'xuat' || v.kind === 'vay')
+    .map((v) => ({ kind: v.kind, lines: v.lines.map((l) => ({ phi_id: l.phi, khu_id: l.khu, qty: l.qty })) }));
+  if (rut.some((v) => v.lines.some((l) => l.qty < 0))) {
+    // tồn đọc MỘT lần cho mọi phiếu; từng phiếu vẫn kiểm riêng như khi duyệt lẻ (xem rutCtx)
+    const ctx = await rutCtx(env, day, rut.flatMap((v) => v.lines));
+    for (const v of rut) await checkTransferStock(env, day, v.lines, { kind: v.kind, ctx });
   }
   for (const v of phieu) {
     // phiếu kho của sổ vay mượn: duyệt phiếu là duyệt luôn lần ghi sổ đi kèm (cùng grp)

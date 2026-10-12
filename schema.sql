@@ -123,6 +123,9 @@ CREATE TABLE IF NOT EXISTS counts (
   cap INTEGER NOT NULL DEFAULT 2,
   PRIMARY KEY (day, khu_id, phi_id)
 );
+-- Mọi đường đọc tồn hỏi "lần đã duyệt gần nhất của Ô NÀY": khoá chính mở đầu bằng day nên không đỡ được.
+-- phi_id PHẢI đứng đầu, không phải khu_id: xem migration 25 ở src/db.js.
+CREATE INDEX IF NOT EXISTS idx_counts_o ON counts(phi_id, khu_id, day);
 
 -- Lịch sử mọi lần báo (chỉ ghi thêm). cap: cấp của người báo lúc báo, như counts.cap — để khi huỷ một
 -- báo cáo, ô quay về lần đã duyệt thì lấy lại đúng cả cấp của lần đó.
@@ -199,6 +202,7 @@ CREATE TABLE IF NOT EXISTS receipts (
 CREATE INDEX IF NOT EXISTS idx_receipts_duyet ON receipts(duyet_day);
 CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day);
 CREATE INDEX IF NOT EXISTS idx_receipts_grp ON receipts(grp);
+CREATE INDEX IF NOT EXISTS idx_receipts_o ON receipts(phi_id, khu_id, duyet_day);
 
 -- Chốt ngày: khóa số liệu, lưu mức dùng để tính trung bình
 -- span: số ngày gộp (quên chốt thì > 1)
@@ -296,6 +300,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_doitac_name ON doitac(name COLLATE NOCASE)
 --       vay / cho_vay). so_bb: số biên bản giao nhận (bắt buộc từ bản 20). nguoi, bien_so: người
 --       giao/nhận bên đối tác, biển số xe.
 -- cap: cấp duyệt của người ghi LÚC GHI, như counts.cap.
+-- voided_by, voided_name, voided_note: ai huỷ / từ chối lần ghi và vì sao (bản 26). Ghi trong dòng để còn
+--       lại sau khi nạp lại từ bản sao: nhật ký không nạp lại được.
 -- grp: các dòng cùng MỘT lần ghi (vd cho A vay cả D16 và D18 một lượt), để huỷ/duyệt cùng lúc
 -- như một phiếu, giống receipts.grp.
 CREATE TABLE IF NOT EXISTS loans (
@@ -318,10 +324,15 @@ CREATE TABLE IF NOT EXISTS loans (
   so_bb TEXT,
   nguoi TEXT,
   bien_so TEXT,
-  cap INTEGER NOT NULL DEFAULT 2
+  cap INTEGER NOT NULL DEFAULT 2,
+  voided_by INTEGER,
+  voided_name TEXT,
+  voided_note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_loans_doitac ON loans(doitac_id);
 CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp);
+-- lần ghi CHỜ DUYỆT (duyet_ts NULL): bootstrap và màn Duyệt hỏi ở mỗi lần tải, không quét cả sổ
+CREATE INDEX IF NOT EXISTS idx_loans_duyet ON loans(duyet_ts);
 
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -331,6 +342,9 @@ CREATE TABLE IF NOT EXISTS audit (
   action TEXT NOT NULL,
   detail TEXT
 );
+
+-- lọc nhật ký theo ngày: không có thì mỗi lần lọc quét cả bảng, mà bảng này chỉ dài ra
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -376,7 +390,7 @@ CREATE TABLE IF NOT EXISTS bao_cao_huy (
 );
 CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 23);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 26);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
@@ -410,4 +424,7 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'Nhat ky chi duoc ghi them'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'Nhat ky chi duoc ghi them'); END;
 CREATE TRIGGER IF NOT EXISTS counts_log_no_update BEFORE UPDATE ON counts_log BEGIN SELECT RAISE(ABORT, 'Lich su dem chi duoc ghi them'); END;
+-- Sổ vay mượn: không nhận dòng hỏng, và nội dung dòng đã ghi thì không sửa (sai thì huỷ rồi ghi lại). Giữ khớp với LOAN_TRIGGERS trong src/db.js
+CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans WHEN NEW.qty IS NULL OR NEW.qty <= 0 OR NEW.ngay IS NULL OR NOT EXISTS (SELECT 1 FROM doitac WHERE id = NEW.doitac_id) BEGIN SELECT RAISE(ABORT, 'So vay: dong khong hop le'); END;
+CREATE TRIGGER IF NOT EXISTS loans_no_edit BEFORE UPDATE OF doitac_id, phi_id, kind, qty, ngay ON loans BEGIN SELECT RAISE(ABORT, 'So vay: khong sua noi dung dong da ghi'); END;
 CREATE TRIGGER IF NOT EXISTS counts_log_no_delete BEFORE DELETE ON counts_log BEGIN SELECT RAISE(ABORT, 'Lich su dem chi duoc ghi them'); END;

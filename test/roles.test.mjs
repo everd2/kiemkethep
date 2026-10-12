@@ -92,7 +92,7 @@ async function main() {
       ['POST', '/doitac', {}, ALL],
       ['POST', '/receipts', {}, LAP], ['DELETE', '/receipts/99999', null, LAP], ['POST', '/transfers', {}, LAP],
       ['POST', '/adjust', {}, LAP], ['POST', '/xuat', {}, LAP], ['GET', '/report?from=2020-01-01&to=2020-01-02', null, LAP],
-      ['PATCH', '/doitac/99999', {}, LAP],
+      ['PATCH', '/doitac/99999', {}, LAP], ['GET', '/loans/export', null, LAP],
       ['POST', '/receipts/99999/duyet', {}, C2],
       ['POST', '/loans/99999/duyet', {}, C1],
       ['GET', '/review', null, C1], ['POST', '/review/duyet', { khu: 'ZZ' }, C1], ['POST', '/recount', { khu: 'ZZ' }, C1],

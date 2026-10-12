@@ -157,7 +157,7 @@ const review = {
   pending: 7,
   reports: boot.reports, khu,
   loans: [
-    { id: 31, grp: 'L1', doitac_id: 5, doitac_name: 'Cty Đông Á', phi_id: 'D8', kind: 'vay', qty: 22, note: 'hẹn trả T6', ts, user_id: 2, uname: 'An' },
+    { id: 31, grp: 'L1', doitac_id: 5, doitac_name: 'Cty Đông Á', phi_id: 'D8', kind: 'vay', qty: 22, note: 'hẹn trả T6', ts, user_id: 2, uname: 'An', ngay: yday, han: today, so_bb: 'BB-0456', nguoi: 'anh Hùng', bien_so: '29C-123' },
     { id: 32, grp: 'L1', doitac_id: 5, doitac_name: 'Cty Đông Á', phi_id: 'D10', kind: 'vay', qty: 30, note: 'hẹn trả T6', ts, user_id: 2, uname: 'An' },
   ],
 };
@@ -292,7 +292,7 @@ S.screen = 'duyet';
 S.screen = 'duyet'; S.showNormal = true; one('duyet+phi-binh-thuong'); S.showNormal = false;
 // các phần mới phải THẬT SỰ hiện ra, không chỉ "không lỗi"
 S.screen = 'duyet'; render();
-{ const h = $app.innerHTML; const thieu = ['Sổ vay mượn chờ duyệt', 'Vay của Cty Đông Á', 'Khung giờ đếm vừa đổi hôm nay', 'Vay mượn · ', 'Phiếu kho của sổ vay mượn'].filter((x) => !h.includes(x));
+{ const h = $app.innerHTML; const thieu = ['Sổ vay mượn chờ duyệt', 'Vay của Cty Đông Á', 'BB BB-0456', 'xe 29C-123', 'anh Hùng', 'hẹn trả ', 'Khung giờ đếm vừa đổi hôm nay', 'Vay mượn · ', 'Phiếu kho của sổ vay mượn'].filter((x) => !h.includes(x));
   out.push(['duyet+vay-muon', h.length, thieu.length ? 'BAD:thiếu ' + thieu.join(' | ') : 'ok']); }
 S.screen = 'lichsu'; render();
 { const h = $app.innerHTML; out.push(['lichsu+treo', h.length, h.includes('Lúc chốt còn: Khu A thiếu lần đếm buổi chiều') && h.includes('Vay mượn −') ? 'ok' : 'BAD:không nói việc còn treo / vay mượn']); }

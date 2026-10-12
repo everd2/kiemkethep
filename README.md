@@ -113,6 +113,18 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 - Hoàn tác: người ghi **rút lại** khi chưa duyệt, hoặc **huỷ** trong 10 phút sau khi duyệt; sau đó nhờ người duyệt. Người duyệt huỷ được lần ghi đã duyệt trong **7 ngày**; quá hạn thì ghi một lần **ngược lại** (trả, hoặc vay) để sửa, sổ giữ được cả hai dấu vết. Lần ghi có phiếu kho mà ngày duyệt phiếu đã chốt thì không huỷ được (luật của mọi phiếu kho).
 - Ghi *trả* nhiều hơn số đang nợ thì app **nhắc** (có thể một lần vay cũ chưa ai ghi) nhưng không chặn; dư nợ khi đó hiện là **"trả dư"** để không đọc ngược nghĩa.
 - **Đối tác**: ai cũng thêm được tên mới; từ CVKTHT trở lên sửa tên hoặc ẩn. Đối tác đã ẩn không ghi thêm được, nhưng dư nợ và lịch sử vẫn giữ.
+- Phần **trả dư được giữ lại** và trừ vào lần vay kế tiếp, nên tổng *còn nợ theo từng lần vay* luôn bằng đúng dư nợ trên thẻ đối tác (vay 100, trả 120, vay tiếp 50 thì còn nợ 30, không phải 50).
+- **Trùng số biên bản**: ghi một lần cùng đối tác, cùng số biên bản, cùng loại và cùng phi với một lần ghi chưa huỷ thì app **dừng lại hỏi** (nói rõ dòng đang có, ai ghi) — tránh hai người cùng chép một biên bản, hoặc bấm lại sau khi mất mạng. Đồng ý thì vẫn ghi được; ghi bổ sung phi khác của cùng biên bản thì không bị hỏi.
+- Thẻ *Sổ vay mượn chờ duyệt* ở **màn Duyệt** hiện đủ chứng từ (ngày giao nhận, số biên bản, hạn trả, xe, người giao/nhận) để đối chiếu với biên bản trước khi duyệt.
+- **Ai huỷ, vì sao** nằm ngay trong dòng sổ: từ chối lần ghi của người khác hoặc huỷ lần đã duyệt thì app hỏi lý do; thẻ lần ghi đã huỷ hiện tên người huỷ và lý do (tự rút lại lần ghi của mình thì không hỏi).
+- **Tải cả sổ vay mượn (Excel)** ở cuối màn Vay mượn, từ CVKTHT trở lên: mọi lần ghi từ trước tới nay kể cả lần đã huỷ (trạng thái, người ghi / duyệt / huỷ, chứng từ) và bảng dư nợ theo đối tác × phi. Số tấn tính theo kg/cây hiện tại; con số gốc của công nợ là số cây.
+- **Ghi bù kèm phiếu kho** thì app nhắc: phiếu kho đổi tồn từ hôm nay, nếu khu đã đếm lại sau lần giao nhận đó thì chọn *chỉ ghi sổ*.
+- **Tên đối tác** coi là trùng cả khi chỉ khác hoa/thường ở chữ có dấu ("Đức Anh" / "đức anh") hay thừa khoảng trắng. **Phi còn công nợ** (hoặc còn lần ghi chờ duyệt) thì không ẩn được.
+- Database tự chặn dòng sổ hỏng (số lượng ≤ 0, thiếu ngày giao nhận, đối tác không có) và **không cho sửa nội dung dòng đã ghi** — sai thì huỷ rồi ghi lại.
+- **Không huỷ được lần vay đã có lần trả ghi vào** (huỷ thì dư nợ thành âm): huỷ lần trả trước, hoặc ghi lại lần vay đúng rồi mới huỷ lần sai. Áp dụng cả khi huỷ từ phía phiếu kho đi kèm.
+- Số biên bản so trùng **không kể dấu cách, gạch, chấm, hoa/thường**: "BB 01", "bb-01", "BB.01" là một.
+- Hai người cùng duyệt / huỷ một lần ghi: người bấm sau nhận thông báo "vừa được người khác duyệt hoặc huỷ", sổ và nhật ký chỉ ghi một lần.
+- **Xoá sạch dữ liệu thép** xoá cả phiếu kho đi kèm sổ vay (vì là số liệu bãi); lần ghi sổ còn lại thành *chỉ ghi sổ*, công nợ không đổi. Lần ghi đang chờ duyệt lúc đó vẫn duyệt được, và không đổi tồn — tồn bãi bắt đầu lại từ lần đếm sau khi xoá.
 - Mọi lần ghi, duyệt, huỷ nằm trong **nhật ký**, có chip lọc *Vay mượn* riêng.
 - **Xoá sạch dữ liệu thép không xoá sổ vay**: đây là công nợ với bên ngoài, không phải số liệu của bãi. Bản sao toàn bộ có chứa sổ vay; nạp lại một bản sao **cũ chưa có sổ vay** thì sổ vay hiện tại được **giữ nguyên**.
 
@@ -278,11 +290,11 @@ Mở http://localhost:8787/setup để tạo admin thử.
 | Hạng mục | Miễn phí | Ứng dụng này dùng |
 |---|---|---|
 | Workers | 100.000 yêu cầu/ngày (reset 7:00 sáng giờ VN) | Dưới 15.000: máy hỏi số phiên bản mỗi 60 giây khi đang dùng, 5 phút khi để yên, 15 phút ngoài giờ (20:00–6:00), không hỏi khi app chạy nền |
-| D1 truy vấn mỗi yêu cầu | 50 | Tối đa khoảng 15 (gửi báo cáo cả khu chỉ 12, ghi hàng loạt bằng một câu lệnh `json_each`) |
+| D1 truy vấn mỗi yêu cầu | 50 | Hỏi phiên bản 1 câu; tải dữ liệu chung 24 câu trong 2 lượt gọi; gửi báo cáo cả khu 19; "Duyệt tất cả" khoảng 34, không tăng theo số khu hay số phiếu chờ (ghi hàng loạt bằng một câu lệnh `json_each`) |
 | Cron | 5 | 1 (mỗi giờ: tự chốt sổ ngày đã qua + dọn dẹp) |
-| D1 đọc | 5 triệu dòng/ngày | Dưới 1 triệu |
+| D1 đọc | 5 triệu dòng/ngày | Khoảng 900 dòng mỗi lần tải dữ liệu chung, 200 dòng mỗi lần gửi báo cáo, không tăng theo số năm dữ liệu (riêng Tìm nhật ký theo chữ, báo cáo "từ ngày đầu" và Sao lưu đọc cả bảng) |
 | D1 ghi | 100.000 dòng/ngày | Vài trăm đến vài nghìn |
-| D1 dung lượng | 500 MB mỗi database | Khoảng 40 MB/năm |
+| D1 dung lượng | 500 MB mỗi database | Khoảng 12 MB/năm (8 khu × 13 phi, chưa kể nhật ký) |
 | Giao diện tĩnh | Không giới hạn | |
 
 Nếu Cloudflare chặn do hết hạn mức trong ngày, app vẫn mở được và hiện số liệu lần tải gần nhất, báo cáo đếm được giữ lại để gửi sau. Nếu sau này thường xuyên vượt hạn mức, gói Workers Paid 5 USD/tháng gỡ các giới hạn này, không cần sửa code.

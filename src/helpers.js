@@ -89,7 +89,8 @@ export async function auth(req, env, renew = true) {
   if (!m) throw new HttpError(401, 'Chưa đăng nhập');
   const th = await sha256(m[1]);
   const row = await env.DB.prepare(
-    'SELECT u.id, u.name, u.phone, u.role, u.locked, u.deleted, u.must_change, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?'
+    // rev đi kèm luôn: lần hỏi ngầm /rev (mỗi máy một phút một lần, request nhiều nhất của cả app) chỉ còn một lượt gọi D1
+    "SELECT u.id, u.name, u.phone, u.role, u.locked, u.deleted, u.must_change, s.expires_at, (SELECT value FROM meta WHERE key = 'rev') rev FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?"
   ).bind(th).first();
   // xoá tài khoản đã thu hồi mọi phiên, nhưng vẫn kiểm ở đây: phiên là thứ dùng để vào hệ thống
   if (!row || row.expires_at < Date.now() || row.locked || row.deleted) throw new HttpError(401, 'Phiên đăng nhập hết hạn');
@@ -138,3 +139,20 @@ export async function createSession(env, url, req, userId) {
     .bind(th, userId, ua, Date.now(), Date.now() + SESSION_MS).run();
   return sessionCookie(url, token, SESSION_MS / 1000);
 }
+
+/* HUỶ MỘT LẦN VAY ĐÃ CÓ LẦN TRẢ GHI VÀO thì dư nợ thành ÂM ("trả dư"): sổ nói đối tác đang nợ ngược mình
+   trong khi sự thật là một lần vay vừa bị xoá khỏi sổ. Chặn ở cả hai đường huỷ (sổ vay, và phiếu kho đi
+   kèm): các dòng VAY / CHO VAY đã duyệt của lần ghi (grp, hoặc id với dòng cũ không có grp) mà dư nợ hiện
+   tại của đúng đối tác × phi × chiều đó NHỎ HƠN số của dòng — tức bỏ dòng đi là âm.
+   Hai tham số, theo thứ tự: grp, id. Dùng dấu ? trần để ghép được vào guardStmt cùng các điều kiện khác. */
+const LOAN_DU = `(SELECT SUM(CASE WHEN x.kind IN ('vay', 'cho_vay') THEN x.qty ELSE -x.qty END) FROM loans x
+  WHERE x.doitac_id = v.doitac_id AND x.phi_id = v.phi_id AND x.voided = 0 AND x.duyet_ts IS NOT NULL
+    AND (x.kind IN ('vay', 'tra_vay')) = (v.kind = 'vay'))`;
+const LOAN_AM_FROM = `FROM loans v WHERE (v.grp = ? OR v.id = ?) AND v.voided = 0 AND v.duyet_ts IS NOT NULL
+  AND v.kind IN ('vay', 'cho_vay') AND ${LOAN_DU} < v.qty`;
+export const LOAN_AM_COND = `EXISTS (SELECT 1 ${LOAN_AM_FROM})`;
+export const loanAmRows = async (env, grp, id) =>
+  (await env.DB.prepare(`SELECT v.phi_id, v.qty - ${LOAN_DU} thieu ${LOAN_AM_FROM}`).bind(grp, id).all()).results;
+export const loanAmErr = (rows) => new HttpError(409,
+  'Không huỷ được: khoản này đã có lần trả ghi vào, huỷ thì sổ thành trả dư (' + rows.map((r) => r.phi_id + ' dư ' + r.thieu).join(', ')
+  + '). Huỷ lần trả trước; nếu lần vay ghi sai số thì ghi lại lần đúng rồi mới huỷ lần sai.', 'tra_du');

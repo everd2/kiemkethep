@@ -2320,7 +2320,9 @@ async function main() {
     // bản 23 đổi nghĩa dữ liệu cũ (mã vai trò, cấp người báo): bản sao của cấu trúc trước đó không nạp được
     const f = (await S.call('GET', '/backup')).data;
     const bang = { ...f.bang }; delete bang.khu_report_log;
-    eq('bản sao cấu trúc liền trước KHÔNG nạp được', (await S.call('POST', '/restore', { file: { ...f, schema: f.schema - 1, bang }, confirm: 'NAP LAI' })).status, 400);
+    eq('bản sao cấu trúc 22 KHÔNG nạp được', (await S.call('POST', '/restore', { file: { ...f, schema: 22, bang }, confirm: 'NAP LAI' })).status, 400);
+    // bản 24 chỉ thêm index: bản sao của bản 23 vẫn nạp được
+    eq('bản sao cấu trúc 23 nạp được', (await S.call('POST', '/restore', { file: { ...f, schema: 23 }, confirm: 'NAP LAI' })).status, 200);
     eq('bản sao cùng cấu trúc, thiếu một bảng: vẫn nạp được', (await S.call('POST', '/restore', { file: { ...f, bang }, confirm: 'NAP LAI' })).status, 200);
 
     /* --- giờ làm do admin đặt, không cố định 6h–18h --- */
@@ -2492,8 +2494,8 @@ async function main() {
 
     // một lần ghi chờ duyệt rồi 320 dòng đã duyệt mới hơn: lần ghi cũ vẫn phải hiện để duyệt
     const cu = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'vay', lines: [{ phi: 'D20', qty: 7 }] }, 'An')).data.ids[0];
-    const ins = S.raw.prepare("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, duyet_ts) VALUES (?, 'D16', 'vay', 1, 1, ?, ?)");
-    for (let i = 0; i < 320; i++) ins.run(dt, Date.now(), Date.now());
+    const ins = S.raw.prepare("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, duyet_ts, ngay) VALUES (?, 'D16', 'vay', 1, 1, ?, ?, ?)");
+    for (let i = 0; i < 320; i++) ins.run(dt, Date.now(), Date.now(), vnDay());
     const L = (await S.call('GET', '/loans')).data;
     ok('lần ghi chờ duyệt cũ hơn 300 dòng vẫn hiện', L.items.some((x) => x.id === cu), L.items.length);
     eq('dòng đã duyệt vẫn chỉ lấy 300 gần nhất (cộng dòng chờ)', L.items.length, 301);
@@ -2929,6 +2931,149 @@ async function main() {
     const g4 = (await ghi({ so_bb: 'BB-0150', kind: 'tra_vay', lines: [{ phi: 'D18', qty: 20 }] })).data;
     await S.call('POST', '/loans/' + g4.ids[0] + '/duyet', {});
     eq('trả nốt phần quá hạn: hết quá hạn', (await S.call('GET', '/bootstrap')).data.loanQuaHan, { no: 0, co: 0 });
+
+    /* TRẢ DƯ được giữ lại trừ vào lần vay sau: tổng "còn nợ theo từng lần" phải bằng đúng dư nợ.
+       D20: vay 100 (hẹn đã qua), trả 120, vay tiếp 50 (hẹn đã qua) -> dư nợ 30, còn nợ theo lần cũng 30. */
+    const duyet = async (g) => S.call('POST', '/loans/' + g.ids[0] + '/duyet', {});
+    await duyet((await ghi({ so_bb: 'D-1', ngay: lui(30), han: lui(20), lines: [{ phi: 'D20', qty: 100 }] })).data);
+    await duyet((await ghi({ so_bb: 'D-2', kind: 'tra_vay', ngay: lui(25), lines: [{ phi: 'D20', qty: 120 }] })).data);
+    await duyet((await ghi({ so_bb: 'D-3', ngay: lui(15), han: lui(5), lines: [{ phi: 'D20', qty: 50 }] })).data);
+    const L2 = (await S.call('GET', '/loans')).data;
+    const duNo = (L, phi) => L.agg.filter((x) => x.phi_id === phi).reduce((a, x) => a + (x.kind === 'vay' ? x.q : x.kind === 'tra_vay' ? -x.q : 0), 0);
+    eq('trả dư rồi vay tiếp: còn nợ theo lần = dư nợ', [duNo(L2, 'D20'), L2.lots.filter((l) => l.phi_id === 'D20').map((l) => [l.so_bb, l.con])], [30, [['D-3', 30]]]);
+    // D22: lần TRẢ ghi ngày giao nhận TRƯỚC lần vay (ghi bù, gõ nhầm ngày) -> đã tất toán, không báo quá hạn
+    await duyet((await ghi({ so_bb: 'E-1', ngay: lui(10), han: lui(4), lines: [{ phi: 'D22', qty: 40 }] })).data);
+    await duyet((await ghi({ so_bb: 'E-2', kind: 'tra_vay', ngay: lui(12), lines: [{ phi: 'D22', qty: 40 }] })).data);
+    const L3 = (await S.call('GET', '/loans')).data;
+    eq('lần trả mang ngày trước lần vay: tất toán thì không còn khoản nào mở', [duNo(L3, 'D22'), L3.lots.filter((l) => l.phi_id === 'D22').length], [0, 0]);
+    eq('Tổng quan chỉ báo quá hạn phần D20 còn nợ thật', (await S.call('GET', '/bootstrap')).data.loanQuaHan, { no: 1, co: 0 });
+
+    /* TRÙNG BIÊN BẢN: cùng đối tác, số biên bản, loại và phi với một lần ghi chưa huỷ -> server dừng
+       lại hỏi (409 trung_bb); xác nhận thì ghi; khác phi / khác loại / đã huỷ thì không hỏi. */
+    const t1 = (await ghi({ so_bb: 'T-01', lines: [{ phi: 'D25', qty: 20 }] }, 'An')).data;
+    const t2 = await ghi({ so_bb: 't-01', lines: [{ phi: 'D25', qty: 20 }, { phi: 'D28', qty: 5 }] }, 'Binh');
+    eq('trùng số biên bản + cùng phi: dừng lại hỏi', [t2.status, t2.data.code], [409, 'trung_bb']);
+    ok('lời báo nói rõ dòng đang có và ai ghi', /T-01|t-01/.test(t2.data.error) && /D25 20 cây/.test(t2.data.error) && /An ghi/.test(t2.data.error) && /đang chờ duyệt/.test(t2.data.error), t2.data.error);
+    eq('bị dừng thì chưa ghi gì', S.sql("SELECT 1 FROM loans WHERE so_bb = 't-01'").length, 0);
+    eq('cùng biên bản, phi khác (ghi bổ sung): không hỏi', (await ghi({ so_bb: 'T-01', lines: [{ phi: 'D28', qty: 5 }] }, 'Binh')).status, 200);
+    eq('cùng số biên bản, loại khác: không hỏi', (await ghi({ so_bb: 'T-01', kind: 'cho_vay', lines: [{ phi: 'D25', qty: 20 }] }, 'Binh')).status, 200);
+    eq('xác nhận là lần giao nhận khác: ghi được', (await ghi({ so_bb: 'T-01', lines: [{ phi: 'D25', qty: 20 }], trung: true }, 'Binh')).status, 200);
+    await S.call('DELETE', '/loans/' + t1.ids[0], undefined, 'An');
+    S.raw.prepare("UPDATE loans SET voided = 1 WHERE so_bb = 'T-01' AND kind = 'vay' AND phi_id = 'D25'").run();
+    eq('lần ghi trùng đã huỷ hết: ghi lại không bị hỏi', (await ghi({ so_bb: 'T-01', lines: [{ phi: 'D25', qty: 20 }] }, 'An')).status, 200);
+
+    // màn Duyệt nhận đủ chứng từ của lần ghi chờ duyệt, để đối chiếu với biên bản ngay tại đó
+    const gd = (await ghi({ so_bb: 'BB-0777', ngay: lui(2), han: lui(-9), nguoi: 'chị Lan', bien_so: '30H-456', lines: [{ phi: 'D32', qty: 4 }] }, 'An')).data;
+    const rv = (await S.call('GET', '/review')).data.loans.find((x) => x.grp === gd.grp);
+    eq('màn Duyệt: lần ghi sổ vay có đủ chứng từ', [rv.so_bb, rv.ngay, rv.han, rv.nguoi, rv.bien_so], ['BB-0777', lui(2), lui(-9), 'chị Lan', '30H-456']);
+
+    // AI huỷ / từ chối và VÌ SAO nằm ngay trong dòng (không chỉ trong nhật ký), và hiện ở chi tiết đối tác
+    eq('từ chối kèm lý do', (await S.call('DELETE', '/loans/' + gd.ids[0], { ly_do: '  ghi trùng biên bản  ' })).status, 200);
+    const hv = S.one('SELECT voided, voided_by, voided_name, voided_note FROM loans WHERE grp = ?', gd.grp);
+    eq('dòng ghi lại người huỷ và lý do', [hv.voided, hv.voided_by, !!hv.voided_name, hv.voided_note], [1, 1, true, 'ghi trùng biên bản']);
+    const ctH = (await S.call('GET', '/loans?doitac=' + dt)).data.items.find((x) => x.grp === gd.grp);
+    eq('chi tiết đối tác: có tên người huỷ và lý do', [!!ctH.voided_uname, ctH.voided_note], [true, 'ghi trùng biên bản']);
+    ok('nhật ký huỷ cũng có lý do', /"ly_do":"ghi trùng biên bản"/.test(S.one("SELECT detail FROM audit WHERE action = 'loan_reject' ORDER BY id DESC LIMIT 1").detail));
+    const gk = (await ghi({ so_bb: 'BB-0778', lines: [{ phi: 'D32', qty: 1 }] }, 'An')).data;
+    eq('bản app cũ huỷ không gửi lý do: vẫn huỷ được, vẫn ghi người huỷ', [(await S.call('DELETE', '/loans/' + gk.ids[0], undefined, 'An')).status, !!S.one('SELECT voided_by v FROM loans WHERE grp = ?', gk.grp).v], [200, true]);
+
+    // tệp Excel của cả sổ: đủ mọi lần ghi (cả đã huỷ) + bảng dư nợ; từ CVKTHT trở lên
+    const csv = await S.call('GET', '/loans/export');
+    eq('tải sổ vay: 200, là CSV', [csv.status, /text\/csv/.test(csv.res.headers.get('Content-Type'))], [200, true]);
+    const dong = String(csv.data).split('\r\n');
+    ok('CSV có dòng tiêu đề và mọi lần ghi', /Ngày giao nhận/.test(dong[1]) && dong.filter((l) => /"Cty Nam Hà"/.test(l)).length >= S.sql('SELECT 1 FROM loans').length, dong[1]);
+    ok('CSV: lần đã huỷ có trạng thái, người huỷ và lý do', dong.some((l) => /"BB-0777"/.test(l) && /"Đã huỷ"/.test(l) && /"ghi trùng biên bản"/.test(l)));
+    ok('CSV: bảng dư nợ D20 còn nợ 30', dong.some((l) => /^"Cty Nam Hà";"D20";"cây";150;120;30;/.test(l)), dong.filter((l) => /"D20";"cây"/.test(l)).join(' | '));
+    eq('tiểu đội trưởng không tải được cả sổ', (await S.call('GET', '/loans/export', undefined, 'An')).status, 403);
+    // chữ người dùng gõ mà Excel tự "hiểu" (ngày, số, công thức) phải ra tệp dạng chữ: ="..."
+    const gx = (await ghi({ so_bb: '01/10', note: '=1+1', nguoi: '+84912345678', bien_so: '0123', lines: [{ phi: 'D36', qty: 1 }] }, 'An')).data;
+    const dx = String((await S.call('GET', '/loans/export')).data).split('\r\n').find((l) => /01\/10/.test(l) && /D36/.test(l)) || '';
+    ok('CSV: số biên bản / biển số / số điện thoại / ghi chú dạng công thức giữ nguyên là chữ',
+      ['"=""01/10"""', '"=""0123"""', '"=""+84912345678"""', '"=""=1+1"""'].every((x) => dx.includes(x)), dx);
+    ok('CSV: chữ bình thường không bị bọc', /"BB-0123"/.test(dong.join('\n')) && /"anh Hùng"/.test(dong.join('\n')));
+    await S.call('DELETE', '/loans/' + gx.ids[0], undefined, 'An');
+    // bản sao có dòng sổ vay hỏng: từ chối rõ ràng, không nạp gì
+    const bk = (await S.call('GET', '/backup')).data;
+    bk.bang.loans[0].qty = 0;
+    const soTruoc = S.sql('SELECT COUNT(*) n FROM loans')[0].n;
+    const nh = await S.call('POST', '/restore', { file: bk, confirm: 'NAP LAI' }); const soSau = S.sql('SELECT COUNT(*) n FROM loans')[0].n;
+    // số biên bản gõ khác kiểu (dấu cách, gạch, hoa/thường) vẫn là cùng một tờ
+    await ghi({ so_bb: 'KB 77', lines: [{ phi: 'D14', qty: 2 }] }, 'An');
+    const kb = await ghi({ so_bb: 'kb-77', lines: [{ phi: 'D14', qty: 2 }] }, 'Binh');
+    ok('số biên bản khác kiểu gõ: vẫn hỏi trùng, nhắc đúng số đang có trong sổ', kb.status === 409 && kb.data.code === 'trung_bb' && /KB 77/.test(kb.data.error), JSON.stringify(kb.data));
+    eq('số biên bản khác thật (KB 771): không hỏi', (await ghi({ so_bb: 'KB 771', lines: [{ phi: 'D14', qty: 2 }] }, 'Binh')).status, 200);
+
+    /* KHÔNG HUỶ LẦN VAY ĐÃ CÓ LẦN TRẢ GHI VÀO (dư nợ thành âm). D20 đang: vay 100, trả 120, vay 50 -> còn 30.
+       Huỷ lần vay 50 thì thành trả dư 20: từ chối. Huỷ lần trả trước thì huỷ được. */
+    const idBB = (bb) => S.one('SELECT id FROM loans WHERE so_bb = ? AND voided = 0', bb).id;
+    const hd = await S.call('DELETE', '/loans/' + idBB('D-3'), { ly_do: 'thử' });
+    ok('huỷ lần vay làm dư nợ âm: từ chối, nói rõ', hd.status === 409 && hd.data.code === 'tra_du' && /D20 dư 20/.test(hd.data.error), JSON.stringify(hd.data));
+    eq('bị từ chối thì dòng còn nguyên', S.one("SELECT voided v FROM loans WHERE so_bb = 'D-3'").v, 0);
+    eq('huỷ lần trả thì được (dư nợ chỉ tăng)', (await S.call('DELETE', '/loans/' + idBB('D-2'), { ly_do: 'thử' })).status, 200);
+    eq('sau đó huỷ lần vay 50 được: còn nợ 100', [(await S.call('DELETE', '/loans/' + idBB('D-3'), { ly_do: 'thử' })).status, duNo((await S.call('GET', '/loans')).data, 'D20')], [200, 100]);
+    // cùng chốt chặn khi huỷ từ phía PHIẾU KHO đi kèm
+    const vk = (await ghi({ so_bb: 'VK-1', khu: 'A', lines: [{ phi: 'D12', qty: 5 }] }, 'Kho')).data;
+    await duyet(vk);
+    await duyet((await ghi({ so_bb: 'VK-2', kind: 'tra_vay', lines: [{ phi: 'D12', qty: 5 }] }, 'An')).data);
+    const hk = await S.call('DELETE', '/receipts/' + S.one('SELECT id FROM receipts WHERE grp = ?', vk.grp).id);
+    ok('huỷ phiếu kho của lần vay đã có lần trả: từ chối', hk.status === 409 && hk.data.code === 'tra_du', JSON.stringify(hk.data));
+    eq('phiếu kho và sổ còn nguyên', [S.one('SELECT voided v FROM receipts WHERE grp = ?', vk.grp).v, S.one('SELECT voided v FROM loans WHERE grp = ?', vk.grp).v], [0, 0]);
+
+    /* HAI NGƯỜI CÙNG LÚC: giả lập người khác chen vào ĐÚNG GIỮA lúc đọc và lúc ghi (ngay trước batch ghi).
+       Lần ghi sau phải bị từ chối trọn vẹn, nhật ký không có dòng duyệt / huỷ thừa. */
+    const chen = async (lam, goi) => {
+      const goc = S.env.DB.batch.bind(S.env.DB); let xong = false;
+      S.env.DB.batch = async (st) => { if (!xong && st.length >= 4) { xong = true; lam(); } return goc(st); };
+      try { return await goi(); } finally { S.env.DB.batch = goc; }
+    };
+    const nk = (a) => S.sql('SELECT COUNT(*) n FROM audit WHERE action = ?', a)[0].n;
+    const c1 = (await ghi({ so_bb: 'CH-1', lines: [{ phi: 'D10', qty: 1 }] }, 'An')).data;
+    let truoc = nk('loan_duyet');
+    const rc1 = await chen(() => S.raw.prepare('UPDATE loans SET voided = 1 WHERE grp = ?').run(c1.grp), () => S.call('POST', '/loans/' + c1.ids[0] + '/duyet', {}));
+    eq('duyệt đúng lúc người khác vừa huỷ: 409, không ghi nhật ký duyệt, không duyệt', [rc1.status, rc1.data.code, nk('loan_duyet') - truoc, S.one('SELECT duyet_ts d FROM loans WHERE grp = ?', c1.grp).d], [409, 'changed', 0, null]);
+    const c2 = (await ghi({ so_bb: 'CH-2', lines: [{ phi: 'D10', qty: 1 }] }, 'An')).data;
+    truoc = nk('loan_reject');
+    const rc2 = await chen(() => S.raw.prepare('UPDATE loans SET duyet_ts = 5, duyet_by = 1 WHERE grp = ?').run(c2.grp), () => S.call('DELETE', '/loans/' + c2.ids[0], undefined, 'An'));
+    eq('rút lại đúng lúc người khác vừa duyệt: 409, dòng không bị huỷ, không ghi "từ chối"', [rc2.status, rc2.data.code, S.one('SELECT voided v FROM loans WHERE grp = ?', c2.grp).v, nk('loan_reject') - truoc], [409, 'changed', 0, 0]);
+    const c3 = (await ghi({ so_bb: 'CH-3', lines: [{ phi: 'D10', qty: 1 }] }, 'An')).data;
+    truoc = nk('loan_duyet');
+    const rc3 = await chen(() => S.raw.prepare('UPDATE loans SET duyet_ts = 5, duyet_by = 1 WHERE grp = ?').run(c3.grp), () => S.call('POST', '/loans/' + c3.ids[0] + '/duyet', {}));
+    eq('hai người cùng bấm duyệt: người sau 409, nhật ký không có dòng duyệt thứ hai', [rc3.status, nk('loan_duyet') - truoc, S.one('SELECT duyet_ts d FROM loans WHERE grp = ?', c3.grp).d], [409, 0, 5]);
+
+    ok('nạp bản sao có dòng sổ vay hỏng: 400 nói rõ, dữ liệu giữ nguyên', nh.status === 400 && /sổ vay mượn không hợp lệ/.test(nh.data.error) && soSau === soTruoc, JSON.stringify(nh.data));
+
+    // Tổng quan: tiểu đội trưởng không phải trả giá quét sổ (thẻ quá hạn chỉ hiện cho người lập phiếu)
+    eq('tiểu đội trưởng: không tính quá hạn', (await S.call('GET', '/bootstrap', undefined, 'An')).data.loanQuaHan, { no: 0, co: 0 });
+    eq('CVKTHT: vẫn thấy khoản quá hạn', (await S.call('GET', '/bootstrap', undefined, 'Kho')).data.loanQuaHan, { no: 1, co: 0 });
+
+    // tên đối tác trùng khi chỉ khác hoa/thường CÓ DẤU, khác dạng Unicode, hay thừa khoảng trắng
+    eq('thêm đối tác tên có dấu', (await S.call('POST', '/doitac', { name: 'Cty Đức Ánh' })).status, 200);
+    eq('khác hoa/thường chữ có dấu: vẫn là trùng', (await S.call('POST', '/doitac', { name: 'cty đức ánh' })).status, 400);
+    eq('dạng Unicode tổ hợp (NFD): vẫn là trùng', (await S.call('POST', '/doitac', { name: 'Cty Đức Ánh'.normalize('NFD') })).status, 400);
+    eq('thừa khoảng trắng: vẫn là trùng', (await S.call('POST', '/doitac', { name: ' Cty  Đức   Ánh ' })).status, 400);
+    eq('sửa tên đối tác khác thành tên đó: từ chối', (await S.call('PATCH', '/doitac/' + dt, { name: 'CTY ĐỨC ÁNH' })).status, 400);
+    eq('sửa hoa/thường tên của chính nó: được', (await S.call('PATCH', '/doitac/' + dt, { name: 'CTY NAM HÀ' })).status, 200);
+    await S.call('PATCH', '/doitac/' + dt, { name: 'Cty Nam Hà' });
+
+    // phi còn công nợ (hoặc còn lần ghi chờ duyệt) thì không ẩn được: ẩn là khoá đường ghi trả
+    const an20 = await S.call('PATCH', '/phi/D20', { active: 0 });
+    ok('phi còn dư nợ: không ẩn được, nói rõ với ai', an20.status === 400 && /vay mượn/.test(an20.data.error) && /Cty Nam Hà/.test(an20.data.error), JSON.stringify(an20.data));
+    eq('phi chỉ còn lần ghi chờ duyệt: cũng không ẩn', (await S.call('PATCH', '/phi/D28', { active: 0 })).status, 400);
+    eq('phi đã tất toán (D22), không còn thép: ẩn được', (await S.call('PATCH', '/phi/D22', { active: 0 })).status, 200);
+    await S.call('PATCH', '/phi/D22', { active: 1 });
+
+    // database tự chặn dòng hỏng và việc sửa nội dung dòng đã ghi
+    const nem = (q, ...p) => { try { S.raw.prepare(q).run(...p); return false; } catch (e) { return /So vay/.test(e.message); } };
+    ok('trigger: số lượng 0 không vào sổ', nem("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, ngay) VALUES (?, 'D16', 'vay', 0, 1, 1, ?)", dt, today));
+    ok('trigger: thiếu ngày giao nhận không vào sổ', nem("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts) VALUES (?, 'D16', 'vay', 5, 1, 1)", dt));
+    ok('trigger: đối tác không có thì không vào sổ', nem("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, ngay) VALUES (999999, 'D16', 'vay', 5, 1, 1, ?)", today));
+    ok('trigger: không sửa được số lượng dòng đã ghi', nem('UPDATE loans SET qty = qty + 1 WHERE id = ?', g1.ids[0]));
+    ok('trigger: không đổi được đối tác / loại của dòng đã ghi', nem("UPDATE loans SET kind = 'tra_vay' WHERE id = ?", g1.ids[0]));
+    // câu tạo trigger trong migration đúng cú pháp (database test dựng từ schema.sql nên đây là lần duy nhất chúng được chạy)
+    const { LOAN_TRIGGERS } = await import('../src/db.js');
+    S.raw.exec('DROP TRIGGER loans_chk_insert; DROP TRIGGER loans_no_edit');
+    for (const q of LOAN_TRIGGERS) S.raw.prepare(q).run();
+    ok('trigger tạo từ migration cũng chặn', nem('UPDATE loans SET qty = qty + 1 WHERE id = ?', g1.ids[0]) && nem("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, ngay) VALUES (?, 'D16', 'vay', 0, 1, 1, ?)", dt, today));
   }
 
   /* ================= 61. Chấm công báo cáo: ai báo, ai không báo, khu thiếu buổi nào =================
@@ -3111,7 +3256,8 @@ async function main() {
 
     // --- sổ vay mượn: cùng thang duyệt ---
     const dt = (await S.call('POST', '/doitac', { name: 'Cty Cấp Bậc' }, 'An')).data.id;
-    const ghi = (who, qty) => S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-' + who, doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty }] }, who);
+    let soBB = 0; // mỗi lần giao nhận một số biên bản riêng (trùng số + cùng phi thì server hỏi lại)
+    const ghi = (who, qty) => S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-' + who + '-' + (++soBB), doitac: dt, kind: 'vay', lines: [{ phi: 'D16', qty }] }, who);
     const lA = await ghi('An', 3), lC = await ghi('Cv', 4);
     eq('CVKTHT duyệt lần ghi của tiểu đội trưởng', (await S.call('POST', '/loans/' + lA.data.ids[0] + '/duyet', {}, 'Cv')).status, 200);
     eq('CVKTHT không duyệt lần ghi của mình', (await S.call('POST', '/loans/' + lC.data.ids[0] + '/duyet', {}, 'Cv')).status, 403);

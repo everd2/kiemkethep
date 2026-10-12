@@ -1464,8 +1464,11 @@ function loanSec(R) {
   return `<div class="col gap8"><div class="row" style="justify-content:space-between;align-items:baseline"><span class="sec">Sổ vay mượn chờ duyệt</span><span class="sm muted">không tính vào tồn</span></div>
     ${order.map((g) => {
       const rows = by[g], r0 = rows[0], id = Math.min(...rows.map((r) => r.id));
-      return `<div class="card col gap6"><b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b>
+      // chứng từ để người duyệt đối chiếu với tờ biên bản trong nhóm Zalo ngay tại đây, như thẻ ở màn Vay mượn
+      const ct = [r0.so_bb ? 'BB ' + esc(r0.so_bb) : '', hanTxt(r0.han, false), r0.bien_so ? 'xe ' + esc(r0.bien_so) : '', r0.nguoi ? esc(r0.nguoi) : ''].filter(Boolean).join(' · ');
+      return `<div class="card col gap6"><b>${r0.ngay ? ngayNgan(r0.ngay) + ' · ' : ''}${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b>
         <span>${esc(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '))}</span>
+        ${ct ? `<span class="sm">${ct}</span>` : ''}
         <span class="sm muted">${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>
         ${R.closed ? '' : duyetDuoc(r0) ? `<div class="row gap6"><button class="btn s ok f1" data-a="lduyet" data-id="${id}">DUYỆT</button><button class="btn s bad f1" data-a="lvoid" data-id="${id}">TỪ CHỐI</button></div>` : choCapTren('Lần ghi do CVKTHT hoặc cấp trên ghi')}</div>`;
     }).join('')}</div>`;
@@ -1879,7 +1882,7 @@ const phieuWord = (d) => ({ chuyen: 'chuyển khu', dc: 'điều chỉnh tồn',
 const dcLines = (d) => (d.kind === 'dc' || d.kind === 'xuat' ? d : { ...d, lines: (d.lines || []).filter((l) => l.qty > 0) });
 // "Vay của Cty A: D16 180 cây"; dòng nhật ký cũ (trước khi ghi kèm đối tác) chỉ còn loại ghi
 const loanAuditTxt = (d) => (d.doitac ? loanTitle(d.kind, d.doitac) : ((LOAN_KIND[d.kind] || {}).ten || d.kind))
-  + (d.lines && d.lines.length ? ': ' + lineTxt(d) : '');
+  + (d.lines && d.lines.length ? ': ' + lineTxt(d) : '') + (d.ly_do ? ' · lý do: ' + d.ly_do : '');
 function fmtAudit(a) {
   let d = {};
   try { d = a.detail ? JSON.parse(a.detail) : {}; } catch (e) { d = {}; }
@@ -2261,7 +2264,7 @@ function loanCard(rows) {
     : quyen || (mine && (cho || Date.now() - r0.duyet_ts < 10 * 60e3))
       ? `<button class="btn s bad" data-a="lvoid" data-id="${id}">${cho ? 'Rút lại' : 'Huỷ'}</button>`
       : '';
-  const nhan = huy ? '<span class="badge bad">Đã huỷ</span>' : cho ? '<span class="badge warn">Chờ duyệt</span>' : `<span class="badge ok">Đã duyệt${r0.duyet_uname ? ' · ' + esc(r0.duyet_uname) : ''}</span>`;
+  const nhan = huy ? `<span class="badge bad">Đã huỷ${r0.voided_uname ? ' · ' + esc(r0.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>' : `<span class="badge ok">Đã duyệt${r0.duyet_uname ? ' · ' + esc(r0.duyet_uname) : ''}</span>`;
   /* Ba dòng: (1) NGÀY GIAO NHẬN + việc + trạng thái, (2) phi và khối lượng, (3) chứng từ: số biên
      bản, hạn trả, xe, người — rồi người ghi sổ. Ngày giao nhận là ngày trên biên bản, khác lúc bấm ghi. */
   const conNo = !huy && !cho && loanLotsHien().some((l) => l.grp === r0.grp && l.con > 0);
@@ -2269,7 +2272,7 @@ function loanCard(rows) {
     r0.kho ? 'phiếu kho ' + esc(kName(r0.kho)) : ''].filter(Boolean).join(' · ');
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
     ${esc(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '))} · ${fmtT(kg)} tấn<br>
-    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span></span>${nut}</div>`;
+    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${nut}</div>`;
 }
 // gom các dòng cùng lần ghi (grp), giữ thứ tự mới nhất trước như server trả về
 const loanGroups = (items) => {
@@ -2356,7 +2359,7 @@ function vVayMuon() {
   const khoBox = !canIn() ? '' : `<b class="sm">6. Thép có qua bãi không?</b>
     <div class="row gap6"><button class="chip s f1 ${khoOn ? 'on' : ''}" data-a="lkho" data-v="1">Có, lập phiếu kho</button><button class="chip s f1 ${khoOn ? '' : 'on'}" data-a="lkho" data-v="0">Không, chỉ ghi sổ</button></div>
     ${khoOn ? `<div class="wrap">${b.khuAct.map((k) => `<button class="chip s ${F.khu === k.id ? 'on' : ''}" data-a="lkhu" data-v="${esc(k.id)}">${esc(k.name)}</button>`).join('')}</div>
-      <span class="sm muted" style="line-height:1.4">${ra ? 'Thép rời' : 'Thép vào'} ${esc(kName(F.khu))}${ra && p ? ` (còn lấy được ${fmtQs(conLay(F.khu, F.phi), p)} ${F.phi})` : ''}. Tồn khu đổi theo khi duyệt, nhưng <b>không</b> tính là nhập hay dùng.</span>`
+      <span class="sm muted" style="line-height:1.4">${ra ? 'Thép rời' : 'Thép vào'} ${esc(kName(F.khu))}${ra && p ? ` (còn lấy được ${fmtQs(conLay(F.khu, F.phi), p)} ${F.phi})` : ''}. Tồn khu đổi theo khi duyệt, nhưng <b>không</b> tính là nhập hay dùng.</span>${fv('lngay', b.today) < b.today ? '<span class="sm" style="color:var(--warn);line-height:1.4"><b>Ghi bù ngày cũ:</b> phiếu kho đổi tồn từ HÔM NAY. Nếu khu đã đếm lại sau lần giao nhận đó thì số đếm đã tính thép này rồi — chọn "Không, chỉ ghi sổ".</span>' : ''}`
     : '<span class="sm muted" style="line-height:1.4">Chỉ ghi công nợ, tồn bãi không đổi (thép giao thẳng, không qua bãi).</span>'}`;
   const lines = (F.lines || []).length ? `<div class="card" style="padding:0;overflow:hidden">${F.lines.map((l, i) => `<div class="li"><span><b>${l.phi}</b> · ${fmtQ(l.qty, l.phi)}</span><button class="btn s bad" data-a="lrm" data-i="${i}">Xoá</button></div>`).join('')}</div>` : '';
   const form = `<div class="card col gap8">
@@ -2402,6 +2405,7 @@ function vVayMuon() {
     ${form}
     ${cho.length ? `<h2 class="sec">Chờ duyệt (${cho.length})</h2><div class="card" style="padding:0;overflow:hidden">${cho.map(loanCard).join('')}</div>` : ''}
     <h2 class="sec">Đã duyệt gần đây</h2>${xong.length ? `<div class="card" style="padding:0;overflow:hidden">${xong.map(loanCard).join('')}</div>` : '<div class="muted">Chưa có.</div>'}
+    ${canSua ? '<button class="btn full" data-a="lcsv">Tải cả sổ vay mượn (Excel)</button><span class="sm muted" style="line-height:1.4">Mọi lần ghi từ trước tới nay (cả lần đã huỷ) và bảng dư nợ theo đối tác, để đối chiếu công nợ và lưu ngoài app.</span>' : ''}
     ${dtList}
   </div>`;
 }
@@ -3537,6 +3541,7 @@ const ACTIONS = {
     const msg = `${loanTitle(F.kind, ten)}:\n${lines.map((l) => '  ' + l.phi + ': ' + fmtQ(l.qty, l.phi)).join('\n')}`
       + (vuot.length ? `\n\nLưu ý: ${vuot.map((l) => l.phi).join(', ')} trả nhiều hơn số đang nợ trong sổ. Có thể một lần vay trước đó chưa được ghi.` : '')
       + (kho ? `\n\nKèm phiếu kho: thép ${ra ? 'rời' : 'vào'} ${kName(kho)}. Tồn khu đổi khi duyệt, không tính là nhập hay dùng.`
+          + (ngay < today ? `\n⚠ GHI BÙ ngày ${fmtDay(ngay)} mà kèm phiếu kho: tồn ${kName(kho)} sẽ đổi từ HÔM NAY. Nếu khu đã đếm lại sau ngày đó thì số đếm đã tính thép này rồi — bỏ, chọn "Không, chỉ ghi sổ".` : '')
         : '\n\nChỉ ghi sổ: tồn bãi KHÔNG đổi.')
       + `\n\nNgày giao nhận: ${fmtDay(ngay)}${soNgay(ngay, today) > 7 ? ` (ghi bù ${soNgay(ngay, today)} ngày — kiểm tra lại ngày trên biên bản)` : ''}`
       + (han ? `\nHạn trả: ${fmtDay(han)}` : '')
@@ -3544,14 +3549,21 @@ const ACTIONS = {
       + '\n✓ Đã có biên bản giao nhận\n✓ Đã gửi biên bản lên nhóm Zalo'
       + '\nCần cấp trên duyệt. Đúng chưa?';
     if (!(await ask(msg, 'GHI SỔ'))) return;
-    act(async () => {
-      await api('POST', '/loans', { doitac: F.doitac, kind: F.kind, lines, note, bienban: true, zalo: true, ngay, han: han || null, so_bb: soBB, nguoi, bien_so: bienSo, ...(kho ? { khu: kho } : {}) });
+    /* Server dừng lại khi số biên bản này đã có trong sổ (cùng đối tác, loại, phi): hỏi rồi mới gửi
+       lại kèm trung. Hỏi NGOÀI act, vì hộp hỏi không mở được khi màn đang "Đang lưu...". */
+    let trungMsg = '';
+    const gui = (trung) => act(async () => {
+      try {
+        await api('POST', '/loans', { doitac: F.doitac, kind: F.kind, lines, note, bienban: true, zalo: true, ngay, han: han || null, so_bb: soBB, nguoi, bien_so: bienSo, ...(kho ? { khu: kho } : {}), ...(trung ? { trung: true } : {}) });
+      } catch (e) { if (e.code !== 'trung_bb' || trung) throw e; trungMsg = e.message; return; }
       // hai ô xác nhận và các trường chứng từ là của lần ghi VỪA RỒI: lần sau phải nhập lại cho biên bản mới
       F.lines = []; S.form.lqty = ''; S.form.lnote = ''; F.bb = false; F.zl = false;
       ['lngay', 'lhan', 'lsobb', 'lnguoi', 'lbienso'].forEach((k) => delete S.form[k]);
       F.done = `${loanTitle(F.kind, ten)}: ${lines.map((l) => l.phi + ' ' + fmtQs(l.qty, l.phi)).join(' · ')}`;
       S.loans = await api('GET', '/loans'); await loadBoot();
     });
+    await gui(false);
+    if (trungMsg && await ask(trungMsg + '\n\nVẫn ghi thêm một lần nữa?', 'VẪN GHI', true)) await gui(true);
   },
   lduyet(d) {
     act(async () => {
@@ -3566,12 +3578,19 @@ const ACTIONS = {
     const tuChoi = cho && r0 && (r0.kho ? isCH() : duyetDuoc(r0)) && r0.user_id !== S.me.id;
     const msg = cho ? (tuChoi ? 'Từ chối lần ghi này?' : 'Rút lại lần ghi này?') + '\nChưa duyệt nên chưa vào dư nợ.'
       : 'Huỷ lần ghi đã duyệt?\nDư nợ được tính lại không có khoản này.';
-    if (!(await ask(msg, cho ? (tuChoi ? 'TỪ CHỐI' : 'RÚT LẠI') : 'HUỶ', true))) return;
+    /* Từ chối lần ghi của người khác, hoặc huỷ lần đã duyệt: hỏi LÝ DO, server ghi vào chính dòng đó cùng
+       tên người huỷ — về sau mở sổ ra là thấy, không phải lục nhật ký. Tự rút lại lần ghi của mình thì khỏi. */
+    let ly = '';
+    if (tuChoi || !cho) {
+      ly = await askText(msg, cho ? 'TỪ CHỐI' : 'HUỶ', 'Lý do (vd: ghi trùng, sai số lượng)');
+      if (ly === false) return;
+    } else if (!(await ask(msg, 'RÚT LẠI', true))) return;
     act(async () => {
-      try { await api('DELETE', '/loans/' + d.id); }
+      try { await api('DELETE', '/loans/' + d.id, ly ? { ly_do: String(ly).trim() } : undefined); }
       finally { await reloadLoanScreen(); }
     }, cho ? 'Đã bỏ lần ghi.' : 'Đã huỷ lần ghi.');
   },
+  lcsv() { download('/loans/export', `so-vay-muon_${S.boot.today}.csv`); },
   ldtedit(d) { S.doitacEdit = Number(d.id); S.form.ldtname = null; render(); },
   ldtcancel() { S.doitacEdit = null; S.form.ldtname = null; render(); },
   ldtsave(d) {

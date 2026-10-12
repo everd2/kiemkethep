@@ -8,7 +8,7 @@ import { changePin, login, logout, recoverAdmin, setup } from './auth.js';
 import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
-import { doitacCreate, doitacUpdate, duyetLoan, loansView, postLoan, voidLoan } from './loans.js';
+import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -45,8 +45,7 @@ async function handle(req, env, url) {
   if (r0 === 'rev' && method === 'GET') {
     const u = await auth(req, env, false);
     if (u.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
-    const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'").first();
-    return json({ rev: r ? r.value : 0, today: vnDay() });
+    return json({ rev: u.rev || 0, today: vnDay() });
   }
 
   const user = await auth(req, env);
@@ -85,8 +84,10 @@ async function handle(req, env, url) {
   if (r0 === 'loans') {
     need(ALL);
     if (method === 'GET' && p.length === 1) return loansView(env, url);
+    // tệp Excel của cả sổ: cho người đi đối chiếu công nợ với đối tác (từ CVKTHT, như báo cáo kỳ)
+    if (method === 'GET' && p.length === 2 && p[1] === 'export') { need(LAP_PHIEU); return loansCsv(env); }
     if (method === 'POST' && p.length === 1) return postLoan(req, env, user);
-    if (method === 'DELETE' && p.length === 2) return voidLoan(env, user, Number(p[1]));
+    if (method === 'DELETE' && p.length === 2) return voidLoan(req, env, user, Number(p[1]));
     if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { needCap(1); return duyetLoan(env, user, Number(p[1])); }
   }
   // Danh bạ đối tác: tạo mở cho mọi vai trò (thêm tên mới khi cần), sửa tên/ẩn thì trừ Tiểu đội trưởng

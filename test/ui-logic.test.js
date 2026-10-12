@@ -53,6 +53,10 @@ ctx.fetch = (url, opt) => {
   if (p.indexOf('/api/counts') === 0) return reply({ ok: true, conflict: false });
   if (p.indexOf('/api/receipts') === 0) return reply({ ok: true, id: 77 });
   if (p.indexOf('/api/report') === 0) return reply({ ok: true });
+  // sổ vay: server dừng lại hỏi khi trùng số biên bản, cho tới khi máy khách gửi kèm trung: true
+  if (ctx._trungBB && p === '/api/loans' && opt && opt.method === 'POST' && !JSON.parse(opt.body).trung) {
+    return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'Biên bản số BB-01 đã có trong sổ', code: 'trung_bb' }) });
+  }
   return reply({ ok: true });
 };
 ctx.globalThis = ctx;
@@ -815,6 +819,50 @@ const run = async () => {
   ok('gửi kèm hai xác nhận chứng từ và số biên bản', post && post.body.bienban === true && post.body.zalo === true && post.body.so_bb === 'BB-01', JSON.stringify(post && post.body));
   ok('ngày giao nhận mặc định hôm nay; lần trả thì không gửi hạn trả', post && post.body.ngay === S_today() && post.body.han === null, JSON.stringify(post && post.body));
   ok('ghi xong: hai ô xác nhận về chưa tick (lần sau tick lại cho biên bản mới)', !r('S.loan.bb') && !r('S.loan.zl'));
+  // trùng số biên bản: server dừng lại -> hỏi lại, chưa xoá form; đồng ý thì gửi lại kèm trung: true
+  const tick = () => new Promise((res) => setImmediate(res));
+  const ghiLai = async () => {
+    r(`S.loans = { doitac: [{ id: 5, name: 'Cty Hoà Bình', active: 1 }], items: [], agg: [] }; S.loan.doitac = 5; S.loan.kind = 'vay'; S.loan.phi = 'D10'; S.loan.kho = false; S.loan.bb = true; S.loan.zl = true; S.loan.done = null; S.ask = null;`);
+    ctx._mk('lqty', '7'); ctx._mk('lsobb', 'BB-01'); calls.length = 0;
+    r(`ACTIONS.lsave()`); r(`ACTIONS.askyes()`);
+    for (let i = 0; i < 6; i++) await tick();
+  };
+  const posts = () => calls.filter((c) => c.url === '/api/loans' && c.method === 'POST');
+  ctx._trungBB = true;
+  await ghiLai();
+  ok('trùng biên bản: hộp hỏi lại hiện lời server', /đã có trong sổ/.test(r('S.ask ? S.ask.msg : ""')) && /Vẫn ghi thêm/.test(r('S.ask ? S.ask.msg : ""')), r('S.ask ? S.ask.msg : ""'));
+  ok('trùng biên bản: chưa ghi, form còn nguyên', posts().length === 1 && r('S.loan.bb') === true && !r('S.loan.done'));
+  r(`ACTIONS.askno()`); for (let i = 0; i < 6; i++) await tick();
+  ok('trùng biên bản: bỏ thì không gửi lại', posts().length === 1);
+  await ghiLai();
+  r(`ACTIONS.askyes()`); for (let i = 0; i < 6; i++) await tick();
+  ok('trùng biên bản: đồng ý thì gửi lại kèm trung và ghi xong', posts().length === 2 && posts()[1].body.trung === true && !!r('S.loan.done') && !r('S.loan.bb'), JSON.stringify(posts().map((c) => c.body.trung)));
+  ctx._trungBB = false;
+  // huỷ lần ghi đã duyệt / từ chối lần ghi của người khác: hỏi lý do rồi gửi kèm; tự rút lại thì không hỏi
+  r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'vaymuon'; S.ask = null; S.loans = { doitac: [{ id: 5, name: 'Cty Hoà Bình', active: 1 }], agg: [], items: [
+    { id: 21, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 30, grp: 'h1', user_id: 2, uname: 'An', cap: 0, ts: Date.now(), duyet_ts: null },
+    { id: 22, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 3, grp: 'h2', user_id: 1, uname: 'A', cap: 2, ts: Date.now(), duyet_ts: null }] };`);
+  calls.length = 0;
+  r(`ACTIONS.lvoid({ id: '21' })`);
+  ok('từ chối lần ghi của người khác: hộp hỏi có ô lý do', !!r('S.ask && S.ask.input'));
+  r(`S.form.askin = 'ghi trùng'; ACTIONS.askyes()`); for (let i = 0; i < 6; i++) await tick();
+  const del = calls.find((c) => c.method === 'DELETE' && c.url === '/api/loans/21');
+  ok('từ chối: gửi kèm lý do', !!del && del.body && del.body.ly_do === 'ghi trùng', JSON.stringify(del));
+  r(`S.loans.items = [{ id: 22, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 3, grp: 'h2', user_id: 1, uname: 'A', cap: 2, ts: Date.now(), duyet_ts: null }]; S.ask = null;`);
+  r(`ACTIONS.lvoid({ id: '22' })`);
+  ok('tự rút lại lần ghi của mình: không hỏi lý do', !!r('S.ask') && !r('S.ask.input'));
+  r(`ACTIONS.askno()`); await tick();
+  // thẻ lần ghi đã huỷ nói ai huỷ, vì sao; ghi bù kèm phiếu kho thì nhắc; có nút tải cả sổ
+  r(`S.loans.items = [{ id: 23, doitac_id: 5, doitac_name: 'Cty Hoà Bình', phi_id: 'D10', kind: 'vay', qty: 3, grp: 'h3', user_id: 2, uname: 'An', ts: Date.now(), duyet_ts: null, voided: 1, voided_uname: 'Trung', voided_note: 'sai số lượng' }];`);
+  ok('thẻ đã huỷ: có người huỷ và lý do', /Đã huỷ · Trung/.test(r('loanCard(S.loans.items)')) && /Lý do huỷ: sai số lượng/.test(r('loanCard(S.loans.items)')));
+  r(`S.loans.items = []; S.loan.kho = true; delete S.form.lngay;`);
+  ok('ghi hôm nay kèm phiếu kho: không nhắc ghi bù', !/Ghi bù ngày cũ/.test(r('vVayMuon()')));
+  r(`S.form.lngay = '2020-01-01';`);
+  ok('ghi bù ngày cũ kèm phiếu kho: nhắc tồn đổi từ hôm nay', /Ghi bù ngày cũ/.test(r('vVayMuon()')));
+  ok('người lập phiếu: có nút tải cả sổ vay', /data-a="lcsv"/.test(r('vVayMuon()')));
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
+  ok('tiểu đội trưởng: không có nút tải cả sổ', !/data-a="lcsv"/.test(r('vVayMuon()')));
+  r(`delete S.form.lngay; S.loan.kho = false; S.me = { id: 1, name: 'A', role: 'admin' };`);
   ok('nhật ký: dòng vay mượn có chữ, không hiện mã', /vay của Cty Hoà Bình: D10/.test(r(`fmtAudit({ action: 'loan_vay', detail: JSON.stringify({ doitac: 'Cty Hoà Bình', lines: [{ phi: 'D10', qty: 30 }] }) }).text`)));
   ok('nhật ký: có chip lọc Vay mượn', /data-v="vay">Vay mượn/.test(r('vNhatKy()')));
   r(`S.loans = null; S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);

@@ -170,12 +170,19 @@ export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy
 export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20], 22: [15, 16, 17, 18, 19, 20, 21],
   /* Bản 23 ĐỔI NGHĨA dữ liệu cũ (mã vai trò, cấp người báo ghi trong từng dòng), không chỉ thêm bảng:
      bản sao của bản 22 trở về trước không nạp vào được. Đúng luật ghi ở trên. */
-  23: [] };
+  23: [],
+  // bản 24 chỉ thêm index, dữ liệu không đổi
+  24: [23],
+  25: [23, 24],
+  // bản 26 thêm ba cột ai huỷ / vì sao của sổ vay (tệp cũ thiếu thì để trống) và hai trigger
+  26: [23, 24, 25] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
 export const BK_LOG = ['audit', 'counts_log'];
 export const BK_LOG_MAX = 20000;
+// nạp lại: số ký tự JSON tối đa của một câu INSERT. Chữ Việt tới 3 byte/ký tự, nên vẫn dưới trần 2 MB của D1.
+export const BK_LO_MAX = 400000;
 // sessions và login_fail cố ý bỏ: phiên đăng nhập và số lần nhập sai PIN không phải số liệu bãi
 
 export const bkCols = async (env, t) => {
@@ -263,9 +270,21 @@ export async function restoreData(req, env, user) {
     const use = cols.filter((c) => rows.some((r) => r[c] !== undefined));
     if (!use.length) continue;
     const sel = use.map((c) => `json_extract(j.value, '$.${c}')`).join(', ');
-    stmts.push(env.DB.prepare(
-      `INSERT INTO ${t} (${use.join(', ')}) SELECT ${sel} FROM json_each(?1) j`
-    ).bind(JSON.stringify(rows)));
+    /* Chia nhỏ: D1 từ chối tham số chuỗi quá lớn (trần 2 MB), mà một năm số đếm đã là ~9 MB — nhét cả
+       bảng vào một tham số thì bản sao hết nạp lại được đúng lúc dữ liệu đủ nhiều để đáng giữ. Cắt
+       theo độ dài chứ không theo số dòng: dòng day_close mang undo_json to hơn dòng thường cả trăm lần. */
+    let lo = [], dai = 0;
+    const xa = () => {
+      if (!lo.length) return;
+      stmts.push(env.DB.prepare(`INSERT INTO ${t} (${use.join(', ')}) SELECT ${sel} FROM json_each(?1) j`).bind('[' + lo.join(',') + ']'));
+      lo = []; dai = 0;
+    };
+    for (const r of rows) {
+      const s = JSON.stringify(r);
+      if (dai + s.length > BK_LO_MAX) xa();
+      lo.push(s); dai += s.length + 1;
+    }
+    xa();
   }
   /* Bản sao trước bản 17 không có kg lúc chốt: điền bằng kg/cây hiện tại (đúng như cách các ngày đó
      vẫn đang hiện), để từ lúc nạp chúng cũng được khoá, không trôi theo lần sửa kg/cây sau này. */
@@ -274,6 +293,11 @@ export async function restoreData(req, env, user) {
     auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),
     bump(env)
   );
-  await env.DB.batch(stmts);
+  try { await env.DB.batch(stmts); } catch (e) {
+    /* Trigger của sổ vay từ chối dòng hỏng (xem LOAN_TRIGGERS). Cả lần nạp là một giao dịch nên chưa có
+       gì bị thay — nhưng phải nói rõ vì sao, không để người đang cứu dữ liệu nhận một câu "lỗi máy chủ". */
+    if (/So vay/.test(String((e && e.message) || ''))) throw bad('Bản sao có dòng sổ vay mượn không hợp lệ (số lượng không dương, thiếu ngày giao nhận, hoặc đối tác không có trong tệp). Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.');
+    throw e;
+  }
   return json({ ok: true, dong: dem, giu });
 }

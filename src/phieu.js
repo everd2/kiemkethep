@@ -1,6 +1,6 @@
 // Phiếu nhập kho, chuyển khu, xuất kho và điều chỉnh tồn.
 import { CAP_TREN, HttpError, bad, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
-import { IS_CLOSED, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, qtyWord, readJson,
+import { IS_CLOSED, LOAN_AM_COND, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, loanAmErr, loanAmRows, qtyWord, readJson,
   unitWord } from './helpers.js';
 import { EFF_SELECT, J } from './counts.js';
 
@@ -73,7 +73,7 @@ export async function tonCells(env, day, cells, choRut = true) {
        CASE WHEN e.v IS NOT NULL
          THEN e.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
                                AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
-                               AND rr.duyet_day <= ?1 AND rr.duyet_ts > e.ts), 0)
+                               AND rr.duyet_day <= ?1 AND rr.duyet_day > ${LAST} AND rr.duyet_ts > e.ts), 0)
          ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
                                AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
                                AND rr.duyet_day <= ?1 AND rr.duyet_day > ${LAST}), 0)
@@ -122,22 +122,32 @@ export async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
    dựng ra.
    `lines`: các dòng của phiếu (rỗng = không có gì phải kiểm).
    `opt.duyet === false`: đang LẬP phiếu, không phải duyệt — đổi lời báo lỗi cho khỏi nói "không
-   duyệt được" vào mặt người vừa bấm lưu. */
+   duyệt được" vào mặt người vừa bấm lưu.
+   `opt.ctx`: kết quả rutCtx đã đọc sẵn. "Duyệt tất cả" kiểm nhiều phiếu một lượt; để mỗi phiếu tự
+   đọc lại thì tốn 3 truy vấn mỗi phiếu, vài phiếu chờ là chạm hạn mức truy vấn của một request. */
+export async function rutCtx(env, day, lines) {
+  const out = lines.filter((x) => x.qty < 0);
+  const [phiR, khuR] = await env.DB.batch([
+    env.DB.prepare('SELECT id, bo_size, unit FROM phi'),
+    env.DB.prepare('SELECT id, name FROM khu'),
+  ]);
+  return {
+    phiBy: Object.fromEntries(phiR.results.map((x) => [x.id, x])),
+    nameOf: Object.fromEntries(khuR.results.map((x) => [x.id, x.name])),
+    have: await tonCells(env, day, out.map((x) => ({ khu: x.khu_id, phi: x.phi_id }))),
+  };
+}
 export async function checkTransferStock(env, day, lines, opt) {
   const out = lines.filter((x) => x.qty < 0);
   if (!out.length) return;
   const o = opt || {};
-  const dc = o.kind === 'dc';
   const dau = o.duyet === false ? '' : 'Không duyệt được: ';
   const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất', vay: 'phiếu vay mượn' }[o.kind] || 'phiếu chuyển';
   const byKhu = {};
   out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
-  const phiR = await env.DB.prepare('SELECT id, bo_size, unit FROM phi').all();
-  const phiBy = Object.fromEntries(phiR.results.map((x) => [x.id, x]));
-  const khuR = await env.DB.prepare('SELECT id, name FROM khu').all();
-  const nameOf = Object.fromEntries(khuR.results.map((x) => [x.id, x.name]));
+  const { phiBy, nameOf, have: haveAll } = o.ctx || await rutCtx(env, day, out);
   for (const khuId of Object.keys(byKhu)) {
-    const have = await stockOf(env, day, khuId, byKhu[khuId].map((x) => x.phi_id));
+    const have = Object.fromEntries(byKhu[khuId].map((x) => [x.phi_id, haveAll[khuId + '|' + x.phi_id] || 0]));
     for (const x of byKhu[khuId]) {
       /* stockOf đã trừ MỌI phiếu rút đang chờ duyệt. Lúc DUYỆT thì phiếu đang xét nằm trong số
          bị trừ đó, nên phải cộng ngược phần của chính nó vào trước khi so, không thì phiếu nào
@@ -355,15 +365,25 @@ export async function voidReceipt(env, user, id) {
   const rows = r.grp
     ? (await env.DB.prepare('SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND voided = 0').bind(r.grp).all()).results
     : [r];
-  await batchGuarded(env, guardStmt(env, IS_CLOSED, dayOf), [
+  /* Phiếu kho của sổ vay ĐÃ DUYỆT: huỷ phiếu là huỷ luôn lần ghi sổ, nên cùng chốt chặn với voidLoan —
+     không huỷ một lần vay đã có lần trả ghi vào (dư nợ thành âm). Kiểm trước để nói rõ lý do, và ghép
+     vào câu chặn của batch để một lần trả được duyệt chen vào giữa cũng không lọt. */
+  const vay = r.kind === 'vay' && r.grp && !pending;
+  if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
+  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND}`, dayOf, r.grp, 0) : guardStmt(env, IS_CLOSED, dayOf);
+  const coAm = async (e) => {
+    if (!vay || !(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(dayOf).first()) throw e;
+    const am = await loanAmRows(env, r.grp, 0); throw am.length ? loanAmErr(am) : e;
+  };
+  await batchGuarded(env, chan, [
     r.grp
       ? env.DB.prepare('UPDATE receipts SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)
       : env.DB.prepare('UPDATE receipts SET voided = 1, voided_ts = ? WHERE id = ?').bind(Date.now(), id),
     // phiếu kho của sổ vay mượn: huỷ phiếu là huỷ luôn lần ghi sổ đi kèm, không để sổ và kho lệch nhau
-    ...(r.kind === 'vay' && r.grp ? [env.DB.prepare('UPDATE loans SET voided = 1, voided_ts = ? WHERE grp = ? AND voided = 0').bind(Date.now(), r.grp)] : []),
+    ...(r.kind === 'vay' && r.grp ? [env.DB.prepare("UPDATE loans SET voided = 1, voided_ts = ?, voided_by = ?, voided_name = ?, voided_note = 'huỷ từ phiếu kho' WHERE grp = ? AND voided = 0").bind(Date.now(), user.id, user.name, r.grp)] : []),
     auditStmt(env, user, pending ? 'receipt_reject' : 'receipt_void', { id, kind: r.kind || 'nhap',
       lines: rows.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
-  ], closedErr(pending ? 'Ngày hôm nay đã chốt' : 'Ngày duyệt phiếu đã chốt, không huỷ được'));
+  ], closedErr(pending ? 'Ngày hôm nay đã chốt' : 'Ngày duyệt phiếu đã chốt, không huỷ được')).catch(coAm);
   return json({ ok: true, pending });
 }

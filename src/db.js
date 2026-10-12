@@ -4,7 +4,15 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 26;
+// giữ khớp với hai trigger loans_* cuối schema.sql
+export const LOAN_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
+   WHEN NEW.qty IS NULL OR NEW.qty <= 0 OR NEW.ngay IS NULL OR NOT EXISTS (SELECT 1 FROM doitac WHERE id = NEW.doitac_id)
+   BEGIN SELECT RAISE(ABORT, 'So vay: dong khong hop le'); END`,
+  `CREATE TRIGGER IF NOT EXISTS loans_no_edit BEFORE UPDATE OF doitac_id, phi_id, kind, qty, ngay ON loans
+   BEGIN SELECT RAISE(ABORT, 'So vay: khong sua noi dung dong da ghi'); END`,
+];
 export const MIGRATIONS = {
   2: [
     'ALTER TABLE day_close ADD COLUMN span INTEGER NOT NULL DEFAULT 1',
@@ -301,6 +309,40 @@ export const MIGRATIONS = {
     `UPDATE counts SET cap = COALESCE((SELECT CASE u.role WHEN 'tieudoi' THEN 0 WHEN 'cvktht' THEN 1 ELSE 2 END FROM users u WHERE u.id = counts.user_id), 2)`,
     `UPDATE loans SET cap = COALESCE((SELECT CASE u.role WHEN 'tieudoi' THEN 0 WHEN 'cvktht' THEN 1 ELSE 2 END FROM users u WHERE u.id = loans.user_id), 2)`,
     "DELETE FROM khu_user WHERE user_id NOT IN (SELECT id FROM users WHERE role = 'tieudoi' AND deleted = 0)",
+  ],
+  /* INDEX THEO Ô (khu × phi). Mọi đường đọc tồn đều hỏi "lần gần nhất của Ô NÀY" (xem EFF_SELECT, MV_NEW,
+     tonCells), mà khoá chính của counts mở đầu bằng day và receipts chỉ có index theo duyet_day: mỗi ô
+     phải quét cả kỳ. Đo trên D1: một lần tải /bootstrap đọc ~13.800 dòng, có hai index này còn ~900 —
+     hạn mức gói Free là 5 triệu dòng/ngày và mỗi lần số liệu đổi thì mọi máy đang mở đều tải lại. */
+  24: [
+    'CREATE INDEX IF NOT EXISTS idx_counts_cell ON counts(khu_id, phi_id, day)',
+    'CREATE INDEX IF NOT EXISTS idx_receipts_cell ON receipts(khu_id, phi_id, duyet_day)',
+  ],
+  /* Hai index của bản 24 mở đầu bằng khu_id, và đó là cái bẫy: câu nào lọc "khu_id = một khu, trong kỳ
+     (day > lần chốt trước)" — gửi báo cáo, duyệt khu, huỷ báo cáo — bị SQLite chọn index này thay cho
+     khoá chính, tức quét MỌI ngày từ trước tới nay của khu đó: gửi một báo cáo đọc 1.500 dòng sau 3
+     tháng, 16.500 dòng sau 3 năm. Đặt phi_id lên đầu thì câu chỉ lọc theo khu không dùng được index
+     nữa và quay về khoá chính (chỉ đọc kỳ đang mở), còn câu hỏi theo Ô (đủ khu và phi) vẫn tìm thẳng. */
+  25: [
+    'DROP INDEX IF EXISTS idx_counts_cell',
+    'DROP INDEX IF EXISTS idx_receipts_cell',
+    'CREATE INDEX IF NOT EXISTS idx_counts_o ON counts(phi_id, khu_id, day)',
+    'CREATE INDEX IF NOT EXISTS idx_receipts_o ON receipts(phi_id, khu_id, duyet_day)',
+    // hai bảng chỉ dài ra: lần ghi sổ vay CHỜ DUYỆT (hỏi ở mỗi lần tải) và lọc nhật ký theo ngày
+    'CREATE INDEX IF NOT EXISTS idx_loans_duyet ON loans(duyet_ts)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts)',
+  ],
+  /* SỔ VAY MƯỢN GIỮ ĐƯỢC LÂU DÀI:
+     - voided_by / voided_name / voided_note: AI huỷ (hoặc từ chối) và VÌ SAO, ghi ngay trong dòng. Trước
+       đây chỉ nhật ký biết, mà nhật ký bị cắt còn phần mới nhất trong bản sao và không nạp lại được.
+     - Hai trigger: sổ công nợ không nhận dòng hỏng (số lượng <= 0, thiếu ngày giao nhận, đối tác không
+       có), và NỘI DUNG một dòng đã ghi thì không sửa được nữa — sai thì huỷ rồi ghi lại, như mọi phiếu.
+       Code server vốn đã giữ đúng các điều này; trigger là lớp chặn của chính database. */
+  26: [
+    'ALTER TABLE loans ADD COLUMN voided_by INTEGER',
+    'ALTER TABLE loans ADD COLUMN voided_name TEXT',
+    'ALTER TABLE loans ADD COLUMN voided_note TEXT',
+    ...LOAN_TRIGGERS,
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
