@@ -1,5 +1,5 @@
 'use strict';
-/* Kho Thép Bãi - giao diện (không cần build). Gọi API /api/* trên cùng domain. */
+/* Bãi Gia Công - giao diện (không cần build). Gọi API /api/* trên cùng domain. */
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -812,7 +812,7 @@ function lastPhone() { try { return localStorage.getItem('kt:phone') || ''; } ca
 function vLogin() {
   return `<div class="login f1 scroll">
     <div class="col gap8"><div class="logo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
-      <div style="font-size:32px;font-weight:700;line-height:1.2">Kho Thép Bãi</div>
+      <div style="font-size:32px;font-weight:700;line-height:1.2">Bãi Gia Công</div>
       <div class="muted" style="font-size:18px">Đăng nhập bằng số điện thoại và PIN 4 số</div></div>
     <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric" autocomplete="username" data-model="phone" data-enter="login" value="${esc(S.form.phone || lastPhone())}"></label>
     <label class="field">PIN 4 số<input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="current-password" data-enter="login"></label>
@@ -2289,7 +2289,7 @@ function vMore() {
     ${installCard()}
     <button class="menu" data-a="nav" data-s="pin">Đổi PIN của tôi</button>
     <button class="menu" style="color:var(--bad)" data-a="logout">Đăng xuất</button>
-    <div class="sm muted" style="text-align:center;padding-top:8px">Kho Thép Bãi · phiên bản 1.3</div>
+    <div class="sm muted" style="text-align:center;padding-top:8px">Bãi Gia Công · phiên bản 1.3</div>
   </div>`;
 }
 function vPin() {
@@ -5221,7 +5221,7 @@ const ACTIONS = {
       return !(thuoc.length && !thuoc.includes(Q.ca));
     }).map((u) => 'Tổ ' + u.name);
     if (!ten.length) return say('Các tổ đã báo đủ.'), render();
-    const t = `Các tổ chưa báo quân số ${caGoi(Q)} (hạn ${hhmm(Q.han)}):\n${ten.map((x) => '• ' + x).join('\n')}\nTổ trưởng mở app Kho Thép, bấm BÁO ở thẻ Quân số tổ ngay đầu Tổng quan.`;
+    const t = `Các tổ chưa báo quân số ${caGoi(Q)} (hạn ${hhmm(Q.han)}):\n${ten.map((x) => '• ' + x).join('\n')}\nTổ trưởng mở app Bãi Gia Công, bấm BÁO ở thẻ Quân số tổ ngay đầu Tổng quan.`;
     const ok = await bcChepChu(t);
     say(ok ? 'Đã chép tin nhắc. Mở Zalo và dán vào nhóm.' : 'Máy không cho chép tự động.', !ok);
     render();

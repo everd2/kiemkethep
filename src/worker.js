@@ -1,4 +1,4 @@
-// Kho Thép Bãi - Cloudflare Worker (API) + D1
+// Bãi Gia Công - Cloudflare Worker (API) + D1
 // Giao diện tĩnh nằm trong /public, mọi đường dẫn /api/* chạy qua file này.
 // Điểm vào: định tuyến /api/* và việc Cron. Logic nghiệp vụ nằm ở các module cùng thư mục.
 import { HttpError, LAP_PHIEU, ROLES, capOf, json, vnDay } from './core.js';

@@ -1,6 +1,6 @@
 {
-  "name": "Kho Thép Bãi",
-  "short_name": "Kho Thép",
+  "name": "Bãi Gia Công",
+  "short_name": "Bãi Gia Công",
   "description": "Quản lý tồn kho thép bãi: đếm theo khu, nhập kho, duyệt chốt ngày",
   "start_url": "/",
   "scope": "/",

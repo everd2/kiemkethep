@@ -1,4 +1,4 @@
-# Kho Thép Bãi
+# Bãi Gia Công
 
 Ứng dụng web (PWA) quản lý tồn kho thép bê tông cốt thép D6 → D36 trên bãi, chạy hoàn toàn trên Cloudflare (gói miễn phí): **Workers + D1 + Static Assets**. Không cần VPS.
 

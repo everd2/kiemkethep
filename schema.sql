@@ -1,4 +1,4 @@
--- ===== Kho Thép Bãi: cấu trúc dữ liệu D1 =====
+-- ===== Bãi Gia Công: cấu trúc dữ liệu D1 =====
 -- KHÔNG đặt chú thích BÊN TRONG khối CREATE TABLE. Giải thích cột thì ghi ngay TRÊN khối CREATE.
 -- Lý do: SQLite dựng lại câu CREATE từ chính văn bản này khi chạy ALTER TABLE ... DROP COLUMN.
 -- Chú thích cuối dòng làm câu lệnh bị cắt; chú thích TRÊN DÒNG CỘT vẫn đủ làm sập khi cột đó là
