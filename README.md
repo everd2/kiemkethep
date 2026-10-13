@@ -129,6 +129,19 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 - Mọi lần ghi, duyệt, huỷ nằm trong **nhật ký**, có chip lọc *Vay mượn* riêng.
 - **Xoá sạch dữ liệu thép không xoá sổ vay**: đây là công nợ với bên ngoài, không phải số liệu của bãi. Bản sao toàn bộ có chứa sổ vay; nạp lại một bản sao **cũ chưa có sổ vay** thì sổ vay hiện tại được **giữ nguyên**.
 
+### Sắt vụn xuất ra ngoài
+
+Ở **Thêm → Sắt vụn xuất ra ngoài**, hoặc nút **Sắt vụn xuất ra** ngay đầu màn Vay mượn. Sổ ghi **mỗi lần xe chở sắt vụn ra khỏi bãi**, để thống kê và đối chiếu với phiếu cân của bên mua.
+
+- Sắt vụn là thép thừa, đầu mẩu **trộn nhiều phi**, nên chỉ ghi **khối lượng theo tấn** (gõ `2,5` hoặc `2.5`; sổ lưu theo kg). **Không tính vào tồn bãi**: bảng đếm và phiếu kho tính theo phi, phần thép thành vụn đã ra khỏi tồn từ lúc cắt.
+- Mỗi lần ghi: **ngày xuất** (ghi bù được, không sau hôm nay), **khu xuất** (hoặc *Nhiều khu / chung*), **số tấn**, **xuất cho ai** (có nút chọn nhanh các nơi nhận gần đây, để tên không bị gõ lệch), **số phiếu cân / biên bản** (bắt buộc), biển số xe, người nhận, ghi chú.
+- **Ai cũng ghi được**, kể cả Tiểu đội trưởng. **Duyệt theo cấp bậc** như sổ vay (CVKTHT duyệt lần ghi của Tiểu đội trưởng; lần ghi của CVKTHT thì cấp chỉ huy duyệt); chưa duyệt thì chưa vào thống kê. Lần chờ duyệt hiện cả ở **màn Duyệt** và được nhắc ở Tổng quan.
+- **Thống kê** (chỉ lần đã duyệt): tổng *tháng này*, *năm nay*, *từ trước tới nay*; bảng **theo tháng** (13 tháng gần nhất), **theo khu** và **theo nơi nhận** của năm nay.
+- **Trùng số phiếu cân** (không kể dấu cách, gạch, hoa/thường) thì app dừng lại hỏi, tránh hai người cùng chép một phiếu.
+- Hoàn tác: người ghi **rút lại** khi chưa duyệt hoặc huỷ trong 10 phút sau khi duyệt; người duyệt huỷ được trong **7 ngày**. Từ chối / huỷ lần đã duyệt phải ghi **lý do**; lần đã huỷ vẫn nằm trong sổ, kèm tên người huỷ và lý do. Nội dung một dòng đã ghi thì không sửa — sai thì huỷ rồi ghi lại.
+- **Tải sổ sắt vụn (Excel)**, từ CVKTHT trở lên: mọi lần xuất kể cả lần đã huỷ, tổng theo tháng và theo nơi nhận.
+- Sổ nằm trong bản sao toàn bộ; **xoá sạch dữ liệu thép không xoá sổ này**.
+
 ### Gia công cấu kiện
 
 Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia công** cho các Tiểu đội trưởng: gia công thép của cấu kiện nào, ở vị trí trục nào, cần xong khi nào, đang làm tới đâu. **Không liên quan tới đếm thép**: đơn gia công không đổi tồn, không sinh phiếu kho.
@@ -445,6 +458,7 @@ src/bootstrap.js     dữ liệu chung cho máy khách
 src/counts.js        báo cáo đếm, hai người báo khác số, nhật ký, tệp CSV ngày
 src/phieu.js         nhập, chuyển, xuất, điều chỉnh tồn
 src/loans.js         sổ vay mượn ngoài bãi
+src/satvun.js        sổ xuất sắt vụn ra ngoài (chỉ khối lượng, không tính vào tồn)
 src/quanso.js        quân số đầu ca của từng tổ (ca ngày, ca đêm)
 src/baocao.js        báo cáo ca gửi cấp trên (gom số liệu, lưu báo cáo và mẫu)
 src/review.js        màn Duyệt, tự chốt sổ sau 0h, hoàn tác đặt lại số liệu

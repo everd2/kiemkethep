@@ -51,7 +51,11 @@ async function main() {
   // Cơi: chia hai ca — ca ngày 8 (1 ốm), ca đêm 9 (1 việc gia đình), báo sớm ca đêm
   await q('Lò Văn Cơi', { ca: 1, tong: 19, lam: 8, nghi: { om: 1 } });
   await q('Lò Văn Cơi', { ca: 2, tong: 19, lam: 9, nghi: { gd: 1 } });
-  // Tuấn: làm ca đêm cố định, hôm qua báo ca đêm, hôm nay chưa báo gì
+  // Cơi đặt lịch cả 2 ca; ĐÊM HÔM TRƯỚC tổ có 9 người làm, 1 nghỉ việc gia đình — báo cáo ca ngày phải lấy ca đêm này
+  await S.call('PUT', '/quanso/lich', { ca: 3 }, 'Lò Văn Cơi');
+  await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Lò Văn Cơi'], tong: 19, lam: 9, nghi: { gd: 1 } }, CV);
+  // Tuấn: làm ca đêm cố định (tự đặt lịch), hôm qua báo ca đêm, hôm nay chưa báo gì
+  await S.call('PUT', '/quanso/lich', { ca: 2 }, 'Lê Anh Tuấn');
   await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Lê Anh Tuấn'], tong: 20, lam: 20 }, CV);
   // Nam: chưa báo lần nào
   // gia công: một đơn đang làm 80%, một đơn xong trong ca, một đơn đang vướng, một đơn trễ hạn
@@ -140,10 +144,10 @@ async function main() {
     '• Khu vực thi công: Bãi gia công trung đoàn',
     '• Tổng số tổ: 4 tổ',
     '3. Quân số đi làm trong ca 1 là: 9 công nhân / (tổng quân số 60)',
-    '• Tổ Lê Anh Tuấn (làm ca đêm)',
     '• Tổ Lê Hải Nam: chưa báo quân số ca ngày',
     '• Tổ Lò Văn Cơi: ca ngày 8/19 cn, ca đêm 9/19 cn, nghỉ 2 cn — ca ngày: 1 ốm; ca đêm: 1 việc gia đình',
     '• Tổ Phạm Văn Khoa: ca ngày 1/21 cn, ca đêm 18/21 cn, nghỉ 2 cn — 1 nghỉ phép năm, 1 về quê',
+    '• Tổ Lê Anh Tuấn (làm ca đêm)',
     '4. Nội dung công việc thực hiện trong ngày',
     '• Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 80%',
     '• Vách W1 cote 18.5-21.5m trục X27-X28 / 13: đang gia công 50%',
@@ -164,6 +168,26 @@ async function main() {
   const thuc = txt.split('\n');
   mong.forEach((l, n) => { if (thuc[n] !== l) ok(`dòng ${n + 1} đúng mẫu`, false, `mong: ${l}\n    thực: ${thuc[n]}`); });
   eq('bản chữ đúng số dòng của mẫu', thuc.length, mong.length);
+  eq('server gửi kèm ca đêm của ngày hôm trước, lịch ca và số thiết lập', [R('S.bcc.qsDemTruoc.length'), R(`S.bcc.lich[${U['Lò Văn Cơi']}].ca`), R(`S.bcc.lich[${U['Lê Anh Tuấn']}].ca`)], [2, 3, 2]);
+  /* SỐ THIẾT LẬP: tổ chưa báo thì báo cáo lấy số CVKTHT đã đặt, viết y như dòng thường (không ghi chú gì thêm);
+     màn soạn thì nói rõ tổ nào đang lấy số thiết lập. Chọn "Chỉ số thiết lập" thì tổ đã báo cũng lấy số thiết lập. */
+  await S.call('PUT', '/quanso/thietlap', { user: U['Lê Hải Nam'], tong: 20, s1: 20, s2: 0, ts: 0 }, CV);
+  await S.call('PUT', '/quanso/thietlap', { user: U['Phạm Văn Khoa'], tong: 21, s1: 3, s2: 18, ts: 0 }, CV);
+  R(`S.bcc = null; go('baocaoca', true)`); await cho();
+  R(`Object.assign(S.bcDau, { ddt: 'Vũ Nhật Tài', tdtr: 'Hà Huy Đạt', cbpt: 'Nguyễn Duy Dũng', don_vi: 'Trung đoàn XD 01, Tiểu Đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1', du_an: 'Khu đô thị thể thao quốc tế OLYMPIC', khu_vuc: 'Bãi gia công trung đoàn' })`);
+  const tl1 = R('bcTao()').split('\n');
+  eq('tổ chưa báo lấy số thiết lập, viết như dòng thường; tổng cộng thêm tổ đó', [tl1.find((l) => l.includes('Hải Nam')), tl1.find((l) => l.startsWith('3. '))], ['• Tổ Lê Hải Nam: ca ngày 20/20 cn', '3. Quân số đi làm trong ca 1 là: 29 công nhân / (tổng quân số 80)']);
+  ok('bản gửi không có chữ "thiết lập"; màn soạn thì nói rõ đang lấy số thiết lập cho tổ nào', !R('bcTao()').includes('thiết lập') && R('vBaoCaoCa()').includes('Đang lấy số thiết lập cho: Lê Hải Nam.'));
+  ok('mục 3 có nút chọn nguồn: Theo tổ báo / Chỉ số thiết lập', R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="to"') && R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="tl"'));
+  R(`ACTIONS.bcnguon({ v: 'tl' })`);
+  const tl2 = R('bcTao()').split('\n');
+  eq('chọn "Chỉ số thiết lập": tổ Khoa (2 ca) đã báo cũng lấy số thiết lập cho cả hai ca; tổ Cơi chưa có số thiết lập thì vẫn lấy số tổ báo', [tl2.find((l) => l.includes('Khoa')), tl2.find((l) => l.includes('Cơi'))],
+    ['• Tổ Phạm Văn Khoa: ca ngày 3/21 cn, ca đêm 18/21 cn', '• Tổ Lò Văn Cơi: ca ngày 8/19 cn, ca đêm 9/19 cn, nghỉ 2 cn — ca ngày: 1 ốm; ca đêm: 1 việc gia đình']);
+  R(`ACTIONS.bcnguon({ v: 'to' })`);
+  // gỡ số thiết lập để các kiểm tra sau chạy trên số tổ báo như cũ
+  S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
+  R(`S.bcc = null; go('baocaoca', true)`); await cho();
+  R(`Object.assign(S.bcDau, { ddt: 'Vũ Nhật Tài', tdtr: 'Hà Huy Đạt', cbpt: 'Nguyễn Duy Dũng', don_vi: 'Trung đoàn XD 01, Tiểu Đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1', du_an: 'Khu đô thị thể thao quốc tế OLYMPIC', khu_vuc: 'Bãi gia công trung đoàn' })`);
   ok('tổ chưa báo được nêu tên ở đầu màn để nhắc', R('vBaoCaoCa()').includes('1 tổ chưa báo quân số ca ngày: Lê Hải Nam'));
 
   /* GÕ THẬT vào từng ô (sự kiện input qua bộ bắt sự kiện của app, như trên điện thoại): mục phải thành "đã sửa",

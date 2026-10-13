@@ -1,7 +1,7 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
 import { bad, json, vnDay } from './core.js';
 import { SETTINGS_SQL, auditStmt, parseSettings, readJson } from './helpers.js';
-import { QS_LY_DO, TO_SX, caGio, caKe, caKhoa, caLuc } from './quanso.js';
+import { MAU_CO, QS_LY_DO, TO_SX, caGio, caKe, caKhoa, caLuc, docCfg } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
    Người soạn: CVKTHT trở lên. Server chỉ GOM SỐ LIỆU và LƯU; việc ghép chữ theo mẫu nằm ở máy khách (app.js,
@@ -48,10 +48,12 @@ function docCa(q, st) {
 export async function bcView(env, url) {
   const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
   const c = docCa(url.searchParams, st), gio = caGio(st, c), hien = caLuc(st);
-  const [tdt, qs, truoc, don, nguoi, mau, bc] = await env.DB.batch([
+  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),
     env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id WHERE q.ngay = ?`).bind(c.ngay),
+    // ca đêm của NGÀY HÔM TRƯỚC: báo cáo ca ngày của tổ làm hai ca kèm ca liền trước đó
+    env.DB.prepare('SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu FROM quan_so q WHERE q.ngay = ? AND q.ca = 2').bind(new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
     env.DB.prepare(`SELECT q.user_id, q.ca, q.tong, q.lam, q.ca_kia FROM users u JOIN quan_so q ON q.rowid = (
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND x.ngay < ?1 ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0`).bind(c.ngay),
@@ -71,6 +73,9 @@ export async function bcView(env, url) {
   return json({
     ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, lyDo: QS_LY_DO,
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
+    // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
+    qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
+    lich: docCfg(mau.results[0]).lich, tl: docCfg(mau.results[0]).tl,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     bao: r ? { muc: docJ(r.data).muc || {}, van_ban: r.van_ban, ts: r.ts, by_name: r.by_name } : null,
     suaDuoc: c.ngay >= vnDay(Date.now() - BC_SUA_NGAY * 864e5),
@@ -99,8 +104,10 @@ export async function bcPut(req, env, user) {
     env.DB.prepare(`INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?,?,?,?,?,?)
                     ON CONFLICT(ngay, ca) DO UPDATE SET data = excluded.data, van_ban = excluded.van_ban, ts = excluded.ts, by_id = excluded.by_id`)
       .bind(c.ngay, c.ca, JSON.stringify({ muc }), van_ban, ts, user.id),
-    env.DB.prepare(`INSERT INTO bc_mau (id, data, ts, by_id) VALUES (1, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET data = excluded.data, ts = excluded.ts, by_id = excluded.by_id`).bind(JSON.stringify(mau), ts, user.id),
+    // ghi từng nhánh của mẫu: không đè lịch ca / số thiết lập / thứ tự tổ người khác vừa sửa
+    env.DB.prepare(MAU_CO),
+    env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), '$.dau', json(?), '$.mmtb', ?, '$.kt', json(?)), ts = ?, by_id = ? WHERE id = 1")
+      .bind(JSON.stringify(mau.dau), mau.mmtb, JSON.stringify(mau.kt), ts, user.id),
     auditStmt(env, user, 'bc_luu', { ngay: c.ngay, ca: c.ca, kt_mau: b.kt_mau ? 1 : undefined }),
   ]);
   return json({ ok: true, ngay: c.ngay, ca: c.ca, ts });

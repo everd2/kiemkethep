@@ -53,6 +53,10 @@ ctx.fetch = (url, opt) => {
   if (p.indexOf('/api/counts') === 0) return reply({ ok: true, conflict: false });
   if (p.indexOf('/api/receipts') === 0) return reply({ ok: true, id: 77 });
   if (p.indexOf('/api/report') === 0) return reply({ ok: true });
+  // sổ sắt vụn: server dừng lại hỏi khi trùng số phiếu cân, cho tới khi máy khách gửi kèm trung: true
+  if (ctx._trungSV && p === '/api/satvun' && opt && opt.method === 'POST' && !JSON.parse(opt.body).trung) {
+    return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'Phiếu cân số PC-9 đã có trong sổ', code: 'trung_sv' }) });
+  }
   // sổ vay: server dừng lại hỏi khi trùng số biên bản, cho tới khi máy khách gửi kèm trung: true
   if (ctx._trungBB && p === '/api/loans' && opt && opt.method === 'POST' && !JSON.parse(opt.body).trung) {
     return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'Biên bản số BB-01 đã có trong sổ', code: 'trung_bb' }) });
@@ -865,6 +869,61 @@ const run = async () => {
   r(`delete S.form.lngay; S.loan.kho = false; S.me = { id: 1, name: 'A', role: 'admin' };`);
   ok('nhật ký: dòng vay mượn có chữ, không hiện mã', /vay của Cty Hoà Bình: D10/.test(r(`fmtAudit({ action: 'loan_vay', detail: JSON.stringify({ doitac: 'Cty Hoà Bình', lines: [{ phi: 'D10', qty: 30 }] }) }).text`)));
   ok('nhật ký: có chip lọc Vay mượn', /data-v="vay">Vay mượn/.test(r('vNhatKy()')));
+  // ---- Sổ xuất sắt vụn ----
+  {
+    const cho = async () => { for (let i = 0; i < 6; i++) await new Promise((res) => setImmediate(res)); };
+    const svRong = "{ nam: '2026', thangNay: '2026-10', noiGan: ['Cty Phế Liệu A'], tong: { n: 1, kg: 2500, nThang: 1, kgThang: 2500, nNam: 1, kgNam: 2500 }, thang: [{ thang: '2026-10', n: 1, kg: 2500 }], khu: [{ khu_id: null, n: 1, kg: 2500 }], noi: [{ noi: 'Cty Phế Liệu A', n: 1, kg: 2500 }], items: [{ id: 41, ngay: S.boot.today, khu_id: null, kg: 2500, noi: 'Cty Phế Liệu A', so_phieu: 'PC-1', user_id: 2, uname: 'An', cap: 0, ts: Date.now(), duyet_ts: null, voided: 0 }] }";
+    r(`S.me = { id: 1, name: 'A', role: 'admin' }; S.screen = 'satvun'; S.svs = ${svRong}; S.sv = { khu: '', done: null }; S.ask = null; S.toast = '';`);
+    const SV = r('vSatVun()');
+    ok('sắt vụn: ô tổng tháng này / năm nay tính theo tấn', /Tháng này/.test(SV) && /2,50 tấn/.test(SV) && /1 lần xuất/.test(SV));
+    ok('sắt vụn: bảng theo tháng, theo khu (nhiều khu), theo nơi nhận', /Theo tháng/.test(SV) && /10\/2026/.test(SV) && /Nhiều khu/.test(SV) && /Theo nơi nhận/.test(SV));
+    ok('sắt vụn: có nút chuyển qua lại với Vay mượn, ở cả hai màn', /data-a="nav" data-s="vaymuon"/.test(SV) && /data-a="nav" data-s="satvun"/.test(r('S.loans = { doitac: [], items: [], agg: [] }, vVayMuon()')));
+    ok('sắt vụn: admin thấy nút duyệt / từ chối lần chờ và nút tải Excel', /data-a="svduyet" data-id="41"/.test(SV) && /data-a="svvoid" data-id="41"/.test(SV) && /data-a="svcsv"/.test(SV));
+    ok('sắt vụn: nơi nhận gần đây thành nút chọn nhanh', /data-a="svnoi" data-v="Cty Phế Liệu A"/.test(SV));
+    ok('menu Thêm có mục Sắt vụn', /data-s="satvun">Sắt vụn xuất ra ngoài/.test(r('vMore()')));
+    ok('đổi tấn sang kg như server: 2,5 / 2.5 / số có hai dấu', r('svKg("2,5")') === 2500 && r('svKg("0.75")') === 750 && Number.isNaN(r('svKg("1.250,5")')) && Number.isNaN(r('svKg("abc")')));
+    // thiếu khối lượng / nơi nhận / số phiếu: báo ngay, không gửi
+    calls.length = 0;
+    ctx._mk('svtan', ''); ctx._mk('svnoi', 'Cty X'); ctx._mk('svphieu', 'PC-9');
+    r(`ACTIONS.svsave()`);
+    ok('sắt vụn: chưa ghi số tấn thì nhắc, không hỏi xác nhận', !r('S.ask') && /tấn/.test(r('S.toast')), r('S.toast'));
+    ctx._mk('svtan', '2,5'); ctx._mk('svphieu', '');
+    r(`S.toast = ''; ACTIONS.svsave()`);
+    ok('sắt vụn: thiếu số phiếu cân thì nhắc', !r('S.ask') && /phiếu cân/.test(r('S.toast')), r('S.toast'));
+    // ghi đủ: hộp xác nhận nói rõ tấn, kg, không tính vào tồn; gửi đúng dữ liệu
+    ctx._mk('svphieu', 'PC-9'); ctx._mk('svbienso', '29C-1');
+    r(`S.toast = ''; ACTIONS.svkhu({ v: '' }); ACTIONS.svsave()`);
+    ok('sắt vụn: hộp xác nhận nói tấn, kg và "không tính vào tồn"', /2,50 tấn \(2\.500 kg\)/.test(r('S.ask ? S.ask.msg : ""')) && /Không tính vào tồn/.test(r('S.ask ? S.ask.msg : ""')), r('S.ask ? S.ask.msg : ""'));
+    r(`ACTIONS.askyes()`); await cho();
+    const p1 = calls.find((c) => c.url === '/api/satvun' && c.method === 'POST');
+    ok('sắt vụn: gửi đúng tấn, nơi nhận, số phiếu, xe; không chọn khu thì gửi null', p1 && p1.body.tan === '2,5' && p1.body.noi === 'Cty X' && p1.body.so_phieu === 'PC-9' && p1.body.bien_so === '29C-1' && p1.body.khu === null, JSON.stringify(p1 && p1.body));
+    ok('sắt vụn: ghi xong thì xoá ô số tấn và số phiếu, giữ thông báo đã ghi', !r('S.form.svtan') && !r('S.form.svphieu') && /2,50 tấn cho Cty X/.test(r('S.sv.done')));
+    // trùng số phiếu cân: hỏi lại, đồng ý thì gửi kèm trung
+    ctx._trungSV = true; calls.length = 0;
+    r(`S.svs = ${svRong}; S.sv.done = null; S.ask = null;`);
+    ctx._mk('svtan', '1'); ctx._mk('svnoi', 'Cty X'); ctx._mk('svphieu', 'PC-9');
+    r(`ACTIONS.svsave()`); r(`ACTIONS.askyes()`); await cho();
+    ok('sắt vụn: trùng phiếu cân thì hỏi lại, chưa ghi', /đã có trong sổ/.test(r('S.ask ? S.ask.msg : ""')) && !r('S.sv.done'));
+    r(`ACTIONS.askyes()`); await cho();
+    const ps = calls.filter((c) => c.url === '/api/satvun' && c.method === 'POST');
+    ok('sắt vụn: đồng ý thì gửi lại kèm trung và ghi xong', ps.length === 2 && ps[1].body.trung === true && !!r('S.sv.done'), JSON.stringify(ps.map((c) => c.body.trung)));
+    ctx._trungSV = false;
+    // từ chối lần ghi của người khác: hỏi lý do, gửi kèm
+    r(`S.svs = ${svRong}; S.ask = null;`); calls.length = 0;
+    r(`ACTIONS.svvoid({ id: '41' })`);
+    ok('sắt vụn: từ chối thì hỏi lý do', !!r('S.ask && S.ask.input'));
+    r(`S.form.askin = 'ghi trùng'; ACTIONS.askyes()`); await cho();
+    const del = calls.find((c) => c.method === 'DELETE' && c.url === '/api/satvun/41');
+    ok('sắt vụn: gửi kèm lý do', !!del && del.body && del.body.ly_do === 'ghi trùng', JSON.stringify(del));
+    // tiểu đội trưởng: ghi được, không duyệt, không tải Excel; lần đã huỷ hiện người huỷ + lý do
+    r(`S.me = { id: 2, name: 'An', role: 'tieudoi' }; S.svs = ${svRong};`);
+    const SV2 = r('vSatVun()');
+    ok('tiểu đội trưởng: có form ghi và nút rút lại lần của mình, không có nút duyệt / tải Excel', /data-a="svsave"/.test(SV2) && /data-a="svvoid" data-id="41">Rút lại/.test(SV2) && !/data-a="svduyet"/.test(SV2) && !/data-a="svcsv"/.test(SV2));
+    ok('thẻ lần đã huỷ: có người huỷ và lý do', /Đã huỷ · Trung/.test(r("svCard({ id: 9, ngay: S.boot.today, khu_id: null, kg: 1000, noi: 'X', so_phieu: 'P', user_id: 2, uname: 'An', ts: 1, duyet_ts: null, voided: 1, voided_uname: 'Trung', voided_note: 'cân lại' })")) && /Lý do huỷ: cân lại/.test(r("svCard({ id: 9, ngay: S.boot.today, khu_id: null, kg: 1000, noi: 'X', so_phieu: 'P', user_id: 2, uname: 'An', ts: 1, duyet_ts: null, voided: 1, voided_uname: 'Trung', voided_note: 'cân lại' })")));
+    ok('nhật ký: dòng sắt vụn có chữ', /ghi xuất sắt vụn: .*2,50 tấn cho Cty X \(phiếu PC-9\)/.test(r(`fmtAudit({ action: 'sv_ghi', detail: JSON.stringify({ ngay: '2026-10-13', kg: 2500, noi: 'Cty X', so_phieu: 'PC-9' }) }).text`)));
+    ok('Tổng quan nhắc người duyệt được', /lần xuất sắt vụn chờ bạn duyệt/.test(r(`S.me = { id: 1, name: 'A', role: 'admin' }, S.boot.svDuyet = 2, vHome()`)));
+    r(`S.boot.svDuyet = 0; S.screen = 'home'; S.ask = null; ['svtan', 'svnoi', 'svphieu', 'svbienso', 'svngay', 'svnguoi', 'svnote'].forEach((k) => delete S.form[k]);`);
+  }
   r(`S.loans = null; S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);
 
   // ---- 1d4. Các lỗi giao diện cũ (lần rà soát đầu) ----

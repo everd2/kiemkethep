@@ -7,6 +7,7 @@ import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, b
   guardStmt, parseSettings, readJson } from './helpers.js';
 import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
 import { checkTransferStock, rutCtx } from './phieu.js';
+import { SV_CHO_SQL } from './satvun.js';
 
 /* ========================= DUYỆT / CHỐT NGÀY =========================
    Một quy tắc duy nhất: chưa duyệt thì không vào tồn. Màn Duyệt vì thế không còn là màn
@@ -30,7 +31,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, mvnR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, mvnR, svR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -97,6 +98,8 @@ export async function computeReview(env, day, opt = {}) {
        duyệt trong kỳ): phần thép chưa nằm trong số báo cáo. Cùng câu với mvNew của bootstrap, để
        "tồn" ở màn Duyệt và lúc chốt là đúng con số Tổng quan đang hiện. */
     db.prepare(MV_NEW).bind(last, day),
+    // sổ xuất sắt vụn chờ duyệt: duyệt ngay ở màn Duyệt, như sổ vay
+    db.prepare(SV_CHO_SQL),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -360,6 +363,7 @@ export async function computeReview(env, day, opt = {}) {
         ? { at: slotSt.slot_changed_at, by: (slotByR.results[0] || {}).name || null } : null,
     },
     loans: loanR.results,
+    satvun: svR.results,
     reports: repR.results.filter((r) => r.day === day), khu: khuR.results,
   };
 }

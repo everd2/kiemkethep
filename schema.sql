@@ -337,6 +337,35 @@ CREATE INDEX IF NOT EXISTS idx_loans_grp ON loans(grp);
 -- lần ghi CHỜ DUYỆT (duyet_ts NULL): bootstrap và màn Duyệt hỏi ở mỗi lần tải, không quét cả sổ
 CREATE INDEX IF NOT EXISTS idx_loans_duyet ON loans(duyet_ts);
 
+-- Sổ xuất SẮT VỤN ra ngoài bãi (bản 36, xem src/satvun.js). Sắt vụn trộn nhiều phi nên chỉ có khối lượng;
+-- KHÔNG nằm trong tồn (counts/receipts), sổ này chỉ ghi mỗi lần xuất để thống kê và đối chiếu phiếu cân.
+-- kg: khối lượng theo KG nguyên (màn hình hiện tấn). khu_id: khu xuất, NULL = gom từ nhiều khu. noi: xuất cho ai.
+-- so_phieu: số phiếu cân / biên bản. cap: cấp của người ghi lúc ghi (như loans.cap). Duyệt / huỷ như sổ vay.
+CREATE TABLE IF NOT EXISTS satvun (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ngay TEXT NOT NULL,
+  khu_id TEXT,
+  kg INTEGER NOT NULL,
+  noi TEXT NOT NULL,
+  so_phieu TEXT,
+  bien_so TEXT,
+  nguoi TEXT,
+  note TEXT,
+  user_id INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  cap INTEGER NOT NULL DEFAULT 2,
+  duyet_ts INTEGER,
+  duyet_by INTEGER,
+  duyet_name TEXT,
+  voided INTEGER NOT NULL DEFAULT 0,
+  voided_ts INTEGER,
+  voided_by INTEGER,
+  voided_name TEXT,
+  voided_note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_satvun_ngay ON satvun(ngay);
+CREATE INDEX IF NOT EXISTS idx_satvun_duyet ON satvun(duyet_ts);
+
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -454,6 +483,8 @@ CREATE TABLE IF NOT EXISTS don_gc (
   xuat_tu_choi TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
+-- index một phần: chỉ chứa đơn đã xong mà chưa xuất (ít dòng), để không phải đi qua mọi đơn đã xong. Câu truy vấn ép dùng nó.
+CREATE INDEX IF NOT EXISTS idx_don_gc_chua_xuat ON don_gc(xong_ts) WHERE tt = 'xong' AND COALESCE(xuat_tt, '') <> 'duyet';
 
 -- Lịch sử của từng đơn: mỗi lần nhận, cập nhật tiến độ, báo vướng, sửa, huỷ, mở lại là một dòng.
 -- viec: 'nhan', 'tiendo', 'vuong', 'hetvuong', 'xong', 'sua', 'huy', 'molai'. pct: tiến độ SAU việc đó.
@@ -557,7 +588,7 @@ CREATE TABLE IF NOT EXISTS don_gc_doc (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 35);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 37);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
@@ -594,4 +625,7 @@ CREATE TRIGGER IF NOT EXISTS counts_log_no_update BEFORE UPDATE ON counts_log BE
 -- Sổ vay mượn: không nhận dòng hỏng, và nội dung dòng đã ghi thì không sửa (sai thì huỷ rồi ghi lại). Giữ khớp với LOAN_TRIGGERS trong src/db.js
 CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans WHEN NEW.qty IS NULL OR NEW.qty <= 0 OR NEW.ngay IS NULL OR NOT EXISTS (SELECT 1 FROM doitac WHERE id = NEW.doitac_id) BEGIN SELECT RAISE(ABORT, 'So vay: dong khong hop le'); END;
 CREATE TRIGGER IF NOT EXISTS loans_no_edit BEFORE UPDATE OF doitac_id, phi_id, kind, qty, ngay ON loans BEGIN SELECT RAISE(ABORT, 'So vay: khong sua noi dung dong da ghi'); END;
+-- Sổ sắt vụn: như sổ vay (giữ khớp với migration 36 trong src/db.js)
+CREATE TRIGGER IF NOT EXISTS satvun_chk_insert BEFORE INSERT ON satvun WHEN NEW.kg IS NULL OR NEW.kg <= 0 OR NEW.ngay IS NULL OR TRIM(COALESCE(NEW.noi, '')) = '' BEGIN SELECT RAISE(ABORT, 'Sat vun: dong khong hop le'); END;
+CREATE TRIGGER IF NOT EXISTS satvun_no_edit BEFORE UPDATE OF ngay, khu_id, kg, noi ON satvun BEGIN SELECT RAISE(ABORT, 'Sat vun: khong sua noi dung dong da ghi'); END;
 CREATE TRIGGER IF NOT EXISTS counts_log_no_delete BEFORE DELETE ON counts_log BEGIN SELECT RAISE(ABORT, 'Lich su dem chi duoc ghi them'); END;

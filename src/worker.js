@@ -10,7 +10,8 @@ import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } 
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
 import { gcCreate, gcDoc, gcList, gcMucAdd, gcMucXoa, gcThuHoi, gcTn, gcTnMoi, gcUpdate, gcViec, gcView } from './giacong.js';
-import { qsHan, qsPut, qsThuTu, qsView } from './quanso.js';
+import { qsHan, qsLich, qsPut, qsThietLap, qsThuTu, qsView } from './quanso.js';
+import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { bcPut, bcView } from './baocao.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
@@ -94,6 +95,15 @@ async function handle(req, env, url) {
     if (method === 'DELETE' && p.length === 2) return voidLoan(req, env, user, Number(p[1]));
     if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { needCap(1); return duyetLoan(env, user, Number(p[1])); }
   }
+  /* Sổ xuất sắt vụn: như sổ vay mượn — ai cũng ghi và xem được, duyệt theo cấp bậc, tệp Excel từ CVKTHT. */
+  if (r0 === 'satvun') {
+    need(ALL);
+    if (method === 'GET' && p.length === 1) return svView(env);
+    if (method === 'GET' && p.length === 2 && p[1] === 'export') { need(LAP_PHIEU); return svCsv(env); }
+    if (method === 'POST' && p.length === 1) return postSv(req, env, user);
+    if (method === 'DELETE' && p.length === 2) return voidSv(req, env, user, Number(p[1]));
+    if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { needCap(1); return duyetSv(env, user, Number(p[1])); }
+  }
   // Danh bạ đối tác: tạo mở cho mọi vai trò (thêm tên mới khi cần), sửa tên/ẩn thì trừ Tiểu đội trưởng
   if (r0 === 'doitac') {
     need(ALL);
@@ -133,6 +143,9 @@ async function handle(req, env, url) {
     if (method === 'PUT' && p.length === 2 && p[1] === 'han') { needCap(1); return qsHan(req, env, user); }
     // thứ tự tổ trên bảng quân số và báo cáo ca: CVKTHT trở lên xếp
     if (method === 'PUT' && p.length === 2 && p[1] === 'thutu') { needCap(1); return qsThuTu(req, env, user); }
+    // lịch ca: tổ trưởng đặt cho tổ mình, CVKTHT đặt hộ (qsLich tự kiểm); số thiết lập: CVKTHT trở lên
+    if (method === 'PUT' && p.length === 2 && p[1] === 'lich') return qsLich(req, env, user);
+    if (method === 'PUT' && p.length === 2 && p[1] === 'thietlap') { needCap(1); return qsThietLap(req, env, user); }
   }
 
   /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---

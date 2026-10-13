@@ -3381,6 +3381,121 @@ async function main() {
     eq('cấp chỉ huy duyệt lại được', (await duyet(S, 'A')).status, 200);
   }
 
+  /* ================= 65. Sổ xuất sắt vụn =================
+     Chỉ có khối lượng (tấn, lưu kg), không đụng tới tồn. Ghi → duyệt theo cấp → vào thống kê theo tháng,
+     theo khu, theo nơi nhận. Trùng số phiếu cân thì hỏi lại; huỷ ghi người huỷ và lý do. */
+  {
+    const S = await setup();
+    const today = vnDay(), lui = (n) => new Date(Date.parse(today) - n * 864e5).toISOString().slice(0, 10);
+    let so = 0;
+    const ghi = (o, who) => S.call('POST', '/satvun', { tan: '2,5', noi: 'Cty Phế Liệu A', so_phieu: 'PC-' + (++so), khu: 'A', ...o }, who);
+    const tonTruoc = (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]);
+
+    eq('khối lượng trống: từ chối', (await ghi({ tan: '' })).status, 400);
+    eq('khối lượng 0: từ chối', (await ghi({ tan: '0' })).status, 400);
+    eq('khối lượng âm: từ chối', (await ghi({ tan: '-1' })).status, 400);
+    eq('số có cả chấm và phẩy (1.250,5): không đoán, từ chối', (await ghi({ tan: '1.250,5' })).status, 400);
+    eq('quá 1.000 tấn: từ chối', (await ghi({ tan: '1000,001' })).status, 400);
+    eq('thiếu nơi nhận: từ chối', (await ghi({ noi: '  ' })).status, 400);
+    eq('thiếu số phiếu cân: từ chối', (await ghi({ so_phieu: '' })).status, 400);
+    eq('ngày sau hôm nay: từ chối', (await ghi({ ngay: lui(-1) })).status, 400);
+    eq('khu không có: từ chối', (await ghi({ khu: 'ZZ' })).status, 400);
+    eq('chưa ghi gì vào sổ', S.sql('SELECT 1 FROM satvun').length, 0);
+
+    const g1 = await ghi({ tan: '2,5', bien_so: '29C-123', nguoi: 'anh Tư', note: 'đầu mẩu' }, 'An');
+    eq('tiểu đội trưởng ghi được', g1.status, 200);
+    eq('lưu theo kg nguyên, kèm cấp người ghi', S.one('SELECT kg, khu_id, noi, cap, ngay FROM satvun WHERE id = ?', g1.data.id), { kg: 2500, khu_id: 'A', noi: 'Cty Phế Liệu A', cap: 0, ngay: today });
+    eq('dấu chấm cũng là số lẻ: 0.75 tấn = 750 kg', [(await ghi({ tan: '0.75', khu: null, noi: 'Cty Phế Liệu B' }, 'Kho')).status, S.one('SELECT kg, khu_id FROM satvun ORDER BY id DESC LIMIT 1')], [200, { kg: 750, khu_id: null }]);
+    const g2id = S.one('SELECT id FROM satvun ORDER BY id DESC LIMIT 1').id;
+
+    let V = (await S.call('GET', '/satvun')).data;
+    eq('chưa duyệt thì chưa vào thống kê', [V.tong.n, V.tong.kg, V.thang.length], [0, 0, 0]);
+    eq('hai lần chờ duyệt đều hiện', V.items.filter((x) => !x.duyet_ts).length, 2);
+    const dem = async (who) => { const b = (await S.call('GET', '/bootstrap', undefined, who)).data; return [b.svPending, b.svDuyet]; };
+    eq('Tổng quan: CVKTHT duyệt được lần của tiểu đội trưởng, không tự duyệt lần của mình', await dem('Kho'), [2, 1]);
+    eq('Tổng quan: admin duyệt được cả hai; tiểu đội trưởng không duyệt được', [await dem('admin'), await dem('An')], [[2, 2], [2, 0]]);
+    eq('màn Duyệt có mục sắt vụn chờ duyệt', (await S.call('GET', '/review')).data.satvun.map((x) => x.id), [g1.data.id, g2id]);
+
+    eq('tiểu đội trưởng không duyệt được', (await S.call('POST', '/satvun/' + g1.data.id + '/duyet', {}, 'An')).status, 403);
+    eq('CVKTHT không tự duyệt lần mình ghi', (await S.call('POST', '/satvun/' + g2id + '/duyet', {}, 'Kho')).status, 403);
+    eq('CVKTHT duyệt lần của tiểu đội trưởng', (await S.call('POST', '/satvun/' + g1.data.id + '/duyet', {}, 'Kho')).status, 200);
+    eq('duyệt lần hai: từ chối', (await S.call('POST', '/satvun/' + g1.data.id + '/duyet', {})).status, 400);
+    eq('admin duyệt lần của CVKTHT', (await S.call('POST', '/satvun/' + g2id + '/duyet', {})).status, 200);
+
+    // ghi bù tháng trước, năm nay (nếu còn trong năm) để thử thống kê theo tháng
+    const thangTruoc = lui(40);
+    const g3 = (await ghi({ tan: '10', ngay: thangTruoc, khu: 'B', noi: 'Cty Phế Liệu A' }, 'An')).data; await S.call('POST', '/satvun/' + g3.id + '/duyet', {});
+    V = (await S.call('GET', '/satvun')).data;
+    eq('tổng từ trước tới nay: 3 lần, 13,25 tấn', [V.tong.n, V.tong.kg], [3, 13250]);
+    eq('tháng này: 2 lần, 3,25 tấn', [V.tong.nThang, V.tong.kgThang], [2, 3250]);
+    eq('theo tháng: tháng này trước, rồi tháng ghi bù', V.thang.map((x) => [x.thang, x.n, x.kg]), [[today.slice(0, 7), 2, 3250], [thangTruoc.slice(0, 7), 1, 10000]]);
+    const noiA = (await S.call('GET', '/satvun')).data.noi.find((x) => x.noi === 'Cty Phế Liệu A');
+    ok('theo nơi nhận (năm nay): cộng đúng các lần trong năm', noiA && noiA.kg === 2500 + (thangTruoc.slice(0, 4) === today.slice(0, 4) ? 10000 : 0), JSON.stringify(noiA));
+    eq('nơi nhận gần đây cho nút chọn nhanh', V.noiGan.slice().sort(), ['Cty Phế Liệu A', 'Cty Phế Liệu B']);
+    eq('sổ sắt vụn KHÔNG đụng tới tồn bãi', (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]), tonTruoc);
+    eq('không sinh phiếu kho nào', S.sql('SELECT 1 FROM receipts').length, 0);
+
+    // trùng số phiếu cân (gõ khác kiểu vẫn là trùng): dừng lại hỏi, xác nhận thì ghi
+    const pc1 = S.one('SELECT so_phieu p FROM satvun WHERE id = ?', g1.data.id).p; // dạng 'PC-n'
+    const t1 = await ghi({ so_phieu: pc1.toLowerCase().replace('-', ' '), tan: '2,5' }, 'Kho');
+    ok('trùng số phiếu cân: dừng lại hỏi, nói rõ dòng đang có', t1.status === 409 && t1.data.code === 'trung_sv' && t1.data.error.includes(pc1) && /2,500 tấn/.test(t1.data.error) && /An ghi/.test(t1.data.error), JSON.stringify(t1.data));
+    const t2 = await ghi({ so_phieu: pc1.toLowerCase().replace('-', ' '), tan: '1', trung: true }, 'An');
+    eq('xác nhận là lần xuất khác: ghi được', t2.status, 200);
+
+    // huỷ: người khác không rút được; người ghi rút lại; huỷ lần đã duyệt ghi người huỷ + lý do
+    eq('người khác (cùng cấp) không rút được', (await S.call('DELETE', '/satvun/' + t2.data.id, undefined, 'Binh')).status, 403);
+    eq('người ghi rút lại khi chưa duyệt', (await S.call('DELETE', '/satvun/' + t2.data.id, undefined, 'An')).status, 200);
+    eq('huỷ lần đã duyệt kèm lý do', (await S.call('DELETE', '/satvun/' + g1.data.id, { ly_do: ' cân lại ' })).status, 200);
+    eq('dòng ghi người huỷ và lý do', S.one('SELECT voided, voided_by, voided_note FROM satvun WHERE id = ?', g1.data.id), { voided: 1, voided_by: 1, voided_note: 'cân lại' });
+    V = (await S.call('GET', '/satvun')).data;
+    eq('huỷ xong: thống kê tính lại (còn 2 lần, 10,75 tấn)', [V.tong.n, V.tong.kg], [2, 10750]);
+    ok('lần đã huỷ vẫn nằm trong danh sách, có tên người huỷ', V.items.some((x) => x.id === g1.data.id && x.voided && x.voided_uname && x.voided_note === 'cân lại'));
+    eq('duyệt lần đã huỷ: từ chối', (await S.call('POST', '/satvun/' + g1.data.id + '/duyet', {})).status, 400);
+    advance(11 * 60e3);
+    const g5 = (await ghi({ tan: '3' }, 'An')).data; await S.call('POST', '/satvun/' + g5.id + '/duyet', {});
+    advance(11 * 60e3);
+    eq('quá 10 phút sau duyệt: người ghi không huỷ được', (await S.call('DELETE', '/satvun/' + g5.id, undefined, 'An')).status, 403);
+    advance(8 * 864e5);
+    eq('quá 7 ngày sau duyệt: không ai huỷ được', (await S.call('DELETE', '/satvun/' + g5.id, { ly_do: 'x' })).status, 409);
+
+    // nhật ký, tệp Excel, quyền
+    ok('nhật ký có đủ ghi / duyệt / bỏ / huỷ', ['sv_ghi', 'sv_duyet', 'sv_reject', 'sv_void'].every((a) => S.sql('SELECT 1 FROM audit WHERE action = ?', a).length > 0));
+    ok('nhật ký huỷ có lý do', /"ly_do":"cân lại"/.test(S.one("SELECT detail FROM audit WHERE action = 'sv_void' ORDER BY id DESC LIMIT 1").detail));
+    await ghi({ so_phieu: '01/10', note: '=1+1', tan: '1' }, 'An');
+    const csv = await S.call('GET', '/satvun/export');
+    const dong = String(csv.data).split('\r\n');
+    eq('tải sổ sắt vụn: 200, là CSV', [csv.status, /text\/csv/.test(csv.res.headers.get('Content-Type'))], [200, true]);
+    ok('CSV: đủ mọi lần ghi, có lần đã huỷ kèm lý do', dong.filter((l) => /"Cty Phế Liệu/.test(l) && /^"\d\d\//.test(l)).length === S.sql('SELECT 1 FROM satvun').length && dong.some((l) => /"Đã huỷ"/.test(l) && /"cân lại"/.test(l)), dong.slice(1, 4).join(' | '));
+    ok('CSV: số tấn viết dấu phẩy, số phiếu dạng ngày / ghi chú dạng công thức giữ là chữ', dong.some((l) => /;2,500;/.test(l)) && dong.some((l) => l.includes('"=""01/10"""') && l.includes('"=""=1+1"""')));
+    ok('CSV: có bảng tổng theo tháng và theo nơi nhận', dong.some((l) => /TỔNG THEO THÁNG/.test(l)) && dong.some((l) => /TỔNG THEO NƠI NHẬN/.test(l)));
+    eq('tiểu đội trưởng không tải được tệp', (await S.call('GET', '/satvun/export', undefined, 'An')).status, 403);
+
+    // database tự chặn dòng hỏng và sửa nội dung dòng đã ghi
+    const nem = (q, ...p) => { try { S.raw.prepare(q).run(...p); return false; } catch (e) { return /Sat vun/.test(e.message); } };
+    ok('trigger: khối lượng 0 không vào sổ', nem("INSERT INTO satvun (ngay, kg, noi, user_id, ts) VALUES (?, 0, 'X', 1, 1)", today));
+    ok('trigger: thiếu nơi nhận không vào sổ', nem("INSERT INTO satvun (ngay, kg, noi, user_id, ts) VALUES (?, 5, '  ', 1, 1)", today));
+    ok('trigger: không sửa được khối lượng dòng đã ghi', nem('UPDATE satvun SET kg = kg + 1 WHERE id = ?', g5.id));
+    // câu tạo bảng / trigger trong migration đúng cú pháp và cho ra đúng bảng như schema.sql
+    const { MIGRATIONS } = await import('../src/db.js');
+    const cot = () => S.sql("SELECT name FROM pragma_table_info('satvun')").map((x) => x.name).join(',');
+    const cotSchema = cot();
+    S.raw.exec('ALTER TABLE satvun RENAME TO satvun_cu; DROP TRIGGER satvun_chk_insert; DROP TRIGGER satvun_no_edit; DROP INDEX idx_satvun_ngay; DROP INDEX idx_satvun_duyet');
+    for (const q of MIGRATIONS[36]) S.raw.prepare(q).run();
+    eq('bảng tạo từ migration 36 giống bảng trong schema.sql', cot(), cotSchema);
+    ok('trigger tạo từ migration cũng chặn', nem("INSERT INTO satvun (ngay, kg, noi, user_id, ts) VALUES (?, 0, 'X', 1, 1)", today));
+    S.raw.exec('DROP TABLE satvun; ALTER TABLE satvun_cu RENAME TO satvun');
+    for (const q of MIGRATIONS[36]) S.raw.prepare(q).run();
+
+    // sao lưu → nạp lại giữ nguyên sổ; bản sao cũ chưa có sổ thì giữ sổ đang có; xoá sạch không xoá sổ
+    const truoc = JSON.stringify(S.sql('SELECT * FROM satvun ORDER BY id'));
+    const bk = (await S.call('GET', '/backup')).data;
+    eq('bản sao có sổ sắt vụn', bk.bang.satvun.length, S.sql('SELECT 1 FROM satvun').length);
+    eq('nạp lại: sổ giữ nguyên từng cột', [(await S.call('POST', '/restore', { file: bk, confirm: 'NAP LAI' })).status, JSON.stringify(S.sql('SELECT * FROM satvun ORDER BY id')) === truoc], [200, true]);
+    const cu = JSON.parse(JSON.stringify(bk)); cu.schema = 35; delete cu.bang.satvun;
+    eq('bản sao bản 35 (chưa có sổ): nạp được, sổ đang có giữ nguyên', [(await S.call('POST', '/restore', { file: cu, confirm: 'NAP LAI' })).status, JSON.stringify(S.sql('SELECT * FROM satvun ORDER BY id')) === truoc], [200, true]);
+    eq('xoá sạch dữ liệu thép: sổ sắt vụn còn nguyên', [(await S.call('POST', '/reset', { mode: 'wipe', confirm: 'XOA SACH' })).status, JSON.stringify(S.sql('SELECT * FROM satvun ORDER BY id')) === truoc], [200, true]);
+  }
+
   /* ================= 63. Nâng cấp từ bản 22 =================
      Bảng users nhận bộ vai trò mới và đổi hai mã cũ; cột cap được thêm và điền; phân công khu chỉ
      còn Tiểu đội trưởng. Không mất tài khoản nào, bộ đếm id không lùi. */

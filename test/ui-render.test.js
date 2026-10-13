@@ -212,6 +212,17 @@ S.subs = { B: [
 ] };
 S.khu = 'A';
 loadDraft(true);
+// sổ sắt vụn: chờ duyệt, đã duyệt, đã huỷ kèm lý do; thống kê theo tháng / khu / nơi nhận
+S.svs = { nam: S.boot.today.slice(0, 4), thangNay: S.boot.today.slice(0, 7), noiGan: ['Cty Phế Liệu A', 'Cơ sở Bảy'],
+  tong: { n: 3, kg: 13250, nThang: 2, kgThang: 3250, nNam: 3, kgNam: 13250 },
+  thang: [{ thang: S.boot.today.slice(0, 7), n: 2, kg: 3250 }, { thang: '2025-12', n: 1, kg: 10000 }],
+  khu: [{ khu_id: 'A', n: 2, kg: 12500 }, { khu_id: null, n: 1, kg: 750 }],
+  noi: [{ noi: 'Cty Phế Liệu A tên rất dài để thử tràn dòng trên màn hình hẹp', n: 2, kg: 12500 }, { noi: 'Cơ sở Bảy', n: 1, kg: 750 }],
+  items: [
+    { id: 1, ngay: S.boot.today, khu_id: 'A', kg: 2500, noi: 'Cty Phế Liệu A', so_phieu: 'PC-01', bien_so: '29C-123', nguoi: 'anh Tư', note: 'đầu mẩu', user_id: 2, uname: 'An', cap: 0, ts: Date.now(), duyet_ts: null, voided: 0 },
+    { id: 2, ngay: S.boot.today, khu_id: null, kg: 750, noi: 'Cơ sở Bảy', so_phieu: 'PC-02', bien_so: null, nguoi: null, note: null, user_id: 1, uname: 'A', cap: 2, ts: Date.now(), duyet_ts: Date.now(), duyet_uname: 'A', voided: 0 },
+    { id: 3, ngay: S.boot.today, khu_id: 'B', kg: 10000, noi: 'Cty Phế Liệu A', so_phieu: 'PC-03', bien_so: null, nguoi: null, note: null, user_id: 2, uname: 'An', cap: 0, ts: Date.now(), duyet_ts: Date.now(), duyet_uname: 'A', voided: 1, voided_uname: 'Trung', voided_note: 'cân lại' },
+  ] };
 // sổ vay mượn: đủ trạng thái — chờ duyệt (một lần ghi hai phi), đã duyệt, đối tác đã ẩn, dư nợ hai chiều
 S.loans = { doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }, { id: 6, name: 'Cty Cũ', active: 0 }],
   items: [
@@ -259,7 +270,7 @@ S.loanDt = 5;
 S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }],
   agg: [{ phi_id: 'D8', kind: 'vay', q: 330 }, { phi_id: 'D8', kind: 'tra_vay', q: 110 }, { phi_id: 'D10', kind: 'cho_vay', q: 20 }, { phi_id: 'D10', kind: 'tra_no', q: 30 }],
   items: S.loans.items.map((x) => ({ ...x, voided: 0 })).concat([{ id: 8, doitac_id: 5, doitac_name: 'X', phi_id: 'D8', kind: 'vay', qty: 11, grp: 'g8', user_id: 2, uname: 'An', ts: Date.now() - 864e5, duyet_ts: null, voided: 1 }]) };
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','giacong','gcdon','gcform','gcsetup','quanso','qsform','baocaoca'];
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','qsform','baocaoca'];
 const out = [];
 function one(label) {
   render();
@@ -357,7 +368,7 @@ S.screen = 'duyet'; render();
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }
 
 // trạng thái đang tải và tải lỗi
-for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail'],['giacong','gc'],['gcdon','gcDetail'],['gcform','gc'],['gcsetup','gc'],['quanso','qs'],['baocaoca','bcc']]) {
+for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail'],['satvun','svs'],['giacong','gc'],['gcdon','gcDetail'],['gcform','gc'],['gcsetup','gc'],['quanso','qs'],['baocaoca','bcc']]) {
   S.screen = sc; const bak = S[k]; S[k] = null;
   one(sc + '+dang-tai');
   S.loadErr[sc] = 'Không có kết nối mạng'; one(sc + '+loi-tai'); delete S.loadErr[sc];

@@ -5,7 +5,7 @@ import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './he
 import { EFF_SELECT, MV_NEW } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
 import { LOAN_LOT_SQL, loanLots } from './loans.js';
-import { GC_BAO_HUY_MS, TN_MOI_SQL, tnMoi } from './giacong.js';
+import { GC_BAO_HUY_MS, GC_CHUA_XUAT, GC_CHUA_XUAT_IDX, tnMoi, tnMoiStmt } from './giacong.js';
 import { bcDaStmt, qsBoot, qsBootStmt, qsToiStmt } from './quanso.js';
 
 /* ========================= DỮ LIỆU CHUNG ========================= */
@@ -17,7 +17,7 @@ export async function bootstrap(env, user) {
      ?1 luôn là hôm nay. kyNay đổi câu dùng chung (?1 = ngày chốt trước, ?2 = ngày đang xét) sang dạng đó. */
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
   const kyNay = (sql) => sql.replace(/\?1/g, LAST).replace(/\?2/g, '?1');
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR, bcDaR, gcTnR, tnR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR, bcDaR, cfgR, gcTnR, tnR, svR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -94,16 +94,20 @@ export async function bootstrap(env, user) {
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id AND n.biet_ts IS NULL) chua_biet FROM don_gc
                       WHERE tt = 'huy' AND cap_ts > ? AND biet_ts IS NULL
                     UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl, xuat_tt, xong_ts,
-                      (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids, NULL chua_biet FROM don_gc
-                      WHERE tt = 'xong' AND COALESCE(xuat_tt, '') <> 'duyet'`).bind(Date.now() - GC_BAO_HUY_MS),
+                      (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids, NULL chua_biet FROM don_gc ${GC_CHUA_XUAT_IDX}
+                      WHERE ${GC_CHUA_XUAT}`).bind(Date.now() - GC_BAO_HUY_MS),
     // quân số đầu ca: tổ nào đã báo ca đang diễn ra và ca kế tiếp (xem qsBoot)
     qsBootStmt(env),
     // và mấy lần báo gần nhất của chính người đang xem, cho thẻ báo quân số trên Tổng quan (xem qsToiStmt)
     qsToiStmt(env, user),
     bcDaStmt(env),
+    // lịch ca và số thiết lập của các tổ (mẫu báo cáo, xem docCfg)
+    env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     // trao đổi trên đơn gia công: đơn liên quan tới người này có tin chưa đọc, và bộ đếm tin hiện tại (xem gcTn)
-    env.DB.prepare(TN_MOI_SQL).bind(user.id),
+    tnMoiStmt(env, user),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'tn'"),
+    // lần xuất sắt vụn chờ duyệt: chỉ cấp và người ghi, để đếm đúng số lần NGƯỜI NÀY duyệt được (xem duyetSv)
+    env.DB.prepare('SELECT cap, user_id uid FROM satvun WHERE voided = 0 AND duyet_ts IS NULL'),
   ]);
   const last = (lastR.results[0] || {}).d || '';
   return {
@@ -142,7 +146,9 @@ export async function bootstrap(env, user) {
     gc: gcR.results,
     gcTn: tnMoi(gcTnR.results),
     tn: (tnR.results[0] || {}).value || 0,
-    qs: qsBoot(qsR.results, parseSettings(settings.results), user, qsToiR.results, bcDaR.results),
+    qs: qsBoot(qsR.results, parseSettings(settings.results), user, qsToiR.results, bcDaR.results, cfgR.results[0]),
+    svPending: svR.results.length,
+    svDuyet: svR.results.filter((x) => duyetCuaNguoi(user, x.cap, [x.uid])).length,
     loanPending: loanPending.results.length,
     /* Trong đó, số lần ghi người đang xem DUYỆT ĐƯỢC (cùng luật với duyetLoan): thẻ nhắc ở Tổng quan
        dùng số này, không thì CVKTHT bị nhắc cả những lần ghi phải chờ cấp trên. */

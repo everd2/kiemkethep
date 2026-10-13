@@ -94,7 +94,7 @@ export async function doitacUpdate(req, env, user, id) {
 }
 
 // khoá so trùng số biên bản: chỉ giữ chữ và số, không phân hoa/thường; số chỉ toàn ký hiệu thì so nguyên văn
-const bbKhoa = (x) => { const v = String(x || '').normalize('NFC').toUpperCase(); return v.replace(/[^\p{L}\p{N}]/gu, '') || v.trim(); };
+export const bbKhoa = (x) => { const v = String(x || '').normalize('NFC').toUpperCase(); return v.replace(/[^\p{L}\p{N}]/gu, '') || v.trim(); };
 
 // Đọc danh sách dòng { phi, qty } của một lần ghi — giống parseLines của receipts nhưng không cần ctx.khu
 export function parseLoanLines(b, phiBy) {

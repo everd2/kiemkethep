@@ -1,6 +1,6 @@
 // Quân số đầu ca: mỗi tổ (Tiểu đội trưởng) báo số đi làm, số nghỉ và lý do nghỉ ở đầu mỗi ca.
 import { DAY_RE, HttpError, bad, capOf, fmtDay, json, vnDay } from './core.js';
-import { CA_DEFAULT, SETTINGS_SQL, auditStmt, bump, intIn, parseSettings, readJson } from './helpers.js';
+import { CA_DEFAULT, SETTINGS_SQL, auditStmt, batchGuarded, bump, guardStmt, intIn, parseSettings, readJson } from './helpers.js';
 
 /* ========================= QUÂN SỐ ĐẦU CA =========================
    Tách hẳn khỏi phần đếm thép. Đây là nguồn số cho mục "Quân số" của báo cáo ca gửi cấp trên.
@@ -68,6 +68,22 @@ function docCa(ngay, ca) {
   return { ngay: d, ca: n };
 }
 const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
+/* LỊCH CA VÀ SỐ THIẾT LẬP của từng tổ. Lưu trong mẫu báo cáo (bc_mau.data), không cần bảng riêng:
+     lich."<id>" = { ca: 1 ca ngày | 2 ca đêm | 3 cả hai ca, den: 'YYYY-MM-DD' hoặc null (đến khi đổi), ts, by }
+       — tổ trưởng tự đặt (CVKTHT đặt hộ được). Tổ thường làm một ca 15–30 ngày rồi đổi; hết hạn thì app hỏi lại.
+     tl."<id>" = { tong, s1, s2, ts, by } — SỐ THIẾT LẬP do CVKTHT trở lên đặt: tổng quân số, người ca ngày, người ca
+       đêm. Là số dự phòng: báo cáo ca dùng nó cho tổ chưa báo (hoặc khi người soạn chọn "chỉ số thiết lập").
+   Ghi bằng json_set từng nhánh, không đọc-sửa-ghi cả khối: hai người sửa hai tổ cùng lúc không đè nhau. Hai người
+   sửa CÙNG một tổ thì chặn bằng ts: lưu dựa trên bản cũ là bị từ chối và được báo ai vừa sửa (qsThietLap). */
+export const MAU_CO = "INSERT OR IGNORE INTO bc_mau (id, data, ts) VALUES (1, '{}', 0)";
+export const docCfg = (row) => {
+  let d = {}; try { d = JSON.parse((row && row.data) || '{}') || {}; } catch (e) { d = {}; }
+  return { lich: d.lich && typeof d.lich === 'object' ? d.lich : {}, tl: d.tl && typeof d.tl === 'object' ? d.tl : {} };
+};
+// ca của tổ theo lịch vào ngày `ngay`: 1, 2, 3 (cả hai) hoặc 0 (chưa đặt / hết hạn)
+export const caLich = (cfg, uid, ngay) => { const r = cfg.lich[uid]; return r && [1, 2, 3].includes(r.ca) && (!r.den || ngay <= r.den) ? r.ca : 0; };
+const caMang = (c) => (c === 3 ? [1, 2] : c ? [c] : []);
+
 /* THỨ TỰ TỔ: CVKTHT xếp một lần (lưu trong mẫu báo cáo, bc_mau.data.thu_tu = mảng id Tiểu đội trưởng), để bảng
    quân số và báo cáo ca ngày nào cũng cùng một thứ tự. Tổ chưa được xếp đứng sau, theo tên. Dùng với bí danh u. */
 export const TO_SX = "COALESCE((SELECT j.key FROM bc_mau m, json_each(m.data, '$.thu_tu') j WHERE m.id = 1 AND j.value = u.id), 9999), u.name";
@@ -84,7 +100,7 @@ export async function qsView(env, user, url) {
   const ql = capOf(user.role) >= 1;
   // Tiểu đội trưởng: mọi câu chỉ lấy tổ mình
   const rieng = (n) => (ql ? '' : ` AND u.id = ?${n}`), kem = ql ? [] : [user.id];
-  const [tdt, rows, truoc, cuaToi, truocCa] = await env.DB.batch([
+  const [tdt, rows, truoc, cuaToi, truocCa, cfgR, tenR] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(1)} ORDER BY ${TO_SX}`).bind(...kem),
     env.DB.prepare(`SELECT q.ngay, q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, q.ts, q.by_id,
                       COALESCE(u.name, '(đã xoá)') uname, COALESCE(b.name, '(đã xoá)') by_name
@@ -102,7 +118,11 @@ export async function qsView(env, user, url) {
     env.DB.prepare(`SELECT q.user_id, q.ngay, q.ca, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu FROM users u JOIN quan_so q ON q.rowid = (
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND x.ca = ?2 AND x.ngay < ?1 ORDER BY x.ngay DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(3)}`).bind(c.ngay, c.ca, ...kem),
+    env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
+    env.DB.prepare('SELECT id, name FROM users'),
   ]);
+  const cfg = docCfg(cfgR.results[0]), ten = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
+  const loc = (o) => Object.fromEntries(Object.entries(o).filter(([id]) => ql || Number(id) === user.id).map(([id, v]) => [id, { ...v, by_name: ten[v.by] || '' }]));
   const hm = hanMoc(st);
   return json({
     ngay: c.ngay, ca: c.ca, hien, ke, gio: caGio(st, c), han: caHan(st, c), hanPhut: hm, lyDo: QS_LY_DO, tongMax: QS_TONG_MAX,
@@ -114,6 +134,7 @@ export async function qsView(env, user, url) {
     }),
     tdt: tdt.results, rows: rows.results.map((r) => ({ ...r, nghi: docNghi(r.nghi) })), truoc: truoc.results,
     truocCa: truocCa.results.map((r) => ({ ...r, nghi: docNghi(r.nghi) })),
+    lich: loc(cfg.lich), tl: ql ? loc(cfg.tl) : {},
     // cùng luật với qsPut, để máy khách khỏi bày nút bấm vào là bị từ chối
     suaDuoc: ql ? c.ngay >= vnDay(Date.now() - QS_SUA_NGAY * NGAY) : caKhoa(c) >= caKhoa(hien),
   });
@@ -180,18 +201,72 @@ export async function qsHan(req, env, user) {
   return json({ ok: true, ca1: h1, ca2: h2 });
 }
 
+/* Đặt lịch ca của một tổ. Tiểu đội trưởng đặt cho tổ mình; CVKTHT trở lên đặt hộ mọi tổ.
+   body: { user (bỏ trống = tổ mình), ca: 1 | 2 | 3, den: 'YYYY-MM-DD' | null }. */
+export async function qsLich(req, env, user) {
+  const b = await readJson(req);
+  const ql = capOf(user.role) >= 1, uid = b.user == null ? user.id : Number(b.user);
+  if (!ql && uid !== user.id) throw new HttpError(403, 'Bạn chỉ đặt được ca của tổ mình');
+  const ca = Number(b.ca);
+  if (![1, 2, 3].includes(ca)) throw bad('Chọn ca ngày, ca đêm hoặc cả hai ca');
+  let den = null;
+  if (b.den) {
+    den = docCa(b.den, 1).ngay;
+    if (den < vnDay()) throw bad('Ngày kết thúc phải từ hôm nay trở đi');
+    if (den > vnDay(Date.now() + 366 * NGAY)) throw bad('Ngày kết thúc xa quá một năm');
+  }
+  const to = await env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid).first();
+  if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ đặt ca cho tổ của một Tiểu đội trưởng đang dùng app');
+  const v = { ca, den, ts: Date.now(), by: user.id };
+  await env.DB.batch([
+    env.DB.prepare(MAU_CO),
+    env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind('$.lich."' + uid + '"', JSON.stringify(v)),
+    auditStmt(env, user, 'qs_lich', { to: to.name, ca, den: den || undefined }),
+    bump(env),
+  ]);
+  return json({ ok: true, user: uid, ...v });
+}
+
+/* Đặt số thiết lập của một tổ (CVKTHT trở lên). body: { user, tong, s1, s2, ts } — ts là lần sửa mà người này đang
+   nhìn thấy (null nếu tổ chưa có số thiết lập). Người khác đã sửa sau đó thì từ chối, nói rõ ai sửa, số mới là gì. */
+export async function qsThietLap(req, env, user) {
+  const b = await readJson(req);
+  const uid = Number(b.user);
+  if (!Number.isInteger(uid)) throw bad('Cần chọn tổ');
+  const to = await env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid).first();
+  if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ thiết lập cho tổ của một Tiểu đội trưởng đang dùng app');
+  const tong = intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số');
+  const s1 = b.s1 == null || b.s1 === '' ? 0 : intIn(b.s1, 0, QS_TONG_MAX, 'Số người ca ngày');
+  const s2 = b.s2 == null || b.s2 === '' ? 0 : intIn(b.s2, 0, QS_TONG_MAX, 'Số người ca đêm');
+  if (s1 + s2 > tong) throw bad(`Ca ngày ${s1} + ca đêm ${s2} nhiều hơn tổng quân số ${tong}`);
+  const cu = Number(b.ts) || 0, path = '$.tl."' + uid + '"';
+  const v = { tong, s1, s2, ts: Math.max(Date.now(), cu + 1), by: user.id };
+  await env.DB.prepare(MAU_CO).run();
+  try {
+    await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM bc_mau WHERE id = 1 AND COALESCE(json_extract(data, ?1), 0) <> ?2)", path + '.ts', cu), [
+      env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind(path, JSON.stringify(v)),
+      auditStmt(env, user, 'qs_thietlap', { to: to.name, tong, s1, s2 }),
+      bump(env),
+    ], new HttpError(409, 'doi', 'doi'));
+  } catch (e) {
+    if (!(e instanceof HttpError) || e.code !== 'doi') throw e;
+    const r = await env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind(path).first();
+    const m = r && r.v ? JSON.parse(r.v) : null;
+    const ai = m ? await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(m.by).first() : null;
+    throw new HttpError(409, m ? `${(ai && ai.name) || 'Người khác'} vừa sửa số thiết lập tổ ${to.name}: tổng ${m.tong}, ca ngày ${m.s1}, ca đêm ${m.s2}. Màn hình đã tải lại số mới, xem rồi sửa lại nếu cần.` : 'Số thiết lập vừa đổi. Tải lại rồi sửa lại.', 'changed');
+  }
+  return json({ ok: true, user: uid, ...v });
+}
+
 /* Xếp thứ tự tổ (CVKTHT trở lên). ids: id các Tiểu đội trưởng theo thứ tự mới. Lưu vào mẫu báo cáo, giữ nguyên
    các phần khác của mẫu. */
 export async function qsThuTu(req, env, user) {
   const b = await readJson(req);
   const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map(Number).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200) : null;
   if (!ids) throw bad('Thứ tự tổ không hợp lệ');
-  const r = await env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1').first();
-  const d = docNghi(r && r.data);
-  d.thu_tu = ids;
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO bc_mau (id, data, ts, by_id) VALUES (1, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET data = excluded.data, ts = excluded.ts, by_id = excluded.by_id`).bind(JSON.stringify(d), Date.now(), user.id),
+    env.DB.prepare(MAU_CO),
+    env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), '$.thu_tu', json(?)) WHERE id = 1").bind(JSON.stringify(ids)),
     auditStmt(env, user, 'qs_thutu', { n: ids.length }),
     bump(env),
   ]);
@@ -227,7 +302,8 @@ function qsToi(mine, hien, ke) {
   const coDinh = motCa(a) && motCa(z) && a.ca === z.ca ? a.ca : 0;
   return { tong: cua.length ? cua[0].tong : 0, hien: tim(hien), ke: tim(ke), truocHien: truoc(hien), truocKe: truoc(ke), coDinh };
 }
-export function qsBoot(rows, st, user, mine = [], bcDa = []) {
+export function qsBoot(rows, st, user, mine = [], bcDa = [], cfgRow = null) {
+  const cfg = docCfg(cfgRow);
   const hien = caLuc(st), ke = caKe(hien), to = new Map();
   for (const r of rows) {
     const t = to.get(r.id) || { id: r.id, name: r.name, da: false, daKe: false, ds: r.lngay ? [{ ngay: r.lngay, ca: r.lca, lam: r.llam, ca_kia: r.lkia }] : [] };
@@ -236,9 +312,11 @@ export function qsBoot(rows, st, user, mine = [], bcDa = []) {
     if (r.ngay) t.ds.push(r);
     to.set(r.id, t);
   }
-  const ds = [...to.values()].map(({ ds: d, ...t }) => ({ ...t, ca: caCua(d.filter((r) => r.ngay === d[0].ngay)) }));
+  /* Ca của tổ: theo LỊCH CA nếu đã đặt và còn hạn; chưa đặt thì đoán theo lần báo gần nhất như trước. */
+  const ds = [...to.values()].map(({ ds: d, ...t }) => { const l = caLich(cfg, t.id, hien.ngay); return { ...t, ca: l ? caMang(l) : caCua(d.filter((r) => r.ngay === d[0].ngay)), lich: l }; });
+  const lt = cfg.lich[user.id];
   return { hien, ke, den: caGio(st, hien).den, han: caHan(st, hien), hanKe: caHan(st, ke), to: capOf(user.role) >= 1 ? ds : ds.filter((t) => t.id === user.id),
-    lyDo: QS_LY_DO, toi: user.role === 'tieudoi' ? qsToi(mine, hien, ke) : undefined,
+    lyDo: QS_LY_DO, toi: user.role === 'tieudoi' ? { ...qsToi(mine, hien, ke), lich: lt ? { ca: lt.ca, den: lt.den || null, het: !caLich(cfg, user.id, hien.ngay) } : null } : undefined,
     // ca đang diễn ra đã chép báo cáo ca chưa (chỉ cần cho CVKTHT trở lên)
     bcDa: capOf(user.role) >= 1 && bcDa.some((r) => caKhoa(r) === caKhoa(hien)) };
 }

@@ -40,6 +40,11 @@ export const GC_BAO_HUY_MS = 30 * 864e5;
 const GC_KHOI_PHUC_MS = 7 * 864e5;
 // hạn xa nhất: 1 năm. Xa hơn gần như chắc chắn là gõ nhầm năm, và đơn đó sẽ không bao giờ hiện "trễ"
 const GC_HAN_MAX_MS = 366 * 864e5;
+/* ĐƠN XONG CHƯA XUẤT có index riêng (idx_don_gc_chua_xuat, index một phần — chỉ chứa đúng các đơn đó). Phải ÉP dùng
+   (INDEXED BY): để tự chọn thì SQLite lấy index (tt, cap_ts) và đi qua MỌI đơn đã xong từ trước tới nay — đo trên
+   6.000 đơn: 5.702 dòng mỗi lần mở app, mà chỉ 29 đơn là cần. Điều kiện phải viết đúng từng chữ như lúc tạo index. */
+export const GC_CHUA_XUAT = "tt = 'xong' AND COALESCE(xuat_tt, '') <> 'duyet'";
+export const GC_CHUA_XUAT_IDX = 'INDEXED BY idx_don_gc_chua_xuat';
 const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.cote, d.truc, d.noi_dung, d.user_id, d.han, d.buoi, d.tt, d.pct, d.vuong,
     d.giao_by, d.ts, d.cap_ts, d.xong_ts, d.huy_ly_do, d.mo_lai, d.huy_ts, d.biet_ts,
     d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts, d.cho_tl, d.tn_id,
@@ -147,7 +152,7 @@ export async function gcList(env) {
     /* Hai nửa nối bằng UNION ALL chứ không dùng OR: mỗi nửa đi thẳng theo index (tt, cap_ts), còn OR thì
        quét cả bảng — mà bảng này chỉ dài ra, và mỗi lần có người cập nhật là mọi máy đang mở bảng tải lại. */
     env.DB.prepare(`SELECT * FROM (${GC_SELECT} WHERE d.tt IN ('moi', 'nhan', 'lam')
-                    UNION ALL ${GC_SELECT} WHERE d.tt = 'xong' AND COALESCE(d.xuat_tt, '') <> 'duyet'
+                    UNION ALL ${GC_SELECT.replace('FROM don_gc d ', `FROM don_gc d ${GC_CHUA_XUAT_IDX} `)} WHERE d.tt = 'xong' AND COALESCE(d.xuat_tt, '') <> 'duyet'
                     UNION ALL ${GC_SELECT} WHERE d.tt IN ('xong', 'huy') AND d.cap_ts > ? AND (d.tt = 'huy' OR d.xuat_tt = 'duyet')) ORDER BY han, id`).bind(Date.now() - GC_GIU_MS),
     env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0 ORDER BY name"),
     env.DB.prepare(MUC_SQL),
@@ -287,16 +292,24 @@ export async function gcMucXoa(env, user, id) {
      dữ liệu chung) mà tăng meta 'tn': máy chỉ hỏi lại danh sách tin chưa đọc của mình. */
 const GC_TN_MAX = 500, GC_TN_MO_MS = 7 * 864e5, GC_TN_THU_HOI_MS = 2 * 60e3;
 const bumpTn = (env) => env.DB.prepare("UPDATE meta SET value = value + 1 WHERE key = 'tn'");
-// đơn có tin mới (của người khác) mà người này chưa đọc — chỉ đơn LIÊN QUAN tới họ: đang làm, đã giao, hoặc đã nhắn trong đó
-export const TN_MOI_SQL = `SELECT d.id, d.cau_kien, d.truc,
+/* Đơn có tin mới (của người khác) mà người này chưa đọc — chỉ đơn LIÊN QUAN tới họ: đang làm, đã giao, hoặc đã nhắn
+   trong đó. Chỉ xét các đơn CÒN TRÊN BẢNG (còn mở, xong chưa xuất, hoặc đóng trong 30 ngày): câu này chạy ở mỗi lần
+   mở app và mỗi lần có tin, bản đầu quét cả bảng đơn từ trước tới nay (6.000 dòng sau một năm). Tin chưa đọc trên đơn
+   đã rời bảng thì thôi nhắc — đơn đó cũng đã khoá trao đổi từ lâu. ?1 = người xem, ?2 = mốc 30 ngày. */
+export const TN_MOI_SQL = `WITH ung(id) AS (
+    SELECT id FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
+    UNION SELECT id FROM don_gc WHERE tt IN ('xong', 'huy') AND cap_ts > ?2
+    UNION SELECT id FROM don_gc ${GC_CHUA_XUAT_IDX} WHERE ${GC_CHUA_XUAT})
+  SELECT d.id, d.cau_kien, d.truc,
     (SELECT COUNT(*) FROM don_gc_tn t WHERE t.don_id = d.id AND t.id > COALESCE(r.doc_id, 0) AND t.user_id <> ?1 AND t.thu_hoi = 0) moi
-  FROM don_gc d LEFT JOIN don_gc_doc r ON r.don_id = d.id AND r.user_id = ?1
+  FROM ung JOIN don_gc d ON d.id = ung.id LEFT JOIN don_gc_doc r ON r.don_id = d.id AND r.user_id = ?1
   WHERE d.tn_id > COALESCE(r.doc_id, 0)
     AND (d.giao_by = ?1 OR EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id = ?1)
          OR EXISTS (SELECT 1 FROM don_gc_tn t2 WHERE t2.don_id = d.id AND t2.user_id = ?1))`;
 export const tnMoi = (rows) => rows.filter((r) => r.moi > 0);
+export const tnMoiStmt = (env, user) => env.DB.prepare(TN_MOI_SQL).bind(user.id, Date.now() - GC_GIU_MS);
 export async function gcTnMoi(env, user) {
-  return json({ items: tnMoi((await env.DB.prepare(TN_MOI_SQL).bind(user.id).all()).results) });
+  return json({ items: tnMoi((await tnMoiStmt(env, user).all()).results) });
 }
 export async function gcTn(req, env, user, id) {
   if (!Number.isInteger(id)) throw khongThay();

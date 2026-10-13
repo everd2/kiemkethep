@@ -89,6 +89,7 @@ async function main() {
       ['GET', '/bootstrap', null, ALL], ['GET', '/usage?days=7', null, ALL], ['GET', '/day?date=' + vnDay(), null, ALL],
       ['PUT', '/counts', {}, ALL],
       ['GET', '/loans', null, ALL], ['POST', '/loans', {}, ALL], ['DELETE', '/loans/99999', null, ALL],
+      ['GET', '/satvun', null, ALL], ['POST', '/satvun', {}, ALL], ['DELETE', '/satvun/99999', null, ALL],
       ['POST', '/doitac', {}, ALL],
       // gia công: ai cũng xem; việc của người được giao thì ai cũng gọi được (đơn không có: 404); giao, sửa, huỷ, mở lại từ CVKTHT
       ['GET', '/giacong', null, ALL], ['GET', '/giacong/99999', null, ALL], ['POST', '/giacong/99999/nhan', {}, ALL], ['POST', '/giacong/99999/xong', {}, ALL],
@@ -96,12 +97,12 @@ async function main() {
       ['GET', '/giacong/tnmoi', null, ALL], ['POST', '/giacong/99999/tn', {}, ALL], ['POST', '/giacong/99999/doc', {}, ALL], ['POST', '/giacong/99999/tn/1/thuhoi', {}, ALL],
       ['POST', '/giacong/muc', {}, AD], ['DELETE', '/giacong/muc/99999', null, AD],
       // quân số đầu ca: ai cũng vào được (Tiểu đội trưởng chỉ tổ mình, kiểm kỹ ở quanso.test.mjs); thân sai nên không ghi gì
-      ['GET', '/quanso', null, ALL], ['PUT', '/quanso', {}, ALL], ['PUT', '/quanso/han', {}, C1],
+      ['GET', '/quanso', null, ALL], ['PUT', '/quanso', {}, ALL], ['PUT', '/quanso/han', {}, C1], ['PUT', '/quanso/lich', {}, ALL], ['PUT', '/quanso/thietlap', {}, C1], ['PUT', '/quanso/thutu', {}, C1],
       ['POST', '/receipts', {}, LAP], ['DELETE', '/receipts/99999', null, LAP], ['POST', '/transfers', {}, LAP],
       ['POST', '/adjust', {}, LAP], ['POST', '/xuat', {}, LAP], ['GET', '/report?from=2020-01-01&to=2020-01-02', null, LAP],
-      ['PATCH', '/doitac/99999', {}, LAP], ['GET', '/loans/export', null, LAP],
+      ['PATCH', '/doitac/99999', {}, LAP], ['GET', '/loans/export', null, LAP], ['GET', '/satvun/export', null, LAP],
       ['POST', '/receipts/99999/duyet', {}, C2],
-      ['POST', '/loans/99999/duyet', {}, C1],
+      ['POST', '/loans/99999/duyet', {}, C1], ['POST', '/satvun/99999/duyet', {}, C1],
       ['GET', '/review', null, C1], ['GET', '/baocao', null, C1], ['PUT', '/baocao', {}, C1], ['POST', '/review/duyet', { khu: 'ZZ' }, C1], ['POST', '/recount', { khu: 'ZZ' }, C1],
       ['GET', '/conflict?khu=A', null, C1], ['POST', '/conflict/resolve', { khu: 'ZZ' }, C1], ['GET', '/submissions?khu=A', null, C1],
       ['GET', '/audit', null, C1], ['GET', '/cham-cong', null, C1], ['GET', '/export?day=' + vnDay(), null, C1],

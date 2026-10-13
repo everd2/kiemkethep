@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 35;
+export const SCHEMA_VERSION = 37;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -454,6 +454,43 @@ export const MIGRATIONS = {
     'ALTER TABLE don_gc ADD COLUMN xuat_duyet_ts INTEGER',
     'ALTER TABLE don_gc ADD COLUMN xuat_tu_choi TEXT',
     "UPDATE don_gc SET xuat_tt = 'duyet', xuat_ts = xong_ts, xuat_duyet_ts = xong_ts WHERE tt = 'xong' AND xuat_tt IS NULL",
+  ],
+  /* SỔ XUẤT SẮT VỤN (xem src/satvun.js): một bảng mới, không đổi bảng cũ. kg lưu số nguyên (kg) để cộng
+     không lệch số lẻ; khu_id NULL = gom từ nhiều khu. Hai trigger như sổ vay: không nhận dòng hỏng, và nội
+     dung dòng đã ghi thì không sửa — sai thì huỷ rồi ghi lại. */
+  36: [
+    `CREATE TABLE IF NOT EXISTS satvun (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       ngay TEXT NOT NULL,
+       khu_id TEXT,
+       kg INTEGER NOT NULL,
+       noi TEXT NOT NULL,
+       so_phieu TEXT,
+       bien_so TEXT,
+       nguoi TEXT,
+       note TEXT,
+       user_id INTEGER NOT NULL,
+       ts INTEGER NOT NULL,
+       cap INTEGER NOT NULL DEFAULT 2,
+       duyet_ts INTEGER,
+       duyet_by INTEGER,
+       duyet_name TEXT,
+       voided INTEGER NOT NULL DEFAULT 0,
+       voided_ts INTEGER,
+       voided_by INTEGER,
+       voided_name TEXT,
+       voided_note TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS idx_satvun_ngay ON satvun(ngay)',
+    'CREATE INDEX IF NOT EXISTS idx_satvun_duyet ON satvun(duyet_ts)',
+    "CREATE TRIGGER IF NOT EXISTS satvun_chk_insert BEFORE INSERT ON satvun WHEN NEW.kg IS NULL OR NEW.kg <= 0 OR NEW.ngay IS NULL OR TRIM(COALESCE(NEW.noi, '')) = '' BEGIN SELECT RAISE(ABORT, 'Sat vun: dong khong hop le'); END",
+    "CREATE TRIGGER IF NOT EXISTS satvun_no_edit BEFORE UPDATE OF ngay, khu_id, kg, noi ON satvun BEGIN SELECT RAISE(ABORT, 'Sat vun: khong sua noi dung dong da ghi'); END",
+  ],
+  /* GIA CÔNG: index MỘT PHẦN cho đơn đã xong mà chưa xuất (xem GC_CHUA_XUAT ở giacong.js). Bảng đơn, dữ liệu chung
+     và tin chưa đọc đều hỏi tập này ở mỗi lần mở app; không có index riêng thì mỗi lần phải đi qua mọi đơn đã xong từ
+     trước tới nay. Chỉ thêm index, dữ liệu không đổi. */
+  37: [
+    "CREATE INDEX IF NOT EXISTS idx_don_gc_chua_xuat ON don_gc(xong_ts) WHERE tt = 'xong' AND COALESCE(xuat_tt, '') <> 'duyet'",
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
