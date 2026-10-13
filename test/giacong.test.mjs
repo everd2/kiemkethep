@@ -153,7 +153,7 @@ async function main() {
   eq('xong rồi thì không cập nhật tiến độ nữa', (await viec(id, 'tiendo', { pct: 25 }, 'Binh')).status, 409);
   eq('xong rồi thì không sửa được', (await S.call('PATCH', '/giacong/' + id, don(), 'Cv')).status, 409);
   eq('xong rồi thì không huỷ được', (await viec(id, 'huy', { ly_do: 'x' }, 'Cv')).status, 409);
-  eq('đơn đã xong không còn trong bootstrap', (await S.call('GET', '/bootstrap', undefined, 'An')).data.gc.length, 1);
+  eq('đơn đã xong mà CHƯA XUẤT vẫn trong bootstrap (để nhắc xuất)', (await S.call('GET', '/bootstrap', undefined, 'An')).data.gc.filter((x) => x.tt === 'xong').map((x) => [x.id, x.xuat_tt]), [[id, null]]);
   eq('mở lại phải có lý do', (await viec(id, 'molai', {}, 'Cv')).status, 400);
   eq('Cv mở lại đơn', (await viec(id, 'molai', { ly_do: 'thiếu 4 thanh đai trục X14' }, 'Cv')).status, 200);
   const dm = (await xem(id)).don;
@@ -162,6 +162,37 @@ async function main() {
   eq('đơn mang lý do bị mở lại, và bootstrap gửi nó cho người giữ đơn', [dm.mo_lai, (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.find((x) => x.user_id === U.Binh && x.tt === 'lam').mo_lai], ['thiếu 4 thanh đai trục X14', 'thiếu 4 thanh đai trục X14']);
   eq('Binh xác nhận xong lần nữa', (await viec(id, 'xong', {}, 'Binh')).status, 200);
   eq('xong lần nữa thì hết cờ bị mở lại', (await xem(id)).don.mo_lai, null);
+  /* ===== 6b. Xuất sau khi xong: tổ gửi xuất (đủ ba xác nhận), CVKTHT trở lên duyệt; đã xuất thì khoá hẳn ===== */
+  {
+    const xu = (who, body) => viec(id, 'xuat', body, who);
+    const du = { bien_ban: 1, kiem_dem: 1, anh: 1, xuat_cho: 'Đội thi công 2 · khối A tầng 5' };
+    eq('người ngoài đơn không gửi xuất được', (await xu('An', du)).status, 403);
+    eq('thiếu một trong ba xác nhận: từ chối', [(await xu('Binh', { ...du, anh: 0 })).status, (await xu('Binh', { ...du, bien_ban: 0 })).status, (await xu('Binh', { ...du, kiem_dem: 0 })).status], [400, 400, 400]);
+    eq('không ghi xuất cho ai: từ chối', (await xu('Binh', { ...du, xuat_cho: ' ' })).status, 400);
+    advance(1000);
+    eq('Binh gửi xuất', (await xu('Binh', { ...du, note: '120 thanh' })).status, 200);
+    const x1 = (await xem(id)).don;
+    eq('đơn chờ duyệt xuất, ghi ai gửi, xuất cho ai', [x1.tt, x1.xuat_tt, x1.xuat_name, x1.xuat_cho, x1.xuat_note], ['xong', 'cho', 'Binh', du.xuat_cho, '120 thanh']);
+    eq('gửi lần hai: từ chối', (await xu('Binh', du)).status, 409);
+    eq('Tiểu đội trưởng không duyệt xuất được', (await viec(id, 'duyetxuat', {}, 'Binh')).status, 403);
+    eq('không duyệt phải có lý do', (await viec(id, 'tuchoixuat', {}, 'Cv')).status, 400);
+    advance(1000);
+    eq('Cv không duyệt, trả về tổ', (await viec(id, 'tuchoixuat', { ly_do: 'thiếu chữ ký bên nhận' }, 'Cv')).status, 200);
+    eq('đơn về chưa xuất, giữ lý do', [(await xem(id)).don.xuat_tt, (await xem(id)).don.xuat_tu_choi], [null, 'thiếu chữ ký bên nhận']);
+    advance(1000);
+    eq('tổ gửi lại', (await xu('Binh', du)).status, 200);
+    eq('gửi lại thì xoá lý do lần trước', (await xem(id)).don.xuat_tu_choi, null);
+    advance(1000);
+    eq('Trung duyệt xuất', (await viec(id, 'duyetxuat', {}, 'Trung')).status, 200);
+    const x2 = (await xem(id)).don;
+    ok('đơn đã xuất: ghi người duyệt, lúc duyệt', x2.xuat_tt === 'duyet' && x2.xuat_duyet_name === 'Trung' && x2.xuat_duyet_ts > 0, JSON.stringify(x2));
+    eq('đã xuất thì không mở lại được', (await viec(id, 'molai', { ly_do: 'x' }, 'Cv')).status, 409);
+    eq('duyệt lần hai: từ chối', (await viec(id, 'duyetxuat', {}, 'Cv')).status, 409);
+    eq('đơn đã xuất rời bootstrap', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.filter((x) => x.id === id).length, 0);
+    const lg = (await xem(id)).log.map((l) => l.viec);
+    ok('lịch sử đơn có đủ ba bước xuất', ['xuat', 'tuchoixuat', 'duyetxuat'].every((v) => lg.includes(v)), lg.join(','));
+    eq('nhật ký ghi lần duyệt xuất', JSON.parse(S.one("SELECT detail FROM audit WHERE action = 'gc_duyetxuat' ORDER BY id DESC").detail).cau_kien, 'Dầm D3');
+  }
 
   /* ===== 7. Huỷ đơn ===== */
   eq('Tiểu đội trưởng không huỷ được đơn', (await viec(id2, 'huy', { ly_do: 'x' }, 'Binh')).status, 403);
@@ -202,7 +233,7 @@ async function main() {
     eq('đã biết rồi thì bootstrap thôi nhắc', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.filter((x) => x.tt === 'huy').length, 0);
     eq('lịch sử đơn ghi đủ: huỷ, khôi phục, huỷ, đã biết', (await xem(id2)).log.map((l) => l.viec).filter((v) => ['huy', 'khoiphuc', 'biet'].includes(v)).reverse(), ['huy', 'khoiphuc', 'huy', 'biet']);
   }
-  eq('bootstrap: không còn đơn mở nào, đơn huỷ đã được biết cũng không còn', (await S.call('GET', '/bootstrap', undefined, 'Cv')).data.gc, []);
+  eq('bootstrap: không còn đơn mở nào, đơn huỷ đã được biết và đơn đã xuất cũng không còn', (await S.call('GET', '/bootstrap', undefined, 'Cv')).data.gc, []);
   eq('đơn xong và đơn huỷ vẫn nằm trên bảng chung', (await S.call('GET', '/giacong', undefined, 'An')).data.items.map((x) => x.tt).sort(), ['huy', 'huy', 'xong']);
 
   /* ===== 7b. Nhiều Tiểu đội trưởng cùng làm một đơn (ca ngày + ca đêm) =====
@@ -370,7 +401,7 @@ async function main() {
     // phiên đăng nhập sống 30 ngày: qua 40 ngày thì phải đăng nhập lại
     await S.login('Binh', '0900000003', '1357'); await S.login('Admin', '0900000001', '2468');
     const l = (await S.call('GET', '/giacong', undefined, 'Binh')).data.items;
-    ok('sau 40 ngày: đơn xong / huỷ đã rời bảng, đơn còn mở vẫn ở lại', l.length > 0 && l.every((x) => ['moi', 'nhan', 'lam'].includes(x.tt)), l.map((x) => x.cau_kien + ':' + x.tt).join(', '));
+    ok('sau 40 ngày: đơn đã xuất / đã huỷ rời bảng; đơn còn mở và đơn xong CHƯA XUẤT vẫn ở lại', l.length > 0 && l.every((x) => ['moi', 'nhan', 'lam'].includes(x.tt) || (x.tt === 'xong' && x.xuat_tt !== 'duyet')) && !l.some((x) => x.cau_kien === 'Dầm D3'), l.map((x) => x.cau_kien + ':' + x.tt).join(', '));
     eq('đơn cũ vẫn xem lại được theo id (không xoá)', (await xem(id)).don.tt, 'xong');
   }
 
@@ -557,7 +588,7 @@ async function main() {
     ok('chip gợi ý có nút ×', R(`gcChipGoiY('tang', '5', false, 'gctangq')`).includes('data-a="gcanq" data-l="tang" data-v="5"'));
     R(`S.gcForm = null; S.gc = ${JSON.stringify((await S3.call('GET', '/giacong', undefined, 'Cv')).data)};`);
     R(`S.form.gcq = '';`);
-    const nhomTen = () => (R('vGiaCong()').split('data-gctim')[0].match(/<h2 class="sec"[^>]*>([^<]*) </g) || []).map((x) => x.replace(/<[^>]+>/g, '').replace(/<$/, '').trim());
+    const nhomTen = () => (R('vGiaCong()').split('data-gctim')[0].match(/data-a="gcthu"[^>]*>.*?<span style="min-width:0">([^<]*) </g) || []).map((x) => x.replace(/^.*<span style="min-width:0">/, '').replace(/<$/, '').trim());
     eq('gom theo tổ / theo hạn / theo khu', [R(`ACTIONS.gcxem({ v: 'to' })`) || nhomTen(), R(`ACTIONS.gcxem({ v: 'han' })`) || nhomTen(), R(`ACTIONS.gcxem({ v: 'khu' })`) || nhomTen()], [['Binh'], ['Ngày mai'], ['Khu A']]);
     ok('không gom theo tổ thì thẻ đơn ghi tên người giữ đơn', />X1-X2<\/b> · Khu A · Tầng 5 · Binh</.test(R('vGiaCong()')), (R('vGiaCong()').match(/X1-X2<\/b>[^<]*/) || [''])[0]);
     R(`ACTIONS.gcxem({ v: 'to' })`);
@@ -650,7 +681,7 @@ async function main() {
     S3.raw.exec(`UPDATE don_gc SET lam_ts = lam_ts - 3 * 86400000, ts = ts - 3 * 86400000 WHERE id = ${idD}`);
     await vao('Binh', 'tieudoi');
     R(`S.screen = 'giacong'; S.gcF = 'toi';`);
-    ok('đơn 3 ngày không cập nhật: thẻ ghi "Đứng yên 3 ngày", người làm được nhắc', theD().includes('Đứng yên 3 ngày') && R('vHome()').includes('1 chưa cập nhật tiến độ từ 2 ngày'));
+    ok('đơn 3 ngày không cập nhật: cảnh báo "Đứng yên 3 ngày" (thẻ chỉ hiện việc gấp nhất, kèm "+N việc khác"), người làm được nhắc', R(`gcCanhBao(S.gc.items.find((x) => x.id === ${idD})).map((x) => x.html).join()`).includes('Đứng yên 3 ngày') && /\+1 việc khác/.test(theD()) && R('vHome()').includes('1 chưa cập nhật tiến độ từ 2 ngày'));
     await vao('Cv', 'cvktht');
     ok('người giao: mục lọc Đứng yên và thẻ nhắc', R(`S.screen = 'giacong'; vGiaCong()`).includes('data-v="dungyen">Đứng yên 1') && /1 đơn đứng yên/.test(R('vHome()')));
     ok('gom theo hạn / khu: thẻ ghi tên gọi ngắn của người giữ đơn', R('gcViTri({ truc: "X1", uname: "Nguyễn Văn An" }, true)').endsWith(' · An'));
@@ -660,6 +691,47 @@ async function main() {
     eq('người khác không bị nhắc việc không phải của mình', (R('vHome()').match(/Đơn gia công của bạn/g) || []).length, 0);
     await vao('Cv', 'cvktht');
     R('S.boot.skew = 0;');
+    /* --- hiển thị: danh sách gọn, đầu bảng 2 hàng, thu gọn nhóm --- */
+    {
+      await vao('Cv', 'cvktht');
+      R(`S.screen = 'giacong'; S.gcF = 'mo'; S.gcV = 'to'; S.gcGon = false;`);
+      const the = R('vGiaCong()');
+      R('ACTIONS.gcgon()');
+      const gon = R('vGiaCong()');
+      ok('bấm Gọn: mỗi đơn một dòng, không còn thẻ', R('S.gcGon') === true && gon.split('data-a="gcview"').length === the.split('data-a="gcview"').length && !/class="card col gap6" data-gcq/.test(gon.split('data-gctim')[0]) && /class="li" data-gcq/.test(gon));
+      ok('đầu bảng còn 2 hàng: ô tìm, rồi cách gom + Gọn + mục lọc', (gon.split('class="col gap6 tbar"')[1].split('id="body"')[0].match(/class="row gap6"/g) || []).length === 2 && gon.includes('data-a="gcgon"'));
+      const k1 = (gon.match(/data-a="gcthu" data-k="([^"]+)"/) || [])[1];
+      R(`ACTIONS.gcthu({ k: ${JSON.stringify(k1 || '')} })`);
+      ok('bấm tên nhóm: thu gọn nhóm đó (app nhớ)', !!k1 && R('gcThuDoc()').includes(k1) && R('vGiaCong()').split('data-gctim')[0].split('data-a="gcview"').length < gon.split('data-gctim')[0].split('data-a="gcview"').length);
+      R(`ACTIONS.gcthu({ k: ${JSON.stringify(k1 || '')} }); ACTIONS.gcgon()`);
+      eq('đang làm và đã nhận có màu nhãn khác nhau', [R("gcTT({ tt: 'lam' })[1]"), R("gcTT({ tt: 'nhan' })[1]")], ['pri', 'idle']);
+    }
+    /* --- xuất trên giao diện --- */
+    {
+      const rx = await S3.call('POST', '/giacong', { cau_kien: 'Dầm XU', truc: 'Trục 4', phan_khu: 'Khu A', tang: '2', users: [id3.Binh], han: vnDay(Date.now() + 864e5) }, 'Cv');
+      const x = rx.data.id;
+      await S3.call('POST', `/giacong/${x}/nhan`, {}, 'Binh'); advance(1000); await S3.call('POST', `/giacong/${x}/xong`, {}, 'Binh');
+      await vao('Binh', 'tieudoi');
+      ok('tổ: Tổng quan nhắc đơn xong chưa xuất', /đơn gia công của bạn đã xong, chưa xuất/.test(R('vHome()')));
+      R(`S.screen = 'giacong'; S.gcF = 'xuat'; S.gcGon = false;`);
+      ok('mục Chưa xuất có đơn, thẻ có nút XUẤT', R('vGiaCong()').includes(`data-a="gcqxuat" data-id="${x}"`) && R('vGiaCong()').includes('Xong · chưa xuất'));
+      R(`ACTIONS.gcqxuat({ id: '${x}' })`);
+      ok('hộp xuất: ba ô tick và ô xuất cho ai', ['data-v="bb"', 'data-v="dem"', 'data-v="anh"', 'id="gcxcho"'].every((s) => R('gcXuatHtml()').includes(s)));
+      R(`ACTIONS.gcxtick({ v: 'bb' }); ACTIONS.gcxtick({ v: 'dem' }); S.form.gcxcho = 'Đội 2'; ACTIONS.gcxgui()`); await cho();
+      eq('chưa tick đủ ba ô: chưa gửi', S3.one('SELECT xuat_tt FROM don_gc WHERE id = ?', x).xuat_tt, null);
+      R(`ACTIONS.gcxtick({ v: 'anh' }); ACTIONS.gcxgui()`); await cho();
+      eq('tick đủ: gửi xuất, hộp đóng', [S3.one('SELECT xuat_tt, xuat_cho FROM don_gc WHERE id = ?', x), R('S.gcXu')], [{ xuat_tt: 'cho', xuat_cho: 'Đội 2' }, null]);
+      await vao('Cv', 'cvktht');
+      ok('người giao: Tổng quan nhắc chờ duyệt xuất', /1 đơn gia công chờ bạn duyệt xuất/.test(R('vHome()')));
+      R(`S.review = null;`);
+      ok('tab Duyệt có mục Gia công chờ duyệt xuất', R('gcXuatSec()').includes(`data-gid="${x}"`));
+      R(`S.gcId = ${x}; go('gcdon')`); for (let k = 0; k < 8; k++) await cho();
+      ok('màn đơn: đủ xác nhận của tổ và nút duyệt', ['Chờ duyệt xuất', 'Xuất cho:</b> Đội 2', 'data-a="gcduyetxuat"', 'data-a="gctuchoixuat"'].every((s) => R('vGcDon()').includes(s)));
+      R('ACTIONS.gcduyetxuat()'); await cho();
+      R('ACTIONS.askyes()'); for (let k = 0; k < 8; k++) await cho();
+      eq('duyệt xuất từ giao diện', S3.one('SELECT xuat_tt FROM don_gc WHERE id = ?', x).xuat_tt, 'duyet');
+      ok('màn đơn hiện "Đã xuất", không còn nút mở lại', R('vGcDon()').includes('Đã xuất') && !R('vGcDon()').includes('data-a="gcmolai"'));
+    }
     /* --- trao đổi trên giao diện --- */
     {
       const rq = await S3.call('POST', '/giacong', { cau_kien: 'Cột TN', truc: 'Trục 9', phan_khu: 'Khu A', tang: '1', users: [id3.Binh], han: vnDay(Date.now() + 864e5) }, 'Cv');

@@ -961,6 +961,18 @@ function vHome() {
     const tn = b.gcTn || [], tong = tn.reduce((a, x) => a + x.moi, 0);
     if (tong) alerts.push({ bad: false, t: tong + ' tin mới về đơn gia công', s: tn.slice(0, 3).map((x) => x.cau_kien + (x.truc ? ' · ' + x.truc : '')).join(', ') + (tn.length > 3 ? '…' : '') + ' · bấm để đọc', to: tn.length === 1 ? 'gcdon' : 'giacong', gid: tn.length === 1 ? tn[0].id : undefined, f: tn.length === 1 ? undefined : 'tin' });
   }
+  /* XUẤT. Tổ: đơn của mình đã xong mà chưa gửi xuất (đỏ khi quá 1 ngày). Người giao: đơn chờ mình duyệt xuất, và
+     đơn của các tổ xong quá 1 ngày chưa xuất. */
+  {
+    const chua = gcToi.filter((d) => gcChoXuat(d) && !d.xuat_tt), tre = chua.filter(gcXuatTre).length;
+    if (chua.length) alerts.push({ bad: tre > 0, t: chua.length + ' đơn gia công của bạn đã xong, chưa xuất', s: (tre ? tre + ' đơn quá 1 ngày · ' : '') + 'Ký giao nhận, kiểm đếm, chụp ảnh rồi bấm Xuất', to: chua.length === 1 ? 'gcdon' : 'giacong', gid: chua.length === 1 ? chua[0].id : undefined, f: chua.length === 1 ? undefined : 'xuat' });
+    if (isQL()) {
+      const cho = gcAll.filter((d) => d.tt === 'xong' && d.xuat_tt === 'cho' && !gcCuaToi(d));
+      if (cho.length) alerts.push({ bad: false, t: cho.length + ' đơn gia công chờ bạn duyệt xuất', s: cho.slice(0, 3).map((d) => d.cau_kien + (d.truc ? ' · ' + d.truc : '')).join(', ') + ' · bấm để xem và duyệt', to: cho.length === 1 ? 'gcdon' : 'giacong', gid: cho.length === 1 ? cho[0].id : undefined, f: cho.length === 1 ? undefined : 'xuat' });
+      const quaHan = gcAll.filter((d) => !gcCuaToi(d) && gcXuatTre(d)).length;
+      if (quaHan) alerts.push({ bad: true, t: quaHan + ' đơn gia công xong quá 1 ngày chưa xuất', s: 'Nhắc tổ ký giao nhận, kiểm đếm, chụp ảnh rồi bấm Xuất', to: 'giacong', f: 'xuat' });
+    }
+  }
   if (isQL()) {
     const khac = gcAll.filter((d) => gcMo(d) && !gcCuaToi(d));
     const tre = khac.filter(gcTre).length, vg = khac.filter((d) => d.vuong).length;
@@ -1821,7 +1833,7 @@ function vDuyet() {
     ${R.closed ? (b.closedReset ? '<div class="card ok"><b>Hôm nay vừa đặt lại số liệu.</b> Tồn cả bãi về 0, ngày này đã khoá. Ngày mai các khu báo số như thường.</div>' : '<div class="card ok"><b>Sổ hôm nay đã chốt.</b> Ngày mai các khu báo số như thường.</div>') : verdict}
     ${R.closed && b.closedReset && isAdmin() ? `<div class="card col gap6"><b>Đặt lại nhầm?</b><input class="inp s" id="reopenNote" placeholder="Lý do hoàn tác (bắt buộc)" data-model="reopenNote" value="${esc(S.form.reopenNote || '')}"><button class="btn s bad full" data-a="reopen">HOÀN TÁC ĐẶT LẠI SỐ LIỆU</button></div>` : ''}
     ${R.slot && R.slot.changed ? `<div class="card warn col" style="gap:4px"><b>Khung giờ đếm vừa đổi hôm nay lúc ${hhmm(R.slot.changed.at)}${R.slot.changed.by ? ' (' + esc(R.slot.changed.by) + ')' : ''}</b><span class="sm" style="line-height:1.4">Các lần đếm hôm nay đã được xếp lại theo khung mới, nên việc "thiếu lần đếm" có thể khác lúc trước khi đổi.</span></div>` : ''}
-    ${gap}${first}${phieuSec}${loanSec(R)}${items}${cards}
+    ${gap}${first}${gcXuatSec()}${phieuSec}${loanSec(R)}${items}${cards}
     ${khuSec}
     <button class="card b" style="text-align:left;min-height:52px;font-size:16px;border:2px solid #B9B4A8" data-a="toggle-normal">${normal.length} phi bình thường · ${S.showNormal ? 'bấm để ẩn' : 'bấm để xem'}</button>${normalHtml}
   </div>`;
@@ -2070,6 +2082,9 @@ function fmtAudit(a) {
     gc_xong: ['xác nhận ĐÃ XONG đơn gia công ' + gcAuditTxt(d), 'gc'],
     gc_huy: ['huỷ đơn gia công ' + gcAuditTxt(d) + ' của ' + (d.cua || '?') + ' · lý do: ' + (d.ly_do || ''), 'flag'],
     gc_khoiphuc: ['khôi phục đơn gia công đã huỷ ' + gcAuditTxt(d) + ' của ' + (d.cua || '?') + ' · lý do: ' + (d.ly_do || ''), 'flag'],
+    gc_xuat: ['gửi xuất đơn gia công ' + gcAuditTxt(d) + ' cho ' + (d.xuat_cho || '?') + ' (đã ký giao nhận, kiểm đếm, gửi ảnh)', 'gc'],
+    gc_duyetxuat: ['DUYỆT XUẤT đơn gia công ' + gcAuditTxt(d) + ' của ' + (d.cua || '?'), 'gc'],
+    gc_tuchoixuat: ['không duyệt xuất đơn gia công ' + gcAuditTxt(d) + ' · lý do: ' + (d.ly_do || ''), 'flag'],
     gc_molai: ['mở lại đơn gia công đã xong ' + gcAuditTxt(d) + ' của ' + (d.cua || '?') + ' · lý do: ' + (d.ly_do || ''), 'flag'],
     // quân số đầu ca: mỗi lần tổ báo (hoặc cấp trên ghi thay) là một dòng, vì báo lại là ghi đè số cũ
     qs_bao: [(d.thay ? 'ghi thay quân số tổ ' : 'báo quân số tổ ') + (d.to || '?') + ', ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ': đi làm ' + d.lam + '/' + d.tong
@@ -2619,11 +2634,11 @@ function vVayChiTiet() {
    chung của cả đơn vị. Quyền (server mới là chỗ chặn thật, xem src/giacong.js):
      - giao, sửa, giao lại, huỷ, mở lại đơn đã xong: CVKTHT trở lên;
      - nhận đơn, cập nhật tiến độ, báo vướng, xác nhận xong: CHỈ người được giao. */
-const GC_TT = { moi: ['Mới giao', 'warn'], nhan: ['Đã nhận', 'idle'], lam: ['Đang làm', 'idle'], xong: ['Đã xong', 'ok'], huy: ['Đã huỷ', 'bad'] };
+const GC_TT = { moi: ['Mới giao', 'warn'], nhan: ['Đã nhận', 'idle'], lam: ['Đang làm', 'pri'], xong: ['Đã xong', 'ok'], huy: ['Đã huỷ', 'bad'] };
 const GC_PCT = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]; // chép từ src/giacong.js; 100% là việc "xác nhận đã xong"
 // nấc kế tiếp để bấm nhanh trên thẻ đơn; đơn cũ đang 25% / 75% (nấc trước đây) thì lên nấc chẵn chục gần nhất
 const gcPctKe = (pct) => Math.min(90, Math.floor(pct / 10) * 10 + 10);
-const GC_VIEC = { nhan: 'nhận đơn', tiendo: 'cập nhật tiến độ', vuong: 'báo đang vướng', hetvuong: 'báo hết vướng', xong: 'xác nhận đã xong', sua: 'sửa đơn', huy: 'huỷ đơn (không làm nữa)', molai: 'mở lại đơn', biet: 'đã biết đơn bị huỷ', khoiphuc: 'khôi phục đơn đã huỷ', xemvuong: 'đã xem vướng, đang xử lý' };
+const GC_VIEC = { nhan: 'nhận đơn', tiendo: 'cập nhật tiến độ', vuong: 'báo đang vướng', hetvuong: 'báo hết vướng', xong: 'xác nhận đã xong', sua: 'sửa đơn', huy: 'huỷ đơn (không làm nữa)', molai: 'mở lại đơn', biet: 'đã biết đơn bị huỷ', khoiphuc: 'khôi phục đơn đã huỷ', xemvuong: 'đã xem vướng, đang xử lý', xuat: 'gửi xuất', duyetxuat: 'DUYỆT XUẤT', tuchoixuat: 'không duyệt xuất' };
 /* Tên gọi ngắn (chữ cuối của họ tên: "Nguyễn Văn An" → "An") cho những chỗ chật, như dòng vị trí trên thẻ đơn. */
 const gcTen = (n) => String(n || '').trim().split(/\s+/).pop();
 // bao lâu rồi, theo giờ server: "5 phút", "3 giờ", "2 ngày"
@@ -2744,35 +2759,80 @@ function gcKhop(text, q) {
   return qs.every(mot) || (qs.length > 1 && mot(qs.join('')));
 }
 const gcTuKhoa = (d) => gcKhongDau([d.cau_kien, d.truc, d.phan_khu, gcTang(d.tang), d.cote ? 'cote ' + d.cote : '', d.hang_muc, gcTenNguoi(d), d.noi_dung].filter(Boolean).join(' '));
-/* Một đơn trên bảng: hai dòng (cấu kiện · vị trí · trạng thái, rồi tiến độ · hạn), bấm vào là mở đơn.
-   Đơn CỦA NGƯỜI ĐANG XEM có thêm hàng nút làm ngay tại bảng — nhận đơn, bấm mức tiến độ, bấm xong —
-   khỏi phải mở từng đơn. q: chữ đang tìm (đã bỏ dấu); đơn không khớp thì ẩn chứ không bỏ khỏi trang,
-   để gõ tìm chỉ việc ẩn / hiện, không vẽ lại màn hình giữa lúc đang gõ tiếng Việt. */
+/* XUẤT sau khi xong (xem src/giacong.js): đơn xong mà chưa duyệt xuất vẫn là việc dở — chưa gửi xuất, hoặc chờ
+   CVKTHT trở lên duyệt. Quá một ngày chưa gửi xuất thì nhắc đỏ cả tổ lẫn người giao. */
+const gcChoXuat = (d) => d.tt === 'xong' && d.xuat_tt !== 'duyet';
+const gcXuatTre = (d) => gcChoXuat(d) && !d.xuat_tt && d.xong_ts && Date.now() + ((S.boot && S.boot.skew) || 0) - d.xong_ts > 864e5;
+// nhãn trạng thái của đơn; đơn đã xong tách theo việc xuất
+function gcTT(d) {
+  if (d.tt === 'xong') return d.xuat_tt === 'duyet' ? ['Đã xuất', 'ok'] : d.xuat_tt === 'cho' ? ['Chờ duyệt xuất', 'warn'] : ['Xong · chưa xuất', 'ok'];
+  return GC_TT[d.tt] || [d.tt, 'idle'];
+}
+/* MỘT DÒNG CẢNH BÁO trên thẻ: việc gấp nhất của đơn, kèm "+N việc khác". Thẻ nhiều dòng cảnh báo cao gấp đôi và
+   chỉ còn 2 đơn một màn; đủ chi tiết thì mở đơn. Thứ tự: dừng hẳn > bị mở lại > chờ trả lời > vướng > đứng yên;
+   đơn đã xong thì là việc xuất. Trả về [{ mau, html }]. */
+function gcCanhBao(d) {
+  const mo = gcMo(d), out = [];
+  if (mo && d.vuong && d.vuong_dung) out.push({ mau: 'bad', html: gcVuongTxt(d) + ' · ' + gcVuongXem(d) });
+  if (mo && d.mo_lai) out.push({ mau: 'bad', html: '<b>Bị mở lại:</b> ' + esc(d.mo_lai) });
+  if (mo && d.cho_tl) out.push({ mau: 'warn', html: `<b>Chờ ${esc(gcTenNguoi(d, true))} trả lời</b> câu hỏi của người giao` });
+  if (mo && d.vuong && !d.vuong_dung) out.push({ mau: 'warn', html: gcVuongTxt(d) + ' · ' + gcVuongXem(d) });
+  const yen = gcDungYen(d);
+  if (yen) out.push({ mau: 'warn', html: `<b>Đứng yên ${yen} ngày</b> · chưa cập nhật tiến độ` });
+  if (gcChoXuat(d)) {
+    if (d.xuat_tt === 'cho') out.push({ mau: 'warn', html: `<b>Chờ duyệt xuất</b> · xuất cho ${esc(d.xuat_cho || '')}` });
+    else out.push({ mau: gcXuatTre(d) ? 'bad' : 'warn', html: `<b>Chưa xuất</b>${d.xong_ts ? ' · xong ' + gcLau(d.xong_ts) + ' trước' : ''}${d.xuat_tu_choi ? ' · lần trước không duyệt: ' + esc(d.xuat_tu_choi) : ''}` });
+  }
+  return out;
+}
+// chấm màu của dòng gọn: đỏ = gấp, vàng = cần để ý, xanh lá = xong, xanh = đang làm, xám = mới giao / đã huỷ
+function gcCham(d) {
+  const cb = gcCanhBao(d);
+  if (gcTre(d) || gcCanBiet(d) || cb.some((x) => x.mau === 'bad')) return 'var(--bad)';
+  if (cb.length) return 'var(--warn)';
+  return d.tt === 'xong' ? 'var(--ok)' : d.tt === 'lam' || d.tt === 'nhan' ? 'var(--pri)' : '#8C8678';
+}
+/* DANH SÁCH GỌN: mỗi đơn một dòng (~52px, 10–12 đơn một màn): chấm màu · cấu kiện · trục, rồi trạng thái · % · hạn.
+   Bấm dòng là mở đơn. Không có nút làm nhanh: chế độ này để nhìn tổng thể. */
+function gcDong(d, q, kemNguoi) {
+  const tk = gcTuKhoa(d), [ten] = gcTT(d), cb = gcCanhBao(d), tn = gcTnMoi(d.id);
+  const dong2 = [ten, d.tt === 'huy' ? '' : d.pct + '%', gcMo(d) ? gcHanNgan(d) : ''].filter(Boolean).join(' · ');
+  return `<button class="li" data-gcq="${esc(tk)}" data-a="gcview" data-id="${d.id}" style="width:100%;background:#fff;border:0;border-bottom:1px solid var(--line);text-align:left;font:inherit;color:inherit;padding:8px 12px;${q && !gcKhop(tk, q) ? 'display:none;' : ''}">
+    <span style="width:10px;height:10px;border-radius:50%;background:${gcCham(d)};flex:none"></span>
+    <span class="col" style="flex:1;min-width:0;gap:1px">
+      <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><b>${esc(d.cau_kien)}</b> <span class="sm muted">${esc(d.truc || '')}${kemNguoi ? ' · ' + esc(gcTenNguoi(d, true)) : ''}</span></span>
+      <span class="sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${dong2}${cb.length ? ` · <span style="color:var(--${cb[0].mau})">${cb[0].html.replace(/<[^>]+>/g, '')}</span>` : ''}</span></span>
+    ${tn ? `<span class="badge bad" style="flex:none">${tn}</span>` : ''}</button>`;
+}
+/* Một đơn trên bảng: cấu kiện · trạng thái; vị trí; tiến độ · hạn; MỘT dòng cảnh báo. Bấm vào là mở đơn.
+   Đơn CỦA NGƯỜI ĐANG XEM có thêm hàng nút làm ngay tại bảng (nhận, lên %, vướng, xong, xuất). q: chữ đang tìm (đã bỏ
+   dấu); đơn không khớp thì ẩn chứ không bỏ khỏi trang, để gõ tìm chỉ việc ẩn / hiện. */
 function gcCard(d, q, kemNguoi) {
-  const [ten, mau] = GC_TT[d.tt] || [d.tt, 'idle'];
+  const [ten, mau] = gcTT(d);
   const vt = gcViTri(d, kemNguoi), mo = gcMo(d), vuong = d.vuong && mo, cuaToi = mo && gcCuaToi(d);
   const tk = gcTuKhoa(d);
   const canBiet = gcCanBiet(d);
-  const dungYen = gcDungYen(d);
-  const vien = gcTre(d) || (d.mo_lai && mo) || canBiet || (vuong && d.vuong_dung) ? 'border:2px solid var(--bad);' : vuong || dungYen ? 'border:2px solid var(--warn);' : '';
+  const cb = gcCanhBao(d);
+  const vien = gcTre(d) || canBiet || cb.some((x) => x.mau === 'bad') ? 'border:2px solid var(--bad);' : cb.length ? 'border:2px solid var(--warn);' : '';
   // ba nút gọn một hàng cho người làm: lên một nấc, báo / hết vướng, xong. Mười nấc hay ghi chú thì mở đơn.
   const nho = 'style="flex:1;min-height:40px;padding:4px 2px;font-size:15px;white-space:nowrap"';
+  const toiXuat = gcChoXuat(d) && !d.xuat_tt && gcCuaToi(d);
   const nut = canBiet ? `<button class="btn s bad full" data-a="gcqbiet" data-id="${d.id}">ĐÃ BIẾT, DỪNG LÀM</button>`
+    : toiXuat ? `<button class="btn s pri full" data-a="gcqxuat" data-id="${d.id}">XUẤT</button>`
     : !cuaToi ? ''
     : d.tt === 'moi' ? `<button class="btn s pri full" data-a="gcqnhan" data-id="${d.id}">NHẬN ĐƠN</button>`
     : `<div class="row gap6">${d.pct < 90 ? `<button class="chip s" ${nho} data-a="gcqpct" data-id="${d.id}" data-v="${gcPctKe(d.pct)}">Lên ${gcPctKe(d.pct)}%</button>` : ''}${d.vuong ? `<button class="chip s" ${nho} data-a="gcqhetvuong" data-id="${d.id}">Hết vướng</button>` : `<button class="chip s" ${nho.replace('style="', 'style="color:var(--bad);border-color:var(--bad);')} data-a="gcqvuong" data-id="${d.id}">Vướng</button>`}<button class="btn s ok" ${nho} data-a="gcqxong" data-id="${d.id}">XONG</button></div>`;
-  // người giao: lần báo vướng chưa ai nhận thì nhận ngay trên thẻ
-  const nutQl = !cuaToi && isQL() && vuong && !d.vuong_xem_ts ? `<button class="btn s full" data-a="gcqxemvuong" data-id="${d.id}">ĐÃ XEM, ĐANG XỬ LÝ VƯỚNG</button>` : '';
+  // người giao: lần báo vướng chưa ai nhận thì nhận ngay trên thẻ; đơn chờ duyệt xuất thì mở đơn để xem rồi duyệt
+  const ngoai = !gcCuaToi(d) && isQL();
+  const nutQl = ngoai && vuong && !d.vuong_xem_ts ? `<button class="btn s full" data-a="gcqxemvuong" data-id="${d.id}">ĐÃ XEM, ĐANG XỬ LÝ VƯỚNG</button>`
+    : ngoai && d.xuat_tt === 'cho' && d.tt === 'xong' ? `<button class="btn s ok full" data-a="gcview" data-id="${d.id}">XEM VÀ DUYỆT XUẤT</button>` : '';
   return `<div class="card col gap6" data-gcq="${esc(tk)}" style="padding:10px 12px;${vien}${d.tt === 'huy' && !canBiet ? 'opacity:.75;' : ''}${q && !gcKhop(tk, q) ? 'display:none;' : ''}">
     <button class="col" style="gap:4px;border:0;background:transparent;padding:0;margin:0;text-align:left;font:inherit;color:inherit;width:100%;align-items:stretch" data-a="gcview" data-id="${d.id}">
       <span class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="font-size:17px;min-width:0">${esc(d.cau_kien)}</b><span class="row gap6" style="flex:none">${gcTnMoi(d.id) ? `<span class="badge bad">${gcTnMoi(d.id)} tin mới</span>` : ''}<span class="badge ${mau}">${ten}</span></span></span>
-      ${d.cho_tl && mo ? `<span class="sm" style="color:var(--warn)"><b>Chờ ${esc(gcTenNguoi(d, true))} trả lời</b> câu hỏi của người giao</span>` : ''}
       ${vt ? `<span class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${vt}</span>` : ''}
       ${!kemNguoi && gcNguoi(d).length > 1 ? `<span class="sm muted">Cùng làm: ${esc(gcTenNguoi(d, true))}</span>` : ''}
       <span class="row gap8">${d.tt === 'huy' ? `<b class="sm" style="flex:none">${d.pct ? 'Dừng ở ' + d.pct + '%' : 'Chưa làm'}</b>` : `<span class="bar" style="width:72px;flex:none"><i style="width:${d.pct}%"></i></span><b class="sm" style="flex:none">${d.pct}%</b>`}<span class="sm" style="margin-left:auto;text-align:right">${gcHanNgan(d)}</span></span>
-      ${d.mo_lai && mo ? `<span class="sm" style="color:var(--bad)"><b>Bị mở lại:</b> ${esc(d.mo_lai)}</span>` : ''}
-      ${vuong ? `<span class="sm" style="color:${d.vuong_dung ? 'var(--bad)' : 'var(--warn)'}">${gcVuongTxt(d)}</span><span class="sm muted">${d.vuong_ts ? 'báo ' + gcLau(d.vuong_ts) + ' trước · ' : ''}${gcVuongXem(d)}</span>` : ''}
-      ${dungYen ? `<span class="sm" style="color:var(--warn)"><b>Đứng yên ${dungYen} ngày</b> · chưa cập nhật tiến độ</span>` : ''}
+      ${cb.length ? `<span class="sm" style="color:var(--${cb[0].mau})">${cb[0].html}${cb.length > 1 ? ` <span class="muted">· +${cb.length - 1} việc khác</span>` : ''}</span>` : ''}
       ${d.tt === 'huy' ? `<span class="sm" style="color:var(--bad)"><b>Không làm nữa:</b> ${esc(d.huy_ly_do || '')}</span><span class="sm muted">${gcHuyAi(d)}</span>` : ''}
     </button>${nut}${nutQl}</div>`;
 }
@@ -2800,6 +2860,9 @@ function gcLoc() {
    Cùng một bộ đơn, ba cách nhìn — người giao việc kiểm theo tổ, chỉ huy kiểm theo hạn và theo khu. Trong mỗi
    nhóm, đơn trễ và đơn vướng xếp lên đầu. */
 const GC_XEM = [['to', 'Theo tổ'], ['han', 'Theo hạn'], ['khu', 'Theo khu']];
+// danh sách gọn / thẻ, và các nhóm đang thu gọn: nhớ trên máy này
+const gcGon = () => (S.gcGon != null ? S.gcGon : gcNho('kt:gcgon') === '1');
+const gcThuDoc = () => { try { return JSON.parse(localStorage.getItem('kt:gcthu') || '[]'); } catch (e) { return []; } };
 const gcXem = () => (GC_XEM.some((x) => x[0] === S.gcV) ? S.gcV : GC_XEM.some((x) => x[0] === gcNho('kt:gcv')) ? gcNho('kt:gcv') : 'to');
 // nhóm của một đơn theo cách gom đang chọn: [khoá, tên nhóm, thứ tự]
 function gcNhom(d, xem, G, dong) {
@@ -2808,7 +2871,8 @@ function gcNhom(d, xem, G, dong) {
     return [d.phan_khu || '', d.phan_khu || 'Chưa ghi phân khu', d.phan_khu ? (i < 0 ? 500 : i) : 999];
   }
   if (xem === 'han') {
-    if (dong) return d.tt === 'xong' ? ['xong', 'Đã xong', 0] : ['huy', 'Đã huỷ', 1];
+    if (gcChoXuat(d)) return d.xuat_tt === 'cho' ? ['choxuat', 'Chờ duyệt xuất', 0] : ['chuaxuat', 'Xong, chưa xuất', 1];
+    if (dong) return d.tt === 'xong' ? ['xong', 'Đã xuất', 0] : ['huy', 'Đã huỷ', 1];
     const n = soNgay(S.boot.today, d.han);
     return gcTre(d) ? ['tre', 'Trễ hạn', 0] : n <= 0 ? ['nay', 'Hôm nay', 1] : n === 1 ? ['mai', 'Ngày mai', 2] : n <= 7 ? ['tuan', 'Trong 7 ngày tới', 3] : ['sau', 'Sau 7 ngày', 4];
   }
@@ -2825,7 +2889,8 @@ function vGiaCong() {
   const all = G.items || [];
   const mo = all.filter(gcMo), cuaToi = mo.filter(gcCuaToi);
   const F = [['mo', 'Đang mở', mo], ['toi', 'Của tôi', cuaToi], ['tre', 'Trễ', mo.filter(gcTre)], ['vuong', 'Vướng', mo.filter((d) => d.vuong)], ['dungyen', 'Đứng yên', mo.filter(gcDungYen)], ['tin', 'Có tin mới', all.filter((d) => gcTnMoi(d.id))],
-    ['moi', 'Chưa nhận', mo.filter((d) => d.tt === 'moi')], ['dong', 'Xong / huỷ', all.filter((d) => !gcMo(d))]]
+    ['moi', 'Chưa nhận', mo.filter((d) => d.tt === 'moi')], ['xuat', 'Chưa xuất', all.filter(gcChoXuat)],
+    ['dong', 'Đã xuất / huỷ', all.filter((d) => d.tt === 'huy' || (d.tt === 'xong' && d.xuat_tt === 'duyet'))]]
     // "Của tôi" chỉ có nghĩa với người đang giữ đơn
     .filter((f) => (f[0] !== 'toi' || cuaToi.length || S.gcF === 'toi') && (f[0] !== 'tin' || f[2].length || S.gcF === 'tin'));
   const cur = F.find((f) => f[0] === S.gcF) || F[0];
@@ -2833,6 +2898,7 @@ function vGiaCong() {
   const q = gcKhongDau(S.form.gcq).trim();
   const gap = (d) => (gcTre(d) || d.mo_lai || (d.vuong && d.vuong_dung) ? 0 : d.vuong ? 1 : gcDungYen(d) ? 2 : 3);
   const sx = dong ? (a, z) => z.cap_ts - a.cap_ts
+    : cur[0] === 'xuat' ? (a, z) => (a.xong_ts || 0) - (z.xong_ts || 0)
     : (a, z) => gap(a) - gap(z) || (a.han < z.han ? -1 : a.han > z.han ? 1 : a.id - z.id);
   const by = {}, order = [];
   /* Đơn của NGƯỜI ĐANG XEM vừa bị huỷ mà họ chưa bấm "đã biết": đứng trên cùng ở mọi mục đơn còn mở — đây là
@@ -2850,29 +2916,34 @@ function vGiaCong() {
     });
   });
   order.sort((a, z) => by[a].o - by[z].o || String(by[a].ten).localeCompare(String(by[z].ten), 'vi'));
+  const gon = gcGon(), thu = gcThuDoc();
   const nhom = order.map((k) => {
-    const g = by[k], ds = g.ds, t = ds.filter(gcTre).length, v = ds.filter((d) => d.vuong && gcMo(d)).length;
+    const g = by[k], ds = g.ds, kt = xem + ':' + k, dong1 = thu.includes(kt), t = ds.filter(gcTre).length, v = ds.filter((d) => d.vuong && gcMo(d)).length;
     // nhóm "Trễ hạn" thì khỏi nhắc lại "n trễ"
     const dem = `${ds.length} đơn${t && k !== 'tre' ? `, <b style="color:var(--bad)">${t} trễ</b>` : ''}${v ? `, <b style="color:var(--warn)">${v} vướng</b>` : ''}`;
     const hetTdt = xem === 'to' && ds.some(gcMo) && !(G.tdt || []).some((u) => u.id === g.uid);
+    // bấm tên nhóm để thu gọn / mở (app nhớ); thu gọn thì chỉ còn dòng tên nhóm kèm số đơn
     return `<div class="col gap6">
-      <h2 class="sec" style="font-size:16px${k === 'tre' ? ';color:var(--bad)' : ''}">${esc(g.ten)} <span class="sm muted" style="font-weight:400">· ${dem}</span></h2>
-      ${hetTdt ? '<span class="sm b" style="color:var(--bad);line-height:1.4">Người này không còn là Tiểu đội trưởng đang dùng app: các đơn còn mở cần giao lại cho người khác.</span>' : ''}
-      ${ds.map((d) => gcCard(d, '', xem !== 'to')).join('')}</div>`;
+      <button class="sec row" style="font-size:16px;border:0;background:transparent;padding:4px 0;text-align:left;font-family:inherit;font-weight:700;color:${k === 'tre' ? 'var(--bad)' : 'inherit'};gap:6px;align-items:baseline" aria-expanded="${!dong1}" data-a="gcthu" data-k="${esc(kt)}"><span style="flex:none;width:14px">${dong1 ? '▸' : '▾'}</span><span style="min-width:0">${esc(g.ten)} <span class="sm muted" style="font-weight:400">· ${dem}</span></span></button>
+      ${dong1 ? '' : `${hetTdt ? '<span class="sm b" style="color:var(--bad);line-height:1.4">Người này không còn là Tiểu đội trưởng đang dùng app: các đơn còn mở cần giao lại cho người khác.</span>' : ''}
+      ${gon ? `<div class="card" style="padding:0;overflow:hidden">${ds.map((d) => gcDong(d, '', xem !== 'to')).join('')}</div>` : ds.map((d) => gcCard(d, '', xem !== 'to')).join('')}`}</div>`;
   }).join('');
   // ai đang không có đơn nào mở: người giao việc nhìn là biết tiểu đội nào còn rảnh
   const ranh = cur[0] === 'mo' && xem === 'to' ? (G.tdt || []).filter((u) => !mo.some((d) => gcNguoi(d).includes(u.id))) : [];
-  const trong = { mo: 'Chưa có đơn nào đang mở.', toi: 'Bạn không giữ đơn nào đang mở.', tre: 'Không có đơn nào trễ hạn.', vuong: 'Không có đơn nào đang vướng.', dungyen: 'Không có đơn nào đứng yên quá ' + GC_DUNG_YEN_NGAY + ' ngày.', tin: 'Không còn tin nào chưa đọc.', moi: 'Không có đơn nào chờ nhận.', dong: 'Chưa có đơn nào xong hoặc huỷ trong 30 ngày gần đây.' }[cur[0]];
+  const trong = { mo: 'Chưa có đơn nào đang mở.', toi: 'Bạn không giữ đơn nào đang mở.', tre: 'Không có đơn nào trễ hạn.', vuong: 'Không có đơn nào đang vướng.', dungyen: 'Không có đơn nào đứng yên quá ' + GC_DUNG_YEN_NGAY + ' ngày.', tin: 'Không còn tin nào chưa đọc.', moi: 'Không có đơn nào chờ nhận.', dong: 'Chưa có đơn nào xuất hoặc huỷ trong 30 ngày gần đây.', xuat: 'Không có đơn nào đã xong mà chưa xuất.' }[cur[0]];
   const nho = 'style="flex:none;white-space:nowrap"';
   return `${top}
   <div class="col gap6 tbar" style="padding:6px 16px">
     <div class="row gap6"><input class="inp s f1" id="gcq" style="min-width:0" placeholder="Tìm: W23, x14, khu a tang 5, tên" autocomplete="off" data-model="gcq" value="${esc(S.form.gcq || '')}">${isQL() ? `<button class="btn s pri" ${nho} data-a="gcnew">+ Giao đơn</button>` : ''}${isAdmin() ? `<button class="btn s" ${nho} aria-label="Thiết lập danh mục" data-a="nav" data-s="gcsetup">⚙</button>` : ''}</div>
-    <div class="row gap6" style="overflow-x:auto">${F.map((f) => `<button class="chip s ${cur[0] === f[0] ? 'on' : ''}" ${nho} data-a="gcf" data-v="${f[0]}">${f[1]} ${f[2].length}</button>`).join('')}</div>
-    <div class="row gap6">${GC_XEM.map((x) => `<button class="chip s ${xem === x[0] ? 'on' : ''}" style="flex:1;min-height:36px;padding:2px 4px;font-size:15px;white-space:nowrap" data-a="gcxem" data-v="${x[0]}">${x[1]}</button>`).join('')}</div></div>
+    <div class="row gap6" style="overflow-x:auto">
+      <button class="chip s on" ${nho} aria-label="Đổi cách gom" data-a="gcxem" data-v="${GC_XEM[(GC_XEM.findIndex((x) => x[0] === xem) + 1) % GC_XEM.length][0]}">${GC_XEM.find((x) => x[0] === xem)[1]} ⇄</button>
+      <button class="chip s ${gon ? 'on' : ''}" ${nho} aria-pressed="${gon}" data-a="gcgon">☰ Gọn</button>
+      <span style="flex:none;width:1px;align-self:stretch;background:var(--line)"></span>
+      ${F.map((f) => `<button class="chip s ${cur[0] === f[0] ? 'on' : ''}" ${nho} data-a="gcf" data-v="${f[0]}">${f[1]} ${f[2].length}</button>`).join('')}</div></div>
   <div class="f1 scroll pad col gap12" id="body">
     <div class="col gap12" data-gcds="1"${q ? ' style="display:none"' : ''}>${khoiBiet}${nhom || (khoiBiet ? '' : `<div class="muted">${trong}</div>`)}</div>
     <div class="col gap6" data-gctim="1"${q ? '' : ' style="display:none"'}><h2 class="sec" style="font-size:16px">Kết quả tìm: <span data-gcdem="1">${timKhop} đơn</span> <span class="sm muted" style="font-weight:400">· trên mọi đơn, kể cả đã xong và đã huỷ</span></h2>
-      ${timDs.map((d) => gcCard(d, q || ' ', true)).join('')}<div class="muted" data-gckhong="1"${timKhop ? ' style="display:none"' : ''}>Không có đơn nào khớp.</div></div>
+      ${gon ? `<div class="card" style="padding:0;overflow:hidden">${timDs.map((d) => gcDong(d, q || ' ', true)).join('')}</div>` : timDs.map((d) => gcCard(d, q || ' ', true)).join('')}<div class="muted" data-gckhong="1"${timKhop ? ' style="display:none"' : ''}>Không có đơn nào khớp.</div></div>
     ${ranh.length && !q ? `<div class="sm muted" style="line-height:1.4">Đang không có đơn nào mở: ${esc(ranh.map((u) => u.name).join(', '))}</div>` : ''}
   </div>`;
 }
@@ -2882,7 +2953,7 @@ function vGcDon() {
   const D = S.gcDetail, d = D && D.don;
   const top = head(d ? esc(d.cau_kien) : 'Đơn gia công', d ? 'Giao cho ' + esc(d.uname) : '', 'giacong');
   if (!D) return `${top}${panelWait('gcdon')}`;
-  const [ten, mau] = GC_TT[d.tt] || [d.tt, 'idle'];
+  const [ten, mau] = gcTT(d);
   const cuaToi = gcCuaToi(d), mo = gcMo(d), dangLam = d.tt === 'nhan' || d.tt === 'lam';
   const dong = (nhan, v) => (v ? `<div class="row" style="justify-content:space-between;gap:12px;align-items:flex-start"><span class="sm muted" style="flex:none">${nhan}</span><span style="text-align:right;min-width:0">${v}</span></div>` : '');
   const thongTin = `<div class="card col gap8">
@@ -2913,7 +2984,7 @@ function vGcDon() {
   const chiXem = !cuaToi && mo && !isQL() ? `<div class="sm muted" style="line-height:1.4">Đơn của ${esc(d.uname)}: chỉ người được giao mới cập nhật được. Bạn xem được tiến độ và lịch sử.</div>` : '';
   // việc của người giao đơn
   const ql = !isQL() ? '' : mo ? '<div class="row gap6"><button class="btn f1" data-a="gcedit">Sửa / giao lại</button><button class="btn bad f1" data-a="gchuy">Huỷ đơn</button></div>'
-    : d.tt === 'xong' ? '<button class="btn bad full" data-a="gcmolai">Mở lại đơn (chưa xong thật)</button>'
+    : d.tt === 'xong' && d.xuat_tt !== 'duyet' ? '<button class="btn bad full" data-a="gcmolai">Mở lại đơn (chưa xong thật)</button>'
     // cùng luật với server: khôi phục đơn huỷ nhầm trong 7 ngày kể từ lúc huỷ
     : d.tt === 'huy' ? (Date.now() - (d.huy_ts || d.cap_ts) <= GC_KHOI_PHUC_MS ? '<button class="btn full" data-a="gckhoiphuc">Khôi phục đơn (huỷ nhầm)</button>' : '<span class="sm muted" style="line-height:1.4">Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Cần làm lại thì giao đơn mới giống đơn này.</span>') : '';
   /* TRAO ĐỔI VÀ LỊCH SỬ: một dòng thời gian, cũ ở trên, mới ở dưới, để tin nhắn nằm ngay cạnh mốc làm nó phát sinh
@@ -2939,9 +3010,23 @@ function vGcDon() {
     <div class="row gap6"><input class="inp s f1" id="gctn" style="min-width:0" maxlength="500" autocomplete="off" enterkeyhint="send" placeholder="${cuaToi ? 'Nhắn người giao…' : 'Nhắn ' + esc(gcTenNguoi(d, true)) + '…'}" data-model="gctn" data-enter="gctngui" value="${esc(S.form.gctn || '')}">
       ${laNguoiGiao ? `<button class="chip s ${S.gcTnCan ? 'on' : ''}" style="flex:none;min-height:44px;padding:2px 8px;font-size:14px;white-space:nowrap" aria-pressed="${!!S.gcTnCan}" data-a="gctncan">Cần trả lời</button>` : ''}
       <button class="btn s pri" style="flex:none" data-a="gctngui">Gửi</button></div></div>`;
+  /* XUẤT: đơn đã xong. Chưa gửi: nút XUẤT cho người làm (lần trước bị từ chối thì ghi lý do). Chờ duyệt: đủ những gì
+     tổ đã xác nhận, và nút duyệt / không duyệt cho CVKTHT trở lên (không phải người trong đơn). Đã xuất: ai duyệt. */
+  const xuat = d.tt !== 'xong' ? '' : !d.xuat_tt ? `<div class="card ${gcXuatTre(d) ? 'bad' : 'warn'} col gap6" style="padding:10px 12px"><b>Đã xong, chưa xuất</b>
+      <span class="sm">Xong ${d.xong_ts ? dmy(d.xong_ts) + ' (' + gcLau(d.xong_ts) + ' trước)' : ''}. Trước khi xuất: ký biên bản giao nhận, kiểm đếm, chụp ảnh gửi nhóm Zalo.</span>
+      ${d.xuat_tu_choi ? `<span class="sm"><b>Lần trước không được duyệt:</b> ${esc(d.xuat_tu_choi)}</span>` : ''}
+      ${cuaToi || gcCuaToi(d) ? '<button class="btn pri full" style="min-height:56px;font-size:19px" data-a="gcxuat">XUẤT</button>' : '<span class="sm muted">Chờ tổ làm đơn bấm Xuất.</span>'}</div>`
+    : d.xuat_tt === 'cho' ? `<div class="card warn col gap6" style="padding:10px 12px"><b>Chờ duyệt xuất</b>
+      <span class="sm">${esc(d.xuat_name || '')} gửi lúc ${d.xuat_ts ? dmy(d.xuat_ts) : ''}</span>
+      <span><b>Xuất cho:</b> ${esc(d.xuat_cho || '')}</span>
+      <span class="sm">✓ Đã ký biên bản giao nhận · ✓ Đã kiểm đếm · ✓ Đã chụp ảnh gửi nhóm</span>
+      ${d.xuat_note ? `<span class="sm">Ghi chú: ${esc(d.xuat_note)}</span>` : ''}
+      ${!gcCuaToi(d) && isQL() ? '<div class="row gap6"><button class="btn ok f1" data-a="gcduyetxuat">DUYỆT XUẤT</button><button class="btn bad f1" data-a="gctuchoixuat">Không duyệt</button></div>' : '<span class="sm muted">Chờ CVKTHT trở lên duyệt.</span>'}</div>`
+    : `<div class="card ok col gap6" style="padding:10px 12px"><b>Đã xuất</b><span><b>Xuất cho:</b> ${esc(d.xuat_cho || '')}</span>
+      <span class="sm">${d.xuat_name ? esc(d.xuat_name) + ' gửi ' + dmy(d.xuat_ts) + ' · ' : ''}${d.xuat_duyet_name ? esc(d.xuat_duyet_name) + ' duyệt ' + dmy(d.xuat_duyet_ts) : 'duyệt ' + (d.xuat_duyet_ts ? dmy(d.xuat_duyet_ts) : '')}</span></div>`;
   const choTl = d.cho_tl && mo ? `<div class="card warn col gap6" style="padding:8px 12px"><b>Chờ ${esc(gcTenNguoi(d))} trả lời</b><span class="sm">Người giao đã hỏi và cần câu trả lời. Xem ở mục Trao đổi bên dưới.</span></div>` : '';
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${thongTin}${choTl}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
+    ${thongTin}${xuat}${choTl}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
     ${isQL() ? '<button class="btn full" data-a="gccopy">Giao đơn mới giống đơn này</button>' : ''}
     <h2 class="sec">Trao đổi và lịch sử${tins.length ? ` <span class="sm muted" style="font-weight:400">· ${tins.length} tin</span>` : ''}</h2><div class="col gap8">${ls}</div>
     ${tnDuoc ? '' : '<span class="sm muted" style="line-height:1.4">' + (gcCuaToi(d) || isQL() ? 'Đơn đã đóng quá 7 ngày, không trao đổi thêm được.' : 'Chỉ người làm đơn này và CVKTHT trở lên mới nhắn được. Bạn xem được toàn bộ trao đổi.') + '</span>'}
@@ -3503,6 +3588,32 @@ function gcTnGui(nd, canTl) {
     try { S.gcDetail = await api('GET', '/giacong/' + id); S.gcXuong = true; gcDocXong(); } catch (e) { /* đã gửi; vòng tự làm mới tải lại */ }
   });
 }
+/* HỘP XUẤT: tổ phải tick đủ ba việc (ký giao nhận, kiểm đếm, chụp ảnh gửi nhóm) và ghi xuất cho ai / vị trí lắp
+   dựng mới gửi được. S.gcXu = { id, bb, dem, anh }; chữ ở S.form.gcxcho, gcxnote. */
+function gcXuatHtml() {
+  const X = S.gcXu;
+  if (!X || S.ask) return '';
+  const d = [].concat((S.gc && S.gc.items) || [], S.gcDetail ? [S.gcDetail.don] : []).find((x) => x && x.id === X.id);
+  const o = (k, t) => `<button class="chip s" style="justify-content:flex-start;gap:10px;font-size:16px;min-height:48px;text-align:left;${X[k] ? '' : 'background:#fff'}" aria-pressed="${!!X[k]}" data-a="gcxtick" data-v="${k}"><b style="font-size:20px;width:22px;flex:none">${X[k] ? '☑' : '☐'}</b>${t}</button>`;
+  const du = X.bb && X.dem && X.anh && String(S.form.gcxcho || '').trim();
+  return `<div class="modal" role="dialog" aria-modal="true" aria-label="Xuất đơn"><div class="box col gap8">
+    <b style="font-size:18px">Xuất${d ? ': ' + esc(d.cau_kien) + (d.truc ? ' · ' + esc(d.truc) : '') : ''}</b>
+    <span class="sm">Làm đủ ba việc rồi tick, sau đó gửi CVKTHT duyệt:</span>
+    ${o('bb', 'Đã ký biên bản giao nhận')}${o('dem', 'Đã kiểm đếm')}${o('anh', 'Đã chụp ảnh, gửi lên nhóm Zalo')}
+    <input class="inp s" id="gcxcho" maxlength="120" autocomplete="off" placeholder="Xuất cho ai / vị trí lắp dựng (bắt buộc)" data-model="gcxcho" value="${esc(S.form.gcxcho || '')}">
+    <input class="inp s" id="gcxnote" maxlength="200" autocomplete="off" placeholder="Ghi chú (không bắt buộc)" data-model="gcxnote" value="${esc(S.form.gcxnote || '')}">
+    <button class="btn ${du ? 'pri' : 'dis'} full" data-a="gcxgui">GỬI DUYỆT XUẤT</button>
+    ${du ? '' : '<span class="sm muted" style="line-height:1.4">Tick đủ ba ô và ghi xuất cho ai thì mới gửi được.</span>'}
+    <button class="btn full" data-a="gcxdong">Quay lại</button>
+  </div></div>`;
+}
+const gcXuatMo = (id) => { S.gcXu = { id, bb: false, dem: false, anh: false }; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]); render(); };
+// tab Duyệt: đơn gia công chờ duyệt xuất (của người khác), bấm là mở đơn để xem rồi duyệt
+function gcXuatSec() {
+  const ds = ((S.boot && S.boot.gc) || []).filter((d) => d.tt === 'xong' && d.xuat_tt === 'cho' && !gcCuaToi(d));
+  if (!ds.length) return '';
+  return `<h2 class="sec">Gia công chờ duyệt xuất (${ds.length})</h2><div class="card" style="padding:0;overflow:hidden">${ds.map((d) => `<button class="li" style="width:100%;background:#fff;border:0;border-bottom:1px solid var(--line);text-align:left;font:inherit;color:inherit" data-a="nav" data-s="gcdon" data-gid="${d.id}"><span><b>${esc(d.cau_kien)}</b>${d.truc ? ' · ' + esc(d.truc) : ''}</span><span class="sm" style="color:var(--pri);text-decoration:underline;white-space:nowrap">Xem và duyệt ›</span></button>`).join('')}</div>`;
+}
 /* HỘP BÁO VƯỚNG: chọn lý do (một chạm), chọn mức độ, ghi chú thì tuỳ — trừ "Khác" phải ghi rõ. Lý do lấy từ danh
    mục admin lập (Gia công → ⚙), đi kèm bảng đơn hoặc màn một đơn. S.gcVg = { id, loai, dung }; ghi chú ở S.form.gcvgnote. */
 function gcVgHtml() {
@@ -3907,7 +4018,7 @@ function vMain() {
   }
   const showToast = S.toast && S.screen !== 'dem';
   const noTabs = S.screen === 'dem' && S.sel;
-  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}${gcVgHtml()}`;
+  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}${gcVgHtml()}${gcXuatHtml()}`;
 }
 
 function render() {
@@ -4984,6 +5095,38 @@ const ACTIONS = {
   async gctnthu(d) {
     if (!(await ask('Thu hồi tin nhắn này? Mọi người sẽ thấy "Tin đã thu hồi".', 'THU HỒI', true))) return;
     act(async () => { try { await api('POST', `/giacong/${S.gcId}/tn/${d.id}/thuhoi`, {}); } finally { S.gcDetail = await api('GET', '/giacong/' + S.gcId); } }, 'Đã thu hồi.');
+  },
+  // xuất
+  gcqxuat(d) { gcXuatMo(Number(d.id)); },
+  gcxuat() { gcXuatMo(S.gcId); },
+  gcxtick(d) { S.gcXu[d.v] = !S.gcXu[d.v]; render(); },
+  gcxdong() { S.gcXu = null; render(); },
+  gcxgui() {
+    const X = S.gcXu; if (!X) return;
+    const cho = String(S.form.gcxcho || '').trim();
+    if (!(X.bb && X.dem && X.anh)) return say('Tick đủ ba việc: ký giao nhận, kiểm đếm, chụp ảnh.', true), render();
+    if (!cho) { say('Ghi xuất cho ai / vị trí lắp dựng.', true); render(); return gcFocus('gcxcho'); }
+    const note = String(S.form.gcxnote || '').trim();
+    S.gcXu = null; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]);
+    gcDo('xuat', { bien_ban: 1, kiem_dem: 1, anh: 1, xuat_cho: cho, note }, 'Đã gửi xuất, chờ CVKTHT duyệt.', X.id);
+  },
+  async gcduyetxuat() {
+    const d = S.gcDetail && S.gcDetail.don; if (!d) return;
+    if (!(await ask(`Duyệt xuất "${d.cau_kien}" cho ${d.xuat_cho}?\n\nĐã xuất thì đơn khoá hẳn, không mở lại được nữa.`, 'DUYỆT XUẤT'))) return;
+    gcDo('duyetxuat', {}, 'Đã duyệt xuất.');
+  },
+  async gctuchoixuat() {
+    const d = S.gcDetail && S.gcDetail.don; if (!d) return;
+    const ly = await askText(`Không duyệt xuất "${d.cau_kien}"?\nĐơn về "chưa xuất", tổ sửa rồi gửi lại. Ghi lý do.`, 'KHÔNG DUYỆT', 'Lý do (ví dụ: thiếu chữ ký bên nhận)', 'Phải ghi lý do.');
+    if (ly) gcDo('tuchoixuat', { ly_do: ly }, 'Đã trả lại cho tổ.');
+  },
+  // hiển thị: danh sách gọn / thẻ; thu gọn / mở một nhóm
+  gcgon() { S.gcGon = !gcGon(); try { localStorage.setItem('kt:gcgon', S.gcGon ? '1' : ''); } catch (e) { /* đầy bộ nhớ */ } render(); },
+  gcthu(d) {
+    const t = gcThuDoc(), i = t.indexOf(d.k);
+    if (i >= 0) t.splice(i, 1); else t.push(d.k);
+    try { localStorage.setItem('kt:gcthu', JSON.stringify(t.slice(-40))); } catch (e) { /* đầy bộ nhớ */ }
+    render();
   },
   gcqbiet(d) { gcDo('biet', {}, 'Đã báo: bạn đã biết và dừng làm đơn này.', Number(d.id)); },
   gcbiet() { gcDo('biet', {}, 'Đã báo: bạn đã biết và dừng làm đơn này.'); },

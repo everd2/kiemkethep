@@ -52,7 +52,7 @@ a{color:var(--pri)}
 .card.bad{background:var(--badbg);border:2px solid var(--bad);color:#6E1212}
 .card.ok{background:var(--okbg);border:2px solid var(--ok);color:#124F27}
 .badge{font-size:14px;font-weight:700;padding:3px 10px;border-radius:999px;color:#fff;white-space:nowrap}
-.badge.ok{background:var(--ok)}.badge.warn{background:var(--warn)}.badge.bad{background:var(--bad)}.badge.idle{background:#4B5360}
+.badge.ok{background:var(--ok)}.badge.warn{background:var(--warn)}.badge.bad{background:var(--bad)}.badge.idle{background:#4B5360}.badge.pri{background:var(--pri)}
 .bar{height:10px;border-radius:999px;background:#E4E0D6;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--pri)}
 .toast{margin:4px 16px;padding:12px 16px;border-radius:12px;font-size:18px;font-weight:600;background:var(--okbg);color:#124F27;border:1px solid var(--ok)}

@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 34;
+export const SCHEMA_VERSION = 35;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -441,6 +441,19 @@ export const MIGRATIONS = {
     'ALTER TABLE don_gc ADD COLUMN tn_id INTEGER',
     'ALTER TABLE don_gc ADD COLUMN cho_tl INTEGER',
     "INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1)",
+  ],
+  /* GIA CÔNG: xuất đơn đã xong (một lần mỗi đơn, xem giacong.js). xuat_tt: NULL chưa xuất, 'cho' chờ duyệt, 'duyet'
+     đã xuất. Đơn đã xong từ trước bản này coi như ĐÃ XUẤT (không đòi xuất lùi những đơn cũ), ghi giờ theo lúc xong. */
+  35: [
+    'ALTER TABLE don_gc ADD COLUMN xuat_tt TEXT',
+    'ALTER TABLE don_gc ADD COLUMN xuat_ts INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN xuat_by INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN xuat_cho TEXT',
+    'ALTER TABLE don_gc ADD COLUMN xuat_note TEXT',
+    'ALTER TABLE don_gc ADD COLUMN xuat_duyet_by INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN xuat_duyet_ts INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN xuat_tu_choi TEXT',
+    "UPDATE don_gc SET xuat_tt = 'duyet', xuat_ts = xong_ts, xuat_duyet_ts = xong_ts WHERE tt = 'xong' AND xuat_tt IS NULL",
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

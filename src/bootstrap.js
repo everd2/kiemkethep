@@ -86,13 +86,16 @@ export async function bootstrap(env, user) {
     /* Kèm đơn bị HUỶ mà người giữ đơn CHƯA bấm "đã biết" (tối đa 30 ngày): họ phải thấy để thôi làm, người giao
        thấy để biết bên kia chưa xem. Kèm tên đơn và lý do để thẻ nhắc gọi đúng tên. UNION ALL để cả hai nửa đi
        theo index (tt, cap_ts). */
-    env.DB.prepare(`SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl,
+    env.DB.prepare(`SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl, xuat_tt, xong_ts,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id AND n.biet_ts IS NULL) chua_biet FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
-                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl,
+                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl, xuat_tt, xong_ts,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id AND n.biet_ts IS NULL) chua_biet FROM don_gc
-                      WHERE tt = 'huy' AND cap_ts > ? AND biet_ts IS NULL`).bind(Date.now() - GC_BAO_HUY_MS),
+                      WHERE tt = 'huy' AND cap_ts > ? AND biet_ts IS NULL
+                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl, xuat_tt, xong_ts,
+                      (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids, NULL chua_biet FROM don_gc
+                      WHERE tt = 'xong' AND COALESCE(xuat_tt, '') <> 'duyet'`).bind(Date.now() - GC_BAO_HUY_MS),
     // quân số đầu ca: tổ nào đã báo ca đang diễn ra và ca kế tiếp (xem qsBoot)
     qsBootStmt(env),
     // và mấy lần báo gần nhất của chính người đang xem, cho thẻ báo quân số trên Tổng quan (xem qsToiStmt)

@@ -402,6 +402,9 @@ CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 -- pct giữ nguyên số lúc huỷ ("dừng ở 50%").
 -- Báo vướng: vuong (chữ hiện ra), vuong_loai (lý do trong danh mục gc_muc loại 'vg'), vuong_dung (1 = dừng hẳn),
 -- vuong_ts (lúc báo), vuong_xem_by / vuong_xem_ts (người giao bấm "đã xem, đang xử lý").
+-- Xuất (một lần, sau khi xong): xuat_tt NULL chưa xuất / 'cho' chờ CVKTHT trở lên duyệt / 'duyet' đã xuất (khoá hẳn).
+-- xuat_ts, xuat_by, xuat_cho (xuất cho ai / vị trí), xuat_note: lúc tổ gửi xuất; xuat_duyet_by / ts: người duyệt;
+-- xuat_tu_choi: lý do lần không duyệt gần nhất. Xuất không đụng tồn kho.
 -- lam_ts: lần cuối người làm động tới đơn (nhận, tiến độ, vướng, xong) — đơn đứng yên lâu thì bảng tô vàng. han: ngày cần xong. buoi: 'sang' | 'chieu' | NULL.
 -- tt: 'moi' vừa giao chưa nhận, 'nhan' đã nhận, 'lam' đang làm, 'xong', 'huy'. pct: nấc 10 từ 0 tới 90, và 100 = xong (đơn trước bản 28 còn có thể mang 25 / 75).
 -- vuong: lý do đang kẹt; NULL = không vướng. Là cờ đi kèm chứ không phải một trạng thái.
@@ -440,7 +443,15 @@ CREATE TABLE IF NOT EXISTS don_gc (
   vuong_xem_ts INTEGER,
   lam_ts INTEGER,
   tn_id INTEGER,
-  cho_tl INTEGER
+  cho_tl INTEGER,
+  xuat_tt TEXT,
+  xuat_ts INTEGER,
+  xuat_by INTEGER,
+  xuat_cho TEXT,
+  xuat_note TEXT,
+  xuat_duyet_by INTEGER,
+  xuat_duyet_ts INTEGER,
+  xuat_tu_choi TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
 
@@ -546,7 +557,7 @@ CREATE TABLE IF NOT EXISTS don_gc_doc (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 34);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 35);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

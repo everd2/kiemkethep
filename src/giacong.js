@@ -43,11 +43,12 @@ const GC_HAN_MAX_MS = 366 * 864e5;
 const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.cote, d.truc, d.noi_dung, d.user_id, d.han, d.buoi, d.tt, d.pct, d.vuong,
     d.giao_by, d.ts, d.cap_ts, d.xong_ts, d.huy_ly_do, d.mo_lai, d.huy_ts, d.biet_ts,
     d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts, d.cho_tl, d.tn_id,
+    d.xuat_tt, d.xuat_ts, d.xuat_cho, d.xuat_note, d.xuat_duyet_ts, d.xuat_tu_choi, xg.name xuat_name, xd.name xuat_duyet_name,
     COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name, x.name vuong_xem_name,
     (SELECT json_group_array(json_object('id', n.user_id, 'ten', COALESCE(un.name, '(đã xoá)'), 'biet', n.biet_ts))
        FROM don_gc_nguoi n LEFT JOIN users un ON un.id = n.user_id WHERE n.don_id = d.id) nguoi_json
   FROM don_gc d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN users g ON g.id = d.giao_by LEFT JOIN users h ON h.id = d.huy_by
-    LEFT JOIN users x ON x.id = d.vuong_xem_by`;
+    LEFT JOIN users x ON x.id = d.vuong_xem_by LEFT JOIN users xg ON xg.id = d.xuat_by LEFT JOIN users xd ON xd.id = d.xuat_duyet_by`;
 
 /* NHIỀU NGƯỜI CÙNG LÀM MỘT ĐƠN (bảng don_gc_nguoi, tối đa GC_NGUOI_MAX): ví dụ tổ ca ngày và tổ ca đêm cùng làm
    một cấu kiện. Mọi người trong đơn NGANG NHAU: ai cũng nhận đơn (một người nhận là đơn đã nhận), cập nhật một % CHUNG,
@@ -146,7 +147,8 @@ export async function gcList(env) {
     /* Hai nửa nối bằng UNION ALL chứ không dùng OR: mỗi nửa đi thẳng theo index (tt, cap_ts), còn OR thì
        quét cả bảng — mà bảng này chỉ dài ra, và mỗi lần có người cập nhật là mọi máy đang mở bảng tải lại. */
     env.DB.prepare(`SELECT * FROM (${GC_SELECT} WHERE d.tt IN ('moi', 'nhan', 'lam')
-                    UNION ALL ${GC_SELECT} WHERE d.tt IN ('xong', 'huy') AND d.cap_ts > ?) ORDER BY han, id`).bind(Date.now() - GC_GIU_MS),
+                    UNION ALL ${GC_SELECT} WHERE d.tt = 'xong' AND COALESCE(d.xuat_tt, '') <> 'duyet'
+                    UNION ALL ${GC_SELECT} WHERE d.tt IN ('xong', 'huy') AND d.cap_ts > ? AND (d.tt = 'huy' OR d.xuat_tt = 'duyet')) ORDER BY han, id`).bind(Date.now() - GC_GIU_MS),
     env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0 ORDER BY name"),
     env.DB.prepare(MUC_SQL),
   ]);
@@ -353,9 +355,14 @@ export async function gcDoc(req, env, user, id) {
    (0 = vẫn làm được phần khác). Báo lại thì xoá dấu "đã xem" cũ: lần báo mới chưa ai xem. Bản app cũ gửi chữ tự do
    (chỉ ly_do) vẫn nhận.
    lam_ts: lần cuối NGƯỜI LÀM động tới đơn (nhận, tiến độ, vướng, xong) — để biết đơn nào đứng yên lâu.
+   XUẤT (sau khi xong, mỗi đơn MỘT lần): người trong đơn bấm "xuat" kèm xác nhận đủ ba việc — đã ký biên bản giao
+   nhận, đã kiểm đếm, đã chụp ảnh gửi nhóm Zalo — và xuất cho ai / vị trí lắp dựng; đơn thành xuat_tt = 'cho'.
+   CVKTHT trở lên "duyetxuat" (xuat_tt = 'duyet', đơn khoá hẳn: thép đã rời bãi, không mở lại được nữa) hoặc
+   "tuchoixuat" kèm lý do (về chưa xuất, tổ sửa rồi gửi lại). Xuất KHÔNG đụng tồn kho: thép đã tính là dùng khi lấy
+   ra gia công, trừ lần nữa là trừ hai lần.
    Kiểm quyền TRƯỚC khi tìm đơn, để người không có quyền nhận 403 chứ không dò được đơn nào có thật. */
-const VIEC_QL = ['huy', 'molai', 'khoiphuc', 'xemvuong'];
-const VIEC_CUA = ['nhan', 'tiendo', 'vuong', 'hetvuong', 'xong', 'biet'];
+const VIEC_QL = ['huy', 'molai', 'khoiphuc', 'xemvuong', 'duyetxuat', 'tuchoixuat'];
+const VIEC_CUA = ['nhan', 'tiendo', 'vuong', 'hetvuong', 'xong', 'biet', 'xuat'];
 export async function gcViec(req, env, user, id, viec) {
   if (!VIEC_QL.includes(viec) && !VIEC_CUA.includes(viec)) throw new HttpError(404, 'Không tìm thấy');
   if (VIEC_QL.includes(viec) && capOf(user.role) < 1) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này');
@@ -413,7 +420,8 @@ export async function gcViec(req, env, user, id, viec) {
     if (d.tt === 'moi') throw sai('Hãy nhận đơn trước khi xác nhận xong.');
     if (dong) throw sai(dong);
     note = chu(b.note, 200) || null;
-    Object.assign(set, { tt: 'xong', pct: 100, vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, mo_lai: null, xong_ts: ts, lam_ts: ts });
+    Object.assign(set, { tt: 'xong', pct: 100, vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, mo_lai: null, xong_ts: ts, lam_ts: ts,
+      xuat_tt: null, xuat_ts: null, xuat_by: null, xuat_cho: null, xuat_note: null, xuat_duyet_by: null, xuat_duyet_ts: null, xuat_tu_choi: null });
     audit = 'gc_xong';
   } else if (viec === 'huy') {
     if (dong) throw sai(dong + (d.tt === 'xong' ? ' Muốn làm lại thì mở lại đơn.' : ''));
@@ -423,6 +431,28 @@ export async function gcViec(req, env, user, id, viec) {
     Object.assign(set, { tt: 'huy', huy_ly_do: note, huy_by: user.id, huy_ts: ts, huy_tt: d.tt, biet_ts: null, vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, mo_lai: null });
     them.push(env.DB.prepare('UPDATE don_gc_nguoi SET biet_ts = NULL WHERE don_id = ?').bind(id));
     audit = 'gc_huy';
+  } else if (viec === 'xuat') {
+    if (d.tt !== 'xong') throw sai('Chỉ xuất được đơn đã xong.');
+    if (d.xuat_tt === 'cho') throw sai('Đơn đang chờ duyệt xuất rồi.');
+    if (d.xuat_tt === 'duyet') throw sai('Đơn đã xuất rồi.');
+    if (!(b.bien_ban && b.kiem_dem && b.anh)) throw bad('Phải xác nhận đủ: đã ký giao nhận, đã kiểm đếm, đã chụp ảnh gửi nhóm');
+    const cho = chu(b.xuat_cho, 120);
+    if (!cho) throw bad('Ghi xuất cho ai / vị trí lắp dựng');
+    note = 'xuất cho ' + cho + ' · đã ký giao nhận, đã kiểm đếm, đã gửi ảnh' + (chu(b.note, 200) ? ' · ' + chu(b.note, 200) : '');
+    Object.assign(set, { xuat_tt: 'cho', xuat_ts: ts, xuat_by: user.id, xuat_cho: cho, xuat_note: chu(b.note, 200) || null, xuat_tu_choi: null });
+    audit = 'gc_xuat';
+  } else if (viec === 'duyetxuat') {
+    if (d.tt !== 'xong' || d.xuat_tt !== 'cho') throw sai(d.xuat_tt === 'duyet' ? 'Đơn đã được duyệt xuất rồi.' : 'Đơn không chờ duyệt xuất.');
+    // dưới cấp chỉ huy không tự duyệt việc của mình (người gửi xuất là CVKTHT trong nhóm làm)
+    if (capOf(user.role) < 2 && (d.xuat_by === user.id || toi)) throw new HttpError(403, 'Bạn không tự duyệt xuất đơn của mình được: cần cấp trên duyệt.');
+    Object.assign(set, { xuat_tt: 'duyet', xuat_duyet_by: user.id, xuat_duyet_ts: ts });
+    audit = 'gc_duyetxuat';
+  } else if (viec === 'tuchoixuat') {
+    if (d.tt !== 'xong' || d.xuat_tt !== 'cho') throw sai('Đơn không chờ duyệt xuất.');
+    note = chu(b.ly_do, 200);
+    if (!note) throw bad('Cần ghi lý do không duyệt xuất');
+    Object.assign(set, { xuat_tt: null, xuat_tu_choi: note });
+    audit = 'gc_tuchoixuat';
   } else if (viec === 'biet') {
     if (d.tt !== 'huy') throw sai('Đơn này không bị huỷ.');
     if (toi.biet) throw sai('Bạn đã báo đã biết rồi.');
@@ -445,6 +475,7 @@ export async function gcViec(req, env, user, id, viec) {
     audit = 'gc_khoiphuc';
   } else {
     if (d.tt !== 'xong') throw sai('Chỉ mở lại được đơn đã xong.');
+    if (d.xuat_tt === 'duyet') throw sai('Đơn đã xuất (thép đã rời bãi), không mở lại được. Cần làm thêm thì giao đơn mới.');
     note = chu(b.ly_do, 200);
     if (!note) throw bad('Cần ghi lý do mở lại đơn');
     Object.assign(set, { tt: 'lam', pct: GC_PCT_MO_LAI, xong_ts: null, mo_lai: note });
@@ -458,7 +489,7 @@ export async function gcViec(req, env, user, id, viec) {
     env.DB.prepare('INSERT INTO don_gc_log (don_id, ts, user_id, viec, pct, note) VALUES (?,?,?,?,?,?)').bind(id, ts, user.id, viec, pctSau, note),
   ];
   // nhật ký chung chỉ ghi các mốc của đơn (giao, sửa, xong, huỷ, mở lại); từng lần cập nhật tiến độ nằm ở lịch sử của đơn
-  if (audit) stmts.push(auditStmt(env, user, audit, { id, cau_kien: d.cau_kien, truc: d.truc, cua: d.uname, ly_do: VIEC_QL.includes(viec) ? note : undefined }));
+  if (audit) stmts.push(auditStmt(env, user, audit, { id, cau_kien: d.cau_kien, truc: d.truc, cua: d.uname, ly_do: VIEC_QL.includes(viec) ? note : undefined, xuat_cho: set.xuat_cho }));
   stmts.push(bump(env));
   await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM don_gc WHERE id = ?1 AND cap_ts = ?2)', id, d.cap_ts), stmts, vuaDoi());
   return json({ ok: true, id, tt: set.tt || d.tt, pct: pctSau });
