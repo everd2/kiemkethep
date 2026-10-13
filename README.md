@@ -203,32 +203,34 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
 - **Một tổ = một Tiểu đội trưởng.** Có bao nhiêu tài khoản Tiểu đội trưởng đang dùng thì có bấy nhiêu tổ.
 - **Hai ca**: ca ngày 6h30 → 18h30, ca đêm 18h30 → 6h30 sáng hôm sau. **Ca đêm thuộc ngày bắt đầu ca**: báo lúc 2h sáng ngày 13 vẫn là ca đêm ngày 12. Ca tính theo giờ Việt Nam của máy chủ.
 - **Báo theo ca**: tổ làm cả hai ca thì báo hai lần, tổ chỉ làm ca đêm thì chỉ báo ca đêm. Báo được cho ca đang diễn ra, và báo sớm cho ca kế tiếp. Báo lại là ghi đè số của ca đó.
-- **Tiểu đội trưởng báo ngay trên Tổng quan**, không phải vào màn nào. Đầu trang có thẻ *Quân số tổ*: tổng quân số (lấy theo lần báo trước, có nút *Đổi*), dòng *Nghỉ: không ai*, và **hai nút gửi theo ca** (*BÁO CA NGÀY*, *BÁO CA ĐÊM*). Chọn ca và gửi là **một chạm**, nên vẫn là tổ trưởng tự chọn ca, app không chọn hộ theo giờ. Nút của ca tổ đang làm to hơn.
+- **Tiểu đội trưởng báo ngay trên Tổng quan**, không phải vào màn nào. Thẻ *Quân số tổ* ở đầu trang làm hai việc tách hẳn nhau: **đặt lịch ca** của tổ (một lần, 15–30 ngày mới đổi) và **báo quân số** của ca đó. Thẻ chỉ có **một nút báo**, là nút của ca tổ đang làm — không còn nút ca kia để bấm nhầm.
+  - **Lịch ca**: *Ca ngày / Ca đêm / Cả 2 ca*, kèm thời hạn *Đến khi đổi / 15 ngày / 30 ngày*. Chạm ca là lưu. Chưa đặt hoặc hết hạn thì thẻ hỏi ca trước rồi mới cho báo. Nút **Đổi ca** luôn có trên thẻ. CVKTHT trở lên đặt hộ được.
   - **Ngày đủ quân: 1 chạm.** Có người nghỉ: bấm *Có người nghỉ*, chạm lý do để thêm một người, hoặc **gõ thẳng số** vào ô cạnh lý do (5 người ốm không phải chạm 5 lần, gõ 0 là bỏ). Ô **ghi chú** luôn có sẵn ở đó (bắt buộc khi có *lý do khác*).
   - **Như hôm qua**: lấy lại danh sách nghỉ của lần báo trước (nghỉ phép, về quê thường kéo dài vài ngày). Đây là nút phải tự bấm, không tự điền sẵn, để người đã đi làm lại không bị báo nghỉ mà không ai để ý.
-  - **Báo nhầm ca**: tổ đang làm ca ngày mà bấm *BÁO CA ĐÊM* thì app hỏi lại *"Tổ chuyển sang ca đêm từ …?"* một lần.
-  - **Tổ chia hai ca**: dòng *Tổ có người làm ca đêm?* nằm ngay trên thẻ; bấm vào ra ô *Người của tổ làm ca đêm*, số đi làm ca này tự tính = tổng − nghỉ − ca đêm. Lần sau dòng này mở sẵn, điền đúng số lần trước.
-  - **Tổ làm cố định một ca** (hai lần báo gần nhất cùng ca, cả tổ cùng ca): thẻ chỉ còn nút ca đó; ca kia thu thành dòng nhỏ *Hôm nay tổ có người làm ca đêm?*.
+  - **Tổ ca đêm** buổi sáng không bị nhắc gì; thẻ ghi *Ca đêm …: mở báo từ 17:30* (một tiếng trước giờ vào ca), kèm nút *Báo sớm*.
+  - **Tổ làm cả 2 ca** báo từng ca một (ca tới trước báo trước). Mỗi ca ghi *Người của tổ làm ca ngày / ca đêm* (điền sẵn theo lần trước), số đi làm = số đó − nghỉ.
   - **Mất sóng lúc bấm báo**: app lưu quân số trên máy (theo từng người, máy dùng chung vẫn đúng tên), thẻ ghi *chờ gửi (mất sóng)* và **tự gửi khi có mạng**.
   - Báo xong thẻ thành *Ca ngày …: đã báo lúc …* kèm nút **Sửa** (sửa tại chỗ). Thẻ vàng khi chưa báo trong hạn, đỏ khi quá hạn.
   - Màn **Thêm → Quân số đầu ca** vẫn còn (chọn ca rồi ghi), cho ai quen dùng.
 - **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ở dòng *Hạn báo* cuối bảng quân số (thu gọn, bấm **Đổi** mới hiện ô giờ); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
-- **Tổ đang làm ca nào thì chỉ bị nhắc ca đó.** Một tổ thường làm cố định ca ngày (hoặc ca đêm) 15–30 ngày rồi mới đổi. App không bắt khai lịch đổi ca: lấy theo **lần báo gần nhất** của tổ. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Ngày tổ **đổi ca**, tổ trưởng chọn ca mới và báo một lần là app theo ca mới; sáng hôm đổi ca app chưa biết nên chưa nhắc — CVKTHT thấy tổ đó còn mang nhãn ca cũ và ghi thay được. Tổ chưa báo lần nào thì ca nào cũng được nhắc.
+- **Tổ đang làm ca nào thì chỉ bị nhắc ca đó**, theo **lịch ca** tổ đã đặt. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Tổ chưa đặt lịch thì app tạm đoán theo lần báo gần nhất.
 - **Một lần báo gồm**: tổng quân số của tổ (điền sẵn theo lần báo trước), số nghỉ **theo từng lý do** (ốm, nghỉ phép năm, về quê, việc gia đình, OFF luân phiên, lý do khác — bấm + / −), số đi làm ca này, ghi chú. **OFF luân phiên nằm trong số nghỉ.** Có *lý do khác* thì bắt buộc ghi rõ ở ô ghi chú.
 - **Số luôn khớp nhau**: số nghỉ là tổng các lý do; số đi làm app tự tính bằng tổng trừ số nghỉ. **Tổ chia hai ca** thì gõ lại số đi làm ca này, phần còn lại app tính là người của ca kia; tới đầu ca kia, ô ghi điền sẵn đúng số người đó. Đi làm cộng nghỉ nhiều hơn tổng thì app không nhận.
-- **Cả tổ không làm ca này** (cả tổ làm ca kia): một nút bấm, để bảng quân số ghi *làm ca đêm* thay vì *chưa báo*.
 - **Ai làm được gì**:
 
   | Việc | Ai làm |
   |---|---|
   | Báo quân số tổ mình, cho ca đang diễn ra hoặc ca kế tiếp | Tiểu đội trưởng của tổ đó |
-  | Xem mọi tổ, **ghi thay** hoặc sửa cho bất kỳ tổ nào, lùi được 7 ngày; đổi hạn báo | CVKTHT trở lên |
+  | Đặt lịch ca của tổ mình | Tiểu đội trưởng của tổ đó (CVKTHT trở lên đặt hộ được) |
+  | Xem mọi tổ; đặt **số thiết lập**; xếp thứ tự tổ; đổi hạn báo | CVKTHT trở lên |
   | Xem quân số tổ khác | Chỉ CVKTHT trở lên — Tiểu đội trưởng chỉ thấy tổ mình |
 
-- **Bảng của CVKTHT trở lên**: dòng tổng *Đi làm ca ngày: 70 / 171 công nhân · 7/9 tổ đã báo*, rồi mỗi tổ một thẻ (đã báo, chưa báo, làm ca kia). Tổ chưa báo vẫn tính vào tổng quân số theo lần báo gần nhất, và bảng nói rõ điều đó. Dòng do cấp trên ghi thay có ghi tên người ghi. Lùi xem ca trước bằng nút **‹ Ca trước**.
-- **Ghi thay một chạm**: tổ chưa báo có sẵn nút **Đủ 21/21** (cả tổ đi làm; tổ chia ca thì trừ người ca kia theo lần trước) và **Như lần trước** (đúng số và lý do nghỉ lần báo trước cùng ca) ngay trên bảng — tổ trưởng gọi điện báo là ghi xong. Số khác thì chạm vào tổ để mở ô ghi.
+- **Màn Quân số của CVKTHT trở lên có hai thẻ**, vì đây là hai loại số khác nhau:
+  - **Tổ báo** — số các tổ trưởng tự báo ở ca đang xem: dòng tổng *Đi làm ca ngày: 70 / 171 công nhân · 7/9 tổ đã báo*, rồi mỗi tổ một thẻ. Tổ làm ca này đứng trước, tổ làm ca kia dồn xuống cuối. **Chỉ để xem và nhắc**: CVKTHT không ghi vào báo cáo của tổ, số tổ báo luôn là của tổ.
+  - **Thiết lập** — với mỗi tổ: ba nút ca (*Ngày / Đêm / 2 ca*) và **số thiết lập** (*Tổng, Ca ngày, Ca đêm*). Số thiết lập là số dự phòng: báo cáo ca dùng nó cho tổ **chưa báo**. Mỗi dòng ghi ai sửa lần cuối.
+  - **Nhiều người cùng thiết lập**: hai người sửa hai tổ khác nhau không ảnh hưởng nhau. Hai người sửa **cùng một tổ** thì người lưu sau bị từ chối, app nói rõ *"… vừa sửa số thiết lập tổ …: tổng …, ca ngày …, ca đêm …"* và tải lại số mới để xem rồi quyết.
 - **Chép tin nhắc**: nút *Chép tin nhắc N tổ chưa báo* ra sẵn danh sách tổ chưa báo kèm hạn, dán vào nhóm Zalo.
-- **Xếp thứ tự tổ** (cuối bảng): bấm Lên / Xuống từng tổ rồi Lưu. Thứ tự này dùng cho bảng quân số và mục 3 của báo cáo ca, ngày nào cũng giống nhau.
+- **Xếp thứ tự tổ** (thẻ Thiết lập): bấm Lên / Xuống từng tổ rồi Lưu. Thứ tự này dùng cho bảng quân số và mục 3 của báo cáo ca.
 - **Nhắc soạn báo cáo ca**: qua hạn báo mà ca đó chưa chép báo cáo thì Tổng quan của CVKTHT có thẻ *Soạn báo cáo ca … gửi cấp trên* (ghi số tổ đã báo), bấm là mở thẳng màn soạn.
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào để xem hoặc ghi thay. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa, phải nhờ CVKTHT trở lên. Mọi lần báo và ghi thay nằm trong **nhật ký**, có chip lọc *Quân số*.
@@ -245,7 +247,7 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
 
   | Mục | Lấy từ |
   |---|---|
-  | 3. Quân số | Quân số đầu ca: dòng tổng *đi làm / tổng quân số*, mỗi tổ một dòng (tổ chia ca ghi cả hai ca, nghỉ theo lý do; tổ làm ca kia ghi *(làm ca đêm)*; tổ chưa báo ghi rõ *chưa báo*) |
+  | 3. Quân số | Quân số đầu ca. **Tổ làm ca đang báo cáo đứng trước**, mỗi tổ ghi đi làm / tổng và nghỉ theo lý do. **Tổ làm cả 2 ca ghi thêm ca liền trước** (báo cáo ca ngày kèm ca đêm hôm trước; báo cáo ca đêm kèm ca ngày cùng ngày). **Tổ làm ca kia** dồn xuống cuối, chỉ ghi *(làm ca đêm)*. Tổ chưa báo thì lấy **số thiết lập**, viết như dòng thường. Có nút chọn nguồn: *Theo tổ báo* hoặc *Chỉ số thiết lập* |
   | 4. Công việc trong ngày | Đơn gia công đang làm (*đang gia công 80%*) và đơn xác nhận xong trong giờ ca (*hoàn thành*) |
   | 5. MMTB | Lần chép trước |
   | 6. Kiểm tra, giám sát | Năm dòng mặc định của mẫu |
