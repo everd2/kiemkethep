@@ -309,6 +309,7 @@ async function loadBoot() {
   try { localStorage.setItem('kt:boot', JSON.stringify({ at: Date.now(), b })); } catch (e) { /* đầy bộ nhớ */ }
   indexBoot(b);
   S.boot = b; S.me = b.user; S.stale = null;
+  if (b.tn != null) S.tnBiet = b.tn;
   S.netOk = Date.now(); S.netBad = false;
 }
 // Mất mạng hoặc hết hạn mức: vẫn mở được app với số liệu lần tải gần nhất (chỉ xem)
@@ -950,7 +951,15 @@ function vHome() {
     const huy = gcToi.filter((d) => d.tt === 'huy');
     huy.slice(0, 3).forEach((d) => alerts.push({ bad: true, t: 'KHÔNG LÀM NỮA: ' + d.cau_kien + (d.truc ? ' · ' + d.truc : ''), s: 'Lý do: ' + cut(d.huy_ly_do, 80) + ' · bấm để xem và báo đã biết', to: 'gcdon', gid: d.id }));
     if (huy.length > 3) alerts.push({ bad: true, t: 'Còn ' + (huy.length - 3) + ' đơn gia công khác của bạn bị huỷ', s: 'Bấm để xem và báo đã biết', to: 'giacong', f: 'mo' });
+    // người giao hỏi "cần trả lời" trên đơn của mình: thẻ đỏ gọi đúng tên đơn, bấm là mở đơn
+    mo.filter((d) => d.cho_tl).slice(0, 3).forEach((d) => alerts.push({ bad: true, t: 'Chờ bạn trả lời: ' + d.cau_kien + (d.truc ? ' · ' + d.truc : ''), s: 'Người giao hỏi và cần câu trả lời · bấm để xem và trả lời', to: 'gcdon', gid: d.id }));
     if (viec.length) alerts.push({ bad: viec.some((x) => x[2]), t: 'Đơn gia công của bạn' + (mo.length ? ': ' + mo.length + ' đơn đang mở' : ''), s: viec.map((x) => x[0] + ' ' + x[1]).join(' · ') + ' · bấm để xem', to: 'giacong', f: 'toi' });
+  }
+  /* Tin mới về đơn gia công liên quan tới mình (mình làm, mình giao, hoặc mình đã nhắn trong đó): một đơn thì bấm là mở
+     thẳng đơn, nhiều đơn thì mở bảng ở mục "Có tin mới". */
+  {
+    const tn = b.gcTn || [], tong = tn.reduce((a, x) => a + x.moi, 0);
+    if (tong) alerts.push({ bad: false, t: tong + ' tin mới về đơn gia công', s: tn.slice(0, 3).map((x) => x.cau_kien + (x.truc ? ' · ' + x.truc : '')).join(', ') + (tn.length > 3 ? '…' : '') + ' · bấm để đọc', to: tn.length === 1 ? 'gcdon' : 'giacong', gid: tn.length === 1 ? tn[0].id : undefined, f: tn.length === 1 ? undefined : 'tin' });
   }
   if (isQL()) {
     const khac = gcAll.filter((d) => gcMo(d) && !gcCuaToi(d));
@@ -2647,6 +2656,34 @@ const gcTenNguoi = (d, ngan) => (Array.isArray(d.nguoi) && d.nguoi.length ? d.ng
 const gcChuaBiet = (d) => (Array.isArray(d.nguoi) && d.nguoi.length ? d.nguoi.filter((n) => !n.biet).map((n) => n.id)
   : d.chua_biet !== undefined ? (d.chua_biet ? String(d.chua_biet).split(',').map(Number) : []) : d.biet_ts ? [] : [d.user_id]);
 const gcCanBiet = (d) => d.tt === 'huy' && gcChuaBiet(d).includes(S.me.id);
+/* TRAO ĐỔI TRÊN ĐƠN (xem gcTn ở src/giacong.js). S.boot.gcTn = [{ id, cau_kien, truc, moi }]: đơn liên quan tới mình có
+   tin chưa đọc. Tin không làm đổi 'rev' mà đổi bộ đếm 'tn' (trả kèm /rev): đổi thì máy chỉ hỏi lại danh sách này. */
+const GC_TN_MO_MS = 7 * 864e5, GC_TN_THU_HOI_MS = 2 * 60e3; // chép từ src/giacong.js
+const gcTnMoi = (id) => (((S.boot && S.boot.gcTn) || []).find((x) => x.id === id) || {}).moi || 0;
+// trả lời nhanh: một chạm là gửi
+const GC_TN_NHANH = { lam: ['Đã rõ', 'Đang làm', 'Cần thêm thời gian', 'Cần thêm thép'], giao: ['Đã rõ', 'Làm gấp', 'Đã chuyển thép', 'Kiểm tra lại bản vẽ'] };
+// viết được không: người trong đơn hoặc CVKTHT trở lên; đơn đã đóng quá 7 ngày thì khoá
+function gcTnDuoc(d) {
+  if (!gcCuaToi(d) && !isQL()) return false;
+  const dong = d.tt === 'xong' ? d.xong_ts : d.tt === 'huy' ? d.huy_ts || d.cap_ts : null;
+  return !(dong && Date.now() - dong > GC_TN_MO_MS);
+}
+// đánh dấu đã đọc mọi tin của đơn đang mở (không chờ, lỗi mạng thì lần mở sau đánh dấu lại)
+function gcDocXong() {
+  const D = S.gcDetail;
+  if (!D || !D.tn || !D.tn.length) return;
+  const max = Math.max(...D.tn.map((t) => t.id));
+  if (S.boot && S.boot.gcTn) S.boot.gcTn = S.boot.gcTn.filter((x) => x.id !== D.don.id);
+  if (max <= (D.doc || 0)) return;
+  D.doc = max;
+  api('POST', `/giacong/${D.don.id}/doc`, { den: max }).catch(() => {});
+}
+// tải lại phần trao đổi khi bộ đếm tin đổi: tin chưa đọc của mình, và đơn đang mở / bảng đơn đang xem
+async function gcTnTai() {
+  S.boot.gcTn = (await api('GET', '/giacong/tnmoi')).items;
+  if (S.screen === 'gcdon' && S.gcId) { const n = (S.gcDetail && S.gcDetail.tn || []).length; S.gcDetail = await api('GET', '/giacong/' + S.gcId); if (S.gcDetail.tn.length > n) S.gcXuong = true; gcDocXong(); }
+  if (S.screen === 'giacong') S.gc = await api('GET', '/giacong');
+}
 const GC_KHOI_PHUC_MS = 7 * 864e5; // chép từ src/giacong.js
 // một dòng nói đủ về lần huỷ: ai huỷ, lúc nào, người giữ đơn đã biết chưa
 const gcHuyAi = (d) => `${d.huy_name ? esc(d.huy_name) + ' huỷ' : 'Huỷ'}${d.huy_ts ? ' ' + dmy(d.huy_ts) : ''} · ${(Array.isArray(d.nguoi) && d.nguoi.length ? d.nguoi : [{ ten: d.uname, biet: d.biet_ts }]).map((n) => (n.biet ? esc(n.ten) + ' đã biết ' + dmy(n.biet) : `<b style="color:var(--warn)">${esc(n.ten)} chưa xem</b>`)).join(' · ')}`;
@@ -2728,7 +2765,8 @@ function gcCard(d, q, kemNguoi) {
   const nutQl = !cuaToi && isQL() && vuong && !d.vuong_xem_ts ? `<button class="btn s full" data-a="gcqxemvuong" data-id="${d.id}">ĐÃ XEM, ĐANG XỬ LÝ VƯỚNG</button>` : '';
   return `<div class="card col gap6" data-gcq="${esc(tk)}" style="padding:10px 12px;${vien}${d.tt === 'huy' && !canBiet ? 'opacity:.75;' : ''}${q && !gcKhop(tk, q) ? 'display:none;' : ''}">
     <button class="col" style="gap:4px;border:0;background:transparent;padding:0;margin:0;text-align:left;font:inherit;color:inherit;width:100%;align-items:stretch" data-a="gcview" data-id="${d.id}">
-      <span class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="font-size:17px;min-width:0">${esc(d.cau_kien)}</b><span class="badge ${mau}" style="flex:none">${ten}</span></span>
+      <span class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="font-size:17px;min-width:0">${esc(d.cau_kien)}</b><span class="row gap6" style="flex:none">${gcTnMoi(d.id) ? `<span class="badge bad">${gcTnMoi(d.id)} tin mới</span>` : ''}<span class="badge ${mau}">${ten}</span></span></span>
+      ${d.cho_tl && mo ? `<span class="sm" style="color:var(--warn)"><b>Chờ ${esc(gcTenNguoi(d, true))} trả lời</b> câu hỏi của người giao</span>` : ''}
       ${vt ? `<span class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${vt}</span>` : ''}
       ${!kemNguoi && gcNguoi(d).length > 1 ? `<span class="sm muted">Cùng làm: ${esc(gcTenNguoi(d, true))}</span>` : ''}
       <span class="row gap8">${d.tt === 'huy' ? `<b class="sm" style="flex:none">${d.pct ? 'Dừng ở ' + d.pct + '%' : 'Chưa làm'}</b>` : `<span class="bar" style="width:72px;flex:none"><i style="width:${d.pct}%"></i></span><b class="sm" style="flex:none">${d.pct}%</b>`}<span class="sm" style="margin-left:auto;text-align:right">${gcHanNgan(d)}</span></span>
@@ -2786,10 +2824,10 @@ function vGiaCong() {
   if (!G) return `${top}${panelWait('giacong')}`;
   const all = G.items || [];
   const mo = all.filter(gcMo), cuaToi = mo.filter(gcCuaToi);
-  const F = [['mo', 'Đang mở', mo], ['toi', 'Của tôi', cuaToi], ['tre', 'Trễ', mo.filter(gcTre)], ['vuong', 'Vướng', mo.filter((d) => d.vuong)], ['dungyen', 'Đứng yên', mo.filter(gcDungYen)],
+  const F = [['mo', 'Đang mở', mo], ['toi', 'Của tôi', cuaToi], ['tre', 'Trễ', mo.filter(gcTre)], ['vuong', 'Vướng', mo.filter((d) => d.vuong)], ['dungyen', 'Đứng yên', mo.filter(gcDungYen)], ['tin', 'Có tin mới', all.filter((d) => gcTnMoi(d.id))],
     ['moi', 'Chưa nhận', mo.filter((d) => d.tt === 'moi')], ['dong', 'Xong / huỷ', all.filter((d) => !gcMo(d))]]
     // "Của tôi" chỉ có nghĩa với người đang giữ đơn
-    .filter((f) => f[0] !== 'toi' || cuaToi.length || S.gcF === 'toi');
+    .filter((f) => (f[0] !== 'toi' || cuaToi.length || S.gcF === 'toi') && (f[0] !== 'tin' || f[2].length || S.gcF === 'tin'));
   const cur = F.find((f) => f[0] === S.gcF) || F[0];
   const xem = gcXem(), dong = cur[0] === 'dong';
   const q = gcKhongDau(S.form.gcq).trim();
@@ -2824,7 +2862,7 @@ function vGiaCong() {
   }).join('');
   // ai đang không có đơn nào mở: người giao việc nhìn là biết tiểu đội nào còn rảnh
   const ranh = cur[0] === 'mo' && xem === 'to' ? (G.tdt || []).filter((u) => !mo.some((d) => gcNguoi(d).includes(u.id))) : [];
-  const trong = { mo: 'Chưa có đơn nào đang mở.', toi: 'Bạn không giữ đơn nào đang mở.', tre: 'Không có đơn nào trễ hạn.', vuong: 'Không có đơn nào đang vướng.', dungyen: 'Không có đơn nào đứng yên quá ' + GC_DUNG_YEN_NGAY + ' ngày.', moi: 'Không có đơn nào chờ nhận.', dong: 'Chưa có đơn nào xong hoặc huỷ trong 30 ngày gần đây.' }[cur[0]];
+  const trong = { mo: 'Chưa có đơn nào đang mở.', toi: 'Bạn không giữ đơn nào đang mở.', tre: 'Không có đơn nào trễ hạn.', vuong: 'Không có đơn nào đang vướng.', dungyen: 'Không có đơn nào đứng yên quá ' + GC_DUNG_YEN_NGAY + ' ngày.', tin: 'Không còn tin nào chưa đọc.', moi: 'Không có đơn nào chờ nhận.', dong: 'Chưa có đơn nào xong hoặc huỷ trong 30 ngày gần đây.' }[cur[0]];
   const nho = 'style="flex:none;white-space:nowrap"';
   return `${top}
   <div class="col gap6 tbar" style="padding:6px 16px">
@@ -2878,13 +2916,36 @@ function vGcDon() {
     : d.tt === 'xong' ? '<button class="btn bad full" data-a="gcmolai">Mở lại đơn (chưa xong thật)</button>'
     // cùng luật với server: khôi phục đơn huỷ nhầm trong 7 ngày kể từ lúc huỷ
     : d.tt === 'huy' ? (Date.now() - (d.huy_ts || d.cap_ts) <= GC_KHOI_PHUC_MS ? '<button class="btn full" data-a="gckhoiphuc">Khôi phục đơn (huỷ nhầm)</button>' : '<span class="sm muted" style="line-height:1.4">Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Cần làm lại thì giao đơn mới giống đơn này.</span>') : '';
-  const ls = (D.log || []).map((l) => `<div class="li"><span><b>${esc(l.uname)}</b> ${GC_VIEC[l.viec] || esc(l.viec)}${l.viec === 'tiendo' ? ' <b>' + l.pct + '%</b>' : ''}${l.note ? ': ' + esc(l.note) : ''}<br><span class="sm muted">${dmy(l.ts)}</span></span></div>`).join('')
-    + `<div class="li"><span><b>${esc(d.giao_name)}</b> giao đơn<br><span class="sm muted">${dmy(d.ts)}</span></span></div>`;
+  /* TRAO ĐỔI VÀ LỊCH SỬ: một dòng thời gian, cũ ở trên, mới ở dưới, để tin nhắn nằm ngay cạnh mốc làm nó phát sinh
+     ("Bình báo vướng: thiếu thép" rồi "Cv: thép D16 về lúc 14h"). Mốc của đơn là dòng xám nhỏ; tin nhắn là ô. */
+  const trongDon = (uid) => gcNguoi(d).includes(uid);
+  const moc = [{ ts: d.ts, html: `<b>${esc(d.giao_name)}</b> giao đơn` }].concat((D.log || []).map((l) => ({ ts: l.ts, html: `<b>${esc(l.uname)}</b> ${GC_VIEC[l.viec] || esc(l.viec)}${l.viec === 'tiendo' ? ' <b>' + l.pct + '%</b>' : ''}${l.note ? ': ' + esc(l.note) : ''}` })))
+    .map((m) => ({ ...m, loai: 'moc' }));
+  const tins = (D.tn || []).map((t) => ({ ...t, loai: 'tn' }));
+  const dong2 = moc.concat(tins).sort((a, z) => a.ts - z.ts || (a.loai === 'moc' ? -1 : 1));
+  const tinHtml = (t) => {
+    const toi = t.user_id === S.me.id, moi = !toi && t.id > (D.doc || 0);
+    const nhan = trongDon(t.user_id) ? '' : ` <span class="sm muted">· ${esc(roleTen(t.role))}</span>`;
+    const thu = toi && !t.thu_hoi && Date.now() - t.ts < GC_TN_THU_HOI_MS ? ` · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="gctnthu" data-id="${t.id}">Thu hồi</button>` : '';
+    return `<div class="col" style="align-items:${toi ? 'flex-end' : 'flex-start'}"><div class="col" style="gap:3px;max-width:86%;padding:8px 12px;border-radius:14px;border:${moi ? '2px solid var(--bad)' : '1px solid var(--line)'};background:${toi ? '#DCE6F2' : '#fff'}">
+      <span class="sm"><b>${toi ? 'Bạn' : esc(t.uname)}</b>${nhan} · <span class="muted">${dmy(t.ts)}</span>${t.can_tl ? ' · <b style="color:var(--warn)">Cần trả lời</b>' : ''}${thu}</span>
+      ${t.thu_hoi ? '<i class="muted">Tin đã thu hồi</i>' : `<span style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(t.noi_dung)}</span>`}</div></div>`;
+  };
+  const ls = dong2.map((x) => (x.loai === 'tn' ? tinHtml(x) : `<div class="sm muted" style="text-align:center;line-height:1.35">${x.html} · ${dmy(x.ts)}</div>`)).join('');
+  // ô nhắn ở đáy màn: trả lời nhanh một chạm; người giao (ngoài nhóm làm) bật được "Cần trả lời"
+  const tnDuoc = gcTnDuoc(d), laNguoiGiao = !cuaToi && isQL();
+  const oNhan = !tnDuoc ? '' : `<div class="sendbar col gap6">
+    <div class="row gap6" style="overflow-x:auto">${GC_TN_NHANH[cuaToi ? 'lam' : 'giao'].map((x) => `<button class="chip s" style="flex:none;white-space:nowrap;min-height:36px;padding:2px 12px;font-size:15px" data-a="gctnq" data-v="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+    <div class="row gap6"><input class="inp s f1" id="gctn" style="min-width:0" maxlength="500" autocomplete="off" enterkeyhint="send" placeholder="${cuaToi ? 'Nhắn người giao…' : 'Nhắn ' + esc(gcTenNguoi(d, true)) + '…'}" data-model="gctn" data-enter="gctngui" value="${esc(S.form.gctn || '')}">
+      ${laNguoiGiao ? `<button class="chip s ${S.gcTnCan ? 'on' : ''}" style="flex:none;min-height:44px;padding:2px 8px;font-size:14px;white-space:nowrap" aria-pressed="${!!S.gcTnCan}" data-a="gctncan">Cần trả lời</button>` : ''}
+      <button class="btn s pri" style="flex:none" data-a="gctngui">Gửi</button></div></div>`;
+  const choTl = d.cho_tl && mo ? `<div class="card warn col gap6" style="padding:8px 12px"><b>Chờ ${esc(gcTenNguoi(d))} trả lời</b><span class="sm">Người giao đã hỏi và cần câu trả lời. Xem ở mục Trao đổi bên dưới.</span></div>` : '';
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${thongTin}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
+    ${thongTin}${choTl}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
     ${isQL() ? '<button class="btn full" data-a="gccopy">Giao đơn mới giống đơn này</button>' : ''}
-    <h2 class="sec">Lịch sử đơn</h2><div class="card" style="padding:0;overflow:hidden">${ls}</div>
-  </div>`;
+    <h2 class="sec">Trao đổi và lịch sử${tins.length ? ` <span class="sm muted" style="font-weight:400">· ${tins.length} tin</span>` : ''}</h2><div class="col gap8">${ls}</div>
+    ${tnDuoc ? '' : '<span class="sm muted" style="line-height:1.4">' + (gcCuaToi(d) || isQL() ? 'Đơn đã đóng quá 7 ngày, không trao đổi thêm được.' : 'Chỉ người làm đơn này và CVKTHT trở lên mới nhắn được. Bạn xem được toàn bộ trao đổi.') + '</span>'}
+  </div>${oNhan}`;
 }
 
 /* Soạn đơn: giao mới hoặc sửa / giao lại. Làm sao cho giao một đơn nhanh nhất có thể, vì người giao thường
@@ -3432,6 +3493,16 @@ function qsGui(body, okMsg) {
   });
 }
 
+// gửi một tin trên đơn đang mở; gửi xong cuộn xuống tin vừa gửi
+function gcTnGui(nd, canTl) {
+  if (!nd) { say('Gõ nội dung rồi bấm Gửi.', true); render(); return gcFocus('gctn'); }
+  const id = S.gcId;
+  return act(async () => {
+    await api('POST', `/giacong/${id}/tn`, { noi_dung: nd, can_tl: canTl ? 1 : 0 });
+    delete S.form.gctn; S.gcTnCan = false;
+    try { S.gcDetail = await api('GET', '/giacong/' + id); S.gcXuong = true; gcDocXong(); } catch (e) { /* đã gửi; vòng tự làm mới tải lại */ }
+  });
+}
 /* HỘP BÁO VƯỚNG: chọn lý do (một chạm), chọn mức độ, ghi chú thì tuỳ — trừ "Khác" phải ghi rõ. Lý do lấy từ danh
    mục admin lập (Gia công → ⚙), đi kèm bảng đơn hoặc màn một đơn. S.gcVg = { id, loai, dung }; ghi chú ở S.form.gcvgnote. */
 function gcVgHtml() {
@@ -3857,6 +3928,8 @@ function render() {
   $app.innerHTML = html;
   const nb = document.getElementById('body'), nm = document.getElementById('mx');
   if (keep.screen === S.screen) { if (nb) nb.scrollTop = keep.b; if (nm) nm.scrollTop = keep.m; }
+  // màn một đơn gia công: vừa gửi tin hoặc vừa mở có tin mới thì cuộn xuống cuối
+  if (S.gcXuong && S.screen === 'gcdon' && nb && S.gcDetail) { nb.scrollTop = nb.scrollHeight; S.gcXuong = false; }
   if (S.scrollSel && nm) {
     const idx = S.boot.phiAct.findIndex((p) => p.id === S.scrollSel);
     nm.scrollTop = Math.max(0, ROWH + idx * ROWH - 110);
@@ -3926,7 +3999,13 @@ async function go(screen, noPush, khu) {
     else if (screen === 'vaychitiet') { S.loanDetail = null; render(); S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt); }
     // bảng đơn giữ bản đang có trong lúc tải lại (khỏi nháy "Đang tải" mỗi lần đổi tab); đơn KHÁC thì phải xoá bản cũ
     else if (screen === 'giacong') { S.gc = await api('GET', '/giacong'); }
-    else if (screen === 'gcdon') { if (S.gcDetail && S.gcDetail.don.id !== S.gcId) { S.gcDetail = null; render(); } S.gcDetail = await api('GET', '/giacong/' + S.gcId); }
+    else if (screen === 'gcdon') {
+      if (S.gcDetail && S.gcDetail.don.id !== S.gcId) { S.gcDetail = null; render(); }
+      S.gcDetail = await api('GET', '/giacong/' + S.gcId);
+      // có tin chưa đọc thì mở thẳng xuống cuối, chỗ tin mới
+      if (S.gcDetail.tn.some((t) => t.user_id !== S.me.id && t.id > (S.gcDetail.doc || 0))) S.gcXuong = true;
+      gcDocXong();
+    }
     else if (screen === 'gcform') { if (!S.gc) S.gc = await api('GET', '/giacong'); }
     else if (screen === 'gcsetup') { S.gc = await api('GET', '/giacong'); }
     else if (screen === 'quanso') { await qsTai(); }
@@ -4898,6 +4977,14 @@ const ACTIONS = {
   },
   // làm nhanh ngay trên bảng, cho đơn của chính mình
   gcqnhan(d) { gcDo('nhan', {}, 'Đã nhận đơn.', Number(d.id)); },
+  // trao đổi trên đơn
+  gctnq(d) { gcTnGui(d.v, false); },
+  gctngui() { gcTnGui(String(S.form.gctn || '').trim(), !!S.gcTnCan); },
+  gctncan() { S.gcTnCan = !S.gcTnCan; render(); gcFocus('gctn'); },
+  async gctnthu(d) {
+    if (!(await ask('Thu hồi tin nhắn này? Mọi người sẽ thấy "Tin đã thu hồi".', 'THU HỒI', true))) return;
+    act(async () => { try { await api('POST', `/giacong/${S.gcId}/tn/${d.id}/thuhoi`, {}); } finally { S.gcDetail = await api('GET', '/giacong/' + S.gcId); } }, 'Đã thu hồi.');
+  },
   gcqbiet(d) { gcDo('biet', {}, 'Đã báo: bạn đã biết và dừng làm đơn này.', Number(d.id)); },
   gcbiet() { gcDo('biet', {}, 'Đã báo: bạn đã biết và dừng làm đơn này.'); },
   async gckhoiphuc() {
@@ -5271,6 +5358,8 @@ let lastAct = Date.now(), lastPoll = 0, lastScroll = 0;
 // phải bắt ở pha capture trên document.
 document.addEventListener('scroll', () => { lastScroll = Date.now(); lastAct = Date.now(); }, { capture: true, passive: true });
 function pollEvery() {
+  // đang mở một đơn gia công (đang trao đổi): hỏi dày hơn để tin tới nhanh
+  if (S.screen === 'gcdon') return 15e3;
   const h = new Date().getHours();
   if (h < 6 || h >= 20) return 15 * 60e3;
   return Date.now() - lastAct > 5 * 60e3 ? 5 * 60e3 : 60e3;
@@ -5303,10 +5392,17 @@ async function refresh() {
       await loadBoot();
       if (S.screen === 'quanso') await qsTai();
       if (S.screen === 'giacong') S.gc = await api('GET', '/giacong');
-      if (S.screen === 'gcdon' && S.gcId) S.gcDetail = await api('GET', '/giacong/' + S.gcId);
+      if (S.screen === 'gcdon' && S.gcId) { S.gcDetail = await api('GET', '/giacong/' + S.gcId); gcDocXong(); }
       if (S.screen === 'vaymuon') S.loans = await api('GET', '/loans');
       if (S.screen === 'vaychitiet') S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt);
       if (S.screen === 'duyet') await reloadReview();
+      render();
+    }
+    /* Chỉ có tin nhắn gia công mới (rev không đổi): hỏi lại tin chưa đọc của mình và đơn / bảng đang mở, không tải lại cả
+       dữ liệu chung. Đang gõ dở tin thì không vẽ lại (mất chữ đang gõ), vòng sau hỏi lại. */
+    else if (S.boot && r.tn != null && r.tn !== S.tnBiet && !(document.activeElement && document.activeElement.id === 'gctn' && S.form.gctn)) {
+      S.tnBiet = r.tn;
+      await gcTnTai();
       render();
     }
     else if (healed) render();

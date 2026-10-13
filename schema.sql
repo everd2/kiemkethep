@@ -438,7 +438,9 @@ CREATE TABLE IF NOT EXISTS don_gc (
   vuong_ts INTEGER,
   vuong_xem_by INTEGER,
   vuong_xem_ts INTEGER,
-  lam_ts INTEGER
+  lam_ts INTEGER,
+  tn_id INTEGER,
+  cho_tl INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
 
@@ -523,7 +525,28 @@ CREATE TABLE IF NOT EXISTS don_gc_nguoi (
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_nguoi_u ON don_gc_nguoi(user_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 33);
+-- Trao đổi trên đơn gia công. don_gc_tn: tin nhắn (can_tl = người giao hỏi cần trả lời; thu_hoi = người gửi thu hồi
+-- trong 2 phút, nội dung không hiện nữa). don_gc_doc: mỗi người đã đọc tới tin nào. don_gc.tn_id: tin mới nhất;
+-- don_gc.cho_tl: id tin "cần trả lời" đang chờ người làm nhắn lại. meta 'tn': bộ đếm tin, tách khỏi 'rev'.
+CREATE TABLE IF NOT EXISTS don_gc_tn (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  don_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  noi_dung TEXT NOT NULL,
+  can_tl INTEGER NOT NULL DEFAULT 0,
+  thu_hoi INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_don_gc_tn_don ON don_gc_tn(don_id, id);
+CREATE TABLE IF NOT EXISTS don_gc_doc (
+  don_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  doc_id INTEGER NOT NULL,
+  PRIMARY KEY (don_id, user_id)
+);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 34);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

@@ -42,7 +42,7 @@ const GC_KHOI_PHUC_MS = 7 * 864e5;
 const GC_HAN_MAX_MS = 366 * 864e5;
 const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.cote, d.truc, d.noi_dung, d.user_id, d.han, d.buoi, d.tt, d.pct, d.vuong,
     d.giao_by, d.ts, d.cap_ts, d.xong_ts, d.huy_ly_do, d.mo_lai, d.huy_ts, d.biet_ts,
-    d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts,
+    d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts, d.cho_tl, d.tn_id,
     COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name, x.name vuong_xem_name,
     (SELECT json_group_array(json_object('id', n.user_id, 'ten', COALESCE(un.name, '(đã xoá)'), 'biet', n.biet_ts))
        FROM don_gc_nguoi n LEFT JOIN users un ON un.id = n.user_id WHERE n.don_id = d.id) nguoi_json
@@ -153,16 +153,21 @@ export async function gcList(env) {
   return json({ items: don.results.map(docNguoi), tdt: tdt.results, muc: xepMuc(muc.results) });
 }
 
-export async function gcView(env, id) {
+export async function gcView(env, id, user) {
   if (!Number.isInteger(id)) throw khongThay();
-  const [don, log, muc] = await env.DB.batch([
+  const [don, log, muc, tn, doc] = await env.DB.batch([
     env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id),
     env.DB.prepare(`SELECT l.id, l.ts, l.viec, l.pct, l.note, COALESCE(u.name, '(đã xoá)') uname
                     FROM don_gc_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.don_id = ? ORDER BY l.id DESC`).bind(id),
     env.DB.prepare(MUC_SQL),
+    // trao đổi: 200 tin gần nhất (tin đã thu hồi không trả nội dung)
+    env.DB.prepare(`SELECT * FROM (SELECT t.id, t.user_id, t.ts, CASE WHEN t.thu_hoi = 1 THEN NULL ELSE t.noi_dung END noi_dung, t.can_tl, t.thu_hoi,
+                      COALESCE(u.name, '(đã xoá)') uname, u.role FROM don_gc_tn t LEFT JOIN users u ON u.id = t.user_id
+                    WHERE t.don_id = ? ORDER BY t.id DESC LIMIT 200) ORDER BY id`).bind(id),
+    env.DB.prepare('SELECT doc_id FROM don_gc_doc WHERE don_id = ? AND user_id = ?').bind(id, user ? user.id : 0),
   ]);
   if (!don.results.length) throw khongThay();
-  return json({ don: docNguoi(don.results[0]), log: log.results, muc: xepMuc(muc.results) });
+  return json({ don: docNguoi(don.results[0]), log: log.results, muc: xepMuc(muc.results), tn: tn.results, doc: (doc.results[0] || {}).doc_id || 0 });
 }
 
 // một đơn CÒN MỞ khác (id khác boQua) của cùng người, giống hệt cấu kiện + phân khu + tầng + cote + trục
@@ -266,6 +271,76 @@ export async function gcMucXoa(env, user, id) {
     auditStmt(env, user, 'gc_muc', { loai: m.loai, ten: m.ten, xoa: true }),
     bump(env),
   ]);
+  return json({ ok: true });
+}
+
+/* ========================= TRAO ĐỔI TRÊN ĐƠN =========================
+   Mỗi đơn một mạch tin nhắn giữa người giao và người làm, hiện chung dòng thời gian với các mốc của đơn.
+   - VIẾT: người trong đơn và mọi CVKTHT trở lên. ĐỌC: cả đơn vị (như bảng đơn).
+   - "Cần trả lời" (can_tl): chỉ người NGOÀI nhóm làm (người giao) bật được; đơn mang cho_tl = id tin đó cho tới khi một
+     người trong nhóm làm nhắn lại.
+   - Không sửa, không xoá; người gửi THU HỒI được trong 2 phút (tin còn dấu "đã thu hồi", nội dung không trả ra nữa).
+   - Đơn xong / huỷ vẫn nhắn được 7 ngày rồi khoá.
+   - Chưa đọc: don_gc_doc giữ id tin cuối mỗi người đã đọc. Tin không tăng meta 'rev' (cái đó bắt mọi máy tải lại cả
+     dữ liệu chung) mà tăng meta 'tn': máy chỉ hỏi lại danh sách tin chưa đọc của mình. */
+const GC_TN_MAX = 500, GC_TN_MO_MS = 7 * 864e5, GC_TN_THU_HOI_MS = 2 * 60e3;
+const bumpTn = (env) => env.DB.prepare("UPDATE meta SET value = value + 1 WHERE key = 'tn'");
+// đơn có tin mới (của người khác) mà người này chưa đọc — chỉ đơn LIÊN QUAN tới họ: đang làm, đã giao, hoặc đã nhắn trong đó
+export const TN_MOI_SQL = `SELECT d.id, d.cau_kien, d.truc,
+    (SELECT COUNT(*) FROM don_gc_tn t WHERE t.don_id = d.id AND t.id > COALESCE(r.doc_id, 0) AND t.user_id <> ?1 AND t.thu_hoi = 0) moi
+  FROM don_gc d LEFT JOIN don_gc_doc r ON r.don_id = d.id AND r.user_id = ?1
+  WHERE d.tn_id > COALESCE(r.doc_id, 0)
+    AND (d.giao_by = ?1 OR EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id = ?1)
+         OR EXISTS (SELECT 1 FROM don_gc_tn t2 WHERE t2.don_id = d.id AND t2.user_id = ?1))`;
+export const tnMoi = (rows) => rows.filter((r) => r.moi > 0);
+export async function gcTnMoi(env, user) {
+  return json({ items: tnMoi((await env.DB.prepare(TN_MOI_SQL).bind(user.id).all()).results) });
+}
+export async function gcTn(req, env, user, id) {
+  if (!Number.isInteger(id)) throw khongThay();
+  const b = await readJson(req);
+  const d = docNguoi(await env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id).first());
+  if (!d) throw khongThay();
+  const trong = d.nguoi.some((n) => n.id === user.id);
+  if (!trong && capOf(user.role) < 1) throw new HttpError(403, 'Chỉ người làm đơn này và CVKTHT trở lên mới trao đổi được');
+  const dong = d.tt === 'xong' ? d.xong_ts : d.tt === 'huy' ? d.huy_ts || d.cap_ts : null;
+  if (dong && Date.now() - dong > GC_TN_MO_MS) throw new HttpError(409, 'Đơn đã đóng quá 7 ngày, không trao đổi thêm được.', 'tt');
+  const nd = String(b.noi_dung == null ? '' : b.noi_dung).replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, GC_TN_MAX);
+  if (!nd) throw bad('Tin nhắn trống');
+  const canTl = b.can_tl && !trong ? 1 : 0;
+  // người trong nhóm làm nhắn là đã trả lời; người giao hỏi "cần trả lời" thì đơn chờ tin đó
+  const choTl = canTl ? '(SELECT MAX(id) FROM don_gc_tn)' : trong ? 'NULL' : 'cho_tl';
+  const MAX = '(SELECT MAX(id) FROM don_gc_tn)';
+  const r = await env.DB.batch([
+    env.DB.prepare('INSERT INTO don_gc_tn (don_id, user_id, ts, noi_dung, can_tl) VALUES (?,?,?,?,?)').bind(id, user.id, Date.now(), nd, canTl),
+    env.DB.prepare(`UPDATE don_gc SET tn_id = ${MAX}, cho_tl = ${choTl} WHERE id = ?`).bind(id),
+    env.DB.prepare(`INSERT INTO don_gc_doc (don_id, user_id, doc_id) VALUES (?, ?, ${MAX})
+                    ON CONFLICT(don_id, user_id) DO UPDATE SET doc_id = excluded.doc_id`).bind(id, user.id),
+    bumpTn(env),
+  ]);
+  return json({ ok: true, id: r[0].meta.last_row_id });
+}
+export async function gcThuHoi(env, user, id, tnId) {
+  const t = Number.isInteger(id) && Number.isInteger(tnId)
+    ? await env.DB.prepare('SELECT t.id, t.user_id, t.ts, t.thu_hoi, d.cho_tl FROM don_gc_tn t JOIN don_gc d ON d.id = t.don_id WHERE t.id = ? AND t.don_id = ?').bind(tnId, id).first() : null;
+  if (!t) throw new HttpError(404, 'Không tìm thấy tin nhắn');
+  if (t.user_id !== user.id) throw new HttpError(403, 'Chỉ thu hồi được tin của chính mình');
+  if (t.thu_hoi) throw new HttpError(409, 'Tin này đã thu hồi rồi.', 'tt');
+  if (Date.now() - t.ts > GC_TN_THU_HOI_MS) throw new HttpError(409, 'Quá 2 phút, không thu hồi được nữa. Nhắn thêm một tin để đính chính.', 'tt');
+  await env.DB.batch([
+    env.DB.prepare('UPDATE don_gc_tn SET thu_hoi = 1 WHERE id = ?').bind(tnId),
+    env.DB.prepare('UPDATE don_gc SET cho_tl = NULL WHERE id = ? AND cho_tl = ?').bind(id, tnId),
+    bumpTn(env),
+  ]);
+  return json({ ok: true });
+}
+// đã đọc tới tin nào (không lùi): không tăng rev hay tn, chỉ việc của máy người đọc
+export async function gcDoc(req, env, user, id) {
+  const b = await readJson(req);
+  const den = Number(b.den);
+  if (!Number.isInteger(id) || !Number.isInteger(den)) throw bad('Dữ liệu không hợp lệ');
+  await env.DB.prepare(`INSERT INTO don_gc_doc (don_id, user_id, doc_id) VALUES (?, ?, ?)
+                        ON CONFLICT(don_id, user_id) DO UPDATE SET doc_id = MAX(doc_id, excluded.doc_id)`).bind(id, user.id, den).run();
   return json({ ok: true });
 }
 

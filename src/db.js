@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -429,6 +429,18 @@ export const MIGRATIONS = {
      quyền: admin vẫn duyệt được hết. */
   33: [
     'ALTER TABLE users ADD COLUMN chuc_danh TEXT',
+  ],
+  /* GIA CÔNG: trao đổi trên từng đơn (xem gcTn). don_gc_tn: tin nhắn; don_gc_doc: mỗi người đã đọc tới tin nào;
+     don_gc.tn_id: tin mới nhất, cho_tl: tin "cần trả lời" đang chờ. meta 'tn': bộ đếm tin, tách khỏi 'rev'. */
+  34: [
+    `CREATE TABLE IF NOT EXISTS don_gc_tn (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, don_id INTEGER NOT NULL, user_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+       noi_dung TEXT NOT NULL, can_tl INTEGER NOT NULL DEFAULT 0, thu_hoi INTEGER NOT NULL DEFAULT 0)`,
+    'CREATE INDEX IF NOT EXISTS idx_don_gc_tn_don ON don_gc_tn(don_id, id)',
+    'CREATE TABLE IF NOT EXISTS don_gc_doc (don_id INTEGER NOT NULL, user_id INTEGER NOT NULL, doc_id INTEGER NOT NULL, PRIMARY KEY (don_id, user_id))',
+    'ALTER TABLE don_gc ADD COLUMN tn_id INTEGER',
+    'ALTER TABLE don_gc ADD COLUMN cho_tl INTEGER',
+    "INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1)",
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

@@ -9,7 +9,7 @@ import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
-import { gcCreate, gcList, gcMucAdd, gcMucXoa, gcUpdate, gcViec, gcView } from './giacong.js';
+import { gcCreate, gcDoc, gcList, gcMucAdd, gcMucXoa, gcThuHoi, gcTn, gcTnMoi, gcUpdate, gcViec, gcView } from './giacong.js';
 import { qsHan, qsPut, qsThuTu, qsView } from './quanso.js';
 import { bcPut, bcView } from './baocao.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
@@ -48,7 +48,8 @@ async function handle(req, env, url) {
   if (r0 === 'rev' && method === 'GET') {
     const u = await auth(req, env, false);
     if (u.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
-    return json({ rev: u.rev || 0, today: vnDay() });
+    // tn: bộ đếm tin nhắn gia công (xem gcTn) — đổi thì máy chỉ hỏi lại tin chưa đọc, không tải lại cả dữ liệu
+    return json({ rev: u.rev || 0, today: vnDay(), tn: u.tn || 0 });
   }
 
   const user = await auth(req, env);
@@ -112,7 +113,12 @@ async function handle(req, env, url) {
       throw new HttpError(404, 'Không tìm thấy');
     }
     if (method === 'GET' && p.length === 1) return gcList(env);
-    if (method === 'GET' && p.length === 2) return gcView(env, Number(p[1]));
+    // trao đổi trên đơn: ai viết được thì gcTn tự kiểm (người trong đơn hoặc CVKTHT trở lên)
+    if (method === 'GET' && p.length === 2 && p[1] === 'tnmoi') return gcTnMoi(env, user);
+    if (method === 'POST' && p.length === 3 && p[2] === 'tn') return gcTn(req, env, user, Number(p[1]));
+    if (method === 'POST' && p.length === 5 && p[2] === 'tn' && p[4] === 'thuhoi') return gcThuHoi(env, user, Number(p[1]), Number(p[3]));
+    if (method === 'POST' && p.length === 3 && p[2] === 'doc') return gcDoc(req, env, user, Number(p[1]));
+    if (method === 'GET' && p.length === 2) return gcView(env, Number(p[1]), user);
     if (method === 'POST' && p.length === 1) { needCap(1); return gcCreate(req, env, user); }
     if (method === 'PATCH' && p.length === 2) { needCap(1); return gcUpdate(req, env, user, Number(p[1])); }
     if (method === 'POST' && p.length === 3) return gcViec(req, env, user, Number(p[1]), p[2]);

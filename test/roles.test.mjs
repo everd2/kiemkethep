@@ -93,6 +93,7 @@ async function main() {
       // gia công: ai cũng xem; việc của người được giao thì ai cũng gọi được (đơn không có: 404); giao, sửa, huỷ, mở lại từ CVKTHT
       ['GET', '/giacong', null, ALL], ['GET', '/giacong/99999', null, ALL], ['POST', '/giacong/99999/nhan', {}, ALL], ['POST', '/giacong/99999/xong', {}, ALL],
       ['POST', '/giacong', {}, C1], ['PATCH', '/giacong/99999', {}, C1], ['POST', '/giacong/99999/huy', {}, C1], ['POST', '/giacong/99999/molai', {}, C1], ['POST', '/giacong/99999/xemvuong', {}, C1],
+      ['GET', '/giacong/tnmoi', null, ALL], ['POST', '/giacong/99999/tn', {}, ALL], ['POST', '/giacong/99999/doc', {}, ALL], ['POST', '/giacong/99999/tn/1/thuhoi', {}, ALL],
       ['POST', '/giacong/muc', {}, AD], ['DELETE', '/giacong/muc/99999', null, AD],
       // quân số đầu ca: ai cũng vào được (Tiểu đội trưởng chỉ tổ mình, kiểm kỹ ở quanso.test.mjs); thân sai nên không ghi gì
       ['GET', '/quanso', null, ALL], ['PUT', '/quanso', {}, ALL], ['PUT', '/quanso/han', {}, C1],

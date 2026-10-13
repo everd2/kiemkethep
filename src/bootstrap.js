@@ -5,7 +5,7 @@ import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './he
 import { EFF_SELECT, MV_NEW } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
 import { LOAN_LOT_SQL, loanLots } from './loans.js';
-import { GC_BAO_HUY_MS } from './giacong.js';
+import { GC_BAO_HUY_MS, TN_MOI_SQL, tnMoi } from './giacong.js';
 import { bcDaStmt, qsBoot, qsBootStmt, qsToiStmt } from './quanso.js';
 
 /* ========================= DỮ LIỆU CHUNG ========================= */
@@ -17,7 +17,7 @@ export async function bootstrap(env, user) {
      ?1 luôn là hôm nay. kyNay đổi câu dùng chung (?1 = ngày chốt trước, ?2 = ngày đang xét) sang dạng đó. */
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
   const kyNay = (sql) => sql.replace(/\?1/g, LAST).replace(/\?2/g, '?1');
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR, bcDaR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR, bcDaR, gcTnR, tnR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -86,10 +86,10 @@ export async function bootstrap(env, user) {
     /* Kèm đơn bị HUỶ mà người giữ đơn CHƯA bấm "đã biết" (tối đa 30 ngày): họ phải thấy để thôi làm, người giao
        thấy để biết bên kia chưa xem. Kèm tên đơn và lý do để thẻ nhắc gọi đúng tên. UNION ALL để cả hai nửa đi
        theo index (tt, cap_ts). */
-    env.DB.prepare(`SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do,
+    env.DB.prepare(`SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id AND n.biet_ts IS NULL) chua_biet FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
-                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do,
+                    UNION ALL SELECT id, user_id, tt, han, buoi, vuong, vuong_dung, vuong_xem_ts, lam_ts, ts, mo_lai, cau_kien, truc, huy_ly_do, cho_tl,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id) ids,
                       (SELECT group_concat(user_id) FROM don_gc_nguoi n WHERE n.don_id = don_gc.id AND n.biet_ts IS NULL) chua_biet FROM don_gc
                       WHERE tt = 'huy' AND cap_ts > ? AND biet_ts IS NULL`).bind(Date.now() - GC_BAO_HUY_MS),
@@ -98,6 +98,9 @@ export async function bootstrap(env, user) {
     // và mấy lần báo gần nhất của chính người đang xem, cho thẻ báo quân số trên Tổng quan (xem qsToiStmt)
     qsToiStmt(env, user),
     bcDaStmt(env),
+    // trao đổi trên đơn gia công: đơn liên quan tới người này có tin chưa đọc, và bộ đếm tin hiện tại (xem gcTn)
+    env.DB.prepare(TN_MOI_SQL).bind(user.id),
+    env.DB.prepare("SELECT value FROM meta WHERE key = 'tn'"),
   ]);
   const last = (lastR.results[0] || {}).d || '';
   return {
@@ -134,6 +137,8 @@ export async function bootstrap(env, user) {
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
     doitacAct: doitacAct.results,
     gc: gcR.results,
+    gcTn: tnMoi(gcTnR.results),
+    tn: (tnR.results[0] || {}).value || 0,
     qs: qsBoot(qsR.results, parseSettings(settings.results), user, qsToiR.results, bcDaR.results),
     loanPending: loanPending.results.length,
     /* Trong đó, số lần ghi người đang xem DUYỆT ĐƯỢC (cùng luật với duyetLoan): thẻ nhắc ở Tổng quan

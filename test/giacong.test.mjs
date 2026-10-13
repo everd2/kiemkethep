@@ -258,6 +258,63 @@ async function main() {
     await viec(r2.data.id, 'huy', { ly_do: 'dọn test' }, 'Cv'); await viec(r2.data.id, 'biet', {}, 'Binh');
   }
 
+  /* ===== 7c. Trao đổi trên đơn =====
+     Người trong đơn và CVKTHT trở lên viết; cả đơn vị đọc. "Cần trả lời" chỉ người giao bật, người làm nhắn lại là xong.
+     Không sửa / xoá; thu hồi trong 2 phút. Tin không đổi rev mà đổi bộ đếm tn. Đơn đóng quá 7 ngày thì khoá. */
+  {
+    const r = await S.call('POST', '/giacong', don({ cau_kien: 'Dầm TN1', users: [U.An, U.Binh] }), 'Cv');
+    const t = r.data.id;
+    const gui = (who, noi_dung, can_tl) => S.call('POST', `/giacong/${t}/tn`, { noi_dung, can_tl }, who);
+    const moi = async (who) => (await S.call('GET', '/giacong/tnmoi', undefined, who)).data.items.filter((x) => x.id === t).map((x) => x.moi)[0] || 0;
+    const rev0 = rev(), tn0 = S.one("SELECT value FROM meta WHERE key = 'tn'").value;
+    S.raw.exec("INSERT INTO users (name, phone, role, pin_salt, pin_hash, must_change, created_at) SELECT 'Ngoai', '0900000099', 'tieudoi', pin_salt, pin_hash, 0, 1 FROM users WHERE name = 'An'");
+    await S.login('Ngoai', '0900000099', '1357');
+    eq('người ngoài đơn (Tiểu đội trưởng khác) không nhắn được, nhưng xem được trao đổi', [(await gui('Ngoai', 'xin chào')).status, (await S.call('GET', '/giacong/' + t, undefined, 'Ngoai')).status], [403, 200]);
+    // tài khoản tạm chỉ cho phép thử này: bỏ đi để các mục sau vẫn chỉ có An và Binh là Tiểu đội trưởng
+    S.raw.exec("UPDATE users SET deleted = 1 WHERE name = 'Ngoai'");
+    eq('tin trống: từ chối', (await gui('Cv', '   ')).status, 400);
+    advance(1000);
+    eq('người giao hỏi, bật cần trả lời', (await gui('Cv', 'Chiều nay xong được không?', 1)).status, 200);
+    ok('gửi tin không đổi rev (không bắt mọi máy tải lại cả dữ liệu), chỉ đổi bộ đếm tin', rev() === rev0 && S.one("SELECT value FROM meta WHERE key = 'tn'").value > tn0);
+    const d1 = (await xem(t)).don;
+    ok('đơn chờ trả lời', d1.cho_tl > 0, JSON.stringify(d1.cho_tl));
+    eq('An và Binh có 1 tin mới; người gửi (Cv) thì không', [await moi('An'), await moi('Binh'), await moi('Cv')], [1, 1, 0]);
+    eq('bootstrap của An kèm tin mới và câu hỏi chờ trả lời', (await S.call('GET', '/bootstrap', undefined, 'An')).data.gcTn.filter((x) => x.id === t).length + (await S.call('GET', '/bootstrap', undefined, 'An')).data.gc.filter((x) => x.id === t && x.cho_tl).length, 2);
+    eq('Trung (CVKTHT trở lên, không liên quan đơn) không bị tính tin mới', await moi('Trung'), 0);
+    advance(1000);
+    eq('Trung vẫn nhắn được vào đơn (cấp chỉ huy)', (await gui('Trung', 'Ưu tiên đơn này')).status, 200);
+    eq('Trung nhắn không bật được cần trả lời khi... vẫn chờ câu hỏi của Cv', (await xem(t)).don.cho_tl, d1.cho_tl);
+    eq('đã nhắn trong đơn thì Trung được báo tin mới về đơn đó', (await (async () => { advance(1000); await gui('Cv', 'Nhắc lại: cần trả lời'); return moi('Trung'); })()), 1);
+    const v = await S.call('GET', '/giacong/' + t, undefined, 'An');
+    eq('màn đơn trả về trao đổi theo thứ tự, kèm vai trò người gửi', v.data.tn.map((x) => [x.uname, x.role, x.can_tl]), [['Cv', 'cvktht', 1], ['Trung', 'trungdoi', 0], ['Cv', 'cvktht', 0]]);
+    const max = Math.max(...v.data.tn.map((x) => x.id));
+    eq('An đánh dấu đã đọc: hết tin mới với An, Binh vẫn còn', [(await S.call('POST', `/giacong/${t}/doc`, { den: max }, 'An')).status, await moi('An'), await moi('Binh')], [200, 0, 3]);
+    eq('đánh dấu đọc lùi lại không làm hiện lại tin cũ', [(await S.call('POST', `/giacong/${t}/doc`, { den: 1 }, 'An')).status, await moi('An')], [200, 0]);
+    advance(1000);
+    eq('Binh (người cùng làm) trả lời: hết chờ trả lời', [(await gui('Binh', 'Chiều 4h xong')).status, (await xem(t)).don.cho_tl], [200, null]);
+    ok('người gửi tự động đã đọc tới tin của mình', (await moi('Binh')) === 0);
+    const r2 = await gui('An', 'gõ nhầm');
+    eq('thu hồi tin người khác: từ chối', (await S.call('POST', `/giacong/${t}/tn/${r2.data.id}/thuhoi`, {}, 'Binh')).status, 403);
+    eq('thu hồi tin của mình trong 2 phút', (await S.call('POST', `/giacong/${t}/tn/${r2.data.id}/thuhoi`, {}, 'An')).status, 200);
+    const th = (await xem(t)).tn.find((x) => x.id === r2.data.id);
+    eq('tin thu hồi còn dấu, không còn nội dung', [th.thu_hoi, th.noi_dung], [1, null]);
+    eq('thu hồi lần hai: từ chối', (await S.call('POST', `/giacong/${t}/tn/${r2.data.id}/thuhoi`, {}, 'An')).status, 409);
+    const r3 = await gui('An', 'tin cũ');
+    advance(3 * 60e3);
+    eq('quá 2 phút: không thu hồi được', (await S.call('POST', `/giacong/${t}/tn/${r3.data.id}/thuhoi`, {}, 'An')).status, 409);
+    // người giao hỏi rồi thu hồi câu hỏi: hết chờ trả lời
+    const r4 = await gui('Cv', 'Câu hỏi nhầm', 1);
+    eq('thu hồi câu hỏi cần trả lời thì đơn hết chờ', [(await S.call('POST', `/giacong/${t}/tn/${r4.data.id}/thuhoi`, {}, 'Cv')).status, (await xem(t)).don.cho_tl], [200, null]);
+    // đơn xong: nhắn tiếp 7 ngày rồi khoá
+    await viec(t, 'nhan', {}, 'An'); advance(1000); await viec(t, 'xong', {}, 'An');
+    eq('đơn đã xong vẫn trao đổi được', (await gui('Cv', 'Thiếu 2 thanh?')).status, 200);
+    addDays(8);
+    await S.login('An', '0900000002', '1357'); await S.login('Binh', '0900000003', '1357'); await S.login('Cv', '0900000004', '1357'); await S.login('Trung', '0900000005', '1357'); await S.login('Admin', '0900000001', '2468');
+    eq('đơn đóng quá 7 ngày: khoá trao đổi', (await gui('Cv', 'muộn')).status, 409);
+    addDays(-8);
+    await S.login('An', '0900000002', '1357'); await S.login('Binh', '0900000003', '1357'); await S.login('Cv', '0900000004', '1357'); await S.login('Trung', '0900000005', '1357'); await S.login('Admin', '0900000001', '2468');
+  }
+
   /* ===== 8. Hai người ghi cùng lúc: lần ghi dựa trên bản cũ bị từ chối =====
      Người giao dời hạn đúng lúc người làm bấm lưu tiến độ. Dựng lại bằng cách để câu đọc đơn trả về
      bản cũ: chèn một lần cập nhật vào giữa lúc đọc và lúc ghi. */
@@ -368,7 +425,7 @@ async function main() {
       document: { activeElement: null, hidden: false, body: { appendChild() {}, removeChild() {} }, createElement: el, getElementById: () => el(), querySelectorAll: () => [], addEventListener() {} },
       window: { addEventListener() {} },
       fetch: async (url, o = {}) => {
-        if (!String(url).startsWith('/api/giacong') && !String(url).startsWith('/api/bootstrap')) return new Promise(() => {}); // /me lúc khởi động, /app.js: để treo
+        if (!String(url).startsWith('/api/') || String(url) === '/api/me') return new Promise(() => {}); // /me lúc khởi động, /app.js: để treo
         const r = await S3.call(o.method || 'GET', String(url).replace(/^\/api/, ''), o.body ? JSON.parse(o.body) : undefined, who);
         return { ok: r.status < 400, status: r.status, json: async () => r.data, headers: { get: () => null } };
       },
@@ -603,6 +660,38 @@ async function main() {
     eq('người khác không bị nhắc việc không phải của mình', (R('vHome()').match(/Đơn gia công của bạn/g) || []).length, 0);
     await vao('Cv', 'cvktht');
     R('S.boot.skew = 0;');
+    /* --- trao đổi trên giao diện --- */
+    {
+      const rq = await S3.call('POST', '/giacong', { cau_kien: 'Cột TN', truc: 'Trục 9', phan_khu: 'Khu A', tang: '1', users: [id3.Binh], han: vnDay(Date.now() + 864e5) }, 'Cv');
+      const q = rq.data.id;
+      await vao('Cv', 'cvktht');
+      R(`S.gcId = ${q}; S.screen = 'gcdon'; S.gcDetail = ${JSON.stringify((await S3.call('GET', '/giacong/' + q, undefined, 'Cv')).data)};`);
+      const man = R('vMain()');
+      ok('màn đơn: mục Trao đổi và lịch sử, ô nhắn ở đáy, nút cần trả lời cho người giao', man.includes('Trao đổi và lịch sử') && /class="sendbar[^"]*"/.test(man) && man.includes('data-a="gctncan"') && man.includes('data-v="Làm gấp"'));
+      R(`ACTIONS.gctncan(); S.form.gctn = 'Mai xong được không?'; ACTIONS.gctngui()`); await cho();
+      eq('gửi từ giao diện: server ghi tin cần trả lời, ô nhắn trống lại', [S3.one('SELECT noi_dung, can_tl FROM don_gc_tn WHERE don_id = ? ORDER BY id DESC', q), R('S.form.gctn') || '', R('S.gcTnCan')], [{ noi_dung: 'Mai xong được không?', can_tl: 1 }, '', false]);
+      ok('tin mình gửi hiện bên phải, ghi "Bạn", có nút thu hồi', /align-items:flex-end.*<b>Bạn<\/b>.*data-a="gctnthu"/s.test(R('vGcDon()')));
+      await vao('Binh', 'tieudoi');
+      ok('Tổng quan người làm: thẻ "chờ bạn trả lời" gọi đúng tên và thẻ tin mới', R('vHome()').includes('Chờ bạn trả lời: Cột TN · Trục 9') && /1 tin mới về đơn gia công/.test(R('vHome()')));
+      R(`S.screen = 'giacong'; S.gcF = 'toi';`);
+      ok('thẻ đơn trên bảng: "1 tin mới" và "Chờ Binh trả lời"', R('vGiaCong()').includes('1 tin mới') && R('vGiaCong()').includes('Chờ Binh trả lời'));
+      R(`S.gcId = ${q}; go('gcdon')`); for (let k = 0; k < 8; k++) await cho();
+      eq('mở đơn: đánh dấu đã đọc, hết tin mới', [S3.one('SELECT doc_id FROM don_gc_doc WHERE don_id = ? AND user_id = ?', q, id3.Binh).doc_id > 0, R('gcTnMoi(' + q + ')')], [true, 0]);
+      ok('người làm có trả lời nhanh của người làm, không có nút cần trả lời', R('vMain()').includes('data-v="Cần thêm thép"') && !R('vMain()').includes('data-a="gctncan"'));
+      R(`ACTIONS.gctnq({ v: 'Đã rõ' })`); await cho();
+      eq('trả lời nhanh một chạm: gửi luôn, hết chờ trả lời', [S3.one('SELECT noi_dung FROM don_gc_tn WHERE don_id = ? ORDER BY id DESC', q).noi_dung, S3.one('SELECT cho_tl FROM don_gc WHERE id = ?', q).cho_tl], ['Đã rõ', null]);
+      // người ngoài đơn: xem được, không có ô nhắn
+      await vao('An', 'tieudoi');
+      R(`S.gcId = ${q}; go('gcdon')`); for (let k = 0; k < 8; k++) await cho();
+      ok('người ngoài đơn xem được trao đổi nhưng không có ô nhắn', R('vMain()').includes('Đã rõ') && !R('vMain()').includes('id="gctn"') && R('vMain()').includes('Chỉ người làm đơn này'));
+      // bộ đếm tin: máy chỉ hỏi lại tin chưa đọc khi bộ đếm đổi
+      await vao('Cv', 'cvktht');
+      R(`S.screen = 'home'; S.tnBiet = ${S3.one("SELECT value FROM meta WHERE key = 'tn'").value};`);
+      await S3.call('POST', `/giacong/${q}/tn`, { noi_dung: 'ok' }, 'Binh');
+      R('refresh()'); for (let k = 0; k < 8; k++) await cho();
+      ok('tin mới tới: Tổng quan người giao hiện thẻ tin mới mà không cần tải lại cả dữ liệu', /tin mới về đơn gia công/.test(R('vHome()')));
+      await S3.call('POST', `/giacong/${q}/huy`, { ly_do: 'dọn test' }, 'Cv'); await S3.call('POST', `/giacong/${q}/biet`, {}, 'Binh');
+    }
     /* --- giao cho hai người trên giao diện; đơn hiện trong nhóm của cả hai --- */
     R('ACTIONS.gcnew()'); await cho(); R('vGcForm()');
     R(`S.gcForm.users = []; ACTIONS.gcuser({ v: '${id3.An}' }); ACTIONS.gcuser({ v: '${id3.Binh}' });`);

@@ -90,7 +90,7 @@ export async function auth(req, env, renew = true) {
   const th = await sha256(m[1]);
   const row = await env.DB.prepare(
     // rev đi kèm luôn: lần hỏi ngầm /rev (mỗi máy một phút một lần, request nhiều nhất của cả app) chỉ còn một lượt gọi D1
-    "SELECT u.id, u.name, u.phone, u.role, u.chuc_danh, u.locked, u.deleted, u.must_change, s.expires_at, (SELECT value FROM meta WHERE key = 'rev') rev FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?"
+    "SELECT u.id, u.name, u.phone, u.role, u.chuc_danh, u.locked, u.deleted, u.must_change, s.expires_at, (SELECT value FROM meta WHERE key = 'rev') rev, (SELECT value FROM meta WHERE key = 'tn') tn FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?"
   ).bind(th).first();
   // xoá tài khoản đã thu hồi mọi phiên, nhưng vẫn kiểm ở đây: phiên là thứ dùng để vào hệ thống
   if (!row || row.expires_at < Date.now() || row.locked || row.deleted) throw new HttpError(401, 'Phiên đăng nhập hết hạn');
