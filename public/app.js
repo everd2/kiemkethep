@@ -401,7 +401,14 @@ const LIM = (k, dflt) => {
 const refOf = (k, p) => { const c = S.boot.em[k + '|' + p]; return c ? c.v : S.boot.bm[k + '|' + p]; };
 // nhập/chuyển vào (+) hoặc ra (−) SAU lần đếm gần nhất, tức phần chưa có trong số mốc
 const movedOf = (k, p) => S.boot.mvn[k + '|' + p] || 0;
-// ngày của lần đếm làm mốc, để nói rõ "số hôm qua" hay "số ngày 28/10"
+/* Nhãn của số mốc: số đó là lần đếm ĐÃ DUYỆT trong ngày thì nói giờ duyệt, chỉ khi lấy tồn chuẩn mới
+   gọi là "Hôm qua". Bản cũ luôn ghi "Hôm qua", nên đếm 2 lần/ngày thì buổi chiều người đếm đọc số
+   sáng nay tưởng là số hôm qua — so sai đúng ở chỗ người báo dùng để tự kiểm số mình. */
+const refLbl = (k, p) => {
+  const b = S.boot, c = b.em[k + '|' + p];
+  if (c) return c.day === b.today ? 'Đã duyệt lúc ' + hhmm(c.ts) : 'Đã duyệt ngày ' + fmtDay(c.day);
+  return !b.lastClosed || b.lastClosed === ydayOf(b.today) ? 'Hôm qua' : 'Chốt ngày ' + fmtDay(b.lastClosed);
+};
 // số dự kiến = tồn chuẩn hôm qua + nhập/chuyển; dùng để so lệch khi đếm
 const expOf = (k, p) => { const r = refOf(k, p), m = movedOf(k, p); return r === undefined ? (m ? m : undefined) : r + m; };
 // chỉ cho "giữ nguyên" khi có số hôm qua, khu không có thép nhập/chuyển, và chưa giữ nguyên quá số ngày cho phép
@@ -885,8 +892,15 @@ function vHome() {
   const choKhu = b.closed ? [] : b.khuAct.filter((k) => b.rm[k.id] && khuWaiting(k.id));
   const choToiDuyet = isQL() ? choKhu.filter((k) => khuDuyetDuoc(k.id)) : [];
   const choCuaToi = choKhu.filter((k) => !choToiDuyet.includes(k) && b.rm[k.id].user_id === S.me.id);
+  /* Hết giờ làm mà còn báo cáo HÔM NAY chưa duyệt thì thẻ chuyển đỏ và nói hạn 0h: qua 0h số đó dồn
+     sang ngày mai (carryStmts ở server), hôm nay khu đó tính như không dùng thép còn ngày mai dùng gấp
+     đôi. Báo cáo đã dồn từ hôm qua thì quá hạn rồi, không đếm vào đây. */
+  const gioHet = (b.settings || {}).work_to == null ? 18 : b.settings.work_to;
+  const sapDon = choToiDuyet.filter((k) => !tuHomQua(b.rm[k.id]));
+  const nhacHan = sapDon.length > 0 && vnHourNow() >= gioHet;
   if (choToiDuyet.length) {
-    alerts.push({ bad: false, t: (choToiDuyet.length === 1 ? choToiDuyet[0].name : choToiDuyet.length + ' khu') + ' chờ bạn duyệt', s: 'Vào Duyệt để xem số và duyệt theo từng khu', to: 'duyet' });
+    alerts.push({ bad: nhacHan, t: (choToiDuyet.length === 1 ? choToiDuyet[0].name : choToiDuyet.length + ' khu') + ' chờ bạn duyệt' + (nhacHan ? ', duyệt trước 0h' : ''),
+      s: nhacHan ? 'Qua 0h số dồn sang ngày mai: hôm nay khu đó tính như không dùng thép, ngày mai dùng gấp đôi' : 'Vào Duyệt để xem số và duyệt theo từng khu', to: 'duyet' });
   }
   if (choCuaToi.length) {
     alerts.push({ bad: false, t: 'Báo cáo ' + choCuaToi.map((k) => k.name).join(', ') + ' của bạn chờ duyệt', s: 'Đã gửi, chờ cấp trên duyệt mới tính vào tồn', to: null });
@@ -1252,7 +1266,7 @@ function demView() {
     const p = S.sel, ref = refOf(k, p), mv = movedOf(k, p), ex = expOf(k, p);
     const streakOk = !keepBlock(k, p);
     const selPhi = b.phiBy[p];
-    const refTxt = 'Hôm qua: ' + (ref === undefined ? 'chưa có' : qMain(ref, selPhi)) + (mv ? ` · ${mv > 0 ? 'nhập/chuyển vào +' + qMain(mv, selPhi) : 'chuyển đi −' + qMain(Math.abs(mv), selPhi)} · <b>dự kiến ${qMain(ex, selPhi)}</b>` : '');
+    const refTxt = refLbl(k, p) + ': ' + (ref === undefined ? 'chưa có' : qMain(ref, selPhi)) + (mv ? ` · ${mv > 0 ? 'nhập/chuyển vào +' + qMain(mv, selPhi) : 'chuyển đi −' + qMain(Math.abs(mv), selPhi)} · <b>dự kiến ${qMain(ex, selPhi)}</b>` : '');
     const cu = isCuon(p);
     /* "Xoá" hứa xoá cả ô nhưng nút này chỉ bớt một chữ số, nên nói đúng việc nó làm. */
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'Xoá 1 số', '0', S.field === 'bo' ? (cu ? 'Dở ›' : 'Lẻ ›') : (cu ? '‹ Cuộn' : '‹ Bó')];
@@ -1843,8 +1857,10 @@ function vLichSu() {
   const status = closed
     ? `<div class="card ok col" style="gap:4px"><b>Đã chốt${D.close.uname ? ' bởi ' + esc(D.close.uname) : ' tự động'} lúc ${dmy(D.close.ts)}</b>${D.close.span > 1 ? `<span class="sm">Gộp ${D.close.span} ngày (các ngày trước đó chưa chốt)</span>` : ''}${D.close.note ? `<span class="sm">Ghi chú: ${esc(D.close.note)}</span>` : ''}${treoTxt(D.close.exc_json)}</div>`
     : `<div class="card warn col" style="gap:4px"><b>Ngày này chưa chốt</b><span class="sm">Số tồn lấy theo báo cáo đếm trong ngày; khu không báo tạm lấy tồn chuẩn trước đó.</span></div>`;
+  const dn = donTxt(D.don);
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${status}
+    ${dn ? `<div class="card warn sm" style="line-height:1.45"><b>Ngày bị dồn số.</b> ${esc(dn)}. Lượng dùng của ngày này không phải số của riêng một ngày; cộng với ngày ${[D.don.tu.length ? 'trước' : '', D.don.sang.length ? 'sau' : ''].filter(Boolean).join(' và ')} thì mới đúng.</div>` : ''}
     <div class="hero" style="border-radius:14px;padding:14px 16px"><div class="row" style="justify-content:space-between"><div class="col"><span style="font-size:16px">Tồn cuối ngày ${esc(fmtDay(D.day))}</span><span style="font-size:32px;font-weight:700">${fmtT(totKg)} tấn</span></div>${closed ? `<div class="col" style="align-items:flex-end;font-size:16px"><span>Nhập ${fmtT(totIn)} tấn</span>${totDc ? `<span>Điều chỉnh ${totDc > 0 ? '+' : '−'}${fmtT(Math.abs(totDc))} tấn</span>` : ''}${totVay ? `<span>Vay mượn ${totVay > 0 ? '+' : '−'}${fmtT(Math.abs(totVay))} tấn</span>` : ''}<span>Dùng ${fmtT(totUse)} tấn</span>${totX ? `<span class="sm">trong đó ${fmtT(totX)} tấn có phiếu xuất</span>` : ''}</div>` : ''}</div></div>
     <h2 class="sec">Theo đường kính (chạm để xem từng khu)</h2>
     <div class="card" style="padding:0;overflow:hidden">${rows}</div>
@@ -1852,6 +1868,19 @@ function vLichSu() {
     <h2 class="sec">Phiếu nhập / chuyển / xuất / điều chỉnh / vay mượn</h2>${recs ? `<div class="card" style="padding:0;overflow:hidden">${recs}</div>` : '<div class="muted">Không có phiếu</div>'}
   </div>`;
 }
+/* Ngày bị DỒN SỐ (server gửi don = { sang, tu }, xem donNgay ở src/reports.js): báo cáo chưa duyệt lúc
+   0h chuyển sang ngày sau, nên ngày trước khu đó trông như không dùng thép, ngày sau dùng gấp đôi.
+   Tổng nhiều ngày vẫn đúng; câu này để không ai so từng ngày mà kết luận sai. */
+function donTxt(d) {
+  if (!d) return '';
+  const ten = (ids) => ids.map(kName).join(', ');
+  return [
+    (d.sang || []).length ? ten(d.sang) + ' chưa duyệt lúc 0h, số dồn sang ngày sau' : '',
+    (d.tu || []).length ? ten(d.tu) + ' nhận số dồn từ hôm trước' : '',
+  ].filter(Boolean).join('; ');
+}
+// dòng đánh dấu dưới một ngày trong danh sách "Theo ngày" (báo cáo kỳ, Thống kê); ngày không dồn thì rỗng
+const donDong = (d) => { const t = donTxt(d); return t ? `<span class="sm" style="width:100%;color:var(--warn);line-height:1.35">Dồn số: ${esc(t)}</span>` : ''; };
 /* Những việc còn treo LÚC CHỐT (day_close.exc_json): khu chưa báo, khu thiếu lần đếm, hai người báo
    khác số... Ngày chốt kèm lý do thì xem lại phải biết lý do đó là cho việc gì. Nhãn khung giờ lưu
    sẵn trong exc_json lúc chốt, nên đổi giờ làm sau này không làm sai câu này. */
@@ -1921,7 +1950,7 @@ function vBaoCao() {
     const sg = (x) => (x > 0 ? '+' : x < 0 ? '−' : '') + u(Math.abs(x));
     return `<tr><th>${r.phi}${isCuon(rp) ? '<small class="muted"> (cuộn)</small>' : ''}</th><td>${dash(r.dau)}</td><td>${u(r.nhap)}</td>${hasDc ? `<td>${sg(r.dc || 0)}</td>` : ''}${hasVay ? `<td>${sg(r.vay || 0)}</td>` : ''}${hasKk ? `<td>${sg(r.kk || 0)}</td>` : ''}<td>${u(r.dung)}</td>${hasXuat ? `<td>${u(r.xuat || 0)}</td>` : ''}<td><b>${dash(r.cuoi)}</b></td></tr>`;
   }).join('');
-  const days = D.days.slice().reverse().map((d) => `<div class="li"><span>${fmtDay(d.day)}${d.span > 1 ? ` <span class="sm muted">(gộp ${d.span} ngày)</span>` : ''}</span><span class="sm">nhập ${fmtT(d.nhap_kg)} · dùng ${fmtT(d.dung_kg)} · tồn <b>${fmtT(d.ton_kg)}</b> tấn</span></div>`).join('');
+  const days = D.days.slice().reverse().map((d) => `<div class="li" style="flex-wrap:wrap"><span>${fmtDay(d.day)}${d.span > 1 ? ` <span class="sm muted">(gộp ${d.span} ngày)</span>` : ''}</span><span class="sm">nhập ${fmtT(d.nhap_kg)} · dùng ${fmtT(d.dung_kg)} · tồn <b>${fmtT(d.ton_kg)}</b> tấn</span>${donDong((D.don || {})[d.day])}</div>`).join('');
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${D.closedDays || D.openDay ? '' : '<div class="card warn">Không có ngày nào được chốt trong khoảng này.</div>'}
     ${D.openDay ? '' : '<div class="sm muted">Chưa có ngày chốt nào nên chưa có số tồn đầu kỳ.</div>'}
@@ -2177,8 +2206,8 @@ function vStats() {
     const tinhDuoc = S.usage.filter((d) => !d.moSo).length;
     const coPhieu = (p) => (perX[p.id] ? `<span class="sm muted">trong đó ${fmtQs(perX[p.id], p)} có phiếu xuất</span>` : '');
     usageHtml = S.usage.length ? `<div class="card" style="padding:0;overflow:hidden">${b.phiAct.filter((p) => per[p.id]).map((p) => `<div class="li"><b>${p.id}</b><span class="col" style="align-items:flex-end"><b>${qMain(per[p.id], p)}</b><span class="sm muted">${qSub(per[p.id], p)}</span>${coPhieu(p)}</span></div>`).join('')}<div class="li" style="background:#E8EEF6"><b>Tổng dùng</b><b>${fmtT(tot)} tấn</b></div>${totX ? `<div class="li"><span class="sm">trong đó có phiếu xuất</span><span class="sm">${fmtT(totX)} tấn · không rõ ${fmtT(tot - totX)} tấn</span></div>` : ''}</div>
-      <h2 class="sec">Theo ngày</h2><div class="card" style="padding:0;overflow:hidden">${S.usage.map((d) => `<div class="li"><span>${d.day.split('-').reverse().join('/')}</span>${d.moSo
-        ? '<span class="sm muted">mở sổ · chưa tính dùng</span>' : `<b>${fmtT(d.tan)} tấn</b>`}</div>`).join('')}</div>
+      <h2 class="sec">Theo ngày</h2><div class="card" style="padding:0;overflow:hidden">${S.usage.map((d) => `<div class="li" style="flex-wrap:wrap"><span>${d.day.split('-').reverse().join('/')}</span>${d.moSo
+        ? '<span class="sm muted">mở sổ · chưa tính dùng</span>' : `<b>${fmtT(d.tan)} tấn</b>`}${donDong(d.don)}</div>`).join('')}</div>
       ${tinhDuoc ? '' : '<div class="sm muted" style="line-height:1.4">Ngày mở sổ là ngày lập tồn đầu tiên: chưa có tồn hôm trước nên chưa tính được lượng dùng. Lượng dùng bắt đầu có từ lần chốt kế tiếp.</div>'}`
       /* 1. Trống: nói rõ VÌ SAO trống và KHI NÀO có số, không chỉ "chưa có" — trang trống mà không nói
          gì thì người dùng tưởng app hỏng. */

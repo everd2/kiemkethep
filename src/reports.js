@@ -1,7 +1,35 @@
 // Xem lại ngày cũ, báo cáo theo kỳ, tệp CSV ngày, nhật ký và thống kê lượng dùng.
-import { DAY_RE, bad, daysBetween, fmtDay, json, vnDay } from './core.js';
+import { DAY_RE, SYSTEM, bad, daysBetween, fmtDay, json, vnDay } from './core.js';
 import { CSV_HEAD, DUYET_JOIN, DUYET_NAME, UNAME, csvDec, csvQty, csvRow, csvUnit, isCuon } from './helpers.js';
 import { EFF_BY_BASELINE, MV_CHUA_DEM } from './counts.js';
+
+/* ========================= NGÀY BỊ DỒN SỐ =========================
+   Báo cáo đếm CHƯA DUYỆT lúc tự chốt ngày D được chuyển sang D+1 (carryStmts ở review.js): ngày D khu
+   đó giữ số đã duyệt trước (trông như không dùng), ngày D+1 nhận phần dùng của cả hai ngày. Tổng nhiều
+   ngày vẫn khớp nhưng so từng ngày thì lệch, nên màn hình phải đánh dấu hai ngày đó thay vì để người
+   xem tưởng hôm trước không ai dùng thép còn hôm sau dùng gấp đôi.
+   Khu bị chuyển chính là việc treo 'khu_pending' trong exc_json của lần TỰ chốt (closed_by = SYSTEM):
+   chốt tay ngày xưa và mốc đặt lại số liệu không chuyển báo cáo nào nên không tính.
+   Trả { ngày: { sang: [khu dồn SANG ngày sau], tu: [khu dồn TỪ ngày trước] } }, chỉ ngày có dồn. */
+const nextDay = (d) => new Date(Date.parse(d + 'T00:00:00Z') + 864e5).toISOString().slice(0, 10);
+export async function donNgay(db, from, to) {
+  const { results } = await db.prepare(
+    `SELECT day, exc_json FROM day_close WHERE closed_by = ? AND day >= date(?, '-1 day') AND day <= ?
+       AND exc_json LIKE '%khu_pending%' ORDER BY day`
+  ).bind(SYSTEM.id, from, to).all();
+  const out = {};
+  const o = (d) => (out[d] = out[d] || { sang: [], tu: [] });
+  for (const r of results) {
+    let ex = [];
+    try { ex = JSON.parse(r.exc_json || '[]'); } catch (e) { ex = []; }
+    const khu = [...new Set(ex.filter((e) => e.type === 'khu_pending').map((e) => e.khu))];
+    if (!khu.length) continue;
+    if (r.day >= from) o(r.day).sang = khu;
+    const nd = nextDay(r.day);
+    if (nd <= to) o(nd).tu = khu;
+  }
+  return out;
+}
 
 /* ========================= XEM NGÀY CŨ ========================= */
 
@@ -34,6 +62,8 @@ export async function dayView(env, url) {
     day, close: closeR.results[0] || null, counts: cntR.results, baseline: baseR.results, prevBaseline: prevR.results,
     receipts: rcR.results, summary: sumR.results, mvNew: mvR.results, reports: repR.results,
     lastClose: (lastR.results[0] || {}).d || null,
+    // ngày bị dồn số: khu chưa duyệt lúc 0h (sang ngày sau) và khu nhận số của hôm trước (xem donNgay)
+    don: (await donNgay(db, day, day))[day] || null,
   });
 }
 
@@ -136,6 +166,8 @@ export async function report(env, url) {
     hasVay: rows.some((r) => r.vay),
     // cột "Đặt về 0": chỉ bày khi kỳ có ngày đặt tồn về 0 làm mất số thật
     hasKk: rows.some((r) => r.kk), resetDays: resetR.results.map((r) => r.day),
+    // ngày bị dồn số trong kỳ, để danh sách "Theo ngày" đánh dấu (xem donNgay)
+    don: await donNgay(db, from, to),
   };
   if (url.searchParams.get('format') !== 'csv') return json(out);
 
@@ -205,7 +237,9 @@ export async function usage(env, url) {
     WHERE d.day >= ? AND d.day <= ?`).bind(results[results.length - 1].day, results[0].day).all() : { results: [] };
   const kgBy = {}, xBy = {};
   sumR.results.forEach((r) => { (kgBy[r.day] = kgBy[r.day] || {})[r.phi_id] = r.kg; if (r.xuat) (xBy[r.day] = xBy[r.day] || {})[r.phi_id] = r.xuat; });
-  return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used, kg: kgBy[r.day] || {}, xuat: xBy[r.day] || {} }; }) });
+  // ngày bị dồn số: lượng dùng của ngày đó không phản ánh đúng một ngày (xem donNgay)
+  const don = results.length ? await donNgay(env.DB, results[results.length - 1].day, results[0].day) : {};
+  return json({ items: results.map((r) => { let used = {}; try { used = JSON.parse(r.used_json || '{}'); } catch (e) { /* bỏ qua */ } return { day: r.day, span: r.span || 1, used, kg: kgBy[r.day] || {}, xuat: xBy[r.day] || {}, don: don[r.day] || null }; }) });
 }
 
 /* ========================= CHẤM CÔNG BÁO CÁO =========================

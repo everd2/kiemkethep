@@ -736,6 +736,22 @@ async function main() {
     eq('và số đó vào tồn', S.one("SELECT duyet_v FROM counts WHERE day=? AND khu_id='B' AND phi_id='D22'", day).duyet_v, 1);
     await cron();
     eq('chạy lại trong ngày: không chốt thêm gì', S.sql('SELECT 1 FROM day_close WHERE day=?', day).length, 0);
+
+    /* Ngày bị dồn số (donNgay): hôm qua khu B trông như không dùng, hôm nay nhận phần của cả hai ngày.
+       Màn Xem lại ngày cũ, báo cáo kỳ và Thống kê phải đánh dấu đúng hai ngày đó, không ngày nào khác. */
+    eq('xem lại hôm qua: khu B dồn sang ngày sau', (await S.call('GET', '/day?date=' + homQua)).data.don, { sang: ['B'], tu: [] });
+    eq('xem lại hôm nay: nhận số hôm trước của khu B', (await S.call('GET', '/day?date=' + day)).data.don, { sang: [], tu: ['B'] });
+    const ngayTruoc = new Date(Date.parse(homQua) - 864e5).toISOString().slice(0, 10);
+    eq('ngày không có gì dồn: không đánh dấu', (await S.call('GET', '/day?date=' + ngayTruoc)).data.don, null);
+    eq('báo cáo kỳ đánh dấu hai ngày', (await S.call('GET', `/report?from=${ngayTruoc}&to=${day}`)).data.don,
+      { [homQua]: { sang: ['B'], tu: [] }, [day]: { sang: [], tu: ['B'] } });
+    const ngayNhan = day;
+    addDays(1); day = vnDay();
+    await cron();
+    const us = (await S.call('GET', '/usage?days=7')).data.items;
+    eq('thống kê: ngày dồn đi và ngày nhận số đều có dấu',
+      [us.find((x) => x.day === homQua).don, us.find((x) => x.day === ngayNhan).don],
+      [{ sang: ['B'], tu: [] }, { sang: [], tu: ['B'] }]);
   }
 
   /* ================= 4c. "Có N việc cần xem" đếm theo số lần admin phải ra tay =================
