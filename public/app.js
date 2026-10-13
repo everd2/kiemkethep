@@ -921,7 +921,7 @@ function vHome() {
   /* Đơn gia công. Người được giao thấy đơn CỦA MÌNH: mới giao chưa nhận, trễ hạn, hạn hôm nay. Người
      giao đơn (CVKTHT trở lên) thấy đơn trễ và đơn đang vướng của cả đơn vị — hai thứ họ phải ra tay.
      Bảng đủ mọi đơn của mọi tiểu đội thì ai cũng xem được ở tab Gia công. */
-  const gcAll = b.gc || [], gcToi = gcAll.filter((d) => d.user_id === S.me.id);
+  const gcAll = b.gc || [], gcToi = gcAll.filter(gcCuaToi);
   {
     const mo = gcToi.filter(gcMo);
     // đỏ: việc đã hỏng hạn hoặc bị trả về; vàng: việc còn kịp làm
@@ -936,10 +936,10 @@ function vHome() {
     if (viec.length) alerts.push({ bad: viec.some((x) => x[2]), t: 'Đơn gia công của bạn' + (mo.length ? ': ' + mo.length + ' đơn đang mở' : ''), s: viec.map((x) => x[0] + ' ' + x[1]).join(' · ') + ' · bấm để xem', to: 'giacong', f: 'toi' });
   }
   if (isQL()) {
-    const khac = gcAll.filter((d) => gcMo(d) && d.user_id !== S.me.id);
+    const khac = gcAll.filter((d) => gcMo(d) && !gcCuaToi(d));
     const tre = khac.filter(gcTre).length, vg = khac.filter((d) => d.vuong).length;
     // đơn đã huỷ mà người giữ đơn chưa bấm "đã biết": có thể họ vẫn đang làm — người giao cần gọi trực tiếp
-    const chuaXem = gcAll.filter((d) => d.tt === 'huy' && d.user_id !== S.me.id).length;
+    const chuaXem = gcAll.filter((d) => d.tt === 'huy' && !gcCuaToi(d)).length;
     if (chuaXem) alerts.push({ bad: false, t: chuaXem + ' đơn gia công đã huỷ mà người giữ đơn chưa xem', s: 'Có thể họ vẫn đang làm. Xem ở mục Xong / huỷ rồi báo trực tiếp', to: 'giacong', f: 'dong' });
     /* Vướng: nói rõ bao nhiêu đơn tổ DỪNG HẲN và bao nhiêu lần báo CHƯA AI NHẬN XỬ LÝ — đó là việc của người giao.
        Đơn đứng yên (đã nhận mà mấy ngày không ai cập nhật) cũng nhắc ở đây, vì không thẻ nào khác bắt được nó. */
@@ -2595,10 +2595,20 @@ const gcVuongTxt = (d) => `<b>Vướng${d.vuong_dung ? ' · DỪNG HẲN' : ''}:
 const gcVuongXem = (d) => (d.vuong_xem_ts ? `${esc(d.vuong_xem_name || '')} đang xử lý (${gcLau(d.vuong_xem_ts)} trước)` : '<b>chưa ai nhận xử lý</b>');
 /* HUỶ nghĩa là "đơn này KHÔNG CẦN LÀM NỮA" (không xoá đơn). Người giữ đơn phải bấm ĐÃ BIẾT: chưa bấm thì đơn
    nằm đầu danh sách của họ, và người giao thấy "chưa xem". Huỷ nhầm thì người giao khôi phục được trong 7 ngày. */
-const gcCanBiet = (d) => d.tt === 'huy' && !d.biet_ts && d.user_id === S.me.id;
+/* NHIỀU NGƯỜI CÙNG LÀM MỘT ĐƠN (tối đa GC_NGUOI_MAX, xem src/giacong.js): ai trong đơn cũng nhận, cập nhật, báo vướng,
+   xác nhận xong được; "đã biết" khi đơn bị huỷ là của từng người. Bảng đơn và màn một đơn có d.nguoi
+   [{ id, ten, biet }] (người chính đứng đầu, d.uname = tên mọi người); bootstrap chỉ có d.ids và d.chua_biet. */
+const GC_NGUOI_MAX = 4;
+const gcNguoi = (d) => (Array.isArray(d.nguoi) && d.nguoi.length ? d.nguoi.map((n) => n.id) : d.ids ? String(d.ids).split(',').map(Number) : [d.user_id]);
+const gcCuaToi = (d) => gcNguoi(d).includes(S.me.id);
+const gcTenNguoi = (d, ngan) => (Array.isArray(d.nguoi) && d.nguoi.length ? d.nguoi.map((n) => n.ten) : [d.uname || '']).map((t) => (ngan ? gcTen(t) : t)).join(', ');
+// những người CHƯA bấm "đã biết" trên đơn bị huỷ
+const gcChuaBiet = (d) => (Array.isArray(d.nguoi) && d.nguoi.length ? d.nguoi.filter((n) => !n.biet).map((n) => n.id)
+  : d.chua_biet !== undefined ? (d.chua_biet ? String(d.chua_biet).split(',').map(Number) : []) : d.biet_ts ? [] : [d.user_id]);
+const gcCanBiet = (d) => d.tt === 'huy' && gcChuaBiet(d).includes(S.me.id);
 const GC_KHOI_PHUC_MS = 7 * 864e5; // chép từ src/giacong.js
 // một dòng nói đủ về lần huỷ: ai huỷ, lúc nào, người giữ đơn đã biết chưa
-const gcHuyAi = (d) => `${d.huy_name ? esc(d.huy_name) + ' huỷ' : 'Huỷ'}${d.huy_ts ? ' ' + dmy(d.huy_ts) : ''} · ${d.biet_ts ? esc(d.uname) + ' đã biết ' + dmy(d.biet_ts) : `<b style="color:var(--warn)">${esc(d.uname)} chưa xem</b>`}`;
+const gcHuyAi = (d) => `${d.huy_name ? esc(d.huy_name) + ' huỷ' : 'Huỷ'}${d.huy_ts ? ' ' + dmy(d.huy_ts) : ''} · ${(Array.isArray(d.nguoi) && d.nguoi.length ? d.nguoi : [{ ten: d.uname, biet: d.biet_ts }]).map((n) => (n.biet ? esc(n.ten) + ' đã biết ' + dmy(n.biet) : `<b style="color:var(--warn)">${esc(n.ten)} chưa xem</b>`)).join(' · ')}`;
 const GC_BUOI = [['', 'Trong ngày'], ['sang', 'Buổi sáng'], ['chieu', 'Buổi chiều']];
 const gcMo = (d) => d.tt === 'moi' || d.tt === 'nhan' || d.tt === 'lam';
 // trễ: đã qua ngày cần xong; đơn hạn BUỔI SÁNG thì trễ từ 12h trưa hôm đó (giờ server, như khung giờ đếm)
@@ -2621,7 +2631,7 @@ const gcTang = (t) => (!t ? '' : /^(tầng|mái|hầm|lửng|trệt|sân|tum)/i.
 const gcTangChu = (v) => { const t = String(v || '').trim().replace(/\s+/g, ' ').replace(/^(tầng|tang)\s*/i, ''); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; };
 /* Vị trí của một đơn trên một dòng: TRỤC in đậm đứng đầu (thứ người làm tìm trước tiên), rồi phân khu, tầng;
    kemNguoi: thêm tên người giữ đơn, dùng khi bảng không gom theo tổ. */
-const gcViTri = (d, kemNguoi) => [d.truc ? `<b style="color:var(--ink)">${esc(d.truc)}</b>` : '', esc(d.phan_khu || ''), esc(gcTang(d.tang)), d.cote ? 'cote ' + esc(d.cote) : '', kemNguoi ? esc(gcTen(d.uname)) : ''].filter(Boolean).join(' · ');
+const gcViTri = (d, kemNguoi) => [d.truc ? `<b style="color:var(--ink)">${esc(d.truc)}</b>` : '', esc(d.phan_khu || ''), esc(gcTang(d.tang)), d.cote ? 'cote ' + esc(d.cote) : '', kemNguoi ? esc(gcTenNguoi(d, true)) : ''].filter(Boolean).join(' · ');
 const gcBar = (pct) => `<div class="row gap8"><div class="bar" style="flex:1"><i style="width:${pct}%"></i></div><b class="sm" style="flex:none">${pct}%</b></div>`;
 // hạn viết gọn cho một dòng trên bảng: chỉ nói cái cần biết ngay (trễ mấy ngày, hôm nay, mai), còn lại là ngày
 function gcHanNgan(d) {
@@ -2655,14 +2665,14 @@ function gcKhop(text, q) {
   const qs = q.split(/[^a-z0-9]+/).filter(Boolean);
   return qs.every(mot) || (qs.length > 1 && mot(qs.join('')));
 }
-const gcTuKhoa = (d) => gcKhongDau([d.cau_kien, d.truc, d.phan_khu, gcTang(d.tang), d.cote ? 'cote ' + d.cote : '', d.hang_muc, d.uname, d.noi_dung].filter(Boolean).join(' '));
+const gcTuKhoa = (d) => gcKhongDau([d.cau_kien, d.truc, d.phan_khu, gcTang(d.tang), d.cote ? 'cote ' + d.cote : '', d.hang_muc, gcTenNguoi(d), d.noi_dung].filter(Boolean).join(' '));
 /* Một đơn trên bảng: hai dòng (cấu kiện · vị trí · trạng thái, rồi tiến độ · hạn), bấm vào là mở đơn.
    Đơn CỦA NGƯỜI ĐANG XEM có thêm hàng nút làm ngay tại bảng — nhận đơn, bấm mức tiến độ, bấm xong —
    khỏi phải mở từng đơn. q: chữ đang tìm (đã bỏ dấu); đơn không khớp thì ẩn chứ không bỏ khỏi trang,
    để gõ tìm chỉ việc ẩn / hiện, không vẽ lại màn hình giữa lúc đang gõ tiếng Việt. */
 function gcCard(d, q, kemNguoi) {
   const [ten, mau] = GC_TT[d.tt] || [d.tt, 'idle'];
-  const vt = gcViTri(d, kemNguoi), mo = gcMo(d), vuong = d.vuong && mo, cuaToi = mo && d.user_id === S.me.id;
+  const vt = gcViTri(d, kemNguoi), mo = gcMo(d), vuong = d.vuong && mo, cuaToi = mo && gcCuaToi(d);
   const tk = gcTuKhoa(d);
   const canBiet = gcCanBiet(d);
   const dungYen = gcDungYen(d);
@@ -2679,6 +2689,7 @@ function gcCard(d, q, kemNguoi) {
     <button class="col" style="gap:4px;border:0;background:transparent;padding:0;margin:0;text-align:left;font:inherit;color:inherit;width:100%;align-items:stretch" data-a="gcview" data-id="${d.id}">
       <span class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="font-size:17px;min-width:0">${esc(d.cau_kien)}</b><span class="badge ${mau}" style="flex:none">${ten}</span></span>
       ${vt ? `<span class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${vt}</span>` : ''}
+      ${!kemNguoi && gcNguoi(d).length > 1 ? `<span class="sm muted">Cùng làm: ${esc(gcTenNguoi(d, true))}</span>` : ''}
       <span class="row gap8">${d.tt === 'huy' ? `<b class="sm" style="flex:none">${d.pct ? 'Dừng ở ' + d.pct + '%' : 'Chưa làm'}</b>` : `<span class="bar" style="width:72px;flex:none"><i style="width:${d.pct}%"></i></span><b class="sm" style="flex:none">${d.pct}%</b>`}<span class="sm" style="margin-left:auto;text-align:right">${gcHanNgan(d)}</span></span>
       ${d.mo_lai && mo ? `<span class="sm" style="color:var(--bad)"><b>Bị mở lại:</b> ${esc(d.mo_lai)}</span>` : ''}
       ${vuong ? `<span class="sm" style="color:${d.vuong_dung ? 'var(--bad)' : 'var(--warn)'}">${gcVuongTxt(d)}</span><span class="sm muted">${d.vuong_ts ? 'báo ' + gcLau(d.vuong_ts) + ' trước · ' : ''}${gcVuongXem(d)}</span>` : ''}
@@ -2722,15 +2733,18 @@ function gcNhom(d, xem, G, dong) {
     const n = soNgay(S.boot.today, d.han);
     return gcTre(d) ? ['tre', 'Trễ hạn', 0] : n <= 0 ? ['nay', 'Hôm nay', 1] : n === 1 ? ['mai', 'Ngày mai', 2] : n <= 7 ? ['tuan', 'Trong 7 ngày tới', 3] : ['sau', 'Sau 7 ngày', 4];
   }
-  const toi = d.user_id === S.me.id;
-  return ['u' + d.user_id, d.uname + (toi ? ' (bạn)' : ''), toi ? 0 : 1];
+  // theo tổ: một nhóm cho mỗi người làm (đơn nhiều người hiện trong nhóm của từng người)
+  return gcNguoi(d).map((uid, i) => {
+    const toi = uid === S.me.id, ten = Array.isArray(d.nguoi) && d.nguoi[i] ? d.nguoi[i].ten : d.uname;
+    return ['u' + uid, ten + (toi ? ' (bạn)' : ''), toi ? 0 : 1, uid];
+  });
 }
 function vGiaCong() {
   const G = S.gc;
   const top = head('Gia công cấu kiện', 'Đơn của mọi tiểu đội · ai cũng xem được');
   if (!G) return `${top}${panelWait('giacong')}`;
   const all = G.items || [];
-  const mo = all.filter(gcMo), cuaToi = mo.filter((d) => d.user_id === S.me.id);
+  const mo = all.filter(gcMo), cuaToi = mo.filter(gcCuaToi);
   const F = [['mo', 'Đang mở', mo], ['toi', 'Của tôi', cuaToi], ['tre', 'Trễ', mo.filter(gcTre)], ['vuong', 'Vướng', mo.filter((d) => d.vuong)], ['dungyen', 'Đứng yên', mo.filter(gcDungYen)],
     ['moi', 'Chưa nhận', mo.filter((d) => d.tt === 'moi')], ['dong', 'Xong / huỷ', all.filter((d) => !gcMo(d))]]
     // "Của tôi" chỉ có nghĩa với người đang giữ đơn
@@ -2750,9 +2764,11 @@ function vGiaCong() {
   const timDs = all.slice().sort((a, z) => gcMo(z) - gcMo(a) || (a.han < z.han ? -1 : a.han > z.han ? 1 : a.id - z.id));
   const timKhop = q ? timDs.filter((d) => gcKhop(gcTuKhoa(d), q)).length : 0;
   cur[2].slice().sort(sx).forEach((d) => {
-    const [k, ten, o] = gcNhom(d, xem, G, dong);
-    if (!by[k]) { by[k] = { ten, o, ds: [], uid: d.user_id }; order.push(k); }
-    by[k].ds.push(d);
+    const nh = gcNhom(d, xem, G, dong);
+    (xem === 'to' ? nh : [nh]).forEach(([k, ten, o, uid]) => {
+      if (!by[k]) { by[k] = { ten, o, ds: [], uid }; order.push(k); }
+      by[k].ds.push(d);
+    });
   });
   order.sort((a, z) => by[a].o - by[z].o || String(by[a].ten).localeCompare(String(by[z].ten), 'vi'));
   const nhom = order.map((k) => {
@@ -2766,7 +2782,7 @@ function vGiaCong() {
       ${ds.map((d) => gcCard(d, '', xem !== 'to')).join('')}</div>`;
   }).join('');
   // ai đang không có đơn nào mở: người giao việc nhìn là biết tiểu đội nào còn rảnh
-  const ranh = cur[0] === 'mo' && xem === 'to' ? (G.tdt || []).filter((u) => !mo.some((d) => d.user_id === u.id)) : [];
+  const ranh = cur[0] === 'mo' && xem === 'to' ? (G.tdt || []).filter((u) => !mo.some((d) => gcNguoi(d).includes(u.id))) : [];
   const trong = { mo: 'Chưa có đơn nào đang mở.', toi: 'Bạn không giữ đơn nào đang mở.', tre: 'Không có đơn nào trễ hạn.', vuong: 'Không có đơn nào đang vướng.', dungyen: 'Không có đơn nào đứng yên quá ' + GC_DUNG_YEN_NGAY + ' ngày.', moi: 'Không có đơn nào chờ nhận.', dong: 'Chưa có đơn nào xong hoặc huỷ trong 30 ngày gần đây.' }[cur[0]];
   const nho = 'style="flex:none;white-space:nowrap"';
   return `${top}
@@ -2788,7 +2804,7 @@ function vGcDon() {
   const top = head(d ? esc(d.cau_kien) : 'Đơn gia công', d ? 'Giao cho ' + esc(d.uname) : '', 'giacong');
   if (!D) return `${top}${panelWait('gcdon')}`;
   const [ten, mau] = GC_TT[d.tt] || [d.tt, 'idle'];
-  const cuaToi = d.user_id === S.me.id, mo = gcMo(d), dangLam = d.tt === 'nhan' || d.tt === 'lam';
+  const cuaToi = gcCuaToi(d), mo = gcMo(d), dangLam = d.tt === 'nhan' || d.tt === 'lam';
   const dong = (nhan, v) => (v ? `<div class="row" style="justify-content:space-between;gap:12px;align-items:flex-start"><span class="sm muted" style="flex:none">${nhan}</span><span style="text-align:right;min-width:0">${v}</span></div>` : '');
   const thongTin = `<div class="card col gap8">
     <div class="row" style="justify-content:space-between;gap:8px"><b style="font-size:18px">Tiến độ</b><span class="badge ${mau}">${ten}</span></div>
@@ -2896,7 +2912,8 @@ const gcChipGoiY = (loai, v, on, a, nhan) => `<span class="row" style="flex:none
    mà danh mục đi kèm bảng đơn — vGcForm tách khi đã có. */
 function gcSoan(d, sua) {
   const b = S.boot;
-  S.gcForm = { id: sua ? d.id : null, user: d ? d.user_id : Number(gcNho('kt:gcuser')) || null, userCu: sua ? d.user_id : null, uname: d ? d.uname : '',
+  S.gcForm = { id: sua ? d.id : null, users: d ? gcNguoi(d) : gcNho('kt:gcuser').split(',').map(Number).filter(Boolean),
+    usersCu: sua ? gcNguoi(d) : [], nguoiCu: sua && Array.isArray(d.nguoi) ? d.nguoi : [],
     buoi: d ? d.buoi || '' : '', khu: d ? d.phan_khu || '' : gcNho('kt:gckhu'), hm: d ? d.hang_muc || '' : gcNho('kt:gchm'),
     thieuCaoDo: !!(sua && !d.tang && !d.cote), ckDay: d ? d.cau_kien : null, khuCu: sua ? d.phan_khu || '' : '', hmCu: sua ? d.hang_muc || '' : '',
     trucKieu: 'xy', trucTu: false };
@@ -2918,14 +2935,16 @@ const gcCauKien = (F) => { const t = String(S.form.gcck || '').trim(); return F.
 const gcFocus = (id) => { const e = document.getElementById(id); if (e) { e.focus(); try { e.setSelectionRange(e.value.length, e.value.length); } catch (er) { /* ô không hỗ trợ */ } } };
 function vGcForm() {
   const G = S.gc, F = S.gcForm || {}, b = S.boot;
-  const top = head(F.id ? 'Sửa đơn gia công' : 'Giao đơn gia công', F.id ? 'Đổi hạn, đổi nội dung hoặc giao cho người khác' : 'Giao cho một Tiểu đội trưởng', F.id ? 'gcdon' : 'giacong');
+  const top = head(F.id ? 'Sửa đơn gia công' : 'Giao đơn gia công', F.id ? 'Đổi hạn, đổi nội dung hoặc giao cho người khác' : 'Giao cho một hoặc vài Tiểu đội trưởng', F.id ? 'gcdon' : 'giacong');
   if (!G) return `${top}${panelWait('gcform')}`;
   if (F.ck === undefined) gcTachCk(F);
   // người đang giữ đơn có thể vừa thôi làm Tiểu đội trưởng: vẫn hiện để giữ nguyên được
   const ds = (G.tdt || []).slice();
-  if (F.id && F.user && !ds.some((u) => u.id === F.user)) ds.unshift({ id: F.user, name: F.uname || '#' + F.user });
+  if (!Array.isArray(F.users)) F.users = F.user ? [F.user] : [];
+  // người đang làm đơn (khi sửa) có thể vừa thôi làm Tiểu đội trưởng: vẫn hiện để giữ nguyên được
+  (F.nguoiCu || []).forEach((n) => { if (!ds.some((u) => u.id === n.id)) ds.unshift({ id: n.id, name: n.ten }); });
   // người nhận điền sẵn từ lần trước (hoặc từ đơn mẫu) mà nay không còn là Tiểu đội trưởng: bỏ chọn
-  if (!F.id && F.user && !ds.some((u) => u.id === F.user)) F.user = null;
+  F.users = F.users.filter((i) => ds.some((u) => u.id === i));
   /* Phân khu, hạng mục: danh mục, cộng giá trị ĐƠN ĐANG SỬA đang mang nếu mục đó đã bị xoá khỏi danh mục (giữ
      nguyên được, đúng luật server). Giá trị nhớ từ lần trước mà không còn trong danh mục thì bỏ chọn. */
   const dsKhu = gcMucTen('khu'), dsHm = gcMucTen('hm');
@@ -2965,10 +2984,10 @@ function vGcForm() {
     ${tangGoiY.length ? `<div class="row gap6" ${cuon}>${tangGoiY.map((t) => gcChipGoiY('tang', t, gcTangChu(S.form.gctang) === t, 'gctangq')).join('')}</div>` : ''}
     <b class="sm">Hạng mục ${tuy}</b>
     ${hms.length ? `<div class="wrap">${hms.map((h) => `<button class="chip s ${F.hm === h ? 'on' : ''}" data-a="gchmq" data-v="${esc(h)}">${esc(h)}</button>`).join('')}</div>` : chuaCo('hạng mục')}
-    <b class="sm">Giao cho</b>
-    ${ds.length ? `<div class="wrap">${ds.map((u) => `<button class="chip s ${F.user === u.id ? 'on' : ''}" data-a="gcuser" data-v="${u.id}">${esc(u.name)}</button>`).join('')}</div>`
+    <b class="sm">Giao cho <span class="muted" style="font-weight:400">(chọn tối đa ${GC_NGUOI_MAX} người: ca ngày, ca đêm cùng làm thì chọn cả hai)</span></b>
+    ${ds.length ? `<div class="wrap">${ds.map((u) => `<button class="chip s ${F.users.includes(u.id) ? 'on' : ''}" aria-pressed="${F.users.includes(u.id)}" data-a="gcuser" data-v="${u.id}">${F.users.includes(u.id) ? '✓ ' : ''}${esc(u.name)}</button>`).join('')}</div>`
       : '<span class="sm muted">Chưa có tài khoản Tiểu đội trưởng nào. Admin tạo ở Thêm → Người dùng và PIN.</span>'}
-    ${F.id && F.user !== F.userCu ? '<span class="sm" style="color:var(--warn);line-height:1.4">Giao cho người khác thì đơn về "Mới giao": người mới phải tự nhận đơn.</span>' : ''}
+    ${F.id && F.users.length && !F.users.some((i) => (F.usersCu || []).includes(i)) ? '<span class="sm" style="color:var(--warn);line-height:1.4">Giao hẳn cho người khác thì đơn về "Mới giao": người mới phải tự nhận đơn. Chỉ thêm / bớt người cùng làm thì đơn giữ nguyên.</span>' : ''}
     <b class="sm">Cần xong</b>
     <div class="row gap6" ${cuon}>${GC_HANQ.map(([n, l]) => `<button class="chip s ${han === congNgay(b.today, n) ? 'on' : ''}" ${dinh} data-a="gchanq" data-v="${n}">${l}</button>`).join('')}</div>
     <input class="inp s" type="date" id="gchan" data-model="gchan" data-change="gchan" min="${b.today}" value="${esc(han)}">
@@ -4671,7 +4690,15 @@ const ACTIONS = {
   gccopy() { const d = S.gcDetail && S.gcDetail.don; if (d) gcSoan(d); },
   gcedit() { const d = S.gcDetail && S.gcDetail.don; if (d) gcSoan(d, true); },
   gcxem(d) { S.gcV = d.v; try { localStorage.setItem('kt:gcv', d.v); } catch (e) { /* đầy bộ nhớ */ } render(); },
-  gcuser(d) { S.gcForm.user = Number(d.v); render(); },
+  // chọn / bỏ chọn người nhận; người chọn đầu tiên là người chính
+  gcuser(d) {
+    const F = S.gcForm, id = Number(d.v);
+    if (!Array.isArray(F.users)) F.users = F.user ? [F.user] : [];
+    if (F.users.includes(id)) F.users = F.users.filter((x) => x !== id);
+    else if (F.users.length >= GC_NGUOI_MAX) return say('Một đơn giao tối đa ' + GC_NGUOI_MAX + ' người.', true), render();
+    else F.users.push(id);
+    render();
+  },
   gcbuoi(d) { S.gcForm.buoi = d.v; render(); },
   gchanq(d) { S.form.gchan = congNgay(S.boot.today, Number(d.v)); render(); },
   // bấm loại cấu kiện: chọn xong là đủ; "Khác" thì đưa con trỏ vào ô để gõ tên
@@ -4706,11 +4733,11 @@ const ACTIONS = {
     if (!truc) { say('Nhập vị trí trục.', true); render(); return gcFocus(oTruc); }
     if (gcMucTen('khu').length && !F.khu) return say('Chọn phân khu.', true), render();
     if (!t('gctang') && !t('gccote') && !(F.id && F.thieuCaoDo)) { say('Ghi tầng hoặc cote (có tầng thì cote không bắt buộc).', true); render(); return gcFocus('gctang'); }
-    if (!F.user) return say('Chọn Tiểu đội trưởng nhận đơn.', true), render();
+    if (!(F.users || []).length) return say('Chọn Tiểu đội trưởng nhận đơn.', true), render();
     if (!t('gchan')) return say('Chọn ngày cần xong.', true), render();
-    const body = { cau_kien: gcCauKien(F), truc, phan_khu: F.khu || '', tang: gcTangChu(t('gctang')), cote: t('gccote'), hang_muc: F.hm || '', noi_dung: t('gcnd'), user: F.user, han: t('gchan'), buoi: F.buoi || null };
+    const body = { cau_kien: gcCauKien(F), truc, phan_khu: F.khu || '', tang: gcTangChu(t('gctang')), cote: t('gccote'), hang_muc: F.hm || '', noi_dung: t('gcnd'), users: F.users, user: F.users[0], han: t('gchan'), buoi: F.buoi || null };
     const tiep = !F.id && d && d.v === 'tiep';
-    const ten = (((G && G.tdt) || []).find((u) => u.id === F.user) || {}).name || '';
+    const ten = F.users.map((i) => (((G && G.tdt) || []).find((u) => u.id === i) || (F.nguoiCu || []).map((n) => ({ id: n.id, name: n.ten })).find((u) => u.id === i) || {}).name || '').join(', ');
     let hoiTrung = null, xong = false;
     act(async () => {
       try { if (F.id) await api('PATCH', '/giacong/' + F.id, body); else await api('POST', '/giacong', trung ? { ...body, trung: true } : body); }
@@ -4722,7 +4749,7 @@ const ACTIONS = {
       say(F.id ? 'Đã lưu thay đổi.' : `Đã giao ${body.cau_kien} · ${truc} cho ${ten}.` + (tiep ? ' Soạn đơn tiếp.' : ''));
       // nhớ các lựa chọn của lần giao này để điền sẵn cho lần sau
       if (!F.id) {
-        try { [['kt:gcuser', F.user], ['kt:gckhu', F.khu || ''], ['kt:gchm', F.hm || ''], ['kt:gctang', body.tang], ['kt:gcck', F.ck]].forEach(([k, v]) => localStorage.setItem(k, String(v))); }
+        try { [['kt:gcuser', F.users.join(',')], ['kt:gckhu', F.khu || ''], ['kt:gchm', F.hm || ''], ['kt:gctang', body.tang], ['kt:gcck', F.ck]].forEach(([k, v]) => localStorage.setItem(k, String(v))); }
         catch (e) { /* đầy bộ nhớ */ }
       }
       const xoa = ['gcck', 'gctruc', 'gcnd'].concat(GC_O_TRUC);

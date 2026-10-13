@@ -509,7 +509,18 @@ CREATE TABLE IF NOT EXISTS bc_mau (
   by_id INTEGER
 );
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 31);
+-- Người làm của từng đơn gia công (tối đa 4, ví dụ tổ ca ngày và tổ ca đêm cùng làm). Ai trong đơn cũng nhận, cập
+-- nhật tiến độ, báo vướng, xác nhận xong được. biet_ts: lúc người đó bấm "đã biết" khi đơn bị huỷ (từng người một).
+-- don_gc.user_id vẫn là người đầu tiên được chọn (người chính).
+CREATE TABLE IF NOT EXISTS don_gc_nguoi (
+  don_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  biet_ts INTEGER,
+  PRIMARY KEY (don_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_don_gc_nguoi_u ON don_gc_nguoi(user_id);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 32);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

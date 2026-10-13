@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -415,6 +415,13 @@ export const MIGRATIONS = {
        ngay TEXT NOT NULL, ca INTEGER NOT NULL, data TEXT NOT NULL DEFAULT '{}', van_ban TEXT, ts INTEGER NOT NULL,
        by_id INTEGER NOT NULL, PRIMARY KEY (ngay, ca))`,
     "CREATE TABLE IF NOT EXISTS bc_mau (id INTEGER PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}', ts INTEGER NOT NULL, by_id INTEGER)",
+  ],
+  /* GIA CÔNG: nhiều Tiểu đội trưởng cùng làm một đơn (tổ ca ngày + tổ ca đêm), tối đa 4. Mỗi người một dòng, kèm lúc
+     người đó bấm "đã biết" khi đơn bị huỷ. Đơn cũ: người phụ trách hiện tại thành dòng đầu tiên. */
+  32: [
+    'CREATE TABLE IF NOT EXISTS don_gc_nguoi (don_id INTEGER NOT NULL, user_id INTEGER NOT NULL, biet_ts INTEGER, PRIMARY KEY (don_id, user_id))',
+    'CREATE INDEX IF NOT EXISTS idx_don_gc_nguoi_u ON don_gc_nguoi(user_id)',
+    'INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id, biet_ts) SELECT id, user_id, biet_ts FROM don_gc',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

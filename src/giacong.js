@@ -43,10 +43,30 @@ const GC_HAN_MAX_MS = 366 * 864e5;
 const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.cote, d.truc, d.noi_dung, d.user_id, d.han, d.buoi, d.tt, d.pct, d.vuong,
     d.giao_by, d.ts, d.cap_ts, d.xong_ts, d.huy_ly_do, d.mo_lai, d.huy_ts, d.biet_ts,
     d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts,
-    COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name, x.name vuong_xem_name
+    COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name, x.name vuong_xem_name,
+    (SELECT json_group_array(json_object('id', n.user_id, 'ten', COALESCE(un.name, '(đã xoá)'), 'biet', n.biet_ts))
+       FROM don_gc_nguoi n LEFT JOIN users un ON un.id = n.user_id WHERE n.don_id = d.id) nguoi_json
   FROM don_gc d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN users g ON g.id = d.giao_by LEFT JOIN users h ON h.id = d.huy_by
     LEFT JOIN users x ON x.id = d.vuong_xem_by`;
 
+/* NHIỀU NGƯỜI CÙNG LÀM MỘT ĐƠN (bảng don_gc_nguoi, tối đa GC_NGUOI_MAX): ví dụ tổ ca ngày và tổ ca đêm cùng làm
+   một cấu kiện. Mọi người trong đơn NGANG NHAU: ai cũng nhận đơn (một người nhận là đơn đã nhận), cập nhật một % CHUNG,
+   báo / hết vướng và xác nhận xong — xong rồi thì đơn khoá với tất cả. Riêng "đã biết" khi đơn bị huỷ là của TỪNG
+   người (don_gc_nguoi.biet_ts): mọi tổ đang làm đều phải dừng tay; don_gc.biet_ts chỉ có khi tất cả đã biết.
+   don_gc.user_id vẫn giữ người ĐẦU TIÊN được chọn (người chính): báo cáo ca và các chỗ chỉ cần một tên đọc cột này. */
+export const GC_NGUOI_MAX = 4;
+// gắn danh sách người vào dòng đơn đọc từ GC_SELECT; người chính đứng đầu; uname thành tên mọi người, nối bằng dấu phẩy
+function docNguoi(d) {
+  if (!d) return d;
+  let ds = [];
+  try { ds = JSON.parse(d.nguoi_json || '[]'); } catch (e) { ds = []; }
+  if (!ds.length) ds = [{ id: d.user_id, ten: d.uname, biet: d.biet_ts }];
+  ds.sort((a, z) => (z.id === d.user_id) - (a.id === d.user_id));
+  delete d.nguoi_json;
+  d.nguoi = ds;
+  d.uname = ds.map((n) => n.ten).join(', ');
+  return d;
+}
 const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
 /* Tầng chỉ lưu phần riêng của nó: "1", "2", "B1", "Mái". Người giao gõ "Tầng 5" hay "5" đều thành "5", nên đơn
    trùng, gom và tìm theo tầng không bị tách đôi; chữ "Tầng" do màn hình tự thêm khi hiện. */
@@ -82,15 +102,20 @@ async function docDon(env, b, cu) {
   }
   const buoi = b.buoi ? String(b.buoi) : null;
   if (buoi && !GC_BUOI.includes(buoi)) throw bad('Buổi không hợp lệ');
-  const uid = Number(b.user);
-  if (!Number.isInteger(uid)) throw bad('Cần chọn Tiểu đội trưởng nhận đơn');
+  /* Người nhận: users (danh sách, người đầu là người chính) hoặc user (một người, bản app cũ). Đơn đang có giữ được
+     người cũ dù họ vừa đổi vai trò; người MỚI thêm vào thì phải là Tiểu đội trưởng đang dùng app. */
+  const ids = [...new Set((Array.isArray(b.users) ? b.users : [b.user]).map(Number))].filter(Number.isInteger);
+  if (!ids.length) throw bad('Cần chọn Tiểu đội trưởng nhận đơn');
+  if (ids.length > GC_NGUOI_MAX) throw bad('Một đơn giao tối đa ' + GC_NGUOI_MAX + ' người');
+  const uid = ids[0], cuIds = cu ? (cu.nguoi || []).map((n) => n.id).concat(cu.user_id) : [];
   const [uR, mR] = await env.DB.batch([
-    env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid),
+    env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids)),
     env.DB.prepare(MUC_SQL),
   ]);
-  const u = uR.results[0];
+  const us = ids.map((i) => uR.results.find((r) => r.id === i));
+  const u = { name: us.map((x) => (x ? x.name : '?')).join(', ') };
   // đơn đang có giữ được người cũ dù họ vừa đổi vai trò; giao MỚI thì chỉ giao cho Tiểu đội trưởng
-  if (!u || ((u.deleted || u.role !== 'tieudoi') && !(cu && cu.user_id === uid))) throw bad('Chỉ giao đơn cho Tiểu đội trưởng đang dùng app');
+  if (us.some((x, i) => !x || ((x.deleted || x.role !== 'tieudoi') && !cuIds.includes(ids[i])))) throw bad('Chỉ giao đơn cho Tiểu đội trưởng đang dùng app');
   /* Phân khu và hạng mục lấy theo danh mục, ghi đúng cách viết trong danh mục. Danh mục còn trống (admin
      chưa lập) thì chưa đòi phân khu và hạng mục nhận chữ tự do — không thì cả tính năng đứng im cho tới khi
      admin vào thiết lập. */
@@ -111,7 +136,7 @@ async function docDon(env, b, cu) {
      có luật này) không có cả hai thì vẫn sửa được nếu vẫn để trống cả hai. */
   const tang = chuTang(b.tang), cote = chu(b.cote, 20) || null;
   if (!tang && !cote && !(cu && !cu.tang && !cu.cote)) throw bad('Cần ghi tầng hoặc cote (đã ghi tầng thì cote không bắt buộc)');
-  return { cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung: chu(b.noi_dung, 300) || null, han, buoi, user_id: uid, uname: u.name };
+  return { cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung: chu(b.noi_dung, 300) || null, han, buoi, user_id: uid, user_ids: ids, uname: u.name };
 }
 
 /* Bảng chung: mọi đơn còn mở, cộng đơn đã xong / đã huỷ trong 30 ngày gần đây. Kèm danh sách Tiểu đội
@@ -125,7 +150,7 @@ export async function gcList(env) {
     env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0 ORDER BY name"),
     env.DB.prepare(MUC_SQL),
   ]);
-  return json({ items: don.results, tdt: tdt.results, muc: xepMuc(muc.results) });
+  return json({ items: don.results.map(docNguoi), tdt: tdt.results, muc: xepMuc(muc.results) });
 }
 
 export async function gcView(env, id) {
@@ -137,16 +162,16 @@ export async function gcView(env, id) {
     env.DB.prepare(MUC_SQL),
   ]);
   if (!don.results.length) throw khongThay();
-  return json({ don: don.results[0], log: log.results, muc: xepMuc(muc.results) });
+  return json({ don: docNguoi(don.results[0]), log: log.results, muc: xepMuc(muc.results) });
 }
 
 // một đơn CÒN MỞ khác (id khác boQua) của cùng người, giống hệt cấu kiện + phân khu + tầng + cote + trục
 const donTrung = (env, f, boQua) => env.DB.prepare(
   `SELECT d.id, d.ts, COALESCE(g.name, '(đã xoá)') giao_name FROM don_gc d LEFT JOIN users g ON g.id = d.giao_by
-   WHERE d.tt IN ('moi', 'nhan', 'lam') AND d.id <> ?1 AND d.user_id = ?2 AND d.cau_kien = ?3 COLLATE NOCASE
+   WHERE d.tt IN ('moi', 'nhan', 'lam') AND d.id <> ?1 AND EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id IN (SELECT value FROM json_each(?2))) AND d.cau_kien = ?3 COLLATE NOCASE
      AND COALESCE(d.phan_khu, '') = ?4 COLLATE NOCASE AND COALESCE(d.tang, '') = ?5 COLLATE NOCASE
      AND COALESCE(d.cote, '') = ?6 COLLATE NOCASE AND COALESCE(d.truc, '') = ?7 COLLATE NOCASE
-   ORDER BY d.id DESC LIMIT 1`).bind(boQua, f.user_id, f.cau_kien, f.phan_khu || '', f.tang || '', f.cote || '', f.truc || '').first();
+   ORDER BY d.id DESC LIMIT 1`).bind(boQua, JSON.stringify(f.user_ids || [f.user_id]), f.cau_kien, f.phan_khu || '', f.tang || '', f.cote || '', f.truc || '').first();
 const viTriTxt = (f) => [f.cau_kien, f.phan_khu, f.tang ? 'tầng ' + f.tang : '', f.cote ? 'cote ' + f.cote : '', f.truc ? 'trục ' + f.truc : ''].filter(Boolean).join(', ');
 
 /* ĐƠN TRÙNG: người nhận đang giữ một đơn CÒN MỞ giống hệt (cấu kiện, phân khu, tầng, cote, trục). Hai đường dẫn tới đó,
@@ -165,6 +190,8 @@ export async function gcCreate(req, env, user) {
   const r = await env.DB.batch([
     env.DB.prepare(`INSERT INTO don_gc (cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung, user_id, han, buoi, tt, pct, giao_by, ts, cap_ts)
                     VALUES (?,?,?,?,?,?,?,?,?,?,'moi',0,?,?,?)`).bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.user_id, f.han, f.buoi, user.id, ts, ts),
+    // MAX(id) = đơn vừa ghi ở câu trên: cả batch là một giao dịch
+    env.DB.prepare('INSERT INTO don_gc_nguoi (don_id, user_id) SELECT (SELECT MAX(id) FROM don_gc), value FROM json_each(?)').bind(JSON.stringify(f.user_ids)),
     auditStmt(env, user, 'gc_giao', { cau_kien: f.cau_kien, hang_muc: f.hang_muc, phan_khu: f.phan_khu, tang: f.tang, cote: f.cote, truc: f.truc, cho: f.uname, han: f.han }),
     bump(env),
   ]);
@@ -177,7 +204,7 @@ export async function gcCreate(req, env, user) {
 export async function gcUpdate(req, env, user, id) {
   if (!Number.isInteger(id)) throw khongThay();
   const b = await readJson(req);
-  const d = await env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id).first();
+  const d = docNguoi(await env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id).first());
   if (!d) throw khongThay();
   if (!GC_MO.includes(d.tt)) throw new HttpError(409, d.tt === 'xong' ? 'Đơn đã xong, không sửa được. Mở lại đơn trước.' : 'Đơn đã huỷ, không sửa được.');
   const f = await docDon(env, b, d);
@@ -191,13 +218,19 @@ export async function gcUpdate(req, env, user, id) {
   if (f.noi_dung !== d.noi_dung) doi.push('đổi nội dung');
   const hanTxt = (x) => fmtDay(x.han) + (x.buoi === 'sang' ? ' sáng' : x.buoi === 'chieu' ? ' chiều' : '');
   if (f.han !== d.han || f.buoi !== d.buoi) doi.push('hạn ' + hanTxt(d) + ' → ' + hanTxt(f));
-  const giaoLai = f.user_id !== d.user_id;
-  if (giaoLai) doi.push('giao lại: ' + d.uname + ' → ' + f.uname);
+  /* Đổi người: thêm / bớt người cùng làm thì đơn giữ nguyên trạng thái. Đổi HẲN sang những người khác (không còn ai
+     của nhóm cũ) mới là giao lại: đơn về "mới giao", người mới phải tự nhận. */
+  const cuIds = d.nguoi.map((n) => n.id);
+  const doiNguoi = f.user_ids.join() !== cuIds.join();
+  const giaoLai = !f.user_ids.some((i) => cuIds.includes(i));
+  if (doiNguoi) doi.push((giaoLai ? 'giao lại: ' : 'người làm: ') + d.uname + ' → ' + f.uname);
   if (!doi.length) return json({ ok: true, id, doi: 0 });
   const ts = Math.max(Date.now(), d.cap_ts + 1);
   await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM don_gc WHERE id = ?1 AND cap_ts = ?2)', id, d.cap_ts), [
     env.DB.prepare('UPDATE don_gc SET cau_kien = ?, hang_muc = ?, phan_khu = ?, tang = ?, cote = ?, truc = ?, noi_dung = ?, user_id = ?, han = ?, buoi = ?, tt = ?, cap_ts = ? WHERE id = ?')
       .bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.user_id, f.han, f.buoi, giaoLai ? 'moi' : d.tt, ts, id),
+    env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id = ? AND user_id NOT IN (SELECT value FROM json_each(?))').bind(id, JSON.stringify(f.user_ids)),
+    env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id) SELECT ?, value FROM json_each(?)').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT INTO don_gc_log (don_id, ts, user_id, viec, pct, note) VALUES (?,?,?,?,?,?)').bind(id, ts, user.id, 'sua', d.pct, doi.join(' · ')),
     auditStmt(env, user, 'gc_sua', { id, cau_kien: f.cau_kien, doi }),
     bump(env),
@@ -253,9 +286,11 @@ export async function gcViec(req, env, user, id, viec) {
   if (VIEC_QL.includes(viec) && capOf(user.role) < 1) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này');
   if (!Number.isInteger(id)) throw khongThay();
   const b = await readJson(req);
-  const d = await env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id).first();
+  const d = docNguoi(await env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id).first());
   if (!d) throw khongThay();
-  if (VIEC_CUA.includes(viec) && d.user_id !== user.id) throw new HttpError(403, 'Chỉ ' + d.uname + ' (người được giao đơn này) mới làm được việc đó');
+  const toi = d.nguoi.find((n) => n.id === user.id);
+  if (VIEC_CUA.includes(viec) && !toi) throw new HttpError(403, 'Chỉ ' + d.uname + ' (người được giao đơn này) mới làm được việc đó');
+  const them = []; // câu ghi thêm vào danh sách người của đơn (đã biết, huỷ, khôi phục)
   const sai = (msg) => new HttpError(409, msg, 'tt');
   const dong = d.tt === 'xong' ? 'Đơn đã xong.' : d.tt === 'huy' ? 'Đơn đã huỷ, không cần làm nữa.' : '';
   const ts = Math.max(Date.now(), d.cap_ts + 1);
@@ -311,23 +346,27 @@ export async function gcViec(req, env, user, id, viec) {
     if (!note) throw bad('Cần ghi lý do huỷ đơn');
     // giữ nguyên pct ("dừng ở 50%"); nhớ trạng thái trước khi huỷ để khôi phục về đúng chỗ; cờ vướng hết nghĩa
     Object.assign(set, { tt: 'huy', huy_ly_do: note, huy_by: user.id, huy_ts: ts, huy_tt: d.tt, biet_ts: null, vuong: null, vuong_loai: null, vuong_dung: 0, vuong_xem_by: null, vuong_xem_ts: null, mo_lai: null });
+    them.push(env.DB.prepare('UPDATE don_gc_nguoi SET biet_ts = NULL WHERE don_id = ?').bind(id));
     audit = 'gc_huy';
   } else if (viec === 'biet') {
     if (d.tt !== 'huy') throw sai('Đơn này không bị huỷ.');
-    if (d.biet_ts) throw sai('Bạn đã báo đã biết rồi.');
-    set.biet_ts = ts;
+    if (toi.biet) throw sai('Bạn đã báo đã biết rồi.');
+    them.push(env.DB.prepare('UPDATE don_gc_nguoi SET biet_ts = ? WHERE don_id = ? AND user_id = ?').bind(ts, id, user.id));
+    // người cuối cùng biết thì cả đơn mới là "đã biết" (thôi nhắc người giao)
+    if (d.nguoi.every((n) => n.id === user.id || n.biet)) set.biet_ts = ts;
   } else if (viec === 'khoiphuc') {
     if (d.tt !== 'huy') throw sai('Chỉ khôi phục được đơn đã huỷ.');
     if (Date.now() - (d.huy_ts || d.cap_ts) > GC_KHOI_PHUC_MS) throw sai('Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Hãy giao đơn mới (có nút "Giao đơn mới giống đơn này").');
     note = chu(b.ly_do, 200);
     if (!note) throw bad('Cần ghi lý do khôi phục đơn');
     // trong lúc đơn nằm ở trạng thái huỷ có thể đã có người giao lại đúng việc đó: khôi phục nữa là hai đơn một việc
-    const t = await donTrung(env, d, d.id);
+    const t = await donTrung(env, { ...d, user_ids: d.nguoi.map((n) => n.id) }, d.id);
     if (t) throw sai(d.uname + ' đang giữ một đơn còn mở giống hệt (' + t.giao_name + ' giao ngày ' + fmtDay(vnDay(t.ts)) + '). Không khôi phục thêm đơn này.');
     const truoc = (await env.DB.prepare('SELECT huy_tt FROM don_gc WHERE id = ?').bind(id).first('huy_tt')) || (d.pct > 0 ? 'lam' : 'moi');
     /* Về đúng trạng thái trước khi huỷ. Lý do khôi phục ghi vào mo_lai — cùng chỗ với "bị mở lại" — để người
        giữ đơn thấy ngay trên thẻ và ở Tổng quan rằng đơn này quay lại, phải làm tiếp. */
     Object.assign(set, { tt: GC_MO.includes(truoc) ? truoc : 'moi', huy_ly_do: null, huy_by: null, huy_ts: null, huy_tt: null, biet_ts: null, mo_lai: 'Khôi phục sau khi huỷ: ' + note });
+    them.push(env.DB.prepare('UPDATE don_gc_nguoi SET biet_ts = NULL WHERE don_id = ?').bind(id));
     audit = 'gc_khoiphuc';
   } else {
     if (d.tt !== 'xong') throw sai('Chỉ mở lại được đơn đã xong.');
@@ -339,7 +378,8 @@ export async function gcViec(req, env, user, id, viec) {
   const cot = Object.keys(set);
   const pctSau = set.pct === undefined ? d.pct : set.pct;
   const stmts = [
-    env.DB.prepare(`UPDATE don_gc SET ${cot.map((c) => c + ' = ?').join(', ')}, cap_ts = ? WHERE id = ?`).bind(...cot.map((c) => set[c]), ts, id),
+    env.DB.prepare(`UPDATE don_gc SET ${cot.map((c) => c + ' = ?').concat('cap_ts = ?').join(', ')} WHERE id = ?`).bind(...cot.map((c) => set[c]), ts, id),
+    ...them,
     env.DB.prepare('INSERT INTO don_gc_log (don_id, ts, user_id, viec, pct, note) VALUES (?,?,?,?,?,?)').bind(id, ts, user.id, viec, pctSau, note),
   ];
   // nhật ký chung chỉ ghi các mốc của đơn (giao, sửa, xong, huỷ, mở lại); từng lần cập nhật tiến độ nằm ở lịch sử của đơn

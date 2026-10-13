@@ -205,6 +205,59 @@ async function main() {
   eq('bootstrap: không còn đơn mở nào, đơn huỷ đã được biết cũng không còn', (await S.call('GET', '/bootstrap', undefined, 'Cv')).data.gc, []);
   eq('đơn xong và đơn huỷ vẫn nằm trên bảng chung', (await S.call('GET', '/giacong', undefined, 'An')).data.items.map((x) => x.tt).sort(), ['huy', 'huy', 'xong']);
 
+  /* ===== 7b. Nhiều Tiểu đội trưởng cùng làm một đơn (ca ngày + ca đêm) =====
+     Ai trong đơn cũng nhận, cập nhật, báo vướng, xác nhận xong; một người nhận là đơn đã nhận; xong rồi thì khoá với
+     tất cả; "đã biết" khi bị huỷ là của từng người. */
+  {
+    const r = await S.call('POST', '/giacong', don({ cau_kien: 'Vách W23', truc: 'Trục 6', users: [U.An, U.Binh] }), 'Cv');
+    eq('giao một đơn cho hai người', r.status, 200);
+    const w = r.data.id;
+    const dw = (await xem(w)).don;
+    eq('đơn mang đủ hai người, người chọn đầu là người chính', [dw.user_id, dw.nguoi.map((n) => n.ten), dw.uname], [U.An, ['An', 'Binh'], 'An, Binh']);
+    eq('quá 4 người: từ chối', (await S.call('POST', '/giacong', don({ cau_kien: 'Cột X', users: [U.An, U.Binh, U.Cv, U.Trung, 999] }), 'Cv')).status, 400);
+    eq('có người không phải Tiểu đội trưởng: từ chối', (await S.call('POST', '/giacong', don({ cau_kien: 'Cột X', users: [U.An, U.Cv] }), 'Cv')).status, 400);
+    eq('bootstrap của Binh có đơn này (Binh là người cùng làm)', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.filter((x) => x.id === w).map((x) => x.ids), [U.An + ',' + U.Binh]);
+    eq('người ngoài đơn không làm gì được', (await viec(w, 'nhan', {}, 'Cv')).status, 403);
+    eq('Binh (không phải người chính) nhận đơn', (await viec(w, 'nhan', {}, 'Binh')).status, 200);
+    eq('An nhận nữa: từ chối — một người nhận là đơn đã nhận', (await viec(w, 'nhan', {}, 'An')).status, 409);
+    advance(1000);
+    eq('An (ca ngày) báo 40%', (await viec(w, 'tiendo', { pct: 40 }, 'An')).status, 200);
+    advance(1000);
+    eq('Binh (ca đêm) báo tiếp 70% trên cùng đơn', (await viec(w, 'tiendo', { pct: 70, note: 'ca đêm xong thép chủ' }, 'Binh')).status, 200);
+    eq('một % chung, lịch sử ghi đúng ai bấm', [(await xem(w)).don.pct, (await xem(w)).log.filter((l) => l.viec === 'tiendo').map((l) => l.uname)], [70, ['Binh', 'An']]);
+    advance(1000);
+    eq('Binh báo vướng, An báo hết vướng', [(await viec(w, 'vuong', { loai: 'Máy hỏng' }, 'Binh')).status, (await viec(w, 'hetvuong', {}, 'An')).status], [200, 200]);
+    // giao đơn trùng: cùng vị trí, chung ít nhất một người
+    eq('giao đơn giống hệt cho Binh (đang cùng làm đơn đó): hỏi lại', (await S.call('POST', '/giacong', don({ cau_kien: 'Vách W23', truc: 'Trục 6', user: U.Binh }), 'Cv')).data.code, 'trung');
+    // sửa: thêm / bớt người thì giữ trạng thái; đổi hẳn người thì về mới giao
+    eq('bớt Binh khỏi đơn: đơn giữ nguyên đang làm', [(await S.call('PATCH', '/giacong/' + w, don({ cau_kien: 'Vách W23', truc: 'Trục 6', users: [U.An] }), 'Cv')).status, (await xem(w)).don.tt, (await xem(w)).don.uname], [200, 'lam', 'An']);
+    ok('lịch sử đơn ghi đổi người', (await xem(w)).log[0].note.includes('người làm: An, Binh → An'));
+    eq('Binh không còn thao tác được trên đơn', (await viec(w, 'tiendo', { pct: 80 }, 'Binh')).status, 403);
+    eq('thêm lại Binh: vẫn đang làm', [(await S.call('PATCH', '/giacong/' + w, don({ cau_kien: 'Vách W23', truc: 'Trục 6', users: [U.An, U.Binh] }), 'Cv')).status, (await xem(w)).don.tt], [200, 'lam']);
+    // huỷ: từng người phải tự bấm đã biết
+    advance(1000);
+    await viec(w, 'huy', { ly_do: 'đổi thiết kế' }, 'Cv');
+    eq('huỷ: cả hai đều chưa biết', (await xem(w)).don.nguoi.map((n) => n.biet), [null, null]);
+    advance(1000);
+    eq('An bấm đã biết', (await viec(w, 'biet', {}, 'An')).status, 200);
+    eq('An bấm lần hai: từ chối', (await viec(w, 'biet', {}, 'An')).status, 409);
+    const sau1 = (await xem(w)).don;
+    ok('chỉ An đã biết; cả đơn chưa tính là "đã biết" vì Binh chưa xem', sau1.nguoi[0].biet > 0 && sau1.nguoi[1].biet === null && sau1.biet_ts === null, JSON.stringify(sau1.nguoi));
+    eq('bootstrap: đơn còn nhắc, chỉ Binh chưa biết', (await S.call('GET', '/bootstrap', undefined, 'Binh')).data.gc.filter((x) => x.id === w).map((x) => x.chua_biet), [String(U.Binh)]);
+    advance(1000);
+    eq('Binh bấm đã biết: lúc này cả đơn mới là đã biết', [(await viec(w, 'biet', {}, 'Binh')).status, (await xem(w)).don.biet_ts > 0], [200, true]);
+    advance(1000);
+    eq('khôi phục: đơn về đang làm, hai người lại "chưa biết" sẵn cho lần huỷ sau', [(await viec(w, 'khoiphuc', { ly_do: 'huỷ nhầm' }, 'Cv')).status, (await xem(w)).don.tt, (await xem(w)).don.nguoi.map((n) => n.biet)], [200, 'lam', [null, null]]);
+    advance(1000);
+    eq('Binh (không phải người chính) xác nhận xong', (await viec(w, 'xong', {}, 'Binh')).status, 200);
+    eq('xong rồi: không ai trong nhóm thao tác được nữa', [(await viec(w, 'tiendo', { pct: 90 }, 'An')).status, (await viec(w, 'vuong', { loai: 'Máy hỏng' }, 'An')).status, (await viec(w, 'xong', {}, 'An')).status], [409, 409, 409]);
+    // đổi hẳn người khi đơn còn mở: về mới giao
+    const r2 = await S.call('POST', '/giacong', don({ cau_kien: 'Cột C8', users: [U.An] }), 'Cv');
+    await viec(r2.data.id, 'nhan', {}, 'An');
+    eq('giao hẳn cho Binh: đơn về mới giao', [(await S.call('PATCH', '/giacong/' + r2.data.id, don({ cau_kien: 'Cột C8', users: [U.Binh] }), 'Cv')).status, (await xem(r2.data.id)).don.tt], [200, 'moi']);
+    await viec(r2.data.id, 'huy', { ly_do: 'dọn test' }, 'Cv'); await viec(r2.data.id, 'biet', {}, 'Binh');
+  }
+
   /* ===== 8. Hai người ghi cùng lúc: lần ghi dựa trên bản cũ bị từ chối =====
      Người giao dời hạn đúng lúc người làm bấm lưu tiến độ. Dựng lại bằng cách để câu đọc đơn trả về
      bản cũ: chèn một lần cập nhật vào giữa lúc đọc và lúc ghi. */
@@ -266,6 +319,13 @@ async function main() {
 
   /* ===== 11. Sao lưu / nạp lại giữ đơn gia công ===== */
   {
+    // bản sao cũ chưa có bảng người cùng làm: mỗi đơn lấy lại người phụ trách của nó
+    const bk0 = (await S.call('GET', '/backup', undefined, 'Admin')).data;
+    const cu0 = { ...bk0, bang: { ...bk0.bang } };
+    delete cu0.bang.don_gc_nguoi;
+    S.raw.exec('DELETE FROM don_gc_nguoi');
+    eq('nạp bản sao chưa có danh sách người cùng làm', (await S.call('POST', '/restore', { confirm: 'NAP LAI', file: cu0 }, 'Admin')).status, 200);
+    eq('mỗi đơn có lại ít nhất người phụ trách của nó', S.one('SELECT COUNT(*) n FROM don_gc d WHERE NOT EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id = d.user_id)').n, 0);
     const bk = await S.call('GET', '/backup', undefined, 'Admin');
     const n = S.one('SELECT COUNT(*) n FROM don_gc').n, nl = S.one('SELECT COUNT(*) n FROM don_gc_log').n;
     eq('bản sao có đủ đơn và lịch sử đơn', [bk.data.bang.don_gc.length, bk.data.bang.don_gc_log.length], [n, nl]);
@@ -379,7 +439,7 @@ async function main() {
     ok('màn soạn có ô tầng và ô cote', ['id="gctang"', 'id="gccote"'].every((x) => R('vGcForm()').includes(x)));
     R(`S.form.gctang = '5'; ACTIONS.gcsave({ v: 'tiep' })`); await cho();
     eq('giao + đơn tiếp: đơn đã vào server, đủ cấu kiện, trục, phân khu, tầng', don3(), [{ cau_kien: 'Dầm', truc: 'X1-X2', phan_khu: 'Khu A', tang: '5', hang_muc: null, user_id: id3.Binh, han: ngayMai, tt: 'moi', pct: 0 }]);
-    eq('vẫn ở màn soạn; giữ loại cấu kiện, phân khu, tầng, người nhận, hạn; xoá trục', [R('S.screen'), R('S.gcForm.ck'), R('S.gcForm.khu'), R('S.form.gctang'), R('S.gcForm.user'), R('S.form.gchan'), R('gcTrucGhep()')], ['gcform', 'Dầm', 'Khu A', '5', id3.Binh, ngayMai, '']);
+    eq('vẫn ở màn soạn; giữ loại cấu kiện, phân khu, tầng, người nhận, hạn; xoá trục', [R('S.screen'), R('S.gcForm.ck'), R('S.gcForm.khu'), R('S.form.gctang'), R('S.gcForm.users[0]'), R('S.form.gchan'), R('gcTrucGhep()')], ['gcform', 'Dầm', 'Khu A', '5', id3.Binh, ngayMai, '']);
     ok('trục vừa dùng thành nút gợi ý', R('vGcForm()').includes('data-a="gctrucq" data-v="X1-X2"'));
     // bấm giao lại đúng đơn vừa giao (mạng chập chờn, hoặc quên sửa trục): app hỏi lại chứ không lặng lẽ sinh đơn trùng
     R(`ACTIONS.gctrucq({ v: 'X1-X2' }); ACTIONS.gcsave({ v: 'tiep' })`); await cho();
@@ -393,7 +453,7 @@ async function main() {
     eq('cấu kiện Khác: giao được với tên tự ghi', don3().map((d) => [d.cau_kien, d.truc, d.phan_khu, d.tang]), [['Dầm', 'X1-X2', 'Khu A', '5'], ['Bể nước', 'X7 / Y3', 'Khu A', '5']]);
     eq('giao xong về bảng đơn', [R('S.screen'), R('S.gcForm')], ['giacong', null]);
     R('ACTIONS.gcnew()'); await cho(); R('vGcForm()');
-    eq('lần giao sau: loại cấu kiện, phân khu, tầng, người nhận điền sẵn theo lần trước', [R('S.gcForm.ck'), R('S.gcForm.khu'), R('S.form.gctang'), R('S.gcForm.user')], ['khac', 'Khu A', '5', id3.Binh]);
+    eq('lần giao sau: loại cấu kiện, phân khu, tầng, người nhận điền sẵn theo lần trước', [R('S.gcForm.ck'), R('S.gcForm.khu'), R('S.form.gctang'), R('S.gcForm.users[0]')], ['khac', 'Khu A', '5', id3.Binh]);
     eq('chữ trục có sẵn tách về bốn ô; trục không theo dạng X / Y thì để ô gõ tự do', [R(`gcTrucDat('X12-X17 / Y3-Y5'); [S.form.gcx1, S.form.gcx2, S.form.gcy1, S.form.gcy2, S.gcForm.trucTu].join()`), R(`gcTrucDat('Y4'); [S.form.gcx1 || '', S.form.gcy1, S.gcForm.trucTu].join()`), R(`gcTrucDat('lõi thang T2'); [S.gcForm.trucTu, S.form.gctruc, gcTrucCua()].join()`)], ['12,17,3,5,false', ',4,false', 'true,lõi thang T2,lõi thang T2']);
     // sửa một đơn: loại cấu kiện và số hiệu tách lại đúng từ tên đã lưu
     R(`gcSoan({ id: 99, cau_kien: 'Cầu thang CT2', truc: 'X3-X4', phan_khu: 'Khu B', tang: '2', hang_muc: null, user_id: ${id3.An}, uname: 'An', han: '${ngayMai}', buoi: 'sang' }, true); vGcForm();`);
@@ -543,6 +603,30 @@ async function main() {
     eq('người khác không bị nhắc việc không phải của mình', (R('vHome()').match(/Đơn gia công của bạn/g) || []).length, 0);
     await vao('Cv', 'cvktht');
     R('S.boot.skew = 0;');
+    /* --- giao cho hai người trên giao diện; đơn hiện trong nhóm của cả hai --- */
+    R('ACTIONS.gcnew()'); await cho(); R('vGcForm()');
+    R(`S.gcForm.users = []; ACTIONS.gcuser({ v: '${id3.An}' }); ACTIONS.gcuser({ v: '${id3.Binh}' });`);
+    eq('chọn hai người nhận, người chọn đầu là người chính', R('S.gcForm.users'), [id3.An, id3.Binh]);
+    R(`ACTIONS.gcuser({ v: '${id3.An}' })`);
+    eq('bấm lại là bỏ chọn', R('S.gcForm.users'), [id3.Binh]);
+    R(`ACTIONS.gcuser({ v: '${id3.An}' }); S.gcForm.ck = 'Vách'; S.form.gcck = 'W9'; S.form.gct1 = '3'; S.gcForm.khu = 'Khu A'; S.form.gctang = '2'; ACTIONS.gcsave({})`); await cho();
+    const w9 = S3.one("SELECT id FROM don_gc WHERE cau_kien = 'Vách W9'").id;
+    eq('server ghi đủ hai người', S3.sql('SELECT user_id FROM don_gc_nguoi WHERE don_id = ? ORDER BY rowid', w9).map((x) => x.user_id), [id3.Binh, id3.An]);
+    R(`S.screen = 'giacong'; S.gcV = 'to'; S.gcF = 'mo';`);
+    const bang9 = R('vGiaCong()').split('data-gctim')[0];
+    eq('gom theo tổ: đơn hiện trong nhóm của CẢ HAI người, ghi người cùng làm', [bang9.split(`data-a="gcview" data-id="${w9}"`).length - 1, bang9.includes('Cùng làm: Binh, An')], [2, true]);
+    await vao('An', 'tieudoi');
+    R(`S.screen = 'giacong'; S.gcF = 'toi';`);
+    ok('người cùng làm (An) thấy đơn ở mục Của tôi và có nút NHẬN ĐƠN', R('vGiaCong()').includes(`data-a="gcqnhan" data-id="${w9}"`));
+    ok('Tổng quan của An nhắc đơn mới giao', /Đơn gia công của bạn/.test(R('vHome()')));
+    await S3.call('POST', `/giacong/${w9}/huy`, { ly_do: 'dọn test' }, 'Cv');
+    await vao('An', 'tieudoi');
+    ok('đơn bị huỷ: An được nhắc riêng', R('vHome()').includes('KHÔNG LÀM NỮA: Vách W9'));
+    R(`ACTIONS.gcqbiet({ id: '${w9}' })`); await cho();
+    await vao('Binh', 'tieudoi');
+    ok('An bấm đã biết rồi mà Binh vẫn được nhắc (đã biết là của từng người)', R('vHome()').includes('KHÔNG LÀM NỮA: Vách W9'));
+    await S3.call('POST', `/giacong/${w9}/biet`, {}, 'Binh');
+    await vao('Cv', 'cvktht');
     // người đang giữ đơn mở thôi làm Tiểu đội trưởng: bảng phải nói các đơn đó cần giao lại
     S3.raw.exec(`UPDATE users SET role = 'cvktht' WHERE id = ${id3.Binh}`);
     await vao('Cv', 'cvktht');

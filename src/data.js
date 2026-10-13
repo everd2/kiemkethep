@@ -155,7 +155,7 @@ export async function resetData(req, env, user) {
 
 // Bảng dựng nên TRẠNG THÁI của bãi: nạp lại là thay sạch những bảng này.
 export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts', 'khu_report', 'khu_report_log',
-  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau'];
+  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau', 'don_gc_nguoi'];
 /* Bản sao của cấu trúc cũ vẫn nạp được khi cấu trúc mới CHỈ THÊM BẢNG: nạp lại đã chỉ lấy cột
    bảng hiện tại có, và bảng tệp không có thì để trống. Chỉ lùi ĐÚNG MỘT bản (ngay trước), không
    lùi xa hơn: mỗi bản chỉ được kiểm "chỉ thêm bảng" so với bản liền trước nó lúc viết, lùi hai
@@ -167,7 +167,7 @@ export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts',
 // don_gc, don_gc_log (đơn gia công, bản 27): việc đang giao cho các tiểu đội, bản sao cũ chưa có thì giữ đơn đang có
 // quan_so (quân số đầu ca, bản 28): không phải số liệu thép, bản sao cũ chưa có thì giữ quân số đang có
 // bao_cao_ca, bc_mau (báo cáo ca gửi cấp trên, bản 31): bản sao cũ chưa có thì giữ báo cáo và mẫu đang có
-export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau'];
+export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau', 'don_gc_nguoi'];
 // bản 18 chỉ thêm một bảng tạm không nằm trong bản sao; bản 19 thêm cột daily_summary.bt có mặc định 0
 // (tệp cũ thiếu cột thì nạp ra 0 = ngày bình thường, đúng như cách các ngày đó đã được tính)
 export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20], 22: [15, 16, 17, 18, 19, 20, 21],
@@ -188,7 +188,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 30 thêm các cột báo vướng / lần cuối người làm cập nhật của đơn gia công (tệp cũ thiếu thì để trống)
   30: [23, 24, 25, 26, 27, 28, 29],
   // bản 31 chỉ thêm hai bảng báo cáo ca
-  31: [23, 24, 25, 26, 27, 28, 29, 30] };
+  31: [23, 24, 25, 26, 27, 28, 29, 30],
+  // bản 32 thêm bảng người cùng làm đơn gia công; bản sao cũ chưa có thì dựng lại từ don_gc.user_id (xem restoreData)
+  32: [23, 24, 25, 26, 27, 28, 29, 30, 31] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
@@ -301,6 +303,10 @@ export async function restoreData(req, env, user) {
   }
   /* Bản sao trước bản 17 không có kg lúc chốt: điền bằng kg/cây hiện tại (đúng như cách các ngày đó
      vẫn đang hiện), để từ lúc nạp chúng cũng được khoá, không trôi theo lần sửa kg/cây sau này. */
+  /* Người làm của đơn gia công phải khớp với bảng đơn vừa nạp: bản sao cũ chưa có don_gc_nguoi thì mỗi đơn lấy người
+     phụ trách của nó; dòng của đơn không còn trong bảng đơn thì bỏ. */
+  stmts.push(env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id NOT IN (SELECT id FROM don_gc)'));
+  stmts.push(env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id, biet_ts) SELECT id, user_id, biet_ts FROM don_gc WHERE id NOT IN (SELECT don_id FROM don_gc_nguoi)'));
   stmts.push(env.DB.prepare('UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL'));
   stmts.push(
     auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),
