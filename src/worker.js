@@ -10,7 +10,7 @@ import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } 
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
 import { gcCreate, gcList, gcMucAdd, gcMucXoa, gcUpdate, gcViec, gcView } from './giacong.js';
-import { qsHan, qsPut, qsView } from './quanso.js';
+import { qsHan, qsPut, qsThuTu, qsView } from './quanso.js';
 import { bcPut, bcView } from './baocao.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
@@ -52,7 +52,7 @@ async function handle(req, env, url) {
   }
 
   const user = await auth(req, env);
-  if (r0 === 'me' && method === 'GET') return json({ user: { id: user.id, name: user.name, role: user.role, must_change: user.must_change } });
+  if (r0 === 'me' && method === 'GET') return json({ user: { id: user.id, name: user.name, role: user.role, chuc_danh: user.chuc_danh || null, must_change: user.must_change } });
   if (r0 === 'change-pin' && method === 'POST') return changePin(req, env, user);
   if (user.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
 
@@ -125,6 +125,8 @@ async function handle(req, env, url) {
     if (method === 'PUT' && p.length === 1) return qsPut(req, env, user);
     // hạn báo của hai ca: người gom quân số (CVKTHT trở lên) tự đặt, không phải chờ admin
     if (method === 'PUT' && p.length === 2 && p[1] === 'han') { needCap(1); return qsHan(req, env, user); }
+    // thứ tự tổ trên bảng quân số và báo cáo ca: CVKTHT trở lên xếp
+    if (method === 'PUT' && p.length === 2 && p[1] === 'thutu') { needCap(1); return qsThuTu(req, env, user); }
   }
 
   /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---

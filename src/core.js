@@ -73,6 +73,8 @@ export const LAP_PHIEU = ROLES.filter((r) => capOf(r) >= 1);
 // giao khu phụ trách: chỉ Tiểu đội trưởng (cấp trên đã đếm được mọi khu)
 export const GIAO_KHU = 'tieudoi';
 export const CAP_TREN = 'Trung đội trưởng, Đại đội trưởng hoặc admin';
+// chức danh gắn được cho tài khoản admin (users.chuc_danh): chỉ để báo cáo biết họ giữ chức gì, không đổi quyền
+export const CHUC_DANH = ['daidoi', 'trungdoi', 'cvktht'];
 export const SESSION_MS = 30 * 24 * 3600e3;
 export const LOCK_AFTER = 5;
 export const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khoá lâu dần

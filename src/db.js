@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -422,6 +422,13 @@ export const MIGRATIONS = {
     'CREATE TABLE IF NOT EXISTS don_gc_nguoi (don_id INTEGER NOT NULL, user_id INTEGER NOT NULL, biet_ts INTEGER, PRIMARY KEY (don_id, user_id))',
     'CREATE INDEX IF NOT EXISTS idx_don_gc_nguoi_u ON don_gc_nguoi(user_id)',
     'INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id, biet_ts) SELECT id, user_id, biet_ts FROM don_gc',
+  ],
+  /* CHỨC DANH của tài khoản admin: quyền hệ thống (role = 'admin') và chức danh thật ở đơn vị là hai thứ khác nhau.
+     Người lập app là admin nhưng làm CVKTHT, nên báo cáo ca phải biết họ là CVKTHT để điền sẵn ô CBPT. Chỉ dùng
+     cho admin ('daidoi', 'trungdoi', 'cvktht' hoặc NULL); tài khoản khác thì vai trò chính là chức danh. Không đổi
+     quyền: admin vẫn duyệt được hết. */
+  33: [
+    'ALTER TABLE users ADD COLUMN chuc_danh TEXT',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

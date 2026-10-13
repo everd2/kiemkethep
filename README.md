@@ -70,6 +70,7 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 - **Sửa được tên** nếu đặt sai. Số đếm, phiếu, báo cáo khu và tên người duyệt hiện tên mới **ngay**, kể cả dữ liệu cũ. Riêng **nhật ký** thì các dòng trước khi đổi vẫn mang tên cũ: nhật ký lưu sẵn tên vào từng dòng và database từ chối mọi lệnh sửa, cố ý như vậy để nhật ký không viết lại được. Chính dòng *"đổi tên X thành Y"* trong nhật ký là cái nối hai tên lại.
 - **Xoá tài khoản**: người đó không đăng nhập được nữa, bị đăng xuất khỏi mọi máy và bỏ khỏi phân công khu. **Mọi số đếm, phiếu và báo cáo họ đã làm vẫn giữ nguyên, vẫn mang tên họ** — nên hệ thống không xoá hẳn dòng tài khoản, chỉ đánh dấu đã xoá. Vì vậy cũng **khôi phục lại được** ngay trong app nếu xoá nhầm (khôi phục xong hãy đặt lại PIN cho họ).
 - **Admin đầu tiên** (tài khoản tạo ở màn Thiết lập) là chủ hệ thống: chỉ người này **sửa tên, xoá và khôi phục** tài khoản. Ngược lại, chính tài khoản đó thì **không ai khoá, hạ quyền hay xoá được** — kể cả một admin khác — để cả bãi không bao giờ mất đường quản lý người dùng. Mọi admin đều tạo được tài khoản mới.
+- **Admin kèm chức danh.** Quyền Admin và chức danh ở đơn vị là hai thứ riêng: người lập app có thể là Admin nhưng làm CVKTHT. Ở **Người dùng và PIN**, thẻ của mỗi tài khoản Admin có ô **Chức danh ở đơn vị** (Đại đội trưởng / Trung đội trưởng / CVKTHT / không có). Chức danh **không đổi quyền** (vẫn là Admin, duyệt được hết); nó chỉ để app biết người đó giữ chức gì, ví dụ báo cáo ca đưa tên họ vào ô chọn nhanh đúng chức danh (CBPT với CVKTHT). Đổi vai trò khỏi Admin thì chức danh tự bỏ, vì lúc đó vai trò chính là chức danh.
 - Số điện thoại của tài khoản đã xoá vẫn bị giữ (mỗi số một tài khoản), nên muốn dùng lại số đó thì **khôi phục** tài khoản cũ thay vì tạo mới.
 
 ### Đếm nhiều lần mỗi ngày
@@ -180,10 +181,12 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
 - **Hai ca**: ca ngày 6h30 → 18h30, ca đêm 18h30 → 6h30 sáng hôm sau. **Ca đêm thuộc ngày bắt đầu ca**: báo lúc 2h sáng ngày 13 vẫn là ca đêm ngày 12. Ca tính theo giờ Việt Nam của máy chủ.
 - **Báo theo ca**: tổ làm cả hai ca thì báo hai lần, tổ chỉ làm ca đêm thì chỉ báo ca đêm. Báo được cho ca đang diễn ra, và báo sớm cho ca kế tiếp. Báo lại là ghi đè số của ca đó.
 - **Tiểu đội trưởng báo ngay trên Tổng quan**, không phải vào màn nào. Đầu trang có thẻ *Quân số tổ*: tổng quân số (lấy theo lần báo trước, có nút *Đổi*), dòng *Nghỉ: không ai*, và **hai nút gửi theo ca** (*BÁO CA NGÀY*, *BÁO CA ĐÊM*). Chọn ca và gửi là **một chạm**, nên vẫn là tổ trưởng tự chọn ca, app không chọn hộ theo giờ. Nút của ca tổ đang làm to hơn.
-  - **Ngày đủ quân: 1 chạm.** Có người nghỉ: bấm *Có người nghỉ*, chạm lý do là thêm một người (nút − để bớt), rồi bấm nút ca. Chọn *lý do khác* thì ô ghi chú tự hiện.
+  - **Ngày đủ quân: 1 chạm.** Có người nghỉ: bấm *Có người nghỉ*, chạm lý do để thêm một người, hoặc **gõ thẳng số** vào ô cạnh lý do (5 người ốm không phải chạm 5 lần, gõ 0 là bỏ). Ô **ghi chú** luôn có sẵn ở đó (bắt buộc khi có *lý do khác*).
   - **Như hôm qua**: lấy lại danh sách nghỉ của lần báo trước (nghỉ phép, về quê thường kéo dài vài ngày). Đây là nút phải tự bấm, không tự điền sẵn, để người đã đi làm lại không bị báo nghỉ mà không ai để ý.
   - **Báo nhầm ca**: tổ đang làm ca ngày mà bấm *BÁO CA ĐÊM* thì app hỏi lại *"Tổ chuyển sang ca đêm từ …?"* một lần.
-  - **Tổ chia hai ca**: trong phần người nghỉ có dòng *Tổ chia hai ca*, mở ra ô số đi làm ca này.
+  - **Tổ chia hai ca**: dòng *Tổ có người làm ca đêm?* nằm ngay trên thẻ; bấm vào ra ô *Người của tổ làm ca đêm*, số đi làm ca này tự tính = tổng − nghỉ − ca đêm. Lần sau dòng này mở sẵn, điền đúng số lần trước.
+  - **Tổ làm cố định một ca** (hai lần báo gần nhất cùng ca, cả tổ cùng ca): thẻ chỉ còn nút ca đó; ca kia thu thành dòng nhỏ *Hôm nay tổ có người làm ca đêm?*.
+  - **Mất sóng lúc bấm báo**: app lưu quân số trên máy (theo từng người, máy dùng chung vẫn đúng tên), thẻ ghi *chờ gửi (mất sóng)* và **tự gửi khi có mạng**.
   - Báo xong thẻ thành *Ca ngày …: đã báo lúc …* kèm nút **Sửa** (sửa tại chỗ). Thẻ vàng khi chưa báo trong hạn, đỏ khi quá hạn.
   - Màn **Thêm → Quân số đầu ca** vẫn còn (chọn ca rồi ghi), cho ai quen dùng.
 - **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ở dòng *Hạn báo* cuối bảng quân số (thu gọn, bấm **Đổi** mới hiện ô giờ); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
@@ -200,6 +203,10 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
   | Xem quân số tổ khác | Chỉ CVKTHT trở lên — Tiểu đội trưởng chỉ thấy tổ mình |
 
 - **Bảng của CVKTHT trở lên**: dòng tổng *Đi làm ca ngày: 70 / 171 công nhân · 7/9 tổ đã báo*, rồi mỗi tổ một thẻ (đã báo, chưa báo, làm ca kia). Tổ chưa báo vẫn tính vào tổng quân số theo lần báo gần nhất, và bảng nói rõ điều đó. Dòng do cấp trên ghi thay có ghi tên người ghi. Lùi xem ca trước bằng nút **‹ Ca trước**.
+- **Ghi thay một chạm**: tổ chưa báo có sẵn nút **Đủ 21/21** (cả tổ đi làm; tổ chia ca thì trừ người ca kia theo lần trước) và **Như lần trước** (đúng số và lý do nghỉ lần báo trước cùng ca) ngay trên bảng — tổ trưởng gọi điện báo là ghi xong. Số khác thì chạm vào tổ để mở ô ghi.
+- **Chép tin nhắc**: nút *Chép tin nhắc N tổ chưa báo* ra sẵn danh sách tổ chưa báo kèm hạn, dán vào nhóm Zalo.
+- **Xếp thứ tự tổ** (cuối bảng): bấm Lên / Xuống từng tổ rồi Lưu. Thứ tự này dùng cho bảng quân số và mục 3 của báo cáo ca, ngày nào cũng giống nhau.
+- **Nhắc soạn báo cáo ca**: qua hạn báo mà ca đó chưa chép báo cáo thì Tổng quan của CVKTHT có thẻ *Soạn báo cáo ca … gửi cấp trên* (ghi số tổ đã báo), bấm là mở thẳng màn soạn.
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào để xem hoặc ghi thay. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa, phải nhờ CVKTHT trở lên. Mọi lần báo và ghi thay nằm trong **nhật ký**, có chip lọc *Quân số*.
 - Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).

@@ -190,7 +190,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 31 chỉ thêm hai bảng báo cáo ca
   31: [23, 24, 25, 26, 27, 28, 29, 30],
   // bản 32 thêm bảng người cùng làm đơn gia công; bản sao cũ chưa có thì dựng lại từ don_gc.user_id (xem restoreData)
-  32: [23, 24, 25, 26, 27, 28, 29, 30, 31] };
+  32: [23, 24, 25, 26, 27, 28, 29, 30, 31],
+  // bản 33 thêm cột chức danh của admin (users.chuc_danh); tệp cũ thiếu thì để trống = chưa gắn chức danh
+  33: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */

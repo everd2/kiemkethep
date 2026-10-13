@@ -75,6 +75,19 @@ async function main() {
   eq('số liệu ca ngày: đúng ngày / ca, quân số hai ca của ngày', [B.ngay, B.ca, B.qs.length], [D, 1, 3]);
   eq('đơn xong trong giờ ca vào báo cáo, kèm đơn còn mở', B.don.map((d) => [d.id, d.tt]).sort(), [[d1, 'lam'], [d2, 'lam'], [d3, 'xong'], [d4, 'lam']].sort());
   eq('người chọn nhanh làm chỉ huy: Đại đội trưởng, Trung đội trưởng, CVKTHT', B.nguoi.map((u) => [u.name, u.role]), [['Hà Huy Đạt', 'trungdoi'], ['Nguyễn Duy Dũng', 'cvktht'], ['Vũ Nhật Tài', 'daidoi']]);
+  /* Admin mang chức danh: người lập app là admin nhưng làm CVKTHT, phải hiện trong danh sách CBPT mà không mất quyền admin */
+  const adminId = S.one("SELECT id FROM users WHERE name = 'Admin'").id;
+  eq('không gắn chức danh cho tài khoản không phải admin', (await S.call('POST', `/users/${U[CV]}/chuc-danh`, { chuc_danh: 'daidoi' }, 'Admin')).status, 400);
+  eq('chức danh lạ: từ chối', (await S.call('POST', `/users/${adminId}/chuc-danh`, { chuc_danh: 'tieudoi' }, 'Admin')).status, 400);
+  eq('CVKTHT không gắn được chức danh (việc của admin)', (await S.call('POST', `/users/${adminId}/chuc-danh`, { chuc_danh: 'cvktht' }, CV)).status, 403);
+  eq('admin đầu tiên tự gắn chức danh CVKTHT cho mình', (await S.call('POST', `/users/${adminId}/chuc-danh`, { chuc_danh: 'cvktht' }, 'Admin')).status, 200);
+  const B2 = (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'Admin')).data;
+  eq('admin gắn CVKTHT vào danh sách chọn CBPT', B2.nguoi.map((u) => [u.name, u.role]), [['Admin', 'cvktht'], ['Hà Huy Đạt', 'trungdoi'], ['Nguyễn Duy Dũng', 'cvktht'], ['Vũ Nhật Tài', 'daidoi']]);
+  const me = (await S.call('GET', '/bootstrap', undefined, 'Admin')).data.user;
+  eq('vẫn là admin, kèm chức danh', [me.role, me.chuc_danh], ['admin', 'cvktht']);
+  eq('admin mang chức danh vẫn vào được quản lý tài khoản', (await S.call('GET', '/users', undefined, 'Admin')).status, 200);
+  eq('bỏ chức danh', (await S.call('POST', `/users/${adminId}/chuc-danh`, { chuc_danh: null }, 'Admin')).status, 200);
+  eq('bỏ chức danh thì không còn trong danh sách chọn', (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'Admin')).data.nguoi.some((u) => u.name === 'Admin'), false);
   eq('mẫu chưa có: phần đầu trống, năm dòng kiểm tra mặc định', [B.mau.dau.don_vi, B.mau.kt.length], ['', 5]);
   eq('ca đã qua vẫn soạn được (trong 7 ngày)', B.suaDuoc, true);
 

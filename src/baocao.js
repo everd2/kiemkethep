@@ -1,7 +1,7 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
 import { bad, json, vnDay } from './core.js';
 import { SETTINGS_SQL, auditStmt, parseSettings, readJson } from './helpers.js';
-import { QS_LY_DO, caGio, caKe, caKhoa, caLuc } from './quanso.js';
+import { QS_LY_DO, TO_SX, caGio, caKe, caKhoa, caLuc } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
    Người soạn: CVKTHT trở lên. Server chỉ GOM SỐ LIỆU và LƯU; việc ghép chữ theo mẫu nằm ở máy khách (app.js,
@@ -28,7 +28,9 @@ const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().s
 const doan = (v, max) => String(v == null ? '' : v).replace(/\r/g, '').split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join('\n').slice(0, max);
 const docMau = (row) => {
   const d = docJ(row && row.data);
-  return { dau: Object.fromEntries(BC_DAU.map((k) => [k, chu((d.dau || {})[k], 120)])), mmtb: chu(d.mmtb, 400), kt: Array.isArray(d.kt) && d.kt.length ? d.kt.map((x) => chu(x, 200)).filter(Boolean) : BC_KT };
+  return { dau: Object.fromEntries(BC_DAU.map((k) => [k, chu((d.dau || {})[k], 120)])), mmtb: chu(d.mmtb, 400), kt: Array.isArray(d.kt) && d.kt.length ? d.kt.map((x) => chu(x, 200)).filter(Boolean) : BC_KT,
+    // thứ tự tổ do CVKTHT xếp (id Tiểu đội trưởng), dùng cho bảng quân số và mục 3 của báo cáo
+    thu_tu: Array.isArray(d.thu_tu) ? d.thu_tu.filter((x) => Number.isInteger(x)) : [] };
 };
 function docCa(q, st) {
   const hien = caLuc(st);
@@ -47,7 +49,7 @@ export async function bcView(env, url) {
   const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
   const c = docCa(url.searchParams, st), gio = caGio(st, c), hien = caLuc(st);
   const [tdt, qs, truoc, don, nguoi, mau, bc] = await env.DB.batch([
-    env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0 ORDER BY name"),
+    env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),
     env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id WHERE q.ngay = ?`).bind(c.ngay),
     env.DB.prepare(`SELECT q.user_id, q.ca, q.tong, q.lam, q.ca_kia FROM users u JOIN quan_so q ON q.rowid = (
@@ -58,7 +60,9 @@ export async function bcView(env, url) {
                       SELECT id, cau_kien, hang_muc, phan_khu, tang, cote, truc, user_id, han, buoi, tt, pct, vuong, xong_ts FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
                       UNION ALL SELECT id, cau_kien, hang_muc, phan_khu, tang, cote, truc, user_id, han, buoi, tt, pct, vuong, xong_ts FROM don_gc
                         WHERE tt = 'xong' AND cap_ts >= ?1 AND xong_ts >= ?1 AND xong_ts < ?2) ORDER BY id`).bind(gio.tu, gio.den),
-    env.DB.prepare("SELECT id, name, role FROM users WHERE deleted = 0 AND role IN ('daidoi', 'trungdoi', 'cvktht') ORDER BY name"),
+    // admin mang chức danh (users.chuc_danh) cũng là người chọn được, xếp theo chức danh đó
+    env.DB.prepare(`SELECT id, name, CASE role WHEN 'admin' THEN chuc_danh ELSE role END role FROM users
+                    WHERE deleted = 0 AND (role IN ('daidoi', 'trungdoi', 'cvktht') OR (role = 'admin' AND chuc_danh IN ('daidoi', 'trungdoi', 'cvktht'))) ORDER BY name`),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare(`SELECT b.data, b.van_ban, b.ts, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id
                     WHERE b.ngay = ? AND b.ca = ?`).bind(c.ngay, c.ca),
@@ -88,7 +92,7 @@ export async function bcPut(req, env, user) {
   for (const k of BC_MUC) if (typeof vao[k] === 'string') muc[k] = doan(vao[k], 8000);
   const cu = docMau(await env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1').first());
   const dau = b.dau && typeof b.dau === 'object' ? Object.fromEntries(BC_DAU.map((k) => [k, chu(b.dau[k], 120)])) : cu.dau;
-  const mau = { dau, mmtb: b.mmtb != null ? chu(b.mmtb, 400) : cu.mmtb, kt: cu.kt };
+  const mau = { dau, mmtb: b.mmtb != null ? chu(b.mmtb, 400) : cu.mmtb, kt: cu.kt, thu_tu: cu.thu_tu };
   if (b.kt_mau && typeof muc.s6 === 'string') mau.kt = muc.s6.split('\n').map((x) => chu(x, 200)).filter(Boolean);
   const ts = Date.now();
   await env.DB.batch([

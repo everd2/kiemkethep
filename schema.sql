@@ -15,6 +15,8 @@
 -- 'admin' = quản trị hệ thống.
 -- Tài khoản có id NHỎ NHẤT là admin đầu tiên (người thiết lập hệ thống): chỉ người này được sửa
 -- tên, xoá và khôi phục tài khoản, và không ai khoá/hạ quyền/xoá được tài khoản đó.
+-- chuc_danh: chức danh thật của một tài khoản ADMIN ('daidoi', 'trungdoi', 'cvktht' hoặc NULL), để báo cáo ca
+-- điền đúng tên người theo chức danh. Không đổi quyền. Tài khoản không phải admin luôn NULL (xem migration 33).
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -28,7 +30,8 @@ CREATE TABLE IF NOT EXISTS users (
   locked_until INTEGER NOT NULL DEFAULT 0,
   lock_level INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  deleted INTEGER NOT NULL DEFAULT 0
+  deleted INTEGER NOT NULL DEFAULT 0,
+  chuc_danh TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -520,7 +523,7 @@ CREATE TABLE IF NOT EXISTS don_gc_nguoi (
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_nguoi_u ON don_gc_nguoi(user_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 32);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 33);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

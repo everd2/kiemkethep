@@ -1,5 +1,5 @@
 // Quản trị: người dùng, khu, phi, cài đặt.
-import { GIAO_KHU, HttpError, PHI_DEFAULTS, ROLES, bad, hashPin, json, rand, seedPhi, vnDay } from './core.js';
+import { CHUC_DANH, GIAO_KHU, HttpError, PHI_DEFAULTS, ROLES, bad, hashPin, json, rand, seedPhi, vnDay } from './core.js';
 import { SETTINGS_SQL, SETTING_RANGE, auditStmt, boWord, bump, genPin, intIn, normPhone,
   parseSettings, qtyWord, readJson, unitWord } from './helpers.js';
 import { logout } from './auth.js';
@@ -24,7 +24,7 @@ export const firstAdminId = async (env) => {
 export async function listUsers(env) {
   // trả cả tài khoản đã xoá: admin đầu tiên cần thấy để khôi phục khi xoá nhầm
   const [uR, fid] = await Promise.all([
-    env.DB.prepare('SELECT id, name, phone, role, locked, deleted, must_change, locked_until FROM users ORDER BY id').all(),
+    env.DB.prepare('SELECT id, name, phone, role, chuc_danh, locked, deleted, must_change, locked_until FROM users ORDER BY id').all(),
     firstAdminId(env),
   ]);
   return json({ users: uR.results, first: fid });
@@ -137,12 +137,26 @@ export async function userAction(req, env, admin, id, action) {
     // thôi là Tiểu đội trưởng thì thôi phụ trách khu: cấp trên đếm được mọi khu, không đứng tên khu nào
     const go = role !== GIAO_KHU ? await goKhoiKhu(env, admin, u, b, 'Đổi vai trò') : { mo: [], stmts: [] };
     await env.DB.batch([
-      env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(role, id),
+      // chức danh chỉ có nghĩa với admin: thôi là admin thì vai trò mới chính là chức danh
+      env.DB.prepare(`UPDATE users SET role = ?1, chuc_danh = CASE WHEN ?1 = 'admin' THEN chuc_danh END WHERE id = ?2`).bind(role, id),
       ...go.stmts,
       auditStmt(env, admin, 'user_role', { id, name: u.name, role, tu: u.role, mo: go.mo }),
       bump(env),
     ]);
     return json({ ok: true, mo: go.mo });
+  }
+  /* Chức danh của một tài khoản admin (xem migration 33). Không đổi quyền nên không cần chốt như đổi vai trò:
+     admin đầu tiên tự gắn được cho mình. */
+  if (action === 'chuc-danh') {
+    if (u.role !== 'admin') throw bad('Chỉ tài khoản admin mới gắn thêm chức danh; tài khoản khác thì vai trò chính là chức danh');
+    const cd = b.chuc_danh ? String(b.chuc_danh) : null;
+    if (cd && !CHUC_DANH.includes(cd)) throw bad('Chức danh không hợp lệ');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET chuc_danh = ? WHERE id = ?').bind(cd, id),
+      auditStmt(env, admin, 'user_chuc_danh', { id, name: u.name, chuc_danh: cd }),
+      bump(env),
+    ]);
+    return json({ ok: true });
   }
   if (action === 'logout') {
     await env.DB.batch([

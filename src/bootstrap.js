@@ -6,7 +6,7 @@ import { EFF_SELECT, MV_NEW } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
 import { LOAN_LOT_SQL, loanLots } from './loans.js';
 import { GC_BAO_HUY_MS } from './giacong.js';
-import { qsBoot, qsBootStmt, qsToiStmt } from './quanso.js';
+import { bcDaStmt, qsBoot, qsBootStmt, qsToiStmt } from './quanso.js';
 
 /* ========================= DỮ LIỆU CHUNG ========================= */
 
@@ -17,7 +17,7 @@ export async function bootstrap(env, user) {
      ?1 luôn là hôm nay. kyNay đổi câu dùng chung (?1 = ngày chốt trước, ?2 = ngày đang xét) sang dạng đó. */
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
   const kyNay = (sql) => sql.replace(/\?1/g, LAST).replace(/\?2/g, '?1');
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR, bcDaR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -97,6 +97,7 @@ export async function bootstrap(env, user) {
     qsBootStmt(env),
     // và mấy lần báo gần nhất của chính người đang xem, cho thẻ báo quân số trên Tổng quan (xem qsToiStmt)
     qsToiStmt(env, user),
+    bcDaStmt(env),
   ]);
   const last = (lastR.results[0] || {}).d || '';
   return {
@@ -106,7 +107,7 @@ export async function bootstrap(env, user) {
     closed: closed.results.length > 0,
     // hôm nay là mốc đặt lại số liệu (cách duy nhất để ngày hôm nay bị khoá, xem putCounts)
     closedReset: !!(closed.results[0] && closed.results[0].kind === 'reset'),
-    user: { id: user.id, name: user.name, role: user.role },
+    user: { id: user.id, name: user.name, role: user.role, chuc_danh: user.chuc_danh || null },
     uFirst: (uFirst.results[0] || {}).id || 0,
     phi: phi.results,
     khu: khu.results,
@@ -133,7 +134,7 @@ export async function bootstrap(env, user) {
     phiStd: PHI_DEFAULTS.map((p) => ({ id: p.id, kg_per_cay: p.kg, bo_size: p.bo, min_stock: p.min, unit: p.unit })),
     doitacAct: doitacAct.results,
     gc: gcR.results,
-    qs: qsBoot(qsR.results, parseSettings(settings.results), user, qsToiR.results),
+    qs: qsBoot(qsR.results, parseSettings(settings.results), user, qsToiR.results, bcDaR.results),
     loanPending: loanPending.results.length,
     /* Trong đó, số lần ghi người đang xem DUYỆT ĐƯỢC (cùng luật với duyetLoan): thẻ nhắc ở Tổng quan
        dùng số này, không thì CVKTHT bị nhắc cả những lần ghi phải chờ cấp trên. */

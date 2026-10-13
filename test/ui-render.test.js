@@ -267,6 +267,9 @@ function one(label) {
   out.push([label, h.length, /undefined|NaN|\\[object Object\\]/.test(h) ? 'BAD:' + (h.match(/.{0,40}(undefined|NaN|\\[object Object\\]).{0,40}/) || [''])[0] : 'ok']);
 }
 for (const sc of SCREENS) { S.screen = sc; one(sc); }
+// bảng quân số đang xếp thứ tự tổ, và thẻ báo của tổ trưởng đang mở phần người nghỉ + dòng ca kia
+S.screen = 'quanso'; S.qsSx = S.qs.tdt.map((u) => u.id); one('quanso+xep-thu-tu'); S.qsSx = null;
+{ const me0 = S.me; S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; S.boot.qs.toi = { tong: 19, hien: null, ke: null, truocHien: { ngay: S.boot.today, ca: 1, tong: 19, lam: 8, ca_kia: 10, nghi: { om: 1 }, ghi_chu: null }, truocKe: null, coDinh: 0 }; S.qsH = null; qhState().mo = true; qhState().nghi = { om: 2, khac: 1 }; S.screen = 'home'; one('home+the-quan-so-mo'); S.boot.qs.toi.coDinh = 1; S.qsH = null; one('home+the-quan-so-ca-co-dinh'); S.qsH = null; delete S.boot.qs.toi; S.me = me0; }
 
 // các trạng thái đặc biệt
 S.screen = 'dem'; S.sel = 'D8'; fillSel('D8'); one('dem+ban-so-D8');
