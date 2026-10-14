@@ -953,6 +953,27 @@ const run = async () => {
   r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   ok('tiểu đội trưởng: không có tab Duyệt, tab Nhập; nhãn vai trò là "Tiểu đội trưởng"',
     !/data-s="duyet"/.test(r('tabsHtml()')) && !/data-s="nhap"/.test(r('tabsHtml()')) && /Tiểu đội trưởng/.test(r('vMore()')));
+  // màn Thêm chia nhóm; Tổng quan có hàng tóm tắt gia công, Tiểu đội trưởng thấy việc của mình TRÊN ô tồn toàn bãi
+  ok('Thêm của tiểu đội trưởng: có nhóm, không có nhóm Quản trị', /Sổ theo dõi/.test(r('vMore()')) && /Thống kê và báo cáo/.test(r('vMore()')) && !/Quản trị/.test(r('vMore()')));
+  r(`S.boot.gc = [{ id: 1, tt: 'lam', han: '2099-01-01', cau_kien: 'Cột', truc: 'X1', ids: '99', user_id: 99, vuong: 'Thiếu thép', cap_ts: Date.now() },
+    { id: 2, tt: 'xong', xuat_tt: null, han: '2099-01-01', cau_kien: 'Dầm', truc: 'X2', ids: '99', user_id: 99, xong_ts: Date.now(), cap_ts: Date.now() }];`);
+  ok('hàng tóm tắt gia công: 1 đang mở, 0 trễ, 1 vướng, 1 chưa xuất, mỗi ô mở đúng mục lọc',
+    ['mo">.*?>1<', 'tre">.*?>0<', 'vuong">.*?>1<', 'xuat">.*?>1<'].every((x) => new RegExp('data-s="giacong" data-f="' + x).test(r('gcHomeRow()'))), r('gcHomeRow()'));
+  ok('Tổng quan của tiểu đội trưởng: gia công đứng trên ô tồn toàn bãi', r(`vHome().indexOf('Gia công cấu kiện')`) > 0 && r(`vHome().indexOf('Gia công cấu kiện') < vHome().indexOf('Tồn toàn bãi')`));
+  r(`S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+  ok('Tổng quan của cấp trên: tồn toàn bãi vẫn ở đầu, gia công ngay dưới', r(`vHome().indexOf('Gia công cấu kiện') > vHome().indexOf('Tồn toàn bãi')`) && r(`vHome().indexOf('Gia công cấu kiện') < vHome().indexOf('Tồn theo khu')`));
+  r(`S.boot.gc = [];`);
+  ok('không có đơn nào thì không bày hàng tóm tắt gia công', r('gcHomeRow()') === '' && !/Gia công cấu kiện/.test(r('vHome()')));
+  /* Nút bấm gọi ACTIONS[x](dataset, sự kiện): tham số thứ hai LUÔN có giá trị. gcsave từng coi nó là cờ "vẫn giao đơn
+     trùng" nên lần nào cũng gửi trung: true, server không bao giờ hỏi lại (bắt được khi chạy app thật trên Chrome). */
+  ok('giao đơn: chỉ gửi cờ "vẫn giao đơn trùng" khi được gọi lại với đúng true, không phải khi có sự kiện bấm',
+    /trung === true \? \{ \.\.\.body, trung: true \} : body/.test(r('String(ACTIONS.gcsave)')) && !/trung \? \{/.test(r('String(ACTIONS.gcsave)')));
+  r(`S.logTab = 'log'; S.audit = [];`);
+  ok('Nhật ký: nút lọc một hàng cuộn ngang, "Cần chú ý" ngay sau "Tất cả"', /overflow-x:auto" data-sx="logf">.{0,200}data-v="all">Tất cả<\/button><button[^>]*data-v="flag"/.test(r('vNhatKy()')));
+  r(`S.logFilter = 'admin';`);
+  ok('Nhật ký: nút lọc đang chọn được đánh dấu để hàng cuộn tới nó', /data-cur="1" data-a="logf" data-v="admin"/.test(r('vNhatKy()')) && r(`vNhatKy().split('data-cur=').length`) === 2);
+  r(`S.logFilter = 'all';`);
+  r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   // màn Duyệt: khu do CVKTHT báo thì CVKTHT không có nút duyệt, có dòng nói đang chờ ai
   r(`S.boot = _boot(); indexBoot(S.boot); S.subs = {}; S.cmp = null; S.screen = 'duyet';
      S.review = { day: S.boot.today, last: null, span: 1, rev: 1, closed: false, rows: [], phieu: [], exceptions: [], pending: 2, loans: [], reports: [], khu: [], slot: { n: 1, defs: [] },

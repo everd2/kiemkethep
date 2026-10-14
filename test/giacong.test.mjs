@@ -550,7 +550,9 @@ async function main() {
     const bang = R('vGiaCong()').split('data-gctim="1"');
     ok('đang tìm thì danh sách theo mục lọc ẩn, khối kết quả tìm hiện', /data-gcds="1" style="display:none"/.test(bang[0]) && !bang[1].startsWith(' style="display:none"'), bang[1].slice(0, 40));
     const the = bang[1].split('data-gcq="').slice(1);
-    eq('tìm không dấu "be nuoc": chỉ còn thẻ Bể nước hiện', the.map((x) => [x.split('"')[0].split(' ').slice(0, 2).join(' '), x.split('>')[0].includes('display:none')]), [['dam x1-x2', true], ['be nuoc', false]]);
+    eq('tìm không dấu "be nuoc": chỉ còn thẻ Bể nước hiện', the.map((x) => [x.split('"')[0].split(' ').slice(0, 2).join(' '), x.split('>')[0].includes('display:none')]), [['be nuoc', false]]);
+    ok('không tìm thì khối kết quả tìm KHÔNG dựng thẻ nào (trước đây dựng sẵn mọi đơn rồi ẩn)', !R(`S.form.gcq = ''; vGiaCong()`).split('data-gctim="1"')[1].includes('data-a="gcview"'));
+    R(`S.form.gcq = 'be nuoc'`);
     ok('tìm được theo khu và tầng', R(`gcTuKhoa(S.gc.items[0])`).includes('khu a tang 5'));
     /* --- tìm theo từng từ: mã cấu kiện khớp đúng mã, trục khớp theo dải --- */
     const GC_KEYS = ['gcx1', 'gcx2', 'gcy1', 'gcy2', 'gct1', 'gct2'];
@@ -705,6 +707,21 @@ async function main() {
       ok('bấm tên nhóm: thu gọn nhóm đó (app nhớ)', !!k1 && R('gcThuDoc()').includes(k1) && R('vGiaCong()').split('data-gctim')[0].split('data-a="gcview"').length < gon.split('data-gctim')[0].split('data-a="gcview"').length);
       R(`ACTIONS.gcthu({ k: ${JSON.stringify(k1 || '')} }); ACTIONS.gcgon()`);
       eq('đang làm và đã nhận có màu nhãn khác nhau', [R("gcTT({ tt: 'lam' })[1]"), R("gcTT({ tt: 'nhan' })[1]")], ['pri', 'idle']);
+    }
+    /* --- nhiều đơn: mỗi lần chỉ dựng một số thẻ, bấm để hiện thêm --- */
+    {
+      await vao('Cv', 'cvktht');
+      const g0 = R('JSON.stringify(S.gc)');
+      R(`S.gc.items = Array.from({ length: 150 }, (_, i) => ({ ...S.gc.items[0], id: 9000 + i, cau_kien: 'Cột N' + i, tt: 'lam', xuat_tt: null })); S.screen = 'giacong'; S.gcF = 'mo'; S.gcV = 'han'; S.gcGon = false; S.gcHien = null; S.form.gcq = '';`);
+      const dem = () => R('vGiaCong()').split('data-a="gcview"').length - 1;
+      eq('150 đơn, dạng thẻ: dựng 60 thẻ, có nút hiện thêm, tên nhóm vẫn đếm đủ', [dem(), R('vGiaCong()').includes('data-a="gchienthem"'), /· 150 đơn/.test(R('vGiaCong()'))], [60, true, true]);
+      R(`ACTIONS.gchienthem({ v: '60' })`);
+      eq('bấm hiện thêm: 120 thẻ', dem(), 120);
+      R(`ACTIONS.gcgon()`);
+      eq('dạng gọn: dựng đủ 150 dòng (giới hạn 200)', [dem(), R('vGiaCong()').includes('data-a="gchienthem"')], [150, false]);
+      R(`S.form.gcq = 'cot n'`);
+      ok('tìm ra 150 đơn: chỉ dựng 60, báo còn bao nhiêu', R('vGiaCong()').split('data-gctim="1"')[1].split('data-a="gcview"').length - 1 === 60 && R('vGiaCong()').includes('Còn 90 đơn khớp nữa'));
+      R(`S.form.gcq = ''; S.gcGon = false; S.gcHien = null; S.gcV = 'to'; S.gc = ${g0};`);
     }
     /* --- xuất trên giao diện --- */
     {
