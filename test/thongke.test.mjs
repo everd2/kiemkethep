@@ -159,7 +159,7 @@ async function main() {
   // quân số theo người, cả hai ca: An 20 người (16 làm, 4 nghỉ), Binh 10 (9 làm, 1 nghỉ); Cuong thiếu số → không tính
   const qsHom = JSON.parse(R(`JSON.stringify((({ sTong, sLam, sNghi, soNgay }) => ({ sTong, sLam, sNghi, soNgay }))(tkQs(S.tk, '${D}', '${D}', null).tong))`));
   eq('quân số hôm nay: tổng các tổ 30 người, đi làm 25, nghỉ 5', qsHom, { sTong: 30, sLam: 25, sNghi: 5, soNgay: 1 });
-  ok('màn ngày: bảng các tổ (quân số, đi làm, nghỉ) và bảng màu 7 ngày', ngMan.includes('Bảng các tổ') && ngMan.includes('% nghỉ 7 ngày gần đây') && /An<\/span>[\s\S]*?>20<\/span>[\s\S]*?>16<\/span>[\s\S]*?>4<\/span>/.test(ngMan) && !ngMan.includes('Đi làm / quân số'), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 600));
+  ok('màn ngày: bảng các tổ (quân số dưới tên tổ, đi làm, nghỉ) và bảng màu 7 ngày', ngMan.includes('Bảng các tổ') && ngMan.includes('% nghỉ 7 ngày gần đây') && /An<\/span>[\s\S]*?quân số 20[\s\S]*?>16<\/span>[\s\S]*?>4<\/span>/.test(ngMan) && !ngMan.includes('Đi làm / quân số'), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 600));
   // Dung tổng 12 người, ca đêm chưa báo, mới có số ca ngày: 0 đi làm (cả tổ ở ca đêm) → bỏ; tự báo ca đêm 7 làm, 1 nghỉ → còn 4 chưa có số
   S.raw.prepare('INSERT INTO quan_so (ngay, ca, user_id, tong, lam, ca_kia, nghi, ghi_chu, ts, by_id) VALUES (?,2,?,12,7,4,?,NULL,?,?)').run(D, U.Dung, '{"om":1}', Date.now(), U.Dung);
   R(`S.tk = null`); R(`ACTIONS.tkxemngay({ v: '${D}' })`); await cho();

@@ -404,13 +404,14 @@ async function main() {
     ok('thẻ nhắc tổ chưa báo mở màn báo cáo ca (bước 1 ở đó); Thêm của CVKTHT chỉ còn một mục', R('vHome()').includes('data-a="nav" data-s="baocaoca"') && R('vMore()').includes('data-s="baocaoca"') && !R('vMore()').includes('data-s="quanso"'));
     R(`ACTIONS.nav({ s: 'baocaoca' })`); await cho();
     const b1 = R('vBaoCaoCa()');
-    ok('một màn theo bước: dải 1 Tổ báo → 2 Soát → 3 Chép, không còn hai thẻ Tổ báo / Thiết lập', b1.includes('data-a="bcden" data-v="1">1 · Tổ báo 1/2<') && b1.includes('data-a="bcden" data-v="2"') && (b1.match(/data-a="bcchep">/g) || []).length === 1 && !b1.includes('data-a="qstab"'));
+    ok('một màn đọc từ trên xuống: thanh trên có số tổ đã báo (chạm tới mục 3) và MỘT nút chép cả báo cáo; không dải bước, không thẻ Tổ báo / Thiết lập riêng', /data-a="bcden" data-v="3">[^<]*Tổ đã báo 1\/2</.test(b1) && (b1.match(/data-a="bcchep">/g) || []).length === 1 && !b1.includes('1 · Tổ báo') && !b1.includes('data-a="qstab"'));
     ok('bước 1 chỉ xem — không có nút ghi thay, không mở ô ghi của tổ', !b1.includes('data-a="qsmo"') && !b1.includes('data-a="qsnhanh"'));
-    ok('tổng hợp và số tổ đã báo chỉ tính tổ làm ca này', R('bcQuanSo(S.bcc).lam') === 19 && b1.includes('data-v="1">1 · Tổ báo 1/2<') && b1.includes('1 · Tổ báo ca ngày: 1/2 tổ'));
+    ok('tổng hợp và số tổ đã báo chỉ tính tổ làm ca này', R('bcQuanSo(S.bcc).lam') === 19 && b1.includes('Tổ đã báo 1/2<'));
     ok('từng tổ chỉ nằm ở mục 3, mỗi dòng kèm nhãn: An đã báo, Em chưa báo, Binh (làm ca đêm) xuống cuối không nhãn; không có thanh nút ở đáy', /Tổ An: [^<]*<\/span><span class="badge ok"[^>]*>Đã báo</.test(b1) && /Tổ Em: chưa báo quân số ca ngày<\/span><span class="badge (warn|bad)"/.test(b1) && /Tổ Binh \(làm ca đêm\)<\/span><\/div>/.test(b1) && b1.indexOf('Tổ Em:') < b1.indexOf('Tổ Binh (làm ca đêm)') && !b1.includes('sendbar'));
-    ok('tổ chưa báo được nêu tên ở bước 1', /(Chưa báo|Quá hạn, chưa báo):<\/b> Em\./.test(b1));
+    ok('tổ chưa báo: thanh trên đếm, tên tổ nêu ở dòng của tổ trong mục 3 kèm nhãn', /(Chưa báo|Quá hạn): 1 tổ · /.test(b1) && /Tổ Em[^<]*<\/span><span class="badge (warn|bad)"/.test(b1));
     // năm số của bước 1 cộng lại đúng bằng tổng: An 19 đi làm + 2 nghỉ, Binh 19 người ca đêm, Em 19 người (tổ tự khai) chưa báo
     ok('tổng hợp cộng đủ: Tổng 59 = Đi làm 19 + Nghỉ 2 + Ca đêm 19 + Chưa báo 19', R('JSON.stringify((({ tong, lam, nghi, kiaSo, chuaSo }) => [tong, lam, nghi, kiaSo, chuaSo])(bcQuanSo(S.bcc)))') === '[59,19,2,19,19]', R('JSON.stringify(bcQuanSo(S.bcc))'));
+    ok('nút nhắc tổ chưa báo nằm ở mục 3 (ca đang diễn ra)', /id="bcb3"[\s\S]*?data-a="bcnhac"/.test(b1));
     R('ACTIONS.bcnhac()'); await cho();
     ok('chép tin nhắc: chỉ nhắc tổ làm ca này mà chưa báo', new RegExp('^Các tổ chưa báo quân số ca ngày ' + dm(ba) + ' \\(hạn 07:00\\):\\n• Tổ Em\\nTổ trưởng mở app').test(String(R('__chep'))), String(R('__chep')));
     R('ACTIONS.bctl()'); await cho();
