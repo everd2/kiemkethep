@@ -32,6 +32,34 @@ const docMau = (row) => {
     // thứ tự tổ do CVKTHT xếp (id Tiểu đội trưởng), dùng cho bảng quân số và mục 3 của báo cáo
     thu_tu: Array.isArray(d.thu_tu) ? d.thu_tu.filter((x) => Number.isInteger(x)) : [] };
 };
+/* MỤC 4 SOẠN THEO DÒNG (xem bcViec ở app.js): chỉnh của người soạn trên các dòng công việc, lưu kèm báo cáo của ca.
+     d."<id đơn>" = { tt: 0–100 | 'xong', g, an: 1 } — g = tiến độ của đơn lúc chỉnh; % hoặc hoàn thành do người soạn đặt cho đơn đó (chỉ trong báo cáo,
+       KHÔNG ghi ngược vào đơn gia công), an = bỏ khỏi báo cáo;
+     them = [id đơn] — đơn chưa có % mà người soạn chạm để đưa vào báo cáo;
+     tu = [{ id, ten, tt }] — việc ngoài app người soạn tự thêm (id để hai người sửa cùng lúc ghép được theo từng dòng);
+       việc chưa xong mang sang ca sau (bcView: viecTruoc).
+   Chỉ là phần chỉnh: dòng nào không chỉnh vẫn theo số mới nhất của đơn. Đọc lại luôn qua đây để dữ liệu lạ không lọt. */
+const ttHop = (v) => (v === 'xong' ? 'xong' : Number.isInteger(v) && v >= 0 && v <= 100 ? v : null);
+export function docViec(v) {
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {}, d = {};
+  for (const [k, x] of Object.entries(o.d && typeof o.d === 'object' ? o.d : {}).slice(0, 300)) {
+    if (!/^\d+$/.test(k) || !x || typeof x !== 'object') continue;
+    // g: tiến độ của đơn LÚC người soạn chỉnh (để nhắc khi đơn đi tiếp sau đó)
+    const tt = ttHop(x.tt), g = tt != null ? ttHop(x.g) : null, m = { ...(tt != null ? { tt } : {}), ...(g != null ? { g } : {}), ...(x.an ? { an: 1 } : {}) };
+    if (Object.keys(m).length) d[k] = m;
+  }
+  const them = Array.isArray(o.them) ? [...new Set(o.them.map(Number).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 300) : [];
+  const tu = (Array.isArray(o.tu) ? o.tu : []).map((x, i) => ({ id: x && /^[A-Za-z0-9]{1,16}$/.test(x.id) ? x.id : 't' + i, ten: chu(x && x.ten, 160), tt: ttHop(x && x.tt) }))
+    .filter((x) => x.ten && x.tt != null).slice(0, 60);
+  return { d, them, tu };
+}
+/* Việc ngoài app mang từ báo cáo ca trước sang: chỉ việc chưa xong. Ca trước chép mục 4 BẰNG CHỮ thì không mang gì: các
+   dòng theo app có thể đã bị xoá trong chữ, mang sang là làm sống lại dòng người soạn đã bỏ. */
+function viecTruoc(row) {
+  const d = row ? docJ(row.data) : null;
+  if (!d || (d.muc && typeof d.muc.s4 === 'string')) return [];
+  return docViec(d.viec).tu.filter((x) => x.tt !== 'xong');
+}
 function docCa(q, st) {
   const hien = caLuc(st);
   if (!q.get('ngay') && !q.get('ca')) return hien;
@@ -48,7 +76,7 @@ function docCa(q, st) {
 export async function bcView(env, url) {
   const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
   const c = docCa(url.searchParams, st), gio = caGio(st, c), hien = caLuc(st);
-  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc] = await env.DB.batch([
+  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),
     env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id WHERE q.ngay = ?`).bind(c.ngay),
@@ -68,6 +96,12 @@ export async function bcView(env, url) {
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare(`SELECT b.data, b.van_ban, b.ts, b.by_id, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id
                     WHERE b.ngay = ? AND b.ca = ?`).bind(c.ngay, c.ca),
+    // loại cấu kiện trong danh mục gia công: chọn nhanh khi thêm việc ngoài app vào mục 4
+    env.DB.prepare("SELECT ten FROM gc_muc WHERE loai = 'ck' ORDER BY sort, id"),
+    /* báo cáo đã lưu GẦN NHẤT TRƯỚC ca này, trong 2 ngày: các việc ngoài app chưa xong mang sang ca này. Báo cáo cũ hơn
+       thì thôi (nghỉ soạn một tuần không kéo việc của tuần trước về). */
+    env.DB.prepare('SELECT data FROM bao_cao_ca WHERE ngay >= ?3 AND (ngay < ?1 OR (ngay = ?1 AND ca < ?2)) ORDER BY ngay DESC, ca DESC LIMIT 1')
+      .bind(c.ngay, c.ca, new Date(Date.parse(c.ngay) - 2 * 864e5).toISOString().slice(0, 10)),
   ]);
   const r = bc.results[0];
   return json({
@@ -77,7 +111,9 @@ export async function bcView(env, url) {
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
     lich: docCfg(mau.results[0]).lich, tl: docCfg(mau.results[0]).tl,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
-    bao: r ? { muc: docJ(r.data).muc || {}, nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
+    ck: ck.results.map((x) => x.ten),
+    viecTruoc: viecTruoc(bcTr.results[0]),
+    bao: r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
     suaDuoc: c.ngay >= vnDay(Date.now() - BC_SUA_NGAY * 864e5),
   });
 }
@@ -115,7 +151,9 @@ export async function bcPut(req, env, user) {
   const dau = b.dau && typeof b.dau === 'object' ? Object.fromEntries(BC_DAU.map((k) => [k, b.dau[k] == null ? cu.dau[k] : chu(b.dau[k], 120)])) : cu.dau;
   const mau = { dau, mmtb: b.mmtb != null ? chu(b.mmtb, 400) : cu.mmtb, kt: cu.kt, thu_tu: cu.thu_tu };
   if (b.kt_mau && typeof muc.s6 === 'string') mau.kt = muc.s6.split('\n').map((x) => chu(x, 200)).filter(Boolean);
-  const data = JSON.stringify({ muc, nguon: b.nguon === 'tl' ? 'tl' : undefined });
+  /* phần chỉnh mục 4: máy không gửi (app bản cũ) thì GIỮ phần đang lưu, không xoá trắng các dòng người khác đã chỉnh */
+  const viecCu = bao ? docJ(bao.data).viec : undefined;
+  const data = JSON.stringify({ muc, viec: b.viec ? docViec(b.viec) : viecCu ? docViec(viecCu) : undefined, nguon: b.nguon === 'tl' ? 'tl' : undefined });
   const mauDoi = JSON.stringify([mau.dau, mau.mmtb, mau.kt]) !== JSON.stringify([cu.dau, cu.mmtb, cu.kt]);
   if (bao && !mauDoi && bao.van_ban === van_ban && JSON.stringify(docJ(bao.data)) === data) {
     // lần chép nào cũng vào nhật ký, kể cả khi không có gì mới để lưu

@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -506,6 +506,12 @@ export const MIGRATIONS = {
     `CREATE TABLE IF NOT EXISTS quan_so_tl (
        ngay TEXT NOT NULL, ca INTEGER NOT NULL, user_id INTEGER NOT NULL, tong INTEGER, lam INTEGER,
        nghi TEXT NOT NULL DEFAULT '{}', ghi_chu TEXT, ts INTEGER NOT NULL, PRIMARY KEY (ngay, ca, user_id))`,
+  ],
+  /* GIA CÔNG: ai ORDER đơn — người order (od_nguoi) và đại đội order (od_dd), chữ tự do, đều không bắt buộc.
+     Đơn cũ để trống. */
+  40: [
+    'ALTER TABLE don_gc ADD COLUMN od_nguoi TEXT',
+    'ALTER TABLE don_gc ADD COLUMN od_dd TEXT',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

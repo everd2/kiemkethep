@@ -386,7 +386,7 @@ export function qsBoot(rows, st, user, mine = [], bcDa = [], cfgRow = null) {
    trăm làm ở máy khách (lọc ca ngày / ca đêm không phải hỏi lại máy chủ). OFF luân phiên tính là nghỉ.
    % nghỉ = công nghỉ ÷ (công đi làm + công nghỉ); của toàn bộ thì cộng công mọi tổ rồi mới chia. */
 export const QS_NGUONG_MAC = 15;
-const TK_NGAY_MAX = 62;
+const TK_NGAY_MAX = 124;
 const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: congNgay(c.ngay, -1), ca: 2 });
 
 /* LƯU SỐ CỦA CA TỔ KHÔNG BÁO, chạy theo lịch mỗi giờ. Số thiết lập và lịch ca chỉ có một bản, sửa là mất số cũ, nên
@@ -427,7 +427,8 @@ export async function qsChotCa(env, now = Date.now()) {
   return ghi.length;
 }
 
-/* Số liệu thô cho màn thống kê, một khoảng ngày (tối đa 62 ngày: tháng đang xem và tháng trước để so sánh). Tiểu đội
+/* Số liệu thô cho màn thống kê, một khoảng ngày (tối đa 124 ngày: tháng đang xem và ba tháng trước để so sánh — với 3
+   ngày trước, TB tháng khi xem ngày; với 3 tháng trước khi xem tháng). Tiểu đội
    trưởng chỉ nhận tổ mình. Kèm danh sách tổ (cả tổ đã thôi nhưng có số trong khoảng này) theo thứ tự tổ, và ngưỡng
    tô đỏ. */
 export async function qsThongKe(env, user, url) {

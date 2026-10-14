@@ -66,7 +66,8 @@ async function main() {
   eq('ngưỡng mặc định 15%', cv.nguong, 15);
   const an = (await S.call('GET', `/quanso/thongke?tu=${tu}&den=${D}`, undefined, 'An')).data;
   eq('Tiểu đội trưởng chỉ thấy tổ mình', [an.to.map((t) => t.name), an.qs.every((r) => r.u === U.An), an.tl.length], [['An'], true, 0]);
-  eq('xem quá 62 ngày: từ chối', (await S.call('GET', `/quanso/thongke?tu=2026-01-01&den=2026-06-01`, undefined, 'Cv')).status, 400);
+  eq('xem 4 tháng (tháng đang xem + 3 tháng trước để so sánh): được', (await S.call('GET', `/quanso/thongke?tu=2026-01-01&den=2026-04-30`, undefined, 'Cv')).status, 200);
+  eq('xem quá 124 ngày: từ chối', (await S.call('GET', `/quanso/thongke?tu=2026-01-01&den=2026-06-01`, undefined, 'Cv')).status, 400);
   eq('Tiểu đội trưởng không đổi được ngưỡng', (await S.call('PUT', '/quanso/nguong', { pct: 20 }, 'An')).status, 403);
   eq('ngưỡng ngoài 1–100: từ chối', (await S.call('PUT', '/quanso/nguong', { pct: 0 }, 'Cv')).status, 400);
 
@@ -105,7 +106,10 @@ async function main() {
   await vao('Cv', 'cvktht');
   ok('Thêm có mục Thống kê quân số', R('vMore()').includes('data-s="qstk"'));
   R(`ACTIONS.nav({ s: 'qstk' })`); await cho();
-  eq('mở màn thống kê: tháng đang chạy', [R('S.screen'), R('tkThangCua()')], ['qstk', D.slice(0, 7)]);
+  eq('mở màn thống kê: mặc định xem theo ngày, hôm nay', [R('S.screen'), R('tkChe()'), R('tkNgayCua()'), R('tkThangCua()')], ['qstk', 'ngay', D, D.slice(0, 7)]);
+  eq('tải đủ tháng đang xem và ba tháng trước', [R('S.tk.tu'), R('S.tk.den')], [R('tkCan().tu'), R('tkCan().den')]);
+  R(`ACTIONS.tkche({ v: 'thang' })`); await cho();
+  eq('chuyển sang xem theo tháng (không tải lại vì đã đủ số)', [R('tkChe()'), R('tkThangCua()'), R('!!S.tk')], ['thang', D.slice(0, 7), true]);
   // toàn bộ ca ngày hôm nay: An 16 làm + 4 nghỉ, Binh 9 làm + 1 nghỉ (số thiết lập), Cuong thiếu số
   const tong = R(`JSON.stringify((({ lam, nghi, to, tl, thieu, ly }) => ({ lam, nghi, to, tl, thieu, ly }))(tkTinh(S.tk, tkThangCua(), 1).tong))`);
   eq('ca ngày: cộng công mọi tổ; OFF tính là nghỉ; ca thiếu số đếm riêng', JSON.parse(tong), { lam: 25, nghi: 5, to: 1, tl: 1, thieu: 1, ly: { om: 2, off: 2, phep: 1 } });
@@ -125,7 +129,49 @@ async function main() {
   eq('CVKTHT đổi ngưỡng: lưu và màn hình theo ngưỡng mới', [R('S.tk.nguong'), /An<\/span>[\s\S]*?var\(--pri\)[\s\S]*?20,0%/.test(R('vThongKeQs()'))], [25, true]);
   R(`ACTIONS.tkthang({ v: '-1' })`); await cho();
   eq('lùi một tháng', R('tkThangCua()'), new Date(Date.UTC(Number(D.slice(0, 4)), Number(D.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7));
-  ok('tháng đang chạy thì không bấm sang tháng sau được', R(`S.tkThang = null; vThongKeQs()`).includes('aria-label="Tháng sau"') && !R('vThongKeQs()').includes('data-a="tkthang" data-v="1"'));
+  ok('tháng đang chạy thì không bấm sang tháng sau được', R(`S.tkThang = null; vThongKeQs()`).includes('aria-label="Tháng sau"') && !R('vThongKeQs()').includes('data-a="tkdi" data-v="1"'));
+
+  /* --- xem theo ngày: so với 3 ngày liền trước và TB tháng --- */
+  // An ca ngày ba hôm trước: 18 + 2 ốm (10%), 20 + 0 (0%), 19 + 1 phép (5%) → TB 3 ngày trước = 3 / 60 = 5,0%
+  const qd = (n) => new Date(Date.parse(D) - n * 864e5).toISOString().slice(0, 10);
+  for (const [n, lam, nghi] of [[1, 18, '{"om":2}'], [2, 20, '{}'], [3, 19, '{"phep":1}']]) {
+    S.raw.prepare('INSERT INTO quan_so (ngay, ca, user_id, tong, lam, ca_kia, nghi, ghi_chu, ts, by_id) VALUES (?,1,?,20,?,0,?,NULL,?,?)').run(qd(n), U.An, lam, nghi, Date.now(), U.An);
+  }
+  R(`S.tk = null; ACTIONS.tkxemngay({ v: '${D}' })`); await cho();
+  eq('chạm một ngày ở biểu đồ tháng: sang xem ngày đó', [R('tkChe()'), R('tkNgayCua()')], ['ngay', D]);
+  const ky = JSON.parse(R('JSON.stringify(tkKy())'));
+  eq('ba ngày liền trước, mốc TB 3 ngày và TB tháng', [ky.truoc, ky.aTu, ky.aDen, ky.bTu], [[qd(3), qd(2), qd(1)], qd(3), qd(1), D.slice(0, 7) + '-01']);
+  R(`S.tkCa = 1`);
+  const ngMan = R('vThongKeQs()');
+  ok('màn ngày: % nghỉ hôm nay, so với TB 3 ngày trước (5,0%), tăng 11,7 điểm, có cột từng ngày', ['Nghỉ 16,7%', 'So với TB 3 ngày trước <b>5,0%</b>', '▲ 11,7 điểm', 'Hôm nay', `data-v="${qd(1)}"`, 'So với TB tháng'].every((x) => ngMan.includes(x)), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 500));
+  ok('từng tổ có chênh với 3 ngày trước của tổ: An ▲ 15,0', /An<\/span>[\s\S]*?20,0%[\s\S]*?▲ 15,0/.test(ngMan));
+  ok('ngày không có tổ nào báo thiếu thì báo rõ tổ không có số', ngMan.includes('Không có số ngày này: Dung'));
+  // quân số theo người, cả hai ca: An 20 người (16 làm, 4 nghỉ), Binh 10 (9 làm, 1 nghỉ); Cuong thiếu số → không tính
+  const qsHom = JSON.parse(R(`JSON.stringify((({ sTong, sLam, sNghi, soNgay }) => ({ sTong, sLam, sNghi, soNgay }))(tkQs(S.tk, '${D}', '${D}', null).tong))`));
+  eq('quân số hôm nay: tổng các tổ 30 người, đi làm 25, nghỉ 5', qsHom, { sTong: 30, sLam: 25, sNghi: 5, soNgay: 1 });
+  ok('màn ngày có quân số từng tổ: đi làm / quân số', ngMan.includes('Quân số từng tổ') && ngMan.includes('Đi làm <b>16</b>/20') && ngMan.includes('83,3%'), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 600));
+  // Dung tổng 12 người, ca đêm chưa báo, mới có số ca ngày: 0 đi làm (cả tổ ở ca đêm) → bỏ; tự báo ca đêm 7 làm, 1 nghỉ → còn 4 chưa có số
+  S.raw.prepare('INSERT INTO quan_so (ngay, ca, user_id, tong, lam, ca_kia, nghi, ghi_chu, ts, by_id) VALUES (?,2,?,12,7,4,?,NULL,?,?)').run(D, U.Dung, '{"om":1}', Date.now(), U.Dung);
+  R(`S.tk = null`); R(`ACTIONS.tkxemngay({ v: '${D}' })`); await cho();
+  const dung = JSON.parse(R(`JSON.stringify(tkQs(S.tk, '${D}', '${D}', ${U.Dung}).tong)`));
+  eq('tổ còn người chưa có số: quân số 12, đi làm 7, nghỉ 1 (4 người còn lại)', [dung.sTong, dung.sLam, dung.sNghi], [12, 7, 1]);
+  ok('màn hiện phần còn lại', R('vThongKeQs()').includes('còn 4'));
+  S.raw.prepare('DELETE FROM quan_so WHERE user_id = ? AND ngay = ? AND ca = 2').run(U.Dung, D);
+  R(`S.tk = null`); R(`ACTIONS.tkxemngay({ v: '${D}' })`); await cho();
+  R(`ACTIONS.tkdi({ v: '-1' })`); await cho();
+  eq('lùi một ngày', R('tkNgayCua()'), qd(1));
+  R(`ACTIONS.tkdi({ v: '5' })`); await cho();
+  eq('tới quá hôm nay: dừng ở hôm nay', R('tkNgayCua()'), D);
+  R('ACTIONS.tkchep()'); await cho();
+  ok('tóm tắt ngày có dòng quân số', String(chep).includes('Quân số: 30 người · đi làm 25 (83,3%) · nghỉ 5'), chep);
+  ok('chép tóm tắt ngày kèm so sánh', String(chep).startsWith(`QUÂN SỐ NGÀY ${D.split('-').reverse().join('/')} (ca ngày)`) && String(chep).includes('So với TB 3 ngày trước: 5,0% (tăng 11,7 điểm)'), chep);
+  R(`ACTIONS.tkto({ v: '${U.An}' })`);
+  const anNgay = R('vThongKeQs()');
+  ok('một tổ, xem theo ngày: so với 3 ngày trước của chính tổ (5,0% → 20,0%)', anNgay.includes('Tổ An') && anNgay.includes('Nghỉ 20,0%') && anNgay.includes('▲ 15,0 điểm'), anNgay.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
+  R(`ACTIONS.tkto({ v: '' }); S.tkCa = 0`);
+  R(`ACTIONS.tkche({ v: 'thang' })`); await cho();
+  const thMan = R('vThongKeQs()');
+  ok('màn tháng: so với tháng trước và TB 3 tháng trước, biểu đồ 4 tháng', thMan.includes('TB 3 tháng trước') && thMan.includes('Th ' + Number(D.slice(5, 7))) && thMan.includes('data-a="tkden"'), thMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
 
   await vao('An', 'tieudoi');
   R(`ACTIONS.nav({ s: 'qstk' })`); await cho();

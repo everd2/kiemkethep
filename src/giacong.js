@@ -19,7 +19,8 @@ import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js
    đã lập danh mục phân khu), tang và cote (cao độ) — phải có ÍT NHẤT MỘT trong hai: đã ghi tầng thì cote
    không bắt buộc —, hang_muc (tuỳ chọn). Phân khu, hạng mục và loại cấu kiện chọn từ
    DANH MỤC do admin lập trước (bảng gc_muc) — để người giao bấm chọn thay vì gõ, và để cả đơn vị gọi một khu
-   bằng đúng một tên: gõ tay thì "Khu A", "khu a", "KA" thành ba khu trên bảng. */
+   bằng đúng một tên: gõ tay thì "Khu A", "khu a", "KA" thành ba khu trên bảng.
+   ORDER: od_nguoi (người order) và od_dd (đại đội order) — ai đặt làm cấu kiện này; chữ tự do, đều không bắt buộc. */
 export const GC_MO = ['moi', 'nhan', 'lam'];
 /* Tiến độ theo nấc 10% cho dễ bấm ngoài bãi; 100% không nằm ở đây vì đó là việc "xác nhận xong". Nấc 10 chứ
    không phải 25 như trước: báo cáo ca gửi cấp trên ghi "đang gia công 80%", "85%", và lấy thẳng số này.
@@ -48,7 +49,7 @@ export const GC_CHUA_XUAT_IDX = 'INDEXED BY idx_don_gc_chua_xuat';
 const GC_SELECT = `SELECT d.id, d.cau_kien, d.hang_muc, d.phan_khu, d.tang, d.cote, d.truc, d.noi_dung, d.user_id, d.han, d.buoi, d.tt, d.pct, d.vuong,
     d.giao_by, d.ts, d.cap_ts, d.xong_ts, d.huy_ly_do, d.mo_lai, d.huy_ts, d.biet_ts,
     d.vuong_loai, d.vuong_dung, d.vuong_ts, d.vuong_xem_ts, d.lam_ts, d.cho_tl, d.tn_id,
-    d.xuat_tt, d.xuat_ts, d.xuat_cho, d.xuat_note, d.xuat_duyet_ts, d.xuat_tu_choi, xg.name xuat_name, xd.name xuat_duyet_name,
+    d.xuat_tt, d.xuat_ts, d.xuat_cho, d.xuat_note, d.xuat_duyet_ts, d.xuat_tu_choi, d.od_nguoi, d.od_dd, xg.name xuat_name, xd.name xuat_duyet_name,
     COALESCE(u.name, '(đã xoá)') uname, COALESCE(g.name, '(đã xoá)') giao_name, h.name huy_name, x.name vuong_xem_name,
     (SELECT json_group_array(json_object('id', n.user_id, 'ten', COALESCE(un.name, '(đã xoá)'), 'biet', n.biet_ts))
        FROM don_gc_nguoi n LEFT JOIN users un ON un.id = n.user_id WHERE n.don_id = d.id) nguoi_json
@@ -80,6 +81,8 @@ const chuTang = (v) => {
   const t = chu(v, 20).replace(/^(tầng|tang)\s*/i, '');
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : null;
 };
+// người / đại đội order: bản app cũ không gửi hai ô này, nên khi sửa đơn mà thiếu hẳn ô thì giữ giá trị cũ chứ không xoá
+const odCua = (b, cu, k, max) => (b[k] === undefined && cu ? cu[k] || null : chu(b[k], max) || null);
 const khongThay = () => new HttpError(404, 'Không tìm thấy đơn gia công');
 const vuaDoi = () => new HttpError(409, 'Đơn vừa được người khác cập nhật. Màn hình đã tải lại, hãy xem rồi làm lại.', 'changed');
 
@@ -142,7 +145,7 @@ async function docDon(env, b, cu) {
      có luật này) không có cả hai thì vẫn sửa được nếu vẫn để trống cả hai. */
   const tang = chuTang(b.tang), cote = chu(b.cote, 20) || null;
   if (!tang && !cote && !(cu && !cu.tang && !cu.cote)) throw bad('Cần ghi tầng hoặc cote (đã ghi tầng thì cote không bắt buộc)');
-  return { cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung: chu(b.noi_dung, 300) || null, han, buoi, user_id: uid, user_ids: ids, uname: u.name };
+  return { cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung: chu(b.noi_dung, 300) || null, od_nguoi: odCua(b, cu, 'od_nguoi', 60), od_dd: odCua(b, cu, 'od_dd', 40), han, buoi, user_id: uid, user_ids: ids, uname: u.name };
 }
 
 /* Bảng chung: mọi đơn còn mở, cộng đơn đã xong / đã huỷ trong 30 ngày gần đây. Kèm danh sách Tiểu đội
@@ -200,11 +203,11 @@ export async function gcCreate(req, env, user) {
   }
   const ts = Date.now();
   const r = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO don_gc (cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung, user_id, han, buoi, tt, pct, giao_by, ts, cap_ts)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,'moi',0,?,?,?)`).bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.user_id, f.han, f.buoi, user.id, ts, ts),
+    env.DB.prepare(`INSERT INTO don_gc (cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung, od_nguoi, od_dd, user_id, han, buoi, tt, pct, giao_by, ts, cap_ts)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'moi',0,?,?,?)`).bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.od_nguoi, f.od_dd, f.user_id, f.han, f.buoi, user.id, ts, ts),
     // MAX(id) = đơn vừa ghi ở câu trên: cả batch là một giao dịch
     env.DB.prepare('INSERT INTO don_gc_nguoi (don_id, user_id) SELECT (SELECT MAX(id) FROM don_gc), value FROM json_each(?)').bind(JSON.stringify(f.user_ids)),
-    auditStmt(env, user, 'gc_giao', { cau_kien: f.cau_kien, hang_muc: f.hang_muc, phan_khu: f.phan_khu, tang: f.tang, cote: f.cote, truc: f.truc, cho: f.uname, han: f.han }),
+    auditStmt(env, user, 'gc_giao', { cau_kien: f.cau_kien, hang_muc: f.hang_muc, phan_khu: f.phan_khu, tang: f.tang, cote: f.cote, truc: f.truc, cho: f.uname, han: f.han, od_nguoi: f.od_nguoi || undefined, od_dd: f.od_dd || undefined }),
     bump(env),
   ]);
   return json({ ok: true, id: r[0].meta.last_row_id });
@@ -228,6 +231,8 @@ export async function gcUpdate(req, env, user, id) {
   if (f.cote !== d.cote) doi.push('cote: ' + (f.cote || '(bỏ)'));
   if (f.truc !== d.truc) doi.push('trục: ' + f.truc);
   if (f.noi_dung !== d.noi_dung) doi.push('đổi nội dung');
+  if (f.od_nguoi !== d.od_nguoi) doi.push('người order: ' + (f.od_nguoi || '(bỏ)'));
+  if (f.od_dd !== d.od_dd) doi.push('đại đội order: ' + (f.od_dd || '(bỏ)'));
   const hanTxt = (x) => fmtDay(x.han) + (x.buoi === 'sang' ? ' sáng' : x.buoi === 'chieu' ? ' chiều' : '');
   if (f.han !== d.han || f.buoi !== d.buoi) doi.push('hạn ' + hanTxt(d) + ' → ' + hanTxt(f));
   /* Đổi người: thêm / bớt người cùng làm thì đơn giữ nguyên trạng thái. Đổi HẲN sang những người khác (không còn ai
@@ -239,8 +244,8 @@ export async function gcUpdate(req, env, user, id) {
   if (!doi.length) return json({ ok: true, id, doi: 0 });
   const ts = Math.max(Date.now(), d.cap_ts + 1);
   await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM don_gc WHERE id = ?1 AND cap_ts = ?2)', id, d.cap_ts), [
-    env.DB.prepare('UPDATE don_gc SET cau_kien = ?, hang_muc = ?, phan_khu = ?, tang = ?, cote = ?, truc = ?, noi_dung = ?, user_id = ?, han = ?, buoi = ?, tt = ?, cap_ts = ? WHERE id = ?')
-      .bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.user_id, f.han, f.buoi, giaoLai ? 'moi' : d.tt, ts, id),
+    env.DB.prepare('UPDATE don_gc SET cau_kien = ?, hang_muc = ?, phan_khu = ?, tang = ?, cote = ?, truc = ?, noi_dung = ?, od_nguoi = ?, od_dd = ?, user_id = ?, han = ?, buoi = ?, tt = ?, cap_ts = ? WHERE id = ?')
+      .bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.od_nguoi, f.od_dd, f.user_id, f.han, f.buoi, giaoLai ? 'moi' : d.tt, ts, id),
     env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id = ? AND user_id NOT IN (SELECT value FROM json_each(?))').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id) SELECT ?, value FROM json_each(?)').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT INTO don_gc_log (don_id, ts, user_id, viec, pct, note) VALUES (?,?,?,?,?,?)').bind(id, ts, user.id, 'sua', d.pct, doi.join(' · ')),

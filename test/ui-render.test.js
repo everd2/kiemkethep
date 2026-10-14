@@ -283,6 +283,7 @@ function one(label) {
   out.push([label, h.length, /undefined|NaN|\\[object Object\\]/.test(h) ? 'BAD:' + (h.match(/.{0,40}(undefined|NaN|\\[object Object\\]).{0,40}/) || [''])[0] : 'ok']);
 }
 for (const sc of SCREENS) { S.screen = sc; one(sc); }
+S.screen = 'baocaoca'; S.bcV = null; S.bcMo = 's4'; one('baocaoca+muc4-theo-dong'); S.bcvMo = true; one('baocaoca+muc4-them-viec'); S.bcvMo = false; S.bcMo = null;
 S.screen = 'qstk'; S.tkCa = 2; one('qstk+ca-dem'); S.tkCa = 0; S.tkTo = 2; S.tkNgay = S.boot.today; one('qstk+mot-to'); S.tkTo = 4; one('qstk+to-thieu-so'); S.tkTo = null; S.tkNgMo = true; one('qstk+doi-nguong'); S.tkNgMo = false; one('qstk+chon-ngay'); S.tkNgay = null;
 { const me0 = S.me; S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; one('qstk+tieu-doi-truong'); S.me = me0; }
 // bảng quân số đang xếp thứ tự tổ, và thẻ báo của tổ trưởng đang mở phần người nghỉ + dòng ca kia

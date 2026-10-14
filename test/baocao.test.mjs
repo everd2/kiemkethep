@@ -333,6 +333,99 @@ async function main() {
     S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   }
 
+  /* ===== 3d. Mục 4 soạn theo dòng =====
+     Chạm −10 / +10 / Xong / × trên từng đơn, thêm việc ngoài app bằng chạm; chỉnh chỉ vào báo cáo, không đổi đơn gia
+     công; việc ngoài app chưa xong tự mang sang ca sau. */
+  {
+    R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    R("ACTIONS.bcsua({ k: 's4' })");
+    ok('mở mục 4: soạn theo dòng (nút −10 / +10 / Xong / ×), không phải ô chữ', R('vBaoCaoCa()').includes(`data-a="bcvpct" data-k="d${d1}" data-v="10"`) && R('vBaoCaoCa()').includes(`data-a="bcvxong" data-k="d${d4}"`) && !R('vBaoCaoCa()').includes('id="bc_s4"'));
+    const s4 = () => R("bcGet('s4')").split(String.fromCharCode(10));
+    R(`ACTIONS.bcvpct({ k: 'd${d1}', v: '10' })`);
+    ok('+10 trên đơn 80%: thành 90%', s4().includes('Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 90%'), s4().join(' | '));
+    R(`ACTIONS.bcvxong({ k: 'd${d4}' })`);
+    eq('Xong: dòng thành hoàn thành, xếp sau các việc đang làm', s4().slice(-1), ['Thang bộ TB12 tầng 2-3 trục 13: hoàn thành']);
+    R(`ACTIONS.bcvbo({ k: 'd${d2}' })`);
+    ok('×: bỏ dòng khỏi báo cáo, đơn đó thành nút gợi ý để thêm lại', !s4().some((l) => l.startsWith('Vách W1')) && R('vBaoCaoCa()').includes(`data-a="bcvthem" data-v="${d2}"`));
+    R(`ACTIONS.bcvthem({ v: '${d2}' })`);
+    ok('chạm gợi ý: đơn vào lại báo cáo', s4().includes('Vách W1 cote 18.5-21.5m trục X27-X28 / 13: đang gia công 50%'));
+    R(`ACTIONS.bcvmo(); S.form.bcv_ten = 'LK11, LK12 (thấp tầng)'; ACTIONS.bcvmoi({ v: '10' })`);
+    const t0 = 't' + R('S.bcV.tu[0].id');
+    for (let k = 0; k < 5; k++) R(`ACTIONS.bcvpct({ k: '${t0}', v: '10' })`);
+    R(`ACTIONS.bcvmo(); ACTIONS.bcvck({ v: 'Cột' }); S.form.bcv_tang = 'Tầng 3'; S.form.bcv_truc = 'trục A-B'; ACTIONS.bcvmoi({ v: 'xong' })`);
+    ok('thêm việc ngoài app: gõ hoặc chạm loại cấu kiện + tầng + trục, đổi % bằng chạm', s4().includes('LK11, LK12 (thấp tầng): đang gia công 60%') && s4().includes('Cột tầng 3 trục A-B: hoàn thành'), s4().join(' | '));
+    ok("mục 4 hiện sửa chưa chép và bản sẽ gửi đổi theo", R('vBaoCaoCa()').includes('4. Công việc trong ngày</b> · <b style="color:var(--warn)">sửa chưa chép</b>') && R('bcTao()').includes('• LK11, LK12 (thấp tầng): đang gia công 60%'));
+    // mục 8 theo mục 4: Thang bộ TB12 trễ hạn nhưng đã đánh Xong ở mục 4 thì không còn trong mục 8
+    ok('đơn đánh Xong ở mục 4 không còn là trễ ở mục 8', !R("bcGet('s8')").includes('Thang bộ TB12'), R("bcGet('s8')"));
+    // 10–90%: +10 ở 90 là hoàn thành, −10 không xuống dưới 10
+    R(`ACTIONS.bcvpct({ k: 'd${d2}', v: '10' })`); for (let k = 0; k < 4; k++) R(`ACTIONS.bcvpct({ k: 'd${d2}', v: '10' })`);
+    ok('+10 ở 90%: thành hoàn thành, không ra "100%"', s4().includes('Vách W1 cote 18.5-21.5m trục X27-X28 / 13: hoàn thành') && !s4().some((l) => l.includes('100%')), s4().join(' | '));
+    for (let k = 0; k < 12; k++) R(`ACTIONS.bcvpct({ k: 'd${d2}', v: '-10' })`);
+    ok('−10 không xuống dưới 10%', s4().includes('Vách W1 cote 18.5-21.5m trục X27-X28 / 13: đang gia công 10%'), s4().join(' | '));
+    R(`ACTIONS.bcvtheo({ k: 'd${d2}' })`);
+    R(`ACTIONS.bcvpct({ k: 'd${d2}', v: '-10' })`);
+    ok('chỉnh % cố ý khác số đơn: KHÔNG nhắc', !R('vBaoCaoCa()').includes('Đơn đang') && !R('vBaoCaoCa()').includes('dòng khác số đơn'));
+    // tổ báo tiến độ mới cho đơn đó sau lúc chỉnh (giả lập số đơn trên màn đổi): nhắc, chạm là lấy theo đơn
+    R(`S.bcc.don.find((x) => x.id === ${d2}).pct = 60`);
+    ok('đơn đi tiếp sau lúc chỉnh: có nhắc "Đơn đang …", chạm là lấy theo đơn', R('vBaoCaoCa()').includes('Đơn đang 60% · lấy theo đơn') && R('vBaoCaoCa()').includes('1 dòng khác số đơn')
+      && (R(`ACTIONS.bcvtheo({ k: 'd${d2}' })`), s4().includes('Vách W1 cote 18.5-21.5m trục X27-X28 / 13: đang gia công 60%')), s4().join(' | '));
+    R(`S.bcc.don.find((x) => x.id === ${d2}).pct = 50`);
+    // tên việc tự thêm có dấu cách thừa: chuẩn hoá ngay như server, mở lại không bị báo "Chép lại"
+    R(`ACTIONS.bcvmo(); S.form.bcv_ten = 'Ram  dốc   B1'; ACTIONS.bcvmoi({ v: '10' })`);
+    ok('dấu cách thừa trong tên việc được gộp ngay lúc thêm', s4().includes('Ram dốc B1: đang gia công 10%'));
+    R('ACTIONS.bcchep()'); await cho();
+    R(`S.bcc = null; go('baocaoca', true)`); await cho();
+    ok('mở lại sau khi chép: bước 3 vẫn "Đã chép", không báo nhầm "Chép lại"', R('vBaoCaoCa()').includes('3 · Đã chép<'), R('vBaoCaoCa()').match(/3 · [^<]+</));
+    const tRam = 't' + R("S.bcV.tu.find((x) => x.ten === 'Ram dốc B1').id");
+    R(`ACTIONS.bcvbo({ k: '${tRam}' })`);
+    // hai người cùng soạn: người kia vừa thêm một việc và chép; mình (đang chỉnh dòng khác) chép sau → ghép theo từng dòng
+    const goc2 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, 'Admin')).data;
+    R(`ACTIONS.bcvpct({ k: 'd${d1}', v: '-10' })`);
+    const khac = await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: goc2.bao.ts, van_ban: goc2.bao.van_ban + ' (Admin)', muc: goc2.bao.muc, viec: { ...goc2.bao.viec, tu: goc2.bao.viec.tu.concat({ id: 'admin1', ten: 'Cọc khoan nhồi', tt: 20 }) } }, 'Admin');
+    eq('người kia chép trước', khac.status, 200);
+    R('ACTIONS.bcchep()'); await cho();
+    ok('mình chép sau: bị chặn, ghép theo từng dòng — việc người kia vừa thêm VẪN CÒN, dòng mình chỉnh và dòng mình bỏ giữ nguyên', s4().includes('Cọc khoan nhồi: đang gia công 20%') && s4().includes('Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 80%') && !s4().some((l) => l.startsWith('Ram dốc')), s4().join(' | '));
+    R('ACTIONS.bcchep()'); await cho();
+    const tAdmin = 't' + 'admin1';
+    R(`ACTIONS.bcvbo({ k: '${tAdmin}' })`);
+    R('ACTIONS.bcchep()'); await cho();
+    const luu = JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', D).data).viec;
+    eq('chép: phần chỉnh lưu kèm báo cáo; tiến độ đơn gia công KHÔNG đổi', [luu.tu.map(({ ten, tt }) => ({ ten, tt })), S.one('SELECT pct FROM don_gc WHERE id = ?', d1).pct, S.one('SELECT tt FROM don_gc WHERE id = ?', d4).tt],
+      [[{ ten: 'LK11, LK12 (thấp tầng)', tt: 60 }, { ten: 'Cột tầng 3 trục A-B', tt: 'xong' }], 80, 'lam']);
+    const sau = vnDay(Date.parse(D) + 864e5);
+    R(`S.bcCa = { ngay: '${sau}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    ok('ca sau (chưa ai lưu): việc tự thêm chưa xong mang sang, việc đã hoàn thành thì không; đơn theo số của đơn', s4().includes('LK11, LK12 (thấp tầng): đang gia công 60%') && !s4().some((l) => l.startsWith('Cột tầng 3')) && s4().includes('Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 80%'), s4().join(' | '));
+    R("ACTIONS.bcsua({ k: 's4' }); ACTIONS.bcvchu()");
+    ok('Sửa bằng chữ: ô chữ bắt đầu từ đúng chữ đang hiện, có nút về soạn theo dòng', R('vBaoCaoCa()').includes('id="bc_s4"') && R("S.bcM.s4").includes('LK11') && R('vBaoCaoCa()').includes('data-a="bclay" data-k="s4"'));
+    R("ACTIONS.bclay({ k: 's4' })");
+    ok('về soạn theo dòng', typeof R('S.bcM.s4') === 'undefined' && R('vBaoCaoCa()').includes('data-a="bcvpct"'));
+    const rac = await S.call('PUT', '/baocao', { ngay: sau, ca: 1, ts: 0, van_ban: 'x', muc: {}, viec: { d: { abc: { tt: 5 }, [d1]: { tt: 999 } }, tu: [{ ten: '', tt: 10 }, { ten: 'y', tt: 'gi' }] } }, CV);
+    eq('dữ liệu lạ trong phần chỉnh mục 4: server bỏ đi', [rac.status, JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 1', sau).data).viec], [200, { d: {}, them: [], tu: [] }]);
+    S.raw.exec(`DELETE FROM bao_cao_ca WHERE ngay = '${sau}'`);
+    // app bản cũ (không gửi phần chỉnh mục 4) chép báo cáo: phần chỉnh đang lưu giữ nguyên, không bị xoá trắng
+    const b5 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, CV)).data;
+    eq('app bản cũ chép (không gửi phần chỉnh mục 4): phần chỉnh đang lưu giữ nguyên', [(await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b5.bao.ts, van_ban: b5.bao.van_ban + ' ', muc: b5.bao.muc }, CV)).status,
+      JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', D).data).viec.tu.map((x) => x.ten)], [200, ['LK11, LK12 (thấp tầng)', 'Cột tầng 3 trục A-B']]);
+    // ca trước chép mục 4 BẰNG CHỮ: không mang việc tự thêm sang (có thể đã bị xoá trong chữ)
+    const b6 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, CV)).data;
+    await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b6.bao.ts, van_ban: b6.bao.van_ban, muc: { ...b6.bao.muc, s4: 'Chữ tự gõ' }, viec: b6.bao.viec }, CV);
+    eq('ca trước chép mục 4 bằng chữ: không mang việc tự thêm sang', (await S.call('GET', `/baocao?ngay=${sau}&ca=1`, undefined, CV)).data.viecTruoc, []);
+    const b7 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, CV)).data;
+    await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b7.bao.ts, van_ban: b7.bao.van_ban, muc: Object.fromEntries(Object.entries(b7.bao.muc).filter(([k]) => k !== 's4')), viec: b7.bao.viec }, CV);
+    // chỉ mang từ báo cáo trong 2 ngày
+    const xa = vnDay(Date.parse(D) - 4 * 864e5);
+    S.raw.prepare('INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?, 1, ?, ?, 1, ?)').run(xa, JSON.stringify({ muc: {}, viec: { d: {}, them: [], tu: [{ id: 'cu1', ten: 'Việc cũ', tt: 40 }] } }), 'x', U[CV]);
+    eq('mang sang chỉ từ báo cáo trong 2 ngày: cách 2 ngày thì có, cách 3 ngày thì không', [(await S.call('GET', `/baocao?ngay=${vnDay(Date.parse(D) - 2 * 864e5)}&ca=1`, undefined, CV)).data.viecTruoc.map((x) => x.ten), (await S.call('GET', `/baocao?ngay=${vnDay(Date.parse(D) - 864e5)}&ca=1`, undefined, CV)).data.viecTruoc],
+      [['Việc cũ'], []]);
+    S.raw.exec(`DELETE FROM bao_cao_ca WHERE ngay = '${xa}'`);
+    // chỉnh trên một đơn không còn trong báo cáo của ca (đã huỷ, hay xong từ ca trước): không làm mục 4 thành "đã chỉnh"
+    R(`S.bcc = null; go('baocaoca', true)`); await cho();
+    R("S.bcV.d['99999'] = { tt: 40, g: 20 }; S.bcV.them.push(88888)");
+    ok('chỉnh trên đơn không còn trong ca: mục 4 không bị gắn nhãn "đã chỉnh", không có nút lấy lại', !R('vBaoCaoCa()').includes('đã chỉnh trên đơn') && !R('vBaoCaoCa()').includes('data-a="bclay" data-k="s4"'));
+    R("delete S.bcV.d['99999']; S.bcV.them.pop()");
+    R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
+  }
+
   /* ===== 4. Lưu: kiểm dữ liệu ===== */
   eq('báo cáo trống: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 1, van_ban: '  ' }, CV)).status, 400);
   eq('ca lạ: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 3, van_ban: 'x' }, CV)).status, 400);

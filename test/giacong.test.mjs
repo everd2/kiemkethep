@@ -58,6 +58,22 @@ async function main() {
   ok('giao đơn làm tăng rev (máy khác tự tải lại)', rev() > rev0);
   const d1 = (await xem(id)).don;
   eq('đơn mới: mới giao, 0%, đúng người, đúng người giao', [d1.tt, d1.pct, d1.uname, d1.giao_name, d1.truc, d1.han, d1.buoi], ['moi', 0, 'An', 'Cv', 'X12-X17 / Y3-Y5', mai, 'chieu']);
+  {
+    // người order và đại đội order: không bắt buộc; sửa thì ghi vào lịch sử; bản app cũ không gửi hai ô thì giữ nguyên
+    const ro = await S.call('POST', '/giacong', don({ truc: 'Thử order', od_nguoi: '  Nguyễn  Văn A ', od_dd: 'Đại đội 2' }), 'Cv');
+    const q = ro.data.id;
+    eq('giao kèm người order, đại đội order (chuẩn hoá khoảng trắng)', [(await xem(q)).don.od_nguoi, (await xem(q)).don.od_dd], ['Nguyễn Văn A', 'Đại đội 2']);
+    const ban = { ...don({ truc: 'Thử order' }), users: [U.An] };
+    await S.call('PATCH', '/giacong/' + q, ban, 'Cv');
+    eq('bản app cũ sửa đơn (không gửi hai ô): giữ nguyên người / đại đội order', [(await xem(q)).don.od_nguoi, (await xem(q)).don.od_dd], ['Nguyễn Văn A', 'Đại đội 2']);
+    await S.call('PATCH', '/giacong/' + q, { ...ban, od_nguoi: 'Trần B', od_dd: '' }, 'Cv');
+    const dq = await xem(q);
+    eq('sửa người order, bỏ đại đội order', [dq.don.od_nguoi, dq.don.od_dd], ['Trần B', null]);
+    ok('lịch sử ghi đổi người order và bỏ đại đội order', /người order: Trần B/.test(dq.log[0].note) && /đại đội order: \(bỏ\)/.test(dq.log[0].note), dq.log[0].note);
+    const rk = await S.call('POST', '/giacong', don({ truc: 'Thử không order' }), 'Cv');
+    eq('không ghi người / đại đội order vẫn giao được', [rk.status, (await xem(rk.data.id)).don.od_nguoi, (await xem(rk.data.id)).don.od_dd], [200, null, null]);
+    S.raw.exec(`DELETE FROM don_gc_log WHERE don_id IN (${q}, ${rk.data.id}); DELETE FROM don_gc_nguoi WHERE don_id IN (${q}, ${rk.data.id}); DELETE FROM don_gc WHERE id IN (${q}, ${rk.data.id})`);
+  }
   eq('nhật ký ghi lần giao', JSON.parse(S.one("SELECT detail FROM audit WHERE action = 'gc_giao'").detail).cho, 'An');
 
   /* ===== 2. Ai cũng xem được mọi đơn ===== */

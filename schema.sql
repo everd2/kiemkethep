@@ -439,6 +439,7 @@ CREATE INDEX IF NOT EXISTS idx_bao_cao_huy_dk ON bao_cao_huy(day, khu_id);
 -- vuong: lý do đang kẹt; NULL = không vướng. Là cờ đi kèm chứ không phải một trạng thái.
 -- giao_by, ts: ai giao, lúc nào. cap_ts: lần cập nhật gần nhất, cũng là dấu để chặn hai người ghi đè nhau.
 -- mo_lai: lý do đơn bị mở lại sau khi đã báo xong; xoá khi đơn xong lần nữa hoặc bị huỷ.
+-- od_nguoi / od_dd: người order và đại đội order đơn (chữ tự do, không bắt buộc).
 -- Trễ hạn không lưu: han < hôm nay mà tt còn mở là trễ (hạn buổi sáng thì trễ từ 12h trưa hôm đó).
 CREATE TABLE IF NOT EXISTS don_gc (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -480,7 +481,9 @@ CREATE TABLE IF NOT EXISTS don_gc (
   xuat_note TEXT,
   xuat_duyet_by INTEGER,
   xuat_duyet_ts INTEGER,
-  xuat_tu_choi TEXT
+  xuat_tu_choi TEXT,
+  od_nguoi TEXT,
+  od_dd TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_don_gc_tt ON don_gc(tt, cap_ts);
 -- index một phần: chỉ chứa đơn đã xong mà chưa xuất (ít dòng), để không phải đi qua mọi đơn đã xong. Câu truy vấn ép dùng nó.
@@ -603,7 +606,7 @@ CREATE TABLE IF NOT EXISTS don_gc_doc (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 39);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 40);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
