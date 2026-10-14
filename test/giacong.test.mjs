@@ -72,6 +72,13 @@ async function main() {
     ok('lịch sử ghi đổi người order và bỏ đại đội order', /người order: Trần B/.test(dq.log[0].note) && /đại đội order: \(bỏ\)/.test(dq.log[0].note), dq.log[0].note);
     const rk = await S.call('POST', '/giacong', don({ truc: 'Thử không order' }), 'Cv');
     eq('không ghi người / đại đội order vẫn giao được', [rk.status, (await xem(rk.data.id)).don.od_nguoi, (await xem(rk.data.id)).don.od_dd], [200, null, null]);
+    // danh mục chọn nhanh người / đại đội order: admin lập; tên ngoài danh mục vẫn giao được
+    eq('admin thêm người order, đại đội order vào danh mục', [(await S.call('POST', '/giacong/muc', { loai: 'od', ten: 'Nguyễn Văn A' }, 'Admin')).status, (await S.call('POST', '/giacong/muc', { loai: 'dd', ten: 'Đại đội 2' }, 'Admin')).status], [200, 200]);
+    eq('trùng tên trong danh mục: từ chối', (await S.call('POST', '/giacong/muc', { loai: 'dd', ten: 'đại đội 2' }, 'Admin')).status, 400);
+    const mu = (await S.call('GET', '/giacong', undefined, 'Cv')).data.muc;
+    eq('bảng đơn kèm hai danh mục order', [mu.od.map((m) => m.ten), mu.dd.map((m) => m.ten)], [['Nguyễn Văn A'], ['Đại đội 2']]);
+    eq('người order ngoài danh mục vẫn giao được', (await S.call('PATCH', '/giacong/' + q, { ...ban, od_nguoi: 'Lê C', od_dd: 'Đại đội 9' }, 'Cv')).status, 200);
+    S.raw.exec("DELETE FROM gc_muc WHERE loai IN ('od', 'dd')");
     S.raw.exec(`DELETE FROM don_gc_log WHERE don_id IN (${q}, ${rk.data.id}); DELETE FROM don_gc_nguoi WHERE don_id IN (${q}, ${rk.data.id}); DELETE FROM don_gc WHERE id IN (${q}, ${rk.data.id})`);
   }
   eq('nhật ký ghi lần giao', JSON.parse(S.one("SELECT detail FROM audit WHERE action = 'gc_giao'").detail).cho, 'An');

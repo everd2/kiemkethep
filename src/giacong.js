@@ -86,11 +86,12 @@ const odCua = (b, cu, k, max) => (b[k] === undefined && cu ? cu[k] || null : chu
 const khongThay = () => new HttpError(404, 'Không tìm thấy đơn gia công');
 const vuaDoi = () => new HttpError(409, 'Đơn vừa được người khác cập nhật. Màn hình đã tải lại, hãy xem rồi làm lại.', 'changed');
 
-// danh mục chọn nhanh, admin lập trước: phân khu, hạng mục, loại cấu kiện ("Khác" luôn có sẵn ở máy khách, không lưu)
-export const GC_MUC = { khu: 'phân khu', hm: 'hạng mục', ck: 'loại cấu kiện', vg: 'lý do vướng' };
+/* danh mục chọn nhanh, admin lập trước: phân khu, hạng mục, loại cấu kiện ("Khác" luôn có sẵn ở máy khách, không lưu),
+   lý do vướng, người order, đại đội order. Hai mục order chỉ để bấm cho nhanh: vẫn gõ được tên ngoài danh mục. */
+export const GC_MUC = { khu: 'phân khu', hm: 'hạng mục', ck: 'loại cấu kiện', vg: 'lý do vướng', od: 'người order', dd: 'đại đội order' };
 const GC_MUC_MAX = 40;
 const MUC_SQL = 'SELECT id, loai, ten FROM gc_muc ORDER BY loai, sort, id';
-const xepMuc = (rows) => { const o = { khu: [], hm: [], ck: [], vg: [] }; rows.forEach((r) => { if (o[r.loai]) o[r.loai].push({ id: r.id, ten: r.ten }); }); return o; };
+const xepMuc = (rows) => { const o = { khu: [], hm: [], ck: [], vg: [], od: [], dd: [] }; rows.forEach((r) => { if (o[r.loai]) o[r.loai].push({ id: r.id, ten: r.ten }); }); return o; };
 // so tên không phân hoa/thường (COLLATE NOCASE của SQLite chỉ biết chữ không dấu, nên so ở đây)
 const mucTen = (ds, v) => { const x = ds.find((m) => m.ten.toLowerCase() === String(v).toLowerCase()); return x ? x.ten : null; };
 
@@ -262,7 +263,7 @@ export async function gcMucAdd(req, env, user) {
   const b = await readJson(req);
   const loai = String(b.loai || '');
   if (!GC_MUC[loai]) throw bad('Loại danh mục không hợp lệ');
-  const ten = chu(b.ten, loai === 'hm' ? 60 : 40);
+  const ten = chu(b.ten, loai === 'hm' || loai === 'od' ? 60 : 40);
   if (!ten) throw bad('Cần ghi tên ' + GC_MUC[loai]);
   if ((loai === 'ck' || loai === 'vg') && ten.toLowerCase() === 'khác') throw bad('"Khác" luôn có sẵn, không cần thêm');
   const co = (await env.DB.prepare('SELECT ten FROM gc_muc WHERE loai = ?').bind(loai).all()).results;

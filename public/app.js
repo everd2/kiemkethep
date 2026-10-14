@@ -3355,7 +3355,10 @@ function vGcForm() {
   // trục đã dùng gần đây (ưu tiên cùng phân khu đang chọn): loạt đơn liền nhau thường chung một dải trục
   const trucGoiY = gcGoiY((G.items || []).filter((d) => !F.khu || d.phan_khu === F.khu), 'truc', 'truc', 5);
   const tangGoiY = gcGoiY(G.items || [], 'tang', 'tang', 6);
-  const odnGoiY = gcGoiY(G.items || [], 'od_nguoi', 'odn', 5), oddGoiY = gcGoiY(G.items || [], 'od_dd', 'odd', 5);
+  // người / đại đội order: nút theo danh mục (admin lập), cộng tên đã dùng gần đây mà chưa có trong danh mục
+  const dsOdn = gcMucTen('od'), dsOdd = gcMucTen('dd');
+  const odnGoiY = gcGoiY(G.items || [], 'od_nguoi', 'odn', 5).filter((t) => !dsOdn.includes(t)), oddGoiY = gcGoiY(G.items || [], 'od_dd', 'odd', 5).filter((t) => !dsOdd.includes(t));
+  const odChon = (ds, k, a) => (ds.length ? `<div class="wrap">${ds.map((t) => `<button class="chip s ${String(S.form[k] || '').trim() === t ? 'on' : ''}" data-a="${a}" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : '');
   const kieu = gcTrucKieu();
   const oTruc = (k, sau, chu) => `<input class="inp s" id="${k}" style="flex:1;min-width:0;text-align:center;padding:0 2px" ${chu ? 'autocapitalize="characters" maxlength="5"' : 'inputmode="numeric" maxlength="4"'} autocomplete="off" enterkeyhint="${sau ? 'next' : 'done'}" data-enter="${sau ? 'gcden' + sau : 'gcblur'}" data-model="${k}" value="${esc(S.form[k] || '')}">`;
   const nhan = (t) => `<b style="flex:0 0 40px">${t}</b>`, gach = '<span class="muted" style="flex:none">–</span>';
@@ -3391,10 +3394,12 @@ function vGcForm() {
     <b class="sm">Nội dung, khối lượng ${tuy}</b>
     <input class="inp s" id="gcnd" maxlength="300" placeholder="Ví dụ: 2,4 tấn; D16 × 120 thanh, đai D8 a150" autocomplete="off" data-model="gcnd" value="${esc(S.form.gcnd || '')}">
     <b class="sm">Người order ${tuy}</b>
-    <input class="inp s" id="gcodn" maxlength="60" placeholder="Họ tên người order" autocomplete="off" enterkeyhint="next" data-enter="gcdenodd" data-model="gcodn" value="${esc(S.form.gcodn || '')}">
+    ${odChon(dsOdn, 'gcodn', 'gcodnq')}
+    <input class="inp s" id="gcodn" maxlength="60" placeholder="${dsOdn.length ? 'Hoặc gõ tên khác' : 'Họ tên người order'}" autocomplete="off" enterkeyhint="next" data-enter="gcdenodd" data-model="gcodn" value="${esc(S.form.gcodn || '')}">
     ${odnGoiY.length ? `<div class="row gap6" ${cuon} data-sx="gcodn">${odnGoiY.map((t) => gcChipGoiY('odn', t, String(S.form.gcodn || '').trim() === t, 'gcodnq')).join('')}</div>` : ''}
     <b class="sm">Đại đội order ${tuy}</b>
-    <input class="inp s" id="gcodd" maxlength="40" placeholder="Ví dụ: Đại đội 2" autocomplete="off" enterkeyhint="done" data-enter="gcblur" data-model="gcodd" value="${esc(S.form.gcodd || '')}">
+    ${odChon(dsOdd, 'gcodd', 'gcoddq')}
+    <input class="inp s" id="gcodd" maxlength="40" placeholder="${dsOdd.length ? 'Hoặc gõ tên khác' : 'Ví dụ: Đại đội 2'}" autocomplete="off" enterkeyhint="done" data-enter="gcblur" data-model="gcodd" value="${esc(S.form.gcodd || '')}">
     ${oddGoiY.length ? `<div class="row gap6" ${cuon} data-sx="gcodd">${oddGoiY.map((t) => gcChipGoiY('odd', t, String(S.form.gcodd || '').trim() === t, 'gcoddq')).join('')}</div>` : ''}
   </div>
   <div class="sendbar row gap6">${F.id ? '<button class="btn pri" style="flex:1" data-a="gcsave">LƯU THAY ĐỔI</button>'
@@ -3406,7 +3411,9 @@ function vGcForm() {
 const GC_MUC = [['khu', 'Phân khu', 'Người giao phải chọn một phân khu cho mỗi đơn.', 'Ví dụ: Khu A, Zone 2, Tháp T1'],
   ['hm', 'Hạng mục', 'Không bắt buộc khi giao đơn.', 'Ví dụ: Phần ngầm, Phần thân, Bể nước'],
   ['ck', 'Loại cấu kiện', '"Khác" luôn có sẵn để ghi tên cấu kiện ngoài danh mục.', 'Ví dụ: Dầm, Cột, Lanh tô'],
-  ['vg', 'Lý do vướng', 'Tiểu đội trưởng bấm chọn khi báo vướng. "Khác" luôn có sẵn.', 'Ví dụ: Chờ cẩu, Thiếu đai']];
+  ['vg', 'Lý do vướng', 'Tiểu đội trưởng bấm chọn khi báo vướng. "Khác" luôn có sẵn.', 'Ví dụ: Chờ cẩu, Thiếu đai'],
+  ['od', 'Người order', 'Không bắt buộc khi giao đơn. Bấm chọn cho nhanh; vẫn gõ được tên ngoài danh mục.', 'Họ tên người order'],
+  ['dd', 'Đại đội order', 'Không bắt buộc khi giao đơn. Bấm chọn cho nhanh; vẫn gõ được tên ngoài danh mục.', 'Ví dụ: Đại đội 2']];
 function vGcSetup() {
   const G = S.gc;
   const top = head('Thiết lập gia công', 'Danh mục để chọn nhanh khi giao đơn', 'giacong');
@@ -3416,7 +3423,7 @@ function vGcSetup() {
     return `<div class="card col gap8"><b style="font-size:18px">${tieu} <span class="sm muted" style="font-weight:400">· ${ds.length} mục</span></b>
       <span class="sm muted" style="line-height:1.4">${mo}</span>
       ${ds.length ? `<div class="card" style="padding:0;overflow:hidden">${ds.map((m) => `<div class="li"><span>${esc(m.ten)}</span><button class="btn s bad" data-a="gcmucxoa" data-id="${m.id}">Xoá</button></div>`).join('')}</div>` : '<span class="sm" style="color:var(--warn)">Chưa có mục nào.</span>'}
-      <div class="row gap6"><input class="inp s f1" id="gcm${loai}" style="min-width:0" maxlength="${loai === 'hm' ? 60 : 40}" placeholder="${vd}" autocomplete="off" data-model="gcm${loai}" value="${esc(S.form['gcm' + loai] || '')}"><button class="btn s pri" style="flex:none" data-a="gcmucadd" data-v="${loai}">Thêm</button></div></div>`;
+      <div class="row gap6"><input class="inp s f1" id="gcm${loai}" style="min-width:0" maxlength="${loai === 'hm' || loai === 'od' ? 60 : 40}" placeholder="${vd}" autocomplete="off" data-model="gcm${loai}" value="${esc(S.form['gcm' + loai] || '')}"><button class="btn s pri" style="flex:none" data-a="gcmucadd" data-v="${loai}">Thêm</button></div></div>`;
   };
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${GC_MUC.map(khoi).join('')}
