@@ -1,7 +1,7 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
 import { bad, json, vnDay } from './core.js';
 import { SETTINGS_SQL, auditStmt, parseSettings, readJson } from './helpers.js';
-import { MAU_CO, QS_LY_DO, TO_SX, caGio, caKe, caKhoa, caLuc, docCfg } from './quanso.js';
+import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, docCfg } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
    Người soạn: CVKTHT trở lên. Server chỉ GOM SỐ LIỆU và LƯU; việc ghép chữ theo mẫu nằm ở máy khách (app.js,
@@ -54,7 +54,7 @@ export async function bcView(env, url) {
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id WHERE q.ngay = ?`).bind(c.ngay),
     // ca đêm của NGÀY HÔM TRƯỚC: báo cáo ca ngày của tổ làm hai ca kèm ca liền trước đó
     env.DB.prepare('SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu FROM quan_so q WHERE q.ngay = ? AND q.ca = 2').bind(new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
-    env.DB.prepare(`SELECT q.user_id, q.ca, q.tong, q.lam, q.ca_kia FROM users u JOIN quan_so q ON q.rowid = (
+    env.DB.prepare(`SELECT q.user_id, q.ca, q.tong, q.lam, q.ca_kia, q.ts FROM users u JOIN quan_so q ON q.rowid = (
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND x.ngay < ?1 ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0`).bind(c.ngay),
     /* Đơn còn mở, cộng đơn XONG trong giờ ca. UNION ALL để mỗi nửa đi theo index (tt, cap_ts) như gcList. */
@@ -71,7 +71,7 @@ export async function bcView(env, url) {
   ]);
   const r = bc.results[0];
   return json({
-    ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, lyDo: QS_LY_DO,
+    ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, han: caHan(st, c), lyDo: QS_LY_DO,
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
     // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),

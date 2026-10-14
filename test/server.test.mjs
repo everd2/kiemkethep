@@ -3431,6 +3431,17 @@ async function main() {
     eq('theo tháng: tháng này trước, rồi tháng ghi bù', V.thang.map((x) => [x.thang, x.n, x.kg]), [[today.slice(0, 7), 2, 3250], [thangTruoc.slice(0, 7), 1, 10000]]);
     const noiA = (await S.call('GET', '/satvun')).data.noi.find((x) => x.noi === 'Cty Phế Liệu A');
     ok('theo nơi nhận (năm nay): cộng đúng các lần trong năm', noiA && noiA.kg === 2500 + (thangTruoc.slice(0, 4) === today.slice(0, 4) ? 10000 : 0), JSON.stringify(noiA));
+    // chọn KỲ cho bảng theo khu / theo nơi nhận: mặc định năm nay; một tháng; tất cả
+    const thN = today.slice(0, 7), thT = thangTruoc.slice(0, 7);
+    eq('không gửi kỳ: là năm nay', [V.ky, V.kyTong.kg], [today.slice(0, 4), 3250 + (thT.slice(0, 4) === today.slice(0, 4) ? 10000 : 0)]);
+    const Vt = (await S.call('GET', '/satvun?ky=' + thT)).data;
+    eq('kỳ = tháng ghi bù: chỉ lần của tháng đó, theo khu và theo nơi nhận', [Vt.ky, Vt.kyTong, Vt.khu.map((x) => [x.khu_id, x.kg]), Vt.noi.map((x) => [x.noi, x.kg])], [thT, { n: 1, kg: 10000 }, [['B', 10000]], [['Cty Phế Liệu A', 10000]]]);
+    eq('chọn tháng: danh sách là đủ các lần xuất của tháng đó', Vt.items.filter((x) => x.duyet_ts).map((x) => x.id), [g3.id]);
+    eq('kỳ = tháng này', (await S.call('GET', '/satvun?ky=' + thN)).data.kyTong, { n: 2, kg: 3250 });
+    eq('kỳ = tất cả', (await S.call('GET', '/satvun?ky=all')).data.kyTong, { n: 3, kg: 13250 });
+    eq('kỳ = năm chưa có gì', (await S.call('GET', '/satvun?ky=2001')).data.kyTong, { n: 0, kg: 0 });
+    eq('kỳ rác: coi như năm nay', (await S.call('GET', "/satvun?ky=2026-13'--")).data.ky, today.slice(0, 4));
+    eq('tổng chung không đổi theo kỳ', [Vt.tong.n, Vt.tong.kg, Vt.thang.length], [3, 13250, 2]);
     eq('nơi nhận gần đây cho nút chọn nhanh', V.noiGan.slice().sort(), ['Cty Phế Liệu A', 'Cty Phế Liệu B']);
     eq('sổ sắt vụn KHÔNG đụng tới tồn bãi', (await S.call('GET', '/review')).data.rows.map((r) => [r.phi, r.cnt]), tonTruoc);
     eq('không sinh phiếu kho nào', S.sql('SELECT 1 FROM receipts').length, 0);
@@ -3442,6 +3453,11 @@ async function main() {
     const t2 = await ghi({ so_phieu: pc1.toLowerCase().replace('-', ' '), tan: '1', trung: true }, 'An');
     eq('xác nhận là lần xuất khác: ghi được', t2.status, 200);
 
+    // quá ba số lẻ thì không làm tròn lặng lẽ; đúng ba số lẻ thì giữ tới từng kg
+    eq('bốn số lẻ (2,6755): từ chối', (await ghi({ tan: '2,6755' })).status, 400);
+    const k3 = await ghi({ tan: '2,675', noi: 'cty  phế liệu a' }, 'An');
+    eq('ba số lẻ giữ tới kg; nơi nhận gõ khác hoa/thường dùng lại cách viết đã có', S.one('SELECT kg, noi FROM satvun WHERE id = ?', k3.data.id), { kg: 2675, noi: 'Cty Phế Liệu A' });
+    await S.call('DELETE', '/satvun/' + k3.data.id, undefined, 'An');
     // huỷ: người khác không rút được; người ghi rút lại; huỷ lần đã duyệt ghi người huỷ + lý do
     eq('người khác (cùng cấp) không rút được', (await S.call('DELETE', '/satvun/' + t2.data.id, undefined, 'Binh')).status, 403);
     eq('người ghi rút lại khi chưa duyệt', (await S.call('DELETE', '/satvun/' + t2.data.id, undefined, 'An')).status, 200);
@@ -3456,11 +3472,24 @@ async function main() {
     advance(11 * 60e3);
     eq('quá 10 phút sau duyệt: người ghi không huỷ được', (await S.call('DELETE', '/satvun/' + g5.id, undefined, 'An')).status, 403);
     advance(8 * 864e5);
-    eq('quá 7 ngày sau duyệt: không ai huỷ được', (await S.call('DELETE', '/satvun/' + g5.id, { ly_do: 'x' })).status, 409);
+    // quá 7 ngày: CVKTHT hết quyền huỷ; cấp chỉ huy vẫn huỷ được nhưng phải có lý do (không có lần ghi ngược để sửa sai)
+    eq('quá 7 ngày sau duyệt: CVKTHT không huỷ được', (await S.call('DELETE', '/satvun/' + g5.id, { ly_do: 'x' }, 'Kho')).status, 409);
+    eq('huỷ lần đã duyệt mà không ghi lý do: từ chối', (await S.call('DELETE', '/satvun/' + g5.id, undefined)).status, 400);
+    const tongTruoc = (await S.call('GET', '/satvun')).data.tong.kg;
+    eq('cấp chỉ huy huỷ được lần cũ khi có lý do, thống kê tính lại', [(await S.call('DELETE', '/satvun/' + g5.id, { ly_do: 'gõ nhầm 3 tấn' })).status, tongTruoc - (await S.call('GET', '/satvun')).data.tong.kg], [200, 3000]);
+    // hai người cùng lúc: người kia vừa huỷ ngay trước khi lần duyệt này ghi xuống → 409, không duyệt dòng đã huỷ, nhật ký không ghi thừa
+    {
+      const c = (await ghi({ tan: '1' }, 'An')).data;
+      const goc = S.env.DB.batch.bind(S.env.DB); let xong = false;
+      S.env.DB.batch = async (st) => { if (!xong && st.length >= 4) { xong = true; S.raw.prepare('UPDATE satvun SET voided = 1 WHERE id = ?').run(c.id); } return goc(st); };
+      const truocNK = S.sql("SELECT COUNT(*) n FROM audit WHERE action = 'sv_duyet'")[0].n;
+      let rc; try { rc = await S.call('POST', '/satvun/' + c.id + '/duyet', {}); } finally { S.env.DB.batch = goc; }
+      eq('duyệt đúng lúc người khác vừa huỷ: 409, không duyệt, không ghi nhật ký', [rc.status, rc.data.code, S.one('SELECT duyet_ts d FROM satvun WHERE id = ?', c.id).d, S.sql("SELECT COUNT(*) n FROM audit WHERE action = 'sv_duyet'")[0].n - truocNK], [409, 'changed', null, 0]);
+    }
 
     // nhật ký, tệp Excel, quyền
     ok('nhật ký có đủ ghi / duyệt / bỏ / huỷ', ['sv_ghi', 'sv_duyet', 'sv_reject', 'sv_void'].every((a) => S.sql('SELECT 1 FROM audit WHERE action = ?', a).length > 0));
-    ok('nhật ký huỷ có lý do', /"ly_do":"cân lại"/.test(S.one("SELECT detail FROM audit WHERE action = 'sv_void' ORDER BY id DESC LIMIT 1").detail));
+    ok('nhật ký huỷ có lý do', /"ly_do":"cân lại"/.test(S.sql("SELECT detail FROM audit WHERE action = 'sv_void'").map((x) => x.detail).join(' ')));
     await ghi({ so_phieu: '01/10', note: '=1+1', tan: '1' }, 'An');
     const csv = await S.call('GET', '/satvun/export');
     const dong = String(csv.data).split('\r\n');

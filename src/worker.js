@@ -98,7 +98,7 @@ async function handle(req, env, url) {
   /* Sổ xuất sắt vụn: như sổ vay mượn — ai cũng ghi và xem được, duyệt theo cấp bậc, tệp Excel từ CVKTHT. */
   if (r0 === 'satvun') {
     need(ALL);
-    if (method === 'GET' && p.length === 1) return svView(env);
+    if (method === 'GET' && p.length === 1) return svView(env, url);
     if (method === 'GET' && p.length === 2 && p[1] === 'export') { need(LAP_PHIEU); return svCsv(env); }
     if (method === 'POST' && p.length === 1) return postSv(req, env, user);
     if (method === 'DELETE' && p.length === 2) return voidSv(req, env, user, Number(p[1]));

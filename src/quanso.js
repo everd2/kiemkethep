@@ -106,7 +106,7 @@ export async function qsView(env, user, url) {
                       COALESCE(u.name, '(đã xoá)') uname, COALESCE(b.name, '(đã xoá)') by_name
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id LEFT JOIN users b ON b.id = q.by_id
                     WHERE q.ngay = ?1${ql ? '' : ' AND q.user_id = ?2'} ORDER BY uname, q.ca`).bind(c.ngay, ...kem),
-    env.DB.prepare(`SELECT q.user_id, q.ngay, q.ca, q.tong, q.lam, q.ca_kia FROM users u JOIN quan_so q ON q.rowid = (
+    env.DB.prepare(`SELECT q.user_id, q.ngay, q.ca, q.tong, q.lam, q.ca_kia, q.ts FROM users u JOIN quan_so q ON q.rowid = (
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND (x.ngay < ?1 OR (x.ngay = ?1 AND x.ca < ?2))
                       ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(3)}`).bind(c.ngay, c.ca, ...kem),
@@ -217,11 +217,15 @@ export async function qsLich(req, env, user) {
   }
   const to = await env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid).first();
   if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ đặt ca cho tổ của một Tiểu đội trưởng đang dùng app');
-  const v = { ca, den, ts: Date.now(), by: user.id };
+  /* TỔNG QUÂN SỐ TỔ TỰ KHAI (tong): tổ trưởng khai cùng lúc với ca. Lần đặt ca không gửi kèm tổng (CVKTHT đặt ca hộ
+     trên bảng thiết lập) thì giữ nguyên số tổ đã khai. Khác SỐ THIẾT LẬP (tl) — số của CVKTHT, xem qsThietLap. */
+  const cu = await env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind('$.lich."' + uid + '".tong').first();
+  const tong = b.tong == null || b.tong === '' ? (cu && Number(cu.v)) || undefined : intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số của tổ');
+  const v = { ca, den, tong, ts: Date.now(), by: user.id };
   await env.DB.batch([
     env.DB.prepare(MAU_CO),
     env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind('$.lich."' + uid + '"', JSON.stringify(v)),
-    auditStmt(env, user, 'qs_lich', { to: to.name, ca, den: den || undefined }),
+    auditStmt(env, user, 'qs_lich', { to: to.name, ca, den: den || undefined, tong: b.tong == null || b.tong === '' ? undefined : tong }),
     bump(env),
   ]);
   return json({ ok: true, user: uid, ...v });
@@ -314,9 +318,11 @@ export function qsBoot(rows, st, user, mine = [], bcDa = [], cfgRow = null) {
   }
   /* Ca của tổ: theo LỊCH CA nếu đã đặt và còn hạn; chưa đặt thì đoán theo lần báo gần nhất như trước. */
   const ds = [...to.values()].map(({ ds: d, ...t }) => { const l = caLich(cfg, t.id, hien.ngay); return { ...t, ca: l ? caMang(l) : caCua(d.filter((r) => r.ngay === d[0].ngay)), lich: l }; });
-  const lt = cfg.lich[user.id];
+  const lt = cfg.lich[user.id], toi = user.role === 'tieudoi' ? qsToi(mine, hien, ke) : null;
+  // tổng quân số của tổ: số tổ tự khai nếu khai SAU lần báo gần nhất, không thì theo lần báo gần nhất
+  if (toi && lt && lt.tong && (!mine.length || lt.ts > mine[0].ts || !toi.tong)) toi.tong = lt.tong;
   return { hien, ke, den: caGio(st, hien).den, han: caHan(st, hien), hanKe: caHan(st, ke), to: capOf(user.role) >= 1 ? ds : ds.filter((t) => t.id === user.id),
-    lyDo: QS_LY_DO, toi: user.role === 'tieudoi' ? { ...qsToi(mine, hien, ke), lich: lt ? { ca: lt.ca, den: lt.den || null, het: !caLich(cfg, user.id, hien.ngay) } : null } : undefined,
+    lyDo: QS_LY_DO, toi: toi ? { ...toi, lich: lt ? { ca: lt.ca, den: lt.den || null, het: !caLich(cfg, user.id, hien.ngay), ...(lt.tong ? { tong: lt.tong } : {}) } : null } : undefined,
     // ca đang diễn ra đã chép báo cáo ca chưa (chỉ cần cho CVKTHT trở lên)
     bcDa: capOf(user.role) >= 1 && bcDa.some((r) => caKhoa(r) === caKhoa(hien)) };
 }

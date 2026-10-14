@@ -136,9 +136,10 @@ Vai trò đặt theo chức danh thật, và việc duyệt đi theo cấp bậc
 - Sắt vụn là thép thừa, đầu mẩu **trộn nhiều phi**, nên chỉ ghi **khối lượng theo tấn** (gõ `2,5` hoặc `2.5`; sổ lưu theo kg). **Không tính vào tồn bãi**: bảng đếm và phiếu kho tính theo phi, phần thép thành vụn đã ra khỏi tồn từ lúc cắt.
 - Mỗi lần ghi: **ngày xuất** (ghi bù được, không sau hôm nay), **khu xuất** (hoặc *Nhiều khu / chung*), **số tấn**, **xuất cho ai** (có nút chọn nhanh các nơi nhận gần đây, để tên không bị gõ lệch), **số phiếu cân / biên bản** (bắt buộc), biển số xe, người nhận, ghi chú.
 - **Ai cũng ghi được**, kể cả Tiểu đội trưởng. **Duyệt theo cấp bậc** như sổ vay (CVKTHT duyệt lần ghi của Tiểu đội trưởng; lần ghi của CVKTHT thì cấp chỉ huy duyệt); chưa duyệt thì chưa vào thống kê. Lần chờ duyệt hiện cả ở **màn Duyệt** và được nhắc ở Tổng quan.
-- **Thống kê** (chỉ lần đã duyệt): tổng *tháng này*, *năm nay*, *từ trước tới nay*; bảng **theo tháng** (13 tháng gần nhất), **theo khu** và **theo nơi nhận** của năm nay.
+- **Thống kê** (chỉ lần đã duyệt): tổng *tháng này*, *năm nay*, *từ trước tới nay*; bảng **theo tháng** (13 tháng gần nhất), **theo khu** và **theo nơi nhận**.
+- **Xem theo kỳ**: hai bảng theo khu / theo nơi nhận tính cho *năm nay* (mặc định), *năm trước*, *tất cả*, hoặc **một tháng** — bấm vào dòng tháng ở bảng theo tháng. Chọn một tháng thì danh sách bên dưới là đủ các lần xuất của tháng đó, để đối chiếu với bảng kê của bên mua.
 - **Trùng số phiếu cân** (không kể dấu cách, gạch, hoa/thường) thì app dừng lại hỏi, tránh hai người cùng chép một phiếu.
-- Hoàn tác: người ghi **rút lại** khi chưa duyệt hoặc huỷ trong 10 phút sau khi duyệt; người duyệt huỷ được trong **7 ngày**. Từ chối / huỷ lần đã duyệt phải ghi **lý do**; lần đã huỷ vẫn nằm trong sổ, kèm tên người huỷ và lý do. Nội dung một dòng đã ghi thì không sửa — sai thì huỷ rồi ghi lại.
+- Hoàn tác: người ghi **rút lại** khi chưa duyệt hoặc huỷ trong 10 phút sau khi duyệt; người duyệt huỷ được trong **7 ngày**; quá 7 ngày thì chỉ cấp chỉ huy huỷ được (sổ này không có "lần ghi ngược lại" như sổ vay, nên phải còn đường gỡ một lần gõ nhầm phát hiện lúc đối chiếu cuối tháng). Từ chối / huỷ lần đã duyệt phải ghi **lý do**; lần đã huỷ vẫn nằm trong sổ, kèm tên người huỷ và lý do. Nội dung một dòng đã ghi thì không sửa — sai thì huỷ rồi ghi lại.
 - **Tải sổ sắt vụn (Excel)**, từ CVKTHT trở lên: mọi lần xuất kể cả lần đã huỷ, tổng theo tháng và theo nơi nhận.
 - Sổ nằm trong bản sao toàn bộ; **xoá sạch dữ liệu thép không xoá sổ này**.
 
@@ -198,20 +199,20 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
 
 ### Quân số đầu ca
 
-Ở **Thêm → Quân số đầu ca**, mọi vai trò đều có. Mỗi tổ báo quân số ở **đầu mỗi ca**; đây là nguồn số cho mục quân số của báo cáo ca gửi cấp trên. **Không liên quan tới đếm thép.**
+Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân số của tổ mình (thẻ *Quân số tổ* ở Tổng quan — chỗ báo duy nhất); CVKTHT trở lên **tự đặt số thiết lập** để báo cáo ca dùng khi tổ chưa báo. Mỗi tổ báo quân số ở **đầu mỗi ca**; đây là nguồn số cho mục quân số của báo cáo ca gửi cấp trên. **Không liên quan tới đếm thép.**
 
 - **Một tổ = một Tiểu đội trưởng.** Có bao nhiêu tài khoản Tiểu đội trưởng đang dùng thì có bấy nhiêu tổ.
 - **Hai ca**: ca ngày 6h30 → 18h30, ca đêm 18h30 → 6h30 sáng hôm sau. **Ca đêm thuộc ngày bắt đầu ca**: báo lúc 2h sáng ngày 13 vẫn là ca đêm ngày 12. Ca tính theo giờ Việt Nam của máy chủ.
 - **Báo theo ca**: tổ làm cả hai ca thì báo hai lần, tổ chỉ làm ca đêm thì chỉ báo ca đêm. Báo được cho ca đang diễn ra, và báo sớm cho ca kế tiếp. Báo lại là ghi đè số của ca đó.
-- **Tiểu đội trưởng báo ngay trên Tổng quan**, không phải vào màn nào. Thẻ *Quân số tổ* ở đầu trang làm hai việc tách hẳn nhau: **đặt lịch ca** của tổ (một lần, 15–30 ngày mới đổi) và **báo quân số** của ca đó. Thẻ chỉ có **một nút báo**, là nút của ca tổ đang làm — không còn nút ca kia để bấm nhầm.
-  - **Lịch ca**: *Ca ngày / Ca đêm / Cả 2 ca*, kèm thời hạn *Đến khi đổi / 15 ngày / 30 ngày*. Chạm ca là lưu. Chưa đặt hoặc hết hạn thì thẻ hỏi ca trước rồi mới cho báo. Nút **Đổi ca** luôn có trên thẻ. CVKTHT trở lên đặt hộ được.
+- **Tiểu đội trưởng báo ngay trên Tổng quan**, không phải vào màn nào. Thẻ *Quân số tổ* đứng **trên cùng** (trên cả khối tồn kho) và làm hai việc tách hẳn nhau: **đặt lịch ca** của tổ (một lần, 15–30 ngày mới đổi) và **báo quân số** của ca đó. Thẻ chỉ có **một nút báo**, là nút của ca tổ đang làm. Dòng tiêu đề ghi luôn hạn báo và ca của tổ; dòng dưới ghi *Tổ 21 người (đổi) · nghỉ: không ai*.
+  - **Khai báo tổ**: gõ **tổng quân số của tổ**, rồi chọn *Ca ngày / Ca đêm / Cả 2 ca*, kèm thời hạn *Đến khi đổi / 15 ngày / 30 ngày*. Chạm ca là lưu cả hai; chưa gõ tổng thì chưa lưu. Tổng đã khai vào thẳng thẻ báo, không phải gõ lại mỗi ca. Chưa đặt hoặc hết hạn thì thẻ hỏi ca trước rồi mới cho báo. Nút **Đổi ca** luôn có trên thẻ. CVKTHT trở lên đặt hộ được.
   - **Ngày đủ quân: 1 chạm.** Có người nghỉ: bấm *Có người nghỉ*, chạm lý do để thêm một người, hoặc **gõ thẳng số** vào ô cạnh lý do (5 người ốm không phải chạm 5 lần, gõ 0 là bỏ). Ô **ghi chú** luôn có sẵn ở đó (bắt buộc khi có *lý do khác*).
   - **Như hôm qua**: lấy lại danh sách nghỉ của lần báo trước (nghỉ phép, về quê thường kéo dài vài ngày). Đây là nút phải tự bấm, không tự điền sẵn, để người đã đi làm lại không bị báo nghỉ mà không ai để ý.
   - **Tổ ca đêm** buổi sáng không bị nhắc gì; thẻ ghi *Ca đêm …: mở báo từ 17:30* (một tiếng trước giờ vào ca), kèm nút *Báo sớm*.
   - **Tổ làm cả 2 ca** báo từng ca một (ca tới trước báo trước). Mỗi ca ghi *Người của tổ làm ca ngày / ca đêm* (điền sẵn theo lần trước), số đi làm = số đó − nghỉ.
   - **Mất sóng lúc bấm báo**: app lưu quân số trên máy (theo từng người, máy dùng chung vẫn đúng tên), thẻ ghi *chờ gửi (mất sóng)* và **tự gửi khi có mạng**.
   - Báo xong thẻ thành *Ca ngày …: đã báo lúc …* kèm nút **Sửa** (sửa tại chỗ). Thẻ vàng khi chưa báo trong hạn, đỏ khi quá hạn.
-  - Màn **Thêm → Quân số đầu ca** vẫn còn (chọn ca rồi ghi), cho ai quen dùng.
+  - Màn **Thêm → Quân số tổ đã báo** của Tiểu đội trưởng **chỉ để xem** tổ mình đã báo ca nào; báo và sửa đều ở thẻ trên Tổng quan.
 - **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ở dòng *Hạn báo* cuối bảng quân số (thu gọn, bấm **Đổi** mới hiện ô giờ); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
 - **Tổ đang làm ca nào thì chỉ bị nhắc ca đó**, theo **lịch ca** tổ đã đặt. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Tổ chưa đặt lịch thì app tạm đoán theo lần báo gần nhất.
 - **Một lần báo gồm**: tổng quân số của tổ (điền sẵn theo lần báo trước), số nghỉ **theo từng lý do** (ốm, nghỉ phép năm, về quê, việc gia đình, OFF luân phiên, lý do khác — bấm + / −), số đi làm ca này, ghi chú. **OFF luân phiên nằm trong số nghỉ.** Có *lý do khác* thì bắt buộc ghi rõ ở ô ghi chú.
@@ -225,23 +226,23 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
   | Xem mọi tổ; đặt **số thiết lập**; xếp thứ tự tổ; đổi hạn báo | CVKTHT trở lên |
   | Xem quân số tổ khác | Chỉ CVKTHT trở lên — Tiểu đội trưởng chỉ thấy tổ mình |
 
-- **Màn Quân số của CVKTHT trở lên có hai thẻ**, vì đây là hai loại số khác nhau:
-  - **Tổ báo** — số các tổ trưởng tự báo ở ca đang xem: dòng tổng *Đi làm ca ngày: 70 / 171 công nhân · 7/9 tổ đã báo*, rồi mỗi tổ một thẻ. Tổ làm ca này đứng trước, tổ làm ca kia dồn xuống cuối. **Chỉ để xem và nhắc**: CVKTHT không ghi vào báo cáo của tổ, số tổ báo luôn là của tổ.
-  - **Thiết lập** — với mỗi tổ: ba nút ca (*Ngày / Đêm / 2 ca*) và **số thiết lập** (*Tổng, Ca ngày, Ca đêm*). Số thiết lập là số dự phòng: báo cáo ca dùng nó cho tổ **chưa báo**. Mỗi dòng ghi ai sửa lần cuối.
+- **CVKTHT trở lên làm trên một màn theo bước** (Thêm → *Báo cáo ca và quân số các tổ*): 1 Tổ báo → 2 Soát → 3 Chép. Hai loại số tách rõ:
+  - **Bước 1 · Tổ báo** (đầu màn báo cáo ca) — tổng hợp năm số **cộng lại đúng bằng tổng**: *Tổng = Đi làm + Nghỉ + Ca kia + Chưa báo*, rồi mỗi tổ một dòng (đã báo / chưa báo / quá hạn), các tổ làm ca kia gộp thành một dòng cuối *Làm ca đêm: …*; danh sách tự mở khi còn tổ chưa báo. **Chỉ để xem và nhắc**: CVKTHT không ghi vào báo cáo của tổ.
+  - **Thiết lập** (nút bánh răng ở bước 1) — bảng gọn, mỗi tổ một dòng: *Ca* (Ngày / Đêm / 2 ca), *Tổng*, *Ngày*, *Đêm*; ô của ca tổ không làm thì khoá; dòng cuối **Tổng N tổ** cộng quân số mọi tổ. **Một nút LƯU TẤT CẢ** ở đáy lưu mọi thay đổi trên bảng. Số **xám** là gợi ý theo số của chính tổ (số tổ tự khai hoặc lần tổ báo gần nhất, **số nào mới hơn thì lấy**), **chưa lưu** — báo cáo ca chưa dùng cho tới khi bấm Lưu tất cả. Số thiết lập là số dự phòng: báo cáo ca dùng nó cho tổ **chưa báo**.
   - **Nhiều người cùng thiết lập**: hai người sửa hai tổ khác nhau không ảnh hưởng nhau. Hai người sửa **cùng một tổ** thì người lưu sau bị từ chối, app nói rõ *"… vừa sửa số thiết lập tổ …: tổng …, ca ngày …, ca đêm …"* và tải lại số mới để xem rồi quyết.
-- **Chép tin nhắc**: nút *Chép tin nhắc N tổ chưa báo* ra sẵn danh sách tổ chưa báo kèm hạn, dán vào nhóm Zalo.
+- **Chép tin nhắc**: nút *Chép tin nhắc N tổ chưa báo* (ở bước 1) ra sẵn danh sách tổ chưa báo kèm hạn, dán vào nhóm Zalo.
 - **Xếp thứ tự tổ** (thẻ Thiết lập): bấm Lên / Xuống từng tổ rồi Lưu. Thứ tự này dùng cho bảng quân số và mục 3 của báo cáo ca.
 - **Nhắc soạn báo cáo ca**: qua hạn báo mà ca đó chưa chép báo cáo thì Tổng quan của CVKTHT có thẻ *Soạn báo cáo ca … gửi cấp trên* (ghi số tổ đã báo), bấm là mở thẳng màn soạn.
-- **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào để xem hoặc ghi thay. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
+- **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào là mở màn báo cáo ca, bước 1, để nhắc. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa, phải nhờ CVKTHT trở lên. Mọi lần báo và ghi thay nằm trong **nhật ký**, có chip lọc *Quân số*.
 - Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).
 - **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
 
 ### Báo cáo ca gửi cấp trên
 
-Ở **Thêm → Báo cáo ca gửi cấp trên** (hoặc nút *Soạn báo cáo ca … gửi cấp trên* trên bảng Quân số đầu ca), từ CVKTHT trở lên. App ghép sẵn bản **BÁO CÁO QUÂN SỐ CA** đúng mẫu của đơn vị; người soạn soát lại, bấm **CHÉP BÁO CÁO** rồi dán vào nhóm Zalo (hoặc **CHIA SẺ** thẳng sang Zalo trên điện thoại).
+Ở **Thêm → Báo cáo ca và quân số các tổ** (hoặc thẻ nhắc trên Tổng quan), từ CVKTHT trở lên. Ngay dưới ô chọn ca có **dải bước** *1 · Tổ báo x/y → 2 · Soát → 3 · Chép*: hai nút đầu nhảy tới đúng phần, nút cuối chép cả báo cáo. App ghép sẵn bản **BÁO CÁO QUÂN SỐ CA** đúng mẫu của đơn vị; người soạn soát lại, bấm **3 · Chép** rồi dán vào nhóm Zalo.
 
-- **Chọn ca**: mở ra là ca đang diễn ra; *‹ Ca trước* để soạn ca vừa xong. Ca đêm dùng cùng mẫu, tiêu đề ghi *CA 2 Từ 18h30 đến 6h30*. Soạn được các ca trong 7 ngày gần đây.
+- **Chọn ca**: mở ra là ca đang diễn ra; ngay dưới tiêu đề có *‹ ngày ›* để đổi ngày và hai nút **Ca ngày / Ca đêm** để đổi ca (ca chưa tới thì khoá); đang xem ca khác thì có dòng *Về ca đang diễn ra*. Ca đêm dùng cùng mẫu, tiêu đề ghi *CA 2 Từ 18h30 đến 6h30*. Soạn được các ca trong 7 ngày gần đây.
 - **Phần đầu** (đơn vị, Đại đội trưởng, Trung đội trưởng, CBPT, dự án, khu vực thi công): điền một lần, ba ô chỉ huy có nút **chọn nhanh** từ tài khoản có sẵn (Đại đội trưởng, Trung đội trưởng, CVKTHT). Lần chép nào cũng lưu lại làm mẫu, các ca sau phần này thu gọn thành một dòng. *Tổng số tổ* = số Tiểu đội trưởng.
 - **Các mục điền sẵn từ số liệu app**:
 
@@ -254,11 +255,13 @@ Tab **Gia công**, mọi vai trò đều có. Đây là bảng **giao việc gia
   | 7. Vướng mắc | Đơn gia công đang báo vướng; không có thì *Hiện tại chưa có* |
   | 8. Đánh giá tiến độ | Đơn gia công trễ hạn; không có thì *Nguy cơ chậm tiến độ: Không có* |
 
-- **Sửa thẳng trong ô**, mỗi dòng là một gạch đầu dòng (gõ thêm "•" cũng không bị thành hai dấu). Mục đã sửa giữ nguyên chữ của người soạn kể cả khi số liệu đổi sau đó; nút **Lấy lại từ app** để ghép lại theo số mới. Bản *sẽ gửi* hiện ở cuối màn và chạy theo từng chữ đang gõ.
+- **Màn hình chính là bản sẽ gửi, chia theo từng phần** (phần đầu, mục 3 → 8). Mỗi phần hiện đúng chữ sẽ gửi, kèm hai nút nhỏ: **chép riêng phần đó** và **sửa** (mở ô sửa tại chỗ, một lúc một phần). Chép cả báo cáo là nút **3 · Chép** trên dải bước; không còn thanh nút to ở đáy. Mỗi dòng là một gạch đầu dòng (gõ thêm "•" cũng không bị thành hai dấu). Phần đã sửa giữ nguyên chữ của người soạn kể cả khi số liệu đổi sau đó; nút *lấy lại số từ app* (mũi tên vòng) để ghép lại theo số mới.
+- **Còn thiếu gì thì nói ngay đầu màn**: *Còn thiếu: Đơn vị, Dự án, Máy móc thiết bị…* — bấm vào là mở đúng chỗ điền.
 - **Dòng kiểm tra** sửa trong một ca không tự thành mẫu (để nhận xét xấu hôm nay không lặp lại hôm sau); muốn đổi mẫu thì bấm *Đặt các dòng này làm mẫu cho các ca sau*.
-- Đầu màn ghi *Đi làm … / … công nhân* và tổ nào chưa báo quân số, bấm *Xem quân số* để ghi thay.
-- Bấm chép là **lưu báo cáo của ca đó** (mở lại vẫn thấy, ghi *Đã chép lúc … · người chép*). Đang sửa dở mà thoát hay mất mạng thì nháp vẫn nằm trên máy. Lần chép nào cũng vào nhật ký (chip *Quân số*).
-- Máy không cho chép tự động thì app báo, chạm giữ vào *Bản sẽ gửi* để chép tay.
+- **Tổng hợp quân số mọi tổ ở đầu màn**: *Tổng = Đi làm + Nghỉ + Ca kia + Chưa báo* của ca đang soạn, kèm tổ nào chưa báo. Màn này **tự làm mới** khi có tổ báo thêm (đang mở ô sửa thì đợi đóng ô). Nút **bánh răng** mở thẳng bảng **Thiết lập** (ca và số quân từng tổ, có dòng *Tổng N tổ* chạy theo số đang gõ); Nút quay lại ở đó về đúng báo cáo đang soạn.
+- **Bước 3 nói rõ đã chép chưa**: *Chép* (chưa chép), *Đã chép* (bản đang hiện đúng là bản đã chép), *Chép lại* (nội dung đã đổi sau lần chép — tổ báo thêm, đơn gia công đổi, hoặc sửa tay — cấp trên đang có bản cũ).
+- Bấm chép (cả báo cáo hay riêng một phần) là **lưu báo cáo của ca đó** (mở lại vẫn thấy, ghi *Đã chép lúc … · người chép*). Đang sửa dở mà thoát hay mất mạng thì nháp vẫn nằm trên máy. Lần chép nào cũng vào nhật ký (chip *Quân số*).
+- Máy không cho chép tự động thì app báo, chạm giữ vào chữ của phần cần chép để chép tay.
 
 ### Điều chỉnh tồn
 
@@ -409,7 +412,7 @@ Mở `https://khothep.<ten-cua-ban>.workers.dev/setup`, nhập SETUP_TOKEN, tên
 | Sổ sai một phi ở một khu | **Nhập → Điều chỉnh**, chọn tăng/giảm và lý do, rồi cấp chỉ huy duyệt. Không ảnh hưởng lượng dùng |
 | Xuất thép đi công trình | **Nhập → Xuất kho** (tuỳ chọn), ghi rõ nơi đến, rồi cấp chỉ huy duyệt. Không ghi cũng được — app vẫn tính lượng dùng |
 | Giao việc gia công cho tiểu đội | Tab **Gia công → Giao đơn mới** (CVKTHT trở lên): cấu kiện, trục, người nhận, ngày cần xong. Tiểu đội trưởng tự nhận, cập nhật tiến độ và xác nhận xong; ai cũng xem được |
-| Báo quân số đầu ca | **Thêm → Quân số đầu ca**: Tiểu đội trưởng báo tổ mình ở đầu mỗi ca (tổng, nghỉ theo lý do, đi làm). CVKTHT trở lên xem mọi tổ và ghi thay được |
+| Báo quân số đầu ca | Thẻ **Quân số tổ** đầu Tổng quan: Tiểu đội trưởng khai báo ca, tổng quân số và báo tổ mình ở đầu mỗi ca (nghỉ theo lý do, đi làm). CVKTHT trở lên xem mọi tổ ở bước 1 của màn Báo cáo ca |
 | Vay / cho đối tác vay thép | **Thêm → Vay mượn ngoài bãi** (hoặc lối tắt ở màn Nhập), chọn *thép qua bãi* + khu nếu thép đi qua cổng. Cấp chỉ huy duyệt. Không tính là nhập hay dùng |
 
 Nên sao lưu `backup.sql` định kỳ (ví dụ mỗi tuần) và cất ngoài Cloudflare.

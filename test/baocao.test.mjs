@@ -129,7 +129,13 @@ async function main() {
   ok('Thêm của CVKTHT có mục Báo cáo ca', R('vMore()').includes('data-s="baocaoca"'));
   R(`S.bcCa = { ngay: '${D}', ca: 1 }; go('baocaoca')`); await cho();
   eq('mở màn báo cáo ca đúng ca đã chọn', [R('S.screen'), R('S.bcc.ngay'), R('S.bcc.ca')], ['baocaoca', D, 1]);
-  ok('phần đầu còn trống thì mở sẵn để điền, có nút chọn nhanh chỉ huy', R('S.bcDauMo') && R('vBaoCaoCa()').includes('data-a="bcpick" data-k="ddt" data-v="Vũ Nhật Tài"'));
+  ok('phần đầu còn trống thì mở sẵn để điền, có nút chọn nhanh chỉ huy; đầu màn nói còn thiếu gì', R("S.bcMo === 'dau'") && R('vBaoCaoCa()').includes('data-a="bcpick" data-k="ddt" data-v="Vũ Nhật Tài"') && R('vBaoCaoCa()').includes('Còn thiếu: Đơn vị, Đại đội trưởng, Trung đội trưởng, CBPT, Dự án, Khu vực thi công, Máy móc thiết bị'));
+  ok('mỗi phần có nút chép riêng và nút sửa nhỏ, một nút chép cả báo cáo; chỉ phần đang mở mới có ô sửa; không còn thanh nút to ở đáy', (R('vBaoCaoCa()').match(/data-a="bcchep" data-k="/g) || []).length === 7 && (R('vBaoCaoCa()').match(/data-a="bcchep">/g) || []).length === 1
+    && (R('vBaoCaoCa()').match(/data-a="bcsua"/g) || []).length === 8 && !R('vBaoCaoCa()').includes('<textarea') && !R('vBaoCaoCa()').includes('sendbar') && !R('vBaoCaoCa()').includes('bcchiase'));
+  // bộ test chạy theo giờ thật: ca nào bấm được tuỳ ca kế tiếp (S.bcc.ke) lúc chạy
+  const keK = R('S.bcc.ke.ngay') + ':' + R('S.bcc.ke.ca'), maiK = vnDay(Date.parse(D) + 864e5) + ':1';
+  ok('chọn ca ngay trên màn: lùi ngày, đổi ca cùng ngày; ca chưa tới (sau ca kế tiếp) thì khoá', R('vBaoCaoCa()').includes(`data-a="bcca" data-v="${vnDay(Date.parse(D) - 864e5)}:1"`)
+    && R('vBaoCaoCa()').includes(`data-a="bcca" data-v="${D}:2"`) === (D + ':2' <= keK) && R('vBaoCaoCa()').includes(`data-a="bcca" data-v="${maiK}"`) === (maiK <= keK) && !R('vBaoCaoCa()').includes(`data-v="${vnDay(Date.parse(D) + 864e5)}:2"`), keK);
   R(`ACTIONS.bcpick({ k: 'ddt', v: 'Vũ Nhật Tài' }); ACTIONS.bcpick({ k: 'tdtr', v: 'Hà Huy Đạt' }); ACTIONS.bcpick({ k: 'cbpt', v: 'Nguyễn Duy Dũng' });
      Object.assign(S.bcDau, { don_vi: 'Trung đoàn XD 01, Tiểu Đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1', du_an: 'Khu đô thị thể thao quốc tế OLYMPIC', khu_vuc: 'Bãi gia công trung đoàn' });`);
   const txt = R('bcTao()');
@@ -178,7 +184,8 @@ async function main() {
   const tl1 = R('bcTao()').split('\n');
   eq('tổ chưa báo lấy số thiết lập, viết như dòng thường; tổng cộng thêm tổ đó', [tl1.find((l) => l.includes('Hải Nam')), tl1.find((l) => l.startsWith('3. '))], ['• Tổ Lê Hải Nam: ca ngày 20/20 cn', '3. Quân số đi làm trong ca 1 là: 29 công nhân / (tổng quân số 80)']);
   ok('bản gửi không có chữ "thiết lập"; màn soạn thì nói rõ đang lấy số thiết lập cho tổ nào', !R('bcTao()').includes('thiết lập') && R('vBaoCaoCa()').includes('Đang lấy số thiết lập cho: Lê Hải Nam.'));
-  ok('mục 3 có nút chọn nguồn: Theo tổ báo / Chỉ số thiết lập', R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="to"') && R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="tl"'));
+  R("ACTIONS.bcsua({ k: 's3' })");
+  ok('mở mục 3: có ô sửa và nút chọn nguồn Theo tổ báo / Chỉ số thiết lập; các mục khác vẫn đóng', R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="to"') && R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="tl"') && (R('vBaoCaoCa()').match(/<textarea/g) || []).length === 1 && R('vBaoCaoCa()').includes('id="bc_s3"'));
   R(`ACTIONS.bcnguon({ v: 'tl' })`);
   const tl2 = R('bcTao()').split('\n');
   eq('chọn "Chỉ số thiết lập": tổ Khoa (2 ca) đã báo cũng lấy số thiết lập cho cả hai ca; tổ Cơi chưa có số thiết lập thì vẫn lấy số tổ báo', [tl2.find((l) => l.includes('Khoa')), tl2.find((l) => l.includes('Cơi'))],
@@ -197,15 +204,20 @@ async function main() {
   for (const k of ['s3', 's4', 's5', 's6', 's7', 's8']) {
     const moi = 'Dòng thử ' + k + ' do người soạn gõ';
     go_('bc_' + k, moi);
-    ok('gõ vào mục ' + k + ': mục thành đã sửa, bản sẽ gửi đổi ngay', R('S.bcM.' + k) === moi && prev.textContent.includes(moi) && prev.textContent === R('bcTao()'), prev.textContent.slice(0, 120));
+    ok('gõ vào mục ' + k + ': mục thành đã sửa, bản sẽ gửi đổi ngay', R('S.bcM.' + k) === moi && R('bcTao()').includes(moi) && R(`bcPhan().${k}.join(' ')`).includes(moi), R('bcTao()').slice(0, 120));
     R(`delete S.bcM.${k}`);
   }
   go_('bcd_du_an', 'Dự án gõ tay');
-  ok('gõ vào ô phần đầu: bản sẽ gửi đổi ngay', prev.textContent.includes('• Dự Án: Dự án gõ tay'));
+  ok('gõ vào ô phần đầu: bản sẽ gửi đổi ngay', R('bcTao()').includes('• Dự Án: Dự án gõ tay'));
   go_('bcd_du_an', 'Khu đô thị thể thao quốc tế OLYMPIC');
   go_('bc_s7', 'Chờ bản vẽ trục X14');
   R('ACTIONS.bcchep()'); await cho();
   ok('chép sau khi gõ: bản chép đi và bản lưu có đúng chữ vừa gõ', String(chep).includes('7. Các vướng mắc ảnh hưởng đến tiến độ thi công:\n• Chờ bản vẽ trục X14') && S.one('SELECT van_ban FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D).van_ban === chep, String(chep).split('\n').slice(-4).join(' | '));
+  // chép RIÊNG một phần: bộ nhớ tạm chỉ có phần đó (đúng chữ sẽ gửi), báo cáo của ca vẫn lưu đủ cả bản
+  R("ACTIONS.bcchep({ k: 's7' })"); await cho();
+  eq('chép riêng mục 7: chỉ chép mục đó, bản lưu vẫn là cả báo cáo', [chep, S.one('SELECT van_ban FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D).van_ban === R('bcTao()')], ['7. Các vướng mắc ảnh hưởng đến tiến độ thi công:\n• Chờ bản vẽ trục X14', true]);
+  R("ACTIONS.bcchep({ k: 'dau' })"); await cho();
+  ok('chép riêng phần đầu: từ dòng tiêu đề tới dòng tổng số tổ', String(chep).startsWith('BÁO CÁO QUÂN SỐ CA 1 ') && String(chep).endsWith('• Tổng số tổ: 4 tổ') && !String(chep).includes('3. '), String(chep).slice(-60));
   R("delete S.bcM.s7");
 
   // sửa tay: mục 5 máy móc, mục 4 thêm một dòng; số liệu đổi sau đó thì mục đã sửa giữ nguyên
@@ -217,6 +229,11 @@ async function main() {
   // chép
   R('ACTIONS.bcchep()'); await cho();
   ok('bấm CHÉP: chữ vào bộ nhớ tạm đúng bản đang xem', chep === R('bcTao()'), String(chep).slice(0, 80));
+  // bước 3 nói rõ bản đang hiện đã chép chưa: nội dung đổi sau lần chép thì cấp trên đang có bản cũ, phải chép lại
+  ok('đã chép đúng bản đang hiện: bước 3 thành "Đã chép"; sửa thêm thì thành "Chép lại" và nói rõ nội dung đã đổi', R('vBaoCaoCa()').includes('3 · Đã chép<') && !R('vBaoCaoCa()').includes('Nội dung đã đổi')
+    && R(`S.bcM.s7 = 'Thêm một vướng mắc'; vBaoCaoCa()`).includes('3 · Chép lại<') && R('vBaoCaoCa()').includes('Nội dung đã đổi sau lần chép'));
+  R('delete S.bcM.s7');
+  ok('các số tổng hợp cộng lại đúng bằng tổng quân số (ca ngày)', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong > 0 && Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'), R('JSON.stringify((({ tong, lam, nghi, kiaSo, chuaSo }) => ({ tong, lam, nghi, kiaSo, chuaSo }))(bcQuanSo(S.bcc)))'));
   const row = S.one('SELECT data, van_ban, by_id FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D);
   eq('và lưu báo cáo của ca, người lưu là CVKTHT', [row && row.van_ban === chep, row && row.by_id], [true, U[CV]]);
   const mau = JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data);
@@ -229,7 +246,7 @@ async function main() {
   R(`ACTIONS.bclay({ k: 's4' })`);
   ok('lấy lại từ app: mục 4 về số của app', !R('bcTao()').includes('LK11'));
   R(`ACTIONS.bcca({ v: '${D}:2' })`); await cho();
-  eq('sang ca đêm: phần đầu và máy móc điền sẵn từ mẫu, phần đầu thu gọn', [R('S.bcc.ca'), R('S.bcDau.ddt'), R("bcGet('s5').slice(0, 7)"), R('S.bcDauMo')], [2, 'Vũ Nhật Tài', '7 – 3 K', false]);
+  eq('sang ca đêm: phần đầu và máy móc điền sẵn từ mẫu, không mục nào mở, không còn dòng "còn thiếu"', [R('S.bcc.ca'), R('S.bcDau.ddt'), R("bcGet('s5').slice(0, 7)"), R('S.bcMo'), R('vBaoCaoCa()').includes('Còn thiếu')], [2, 'Vũ Nhật Tài', '7 – 3 K', null, false]);
   const dem = R('bcTao()').split('\n');
   eq('ca đêm: tiêu đề và quân số theo ca đêm', [dem[0], dem.find((l) => l.startsWith('3. '))], [`BÁO CÁO QUÂN SỐ CA 2 Từ 18h30 đến 6h30 ngày ${dd}`, '3. Quân số đi làm trong ca 2 là: 9 công nhân / (tổng quân số 60)']);
   ok('ca đêm: tổ chia ca chưa báo ca đêm thì ghi chưa báo (không cộng số dự kiến), tổ chia ca đã báo thì có cả hai ca', dem.includes('• Tổ Phạm Văn Khoa: chưa báo quân số ca đêm') && dem.includes('• Tổ Lê Anh Tuấn: chưa báo quân số ca đêm') && dem.includes('• Tổ Lò Văn Cơi: ca đêm 9/19 cn, ca ngày 8/19 cn, nghỉ 2 cn — ca đêm: 1 việc gia đình; ca ngày: 1 ốm'), dem.filter((l) => /Khoa|Tuấn/.test(l)).join(' | '));
@@ -243,6 +260,18 @@ async function main() {
   // nháp trên máy: gõ dở rồi thoát, mở lại vẫn còn
   R(`S.bcM.s7 = 'Chờ bản vẽ sửa trục X14'; bcNhap(); S.bcc = null; S.bcM = {}; go('baocaoca', true)`); await cho();
   eq('gõ dở rồi thoát: mở lại vẫn còn chữ đang gõ (nháp trên máy)', R("bcGet('s7')"), 'Chờ bản vẽ sửa trục X14');
+
+  /* Đầu màn có bảng tổng hợp quân số mọi tổ và nút thiết lập: mở thẳng bảng thiết lập (ca, số quân từng tổ, có dòng
+     tổng), nút quay lại ở đó về đúng báo cáo của ca đang soạn chứ không nhảy về ca đang diễn ra. */
+  ok('đầu màn: tổng hợp quân số mọi tổ và nút thiết lập', /<span>Tổng \d+ tổ<\/span><b>\d+<\/b>/.test(R('vBaoCaoCa()')) && R('vBaoCaoCa()').includes('<span>Chưa báo</span>') && R('vBaoCaoCa()').includes('data-a="bctl"'));
+  ok('các số tổng hợp cộng lại đúng bằng tổng quân số', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong > 0 && Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'), R('JSON.stringify((({ tong, lam, nghi, kiaSo, chuaSo }) => ({ tong, lam, nghi, kiaSo, chuaSo }))(bcQuanSo(S.bcc)))'));
+  R('ACTIONS.bctl()'); await cho();
+  const tlMan = R('vQuanSo()');
+  ok('nút thiết lập mở bảng thiết lập, có dòng tổng mọi tổ, nút quay lại về báo cáo ca', R('S.screen') === 'quanso' && tlMan.includes('data-a="qstlluu"') && tlMan.includes('id="tlS_t"') && tlMan.includes('data-a="nav" data-s="baocaoca"'), R('S.screen'));
+  go_(`tl_${U['Lê Hải Nam']}_t`, '25');
+  eq('dòng tổng của bảng thiết lập tính theo số đang gõ', R('qsTlTong().tong') >= 25, true);
+  R(`delete S.form['tl_${U['Lê Hải Nam']}_t']; ACTIONS.nav({ s: 'baocaoca' })`); await cho();
+  eq('quay lại: vẫn là báo cáo của ca đang soạn', [R('S.screen'), R('S.bcc.ngay'), R('S.bcc.ca')], ['baocaoca', D, 2]);
 
   /* ===== 4. Lưu: kiểm dữ liệu ===== */
   eq('báo cáo trống: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 1, van_ban: '  ' }, CV)).status, 400);

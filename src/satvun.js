@@ -14,10 +14,11 @@ import { bbKhoa } from './loans.js';
 export const SV_KG_MAX = 1000000; // một lần xuất tối đa 1.000 tấn: quá thì gần như chắc gõ nhầm đơn vị
 const SV_VOID_DAYS = 7;
 
-// tấn gõ tay → kg nguyên. Nhận "2,5" và "2.5"; số có cả hai dấu (1.250,5) thì không đoán, từ chối
+/* tấn gõ tay → kg nguyên. Nhận "2,5" và "2.5"; số có cả hai dấu (1.250,5) thì không đoán, từ chối. Tối đa
+   BA số lẻ (tới từng kg): gõ 2,6755 mà lặng lẽ làm tròn thành 2.676 kg thì sổ lệch phiếu cân không ai hay. */
 export function tanToKg(v) {
   const s = String(v == null ? '' : v).trim().replace(/\s/g, '');
-  if (!/^\d+([.,]\d+)?$/.test(s)) return NaN;
+  if (!/^\d+([.,]\d{1,3})?$/.test(s)) return NaN;
   return Math.round(Number(s.replace(',', '.')) * 1000);
 }
 
@@ -28,7 +29,7 @@ export async function postSv(req, env, user) {
   if (!DAY_RE.test(ngay) || ngay > today) throw bad('Ngày xuất không hợp lệ (không được sau hôm nay)');
   if (daysBetween(ngay, today) > 366) throw bad('Ngày xuất quá xa (hơn một năm trước). Kiểm tra lại năm');
   const kg = tanToKg(b.tan);
-  if (!(kg >= 1 && kg <= SV_KG_MAX)) throw bad('Khối lượng không hợp lệ: ghi số tấn, ví dụ 2,5 (tối đa 1.000 tấn một lần)');
+  if (!(kg >= 1 && kg <= SV_KG_MAX)) throw bad('Khối lượng không hợp lệ: ghi số tấn, ví dụ 2,5 — tối đa ba số lẻ (tới kg), tối đa 1.000 tấn một lần');
   // khu: khu xuất vụn; để trống = gom từ nhiều khu / chung cả bãi
   let khuId = null;
   if (b.khu) {
@@ -36,8 +37,14 @@ export async function postSv(req, env, user) {
     if (!k) throw bad('Khu không hợp lệ');
     khuId = k.id;
   }
-  const noi = String(b.noi || '').normalize('NFC').replace(/\s+/g, ' ').trim().slice(0, 80);
+  let noi = String(b.noi || '').normalize('NFC').replace(/\s+/g, ' ').trim().slice(0, 80);
   if (!noi) throw bad('Phải ghi xuất cho ai (đơn vị mua / nơi nhận)');
+  /* Cùng một nơi nhận mà gõ khác hoa/thường ("Cty A" / "cty a") thì thống kê theo nơi nhận tách thành hai dòng.
+     Tên đã có trong sổ (lần ghi chưa huỷ, cách viết đầu tiên) thì dùng lại đúng cách viết đó. So trong JavaScript
+     vì SQLite không gộp hoa/thường của chữ có dấu. Gõ sai tên ngay lần đầu thì huỷ lần đó rồi ghi lại. */
+  const khoaNoi = (x) => String(x).normalize('NFC').toLowerCase();
+  const coSan = (await env.DB.prepare('SELECT noi FROM satvun WHERE voided = 0 GROUP BY noi ORDER BY MIN(id)').all()).results.find((x) => khoaNoi(x.noi) === khoaNoi(noi));
+  if (coSan) noi = coSan.noi;
   const soPhieu = String(b.so_phieu || '').trim().slice(0, 40);
   if (!soPhieu) throw bad('Cần ghi số phiếu cân / biên bản giao nhận');
   /* Cùng số phiếu cân với một lần xuất chưa huỷ thì gần như chắc là ghi hai lần (hai người cùng chép, hoặc
@@ -94,9 +101,12 @@ export async function duyetSv(env, user, id) {
   return json({ ok: true });
 }
 
-/* Huỷ: như sổ vay — người ghi rút lại khi chưa duyệt, hoặc trong 10 phút sau khi duyệt; người duyệt được thì
-   từ chối / huỷ, lần đã duyệt chỉ trong SV_VOID_DAYS ngày (thống kê tháng cũ không được đổi lặng lẽ). Ai huỷ
-   và lý do ghi ngay trong dòng. */
+/* Huỷ: người ghi rút lại khi chưa duyệt, hoặc trong 10 phút sau khi duyệt; người duyệt được thì từ chối / huỷ.
+   Lần đã duyệt QUÁ SV_VOID_DAYS ngày thì chỉ CẤP CHỈ HUY huỷ được. Khác sổ vay ở chỗ này, và có lý do: sổ vay
+   sửa sai bằng một lần ghi NGƯỢC LẠI, còn ở đây khối lượng luôn dương nên không có lần ghi ngược — khoá cứng
+   sau 7 ngày thì một lần gõ nhầm 25 tấn thay cho 2,5 tấn, tới cuối tháng đối chiếu phiếu cân mới thấy, sẽ nằm
+   mãi trong thống kê không cách nào gỡ. Thống kê tháng cũ vì vậy vẫn đổi được, nhưng không lặng lẽ: huỷ lần
+   đã duyệt BẮT BUỘC ghi lý do, tên người huỷ và lý do nằm ngay trong dòng, dòng vẫn ở lại trong sổ. */
 export async function voidSv(req, env, user, id) {
   let ly = '';
   try { ly = String((await req.json()).ly_do || '').trim().slice(0, 200); } catch (e) { /* không có thân */ }
@@ -108,9 +118,10 @@ export async function voidSv(req, env, user, id) {
     if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc cấp duyệt được lần ghi này mới huỷ được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) throw new HttpError(403, 'Đã duyệt quá 10 phút, nhờ cấp trên huỷ');
   }
-  if (!pending && quyen && Date.now() - r.duyet_ts > SV_VOID_DAYS * 864e5) {
-    throw new HttpError(409, `Lần xuất đã duyệt quá ${SV_VOID_DAYS} ngày, không huỷ được nữa.`, 'too_old');
+  if (!pending && quyen && capOf(user.role) < 2 && Date.now() - r.duyet_ts > SV_VOID_DAYS * 864e5) {
+    throw new HttpError(409, `Lần xuất đã duyệt quá ${SV_VOID_DAYS} ngày: chỉ ${CAP_TREN} huỷ được.`, 'too_old');
   }
+  if (!pending && !ly) throw bad('Huỷ lần xuất đã duyệt thì phải ghi lý do');
   await ghiNeuChuaDoi(env, id, r.duyet_ts, [
     env.DB.prepare('UPDATE satvun SET voided = 1, voided_ts = ?, voided_by = ?, voided_name = ?, voided_note = ? WHERE id = ?')
       .bind(Date.now(), user.id, user.name, ly || null, id),
@@ -129,16 +140,34 @@ const DA = 'voided = 0 AND duyet_ts IS NOT NULL';
 
 /* Màn Sắt vụn: danh sách (mọi lần chờ duyệt + 300 lần gần nhất, cả lần đã huỷ để thấy sổ bị sửa gì) và
    thống kê cộng ở database: theo tháng (13 tháng gần nhất), theo khu và theo nơi nhận (năm nay). */
-export async function svView(env) {
+/* KỲ của hai bảng "theo khu" và "theo nơi nhận" (?ky=): một NĂM "2026", một THÁNG "2026-10", hoặc "all" = từ
+   trước tới nay; không gửi thì là năm nay. Đối chiếu với bên mua làm theo từng tháng, nên chọn một tháng thì
+   danh sách bên dưới cũng là ĐỦ các lần xuất của tháng đó (không phải 300 lần gần nhất). Trả [từ, tới) theo
+   ngày xuất để câu lọc đi theo index idx_satvun_ngay. */
+export function svKy(ky, nam) {
+  const k = String(ky || '');
+  if (k === 'all') return { ky: 'all', tu: '0000-00-00', toi: '9999-99-99' };
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(k)) {
+    const [y, m] = k.split('-').map(Number);
+    return { ky: k, tu: k + '-01', toi: (m === 12 ? (y + 1) + '-01' : y + '-' + String(m + 1).padStart(2, '0')) + '-01', thang: true };
+  }
+  const y = /^\d{4}$/.test(k) ? k : nam;
+  return { ky: y, tu: y + '-01-01', toi: (Number(y) + 1) + '-01-01' };
+}
+
+export async function svView(env, url) {
   const today = vnDay(), nam = today.slice(0, 4), thang = today.slice(0, 7);
+  const K = svKy(url ? url.searchParams.get('ky') : '', nam);
   const tu = (() => { const [y, m] = thang.split('-').map(Number); const t = (y * 12 + m - 1) - 12; return Math.floor(t / 12) + '-' + String(t % 12 + 1).padStart(2, '0'); })();
   const [itemR, thangR, khuR, noiR, tongR] = await env.DB.batch([
     env.DB.prepare(`SELECT ${SV_COLS} FROM satvun s LEFT JOIN users u ON u.id = s.user_id
-                    WHERE (s.voided = 0 AND s.duyet_ts IS NULL) OR s.id >= COALESCE((SELECT MIN(id) FROM (SELECT id FROM satvun ORDER BY id DESC LIMIT 300)), 0)
-                    ORDER BY s.ngay DESC, s.id DESC`),
+                    WHERE (s.voided = 0 AND s.duyet_ts IS NULL) OR ${K.thang
+                      ? '(s.ngay >= ?1 AND s.ngay < ?2)'
+                      : '(?1 = ?1 AND ?2 = ?2 AND s.id >= COALESCE((SELECT MIN(id) FROM (SELECT id FROM satvun ORDER BY id DESC LIMIT 300)), 0))'}
+                    ORDER BY s.ngay DESC, s.id DESC LIMIT 2000`).bind(K.tu, K.toi),
     env.DB.prepare(`SELECT substr(ngay, 1, 7) thang, COUNT(*) n, SUM(kg) kg FROM satvun WHERE ${DA} AND ngay >= ? GROUP BY thang ORDER BY thang DESC`).bind(tu + '-01'),
-    env.DB.prepare(`SELECT khu_id, COUNT(*) n, SUM(kg) kg FROM satvun WHERE ${DA} AND substr(ngay, 1, 4) = ? GROUP BY khu_id ORDER BY kg DESC`).bind(nam),
-    env.DB.prepare(`SELECT noi, COUNT(*) n, SUM(kg) kg FROM satvun WHERE ${DA} AND substr(ngay, 1, 4) = ? GROUP BY noi ORDER BY kg DESC`).bind(nam),
+    env.DB.prepare(`SELECT khu_id, COUNT(*) n, SUM(kg) kg FROM satvun WHERE ${DA} AND ngay >= ? AND ngay < ? GROUP BY khu_id ORDER BY kg DESC`).bind(K.tu, K.toi),
+    env.DB.prepare(`SELECT noi, COUNT(*) n, SUM(kg) kg FROM satvun WHERE ${DA} AND ngay >= ? AND ngay < ? GROUP BY noi ORDER BY kg DESC`).bind(K.tu, K.toi),
     env.DB.prepare(`SELECT COUNT(*) n, COALESCE(SUM(kg), 0) kg,
                       COALESCE(SUM(CASE WHEN substr(ngay, 1, 7) = ?1 THEN kg END), 0) kgThang, COUNT(CASE WHEN substr(ngay, 1, 7) = ?1 THEN 1 END) nThang,
                       COALESCE(SUM(CASE WHEN substr(ngay, 1, 4) = ?2 THEN kg END), 0) kgNam, COUNT(CASE WHEN substr(ngay, 1, 4) = ?2 THEN 1 END) nNam
@@ -146,7 +175,8 @@ export async function svView(env) {
   ]);
   // nơi nhận gần đây, cho nút chọn nhanh (tên gõ lại mỗi lần dễ lệch chữ, thống kê theo nơi nhận bị tách đôi)
   const noiGan = (await env.DB.prepare('SELECT noi FROM satvun WHERE voided = 0 GROUP BY noi ORDER BY MAX(id) DESC LIMIT 8').all()).results.map((x) => x.noi);
-  return json({ items: itemR.results, thang: thangR.results, khu: khuR.results, noi: noiR.results, tong: tongR.results[0], noiGan, nam, thangNay: thang });
+  const kyTong = khuR.results.reduce((a, x) => ({ n: a.n + x.n, kg: a.kg + x.kg }), { n: 0, kg: 0 });
+  return json({ items: itemR.results, thang: thangR.results, khu: khuR.results, noi: noiR.results, tong: tongR.results[0], noiGan, nam, thangNay: thang, ky: K.ky, kyTong });
 }
 
 /* TỆP EXCEL: mọi lần xuất từ trước tới nay (cả chờ duyệt và đã huỷ, có cột trạng thái), rồi tổng theo tháng
