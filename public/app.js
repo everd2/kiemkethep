@@ -4209,15 +4209,16 @@ function tkDong(T) {
    định đúng ngày đó). ca: 0 cả hai ca, 1 ca ngày, 2 ca đêm. toId: chỉ một tổ. */
 function tkTinh(T, tu, ca, den, toId) {
   if (tu.length === 7) { den = tkCuoiThang(tu); tu += '-01'; } else if (!den) den = tu;
-  const moi = () => ({ lam: 0, nghi: 0, ly: {}, to: 0, tl: 0, thieu: 0, khac: [] });
+  const moi = () => ({ lam: 0, nghi: 0, ly: {}, to: 0, tl: 0, thieu: 0, khac: [], ngaySo: new Set(), caSo: new Set() });
   const to = new Map(T.to.map((u) => [u.id, { id: u.id, name: u.name, deleted: u.deleted, ...moi() }])), tong = moi(), ngay = {};
   for (const r of tkDong(T)) {
     if (r.ngay < tu || r.ngay > den || (ca && r.ca !== ca) || (toId != null && r.u !== toId)) continue;
     if (!to.has(r.u)) to.set(r.u, { id: r.u, name: '(đã xoá)', deleted: 1, ...moi() });
     const t = to.get(r.u), d = ngay[r.ngay] || (ngay[r.ngay] = { lam: 0, nghi: 0, thieu: 0 });
     for (const x of [t, tong]) {
-      x[r.nguon]++;
+      x[r.nguon]++; x.caSo.add(r.ca);
       if (r.nguon === 'thieu') continue;
+      x.ngaySo.add(r.ngay);
       x.lam += r.lam; x.nghi += r.n;
       for (const k in r.nghi) x.ly[k] = (x.ly[k] || 0) + r.nghi[k];
     }
@@ -4342,23 +4343,71 @@ function tkLyDoHtml(x, lyDo, moc, mocTen) {
 }
 // dòng nguồn số: thống kê tin được tới đâu, và các tổ có chịu báo đều không
 const tkNguonTxt = (x) => { const c = x.to + x.tl + x.thieu; return !c ? 'Chưa có ca nào.' : `${c} ca: tổ tự báo ${tkPct(x.to / c)} · số thiết lập ${tkPct(x.tl / c)} · thiếu số ${tkPct(x.thieu / c)}`; };
-/* Từng tổ, một dòng: tên · thanh % nghỉ (vạch đen = mốc dài của chính tổ đó) · % · chênh với mốc gần. Xếp nghỉ cao xuống. */
-function tkHangTo(R, A, B, ng, tbChung, aTen) {
-  const ds = R.to.filter((t) => t.pct != null || t.thieu).sort((a, z) => (z.pct == null ? -1 : z.pct) - (a.pct == null ? -1 : a.pct));
-  const tim = (X, id) => X.to.find((t) => t.id === id) || {};
-  const vMax = Math.max(ng * 1.5, ...ds.map((t) => Math.max(t.pct || 0, tim(B, t.id).pct || 0)));
-  const cao = (p) => p != null && p >= ng;
-  return `<div class="row gap8 sm muted" style="padding:4px 0 2px"><span class="f1">Tổ</span><span style="width:48px;flex:none;text-align:right">% nghỉ</span><span style="width:48px;flex:none;text-align:right;line-height:1.1">so ${esc(aTen)}</span></div>` + ds.map((t) => {
-    const b = tim(B, t.id).pct;
-    return `<button class="row gap8" style="width:100%;border:0;background:transparent;padding:6px 0;text-align:left;font:inherit;color:inherit" data-a="tkto" data-v="${t.id}">
-      <span style="width:84px;flex:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</span>
-      <span class="f1" style="position:relative;height:16px;background:#ECE9E1;border-radius:4px;min-width:0">
-        <span style="position:absolute;left:0;top:0;bottom:0;width:${t.pct == null ? 0 : (t.pct / vMax) * 100}%;border-radius:4px;background:${cao(t.pct) ? 'var(--bad)' : 'var(--pri)'}"></span>
-        ${b != null ? `<span style="position:absolute;top:-3px;bottom:-3px;left:calc(${(b / vMax) * 100}% - 1px);width:3px;border-radius:2px;background:var(--ink)"></span>` : ''}
-        ${tbChung != null ? `<span style="position:absolute;top:-3px;bottom:-3px;left:${(tbChung / vMax) * 100}%;border-left:1px dashed var(--mut)"></span>` : ''}</span>
-      ${t.pct == null ? '<b class="sm" style="width:100px;flex:none;text-align:right;color:var(--warn)">thiếu số</b>'
-        : `<b style="width:48px;flex:none;text-align:right${cao(t.pct) ? ';color:var(--bad)' : ''}">${tkPct(t.pct)}</b><span class="sm" style="width:48px;flex:none;text-align:right">${tkLech(t.pct, tim(A, t.id).pct)}</span>`}</button>`;
-  }).join('');
+/* BẢNG CÁC TỔ: mọi tổ trong MỘT bảng, cùng các cột — quân số (người, cả tổ), đi làm, nghỉ, % nghỉ, chênh với mốc gần
+   (3 ngày trước / tháng trước); dòng dưới tên là ca và lý do nghỉ. Xem theo tháng thì số là trung bình mỗi ngày có số.
+   Dòng tổng đứng đầu; tổ không có số vẫn có dòng (biết ngay tổ nào thiếu). Xếp: nghỉ nhiều trước (mặc định) hoặc thứ tự tổ. */
+function tkBang(T, K, R, A, ca, ng, lyDo) {
+  const ngay = K.che === 'ngay', Q = tkQs(T, K.tu, K.den, null), sx = S.tkSx === 'to' ? 'to' : 'nghi';
+  const cao = (p) => p != null && p >= ng, tim = (X, id) => X.to.find((t) => t.id === id) || {};
+  const cot = 'display:grid;grid-template-columns:minmax(0,1fr) 34px 34px 34px 52px 46px;gap:6px;align-items:center';
+  const so = (v, n) => (v == null ? '—' : tkSo(Math.round(n ? v / n : v)));
+  // lý do: số người nghỉ (xem ngày) hoặc tổng công nghỉ cả tháng (trung bình mỗi ngày thường dưới 1, làm tròn ra 0)
+  const lyTxt = (x) => (ngay ? '' : 'cả tháng ') + lyDo.filter(([k]) => x.ly[k]).map(([k, t]) => `${x.ly[k]} ${t}`).join(' · ');
+  const caTxt = (x) => (x.caSo.size > 1 ? '2 ca' : x.caSo.has(2) ? 'Ca đêm' : x.caSo.has(1) ? 'Ca ngày' : '');
+  const qsCua = (q) => (q && q.sTong ? (ngay ? q.sTong : q.sTong / q.soNgay) : null);
+  const dong = (x, ten, tong, id) => {
+    const nd = ngay ? 0 : x.ngaySo.size, coSo = x.pct != null;
+    const phu = tong ? (Q.tong.sTong ? `Đi làm / quân số: ${tkPct(Q.tong.sLam / Q.tong.sTong)}` : '')
+      : x.thieu && !coSo ? '<span style="color:var(--warn);font-weight:700">thiếu số</span>'
+      : !coSo ? 'không có số (nghỉ, làm ca khác hoặc ca chưa hết)'
+      : [caTxt(x), x.nghi ? lyTxt(x) : 'không ai nghỉ'].filter(Boolean).join(' · ') + (x.thieu ? ` · <span style="color:var(--warn)">${x.thieu} ca thiếu số</span>` : '');
+    const trong = `<span class="col" style="gap:1px;min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${tong ? 800 : 600}">${esc(ten)}</span><span class="muted" style="font-size:12px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${phu}</span></span>
+      <span style="text-align:right">${so(qsCua(tong ? Q.tong : Q.to.get(id)))}</span><span style="text-align:right">${coSo ? so(x.lam, nd) : '—'}</span><span style="text-align:right;${x.nghi ? 'color:var(--bad);font-weight:700' : ''}">${coSo ? so(x.nghi, nd) : '—'}</span>
+      <span style="text-align:center;border-radius:6px;padding:2px 0;font-weight:800;${cao(x.pct) ? 'background:var(--badbg);color:var(--bad)' : coSo ? 'background:#ECE9E1' : 'color:var(--mut)'}">${coSo ? tkPct(x.pct) : '—'}</span>
+      <span style="text-align:right;font-size:13px">${coSo ? tkLech(x.pct, tong ? A.tong.pct : tim(A, id).pct) : ''}</span>`;
+    return tong ? `<div style="${cot};padding:8px 12px;background:#F3F1EC;border-bottom:1px solid var(--line)">${trong}</div>`
+      : `<button style="${cot};width:100%;border:0;border-bottom:1px solid var(--line);background:${cao(x.pct) ? '#FFF6F5' : '#fff'};padding:7px 12px;text-align:left;font:inherit;color:inherit" data-a="tkto" data-v="${id}">${trong}</button>`;
+  };
+  const thu = new Map(T.to.map((u, i) => [u.id, i])), hang = (t) => (t.pct != null ? t.pct : t.thieu ? -0.5 : -1);
+  const ds = R.to.filter((t) => !t.deleted || t.pct != null || t.thieu)
+    .sort(sx === 'to' ? (a, z) => (thu.has(a.id) ? thu.get(a.id) : 999) - (thu.has(z.id) ? thu.get(z.id) : 999) : (a, z) => hang(z) - hang(a));
+  const soTo = ds.filter((t) => t.pct != null || t.thieu).length;
+  return `<div class="row gap6" style="align-items:center"><b class="f1">Bảng các tổ${ngay ? '' : ' (TB mỗi ngày)'}</b>
+      ${[['nghi', 'Nghỉ nhiều trước'], ['to', 'Thứ tự tổ']].map(([v, t]) => `<button class="chip s ${sx === v ? 'on' : ''}" style="flex:none;white-space:nowrap;padding:4px 10px;font-size:14px" data-a="tksx" data-v="${v}">${t}</button>`).join('')}</div>
+    <div class="card sm" style="padding:0;overflow:hidden">
+      <div class="muted" style="${cot};padding:6px 12px;font-size:12px;line-height:1.15;border-bottom:1px solid var(--line)"><span>Tổ</span><span style="text-align:right">Quân số</span><span style="text-align:right">Đi làm</span><span style="text-align:right">Nghỉ</span><span style="text-align:center">% nghỉ</span><span style="text-align:right">so ${ngay ? '3 ngày' : 'th. trước'}</span></div>
+      ${dong(R.tong, `Tổng ${soTo} tổ`, true)}${ds.map((t) => dong(t, t.name, false, t.id)).join('')}</div>
+    <span class="sm muted" style="line-height:1.4">Quân số: người của cả tổ (hai ca). Đi làm, nghỉ${ca ? ' theo ca đang lọc' : ''}${ngay ? '' : ', trung bình mỗi ngày có số'}. Đỏ: nghỉ từ ${T.nguong}%. Chạm một tổ để xem riêng.</span>`;
+}
+/* BẢNG MÀU: tổ (hàng) × kỳ (cột: 7 ngày gần đây khi xem ngày, 4 tháng khi xem tháng). Ô tô theo % nghỉ — nhìn một lần
+   thấy tổ nào nghỉ nhiều vào lúc nào và có kéo dài không. Chạm ô để sang kỳ đó, chạm tên để xem riêng tổ. */
+const tkNen = (p, thieu, co, ng) => (p == null ? (thieu ? ['var(--warnbg)', 'var(--warn)'] : co ? ['#fff', 'var(--mut)'] : ['transparent', 'var(--mut)'])
+  : p >= ng ? ['#F2C4BF', 'var(--bad)'] : p >= ng / 2 ? ['#F8E2B8', '#6B4500'] : p > 0 ? ['#DCE6F2', 'var(--ink)'] : ['var(--okbg)', 'var(--ok)']);
+function tkNhiet(T, K, ca, ng) {
+  const ngay = K.che === 'ngay', b = S.boot.today, het = ngay ? b : b.slice(0, 7);
+  const cols = ngay ? [6, 5, 4, 3, 2, 1, 0].map((n) => congNgay(K.k, -n)).map((k) => ({ k, tu: k, den: k, nhan: String(Number(k.slice(8))), phu: tkThu(k) }))
+    : K.truoc.concat(K.k).map((k) => ({ k, tu: k + '-01', den: tkCuoiThang(k), nhan: 'Th' + Number(k.slice(5)), phu: k.slice(0, 4) }));
+  const X = cols.map((c) => tkTinh(T, c.tu, ca, c.den)), cua = (x, id) => x.to.find((t) => t.id === id);
+  // tổ đang dùng app, cộng tổ đã thôi mà còn số trong các kỳ này
+  const tos = T.to.filter((u) => !u.deleted || X.some((x) => { const t = cua(x, u.id); return t && t.to + t.tl + t.thieu > 0; }));
+  const luoi = `display:grid;grid-template-columns:minmax(58px,1fr) repeat(${cols.length},minmax(0,${ngay ? 40 : 56}px));gap:3px;align-items:center`;
+  const o = (x, c, dam) => {
+    const co = x && x.lam + x.nghi > 0, [nen, chu] = tkNen(x ? x.pct : null, x && x.thieu, co, ng), on = c.k === K.k;
+    const v = !x || (x.pct == null && !x.thieu) ? '' : x.pct == null ? '?' : String(Math.round(x.pct * 100));
+    return `<button style="height:${dam ? 32 : 30}px;min-width:0;border-radius:6px;border:${on ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.06)'};background:${nen};color:${chu};font:inherit;font-size:13px;font-weight:${dam || (x && x.pct >= ng) ? 800 : 600};padding:0" ${c.k > het ? 'disabled' : `data-a="tkden" data-v="${c.k}"`} aria-label="${esc(c.nhan)}: ${v ? 'nghỉ ' + v + '%' : 'không có số'}">${v}</button>`;
+  };
+  const hang = tos.map((u) => `<button style="border:0;background:transparent;padding:0;text-align:left;font:inherit;color:inherit;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-a="tkto" data-v="${u.id}">${esc(u.name)}</button>${cols.map((c, i) => o(cua(X[i], u.id), c)).join('')}`).join('');
+  const mau = (p, t) => { const [nen] = tkNen(p, 0, 1, ng); return `<span class="row" style="gap:4px"><span style="width:14px;height:14px;border-radius:4px;background:${nen};border:1px solid rgba(0,0,0,.08);flex:none"></span>${t}</span>`; };
+  const chuThich = mau(0, '0%') + mau(ng / 4, 'dưới ' + Math.round(T.nguong / 2) + '%') + mau(ng / 2, 'gần ngưỡng') + mau(ng, 'từ ' + T.nguong + '%')
+    + '<span class="row" style="gap:4px"><span style="width:14px;height:14px;border-radius:4px;background:var(--warnbg);color:var(--warn);font-size:11px;font-weight:800;text-align:center;line-height:14px;flex:none">?</span>thiếu số</span>';
+  return `<b>% nghỉ ${ngay ? '7 ngày gần đây' : '4 tháng gần đây'}</b>
+    <div class="card sm" style="padding:10px 12px;display:flex;flex-direction:column;gap:3px">
+      <div class="muted" style="${luoi};font-size:12px;line-height:1.15"><span></span>${cols.map((c) => `<span style="text-align:center;${c.k === K.k ? 'color:var(--ink);font-weight:800' : ''}">${esc(c.nhan)}<br>${esc(c.phu)}</span>`).join('')}</div>
+      ${hang ? `<div style="${luoi}">${hang}</div>` : ''}
+      <div style="${luoi};border-top:1px solid var(--line);padding-top:4px;margin-top:2px"><b>Toàn bộ</b>${cols.map((c, i) => o(X[i].tong, c, true)).join('')}</div>
+    </div>
+    <div class="row sm muted" style="gap:6px 12px;flex-wrap:wrap">${chuThich}</div>
+    <span class="sm muted" style="line-height:1.4">Số trong ô là % nghỉ. Ô viền đậm: ${ngay ? 'ngày' : 'tháng'} đang xem. Chạm ô để xem ${ngay ? 'ngày' : 'tháng'} đó, chạm tên để xem riêng tổ.</span>`;
 }
 function vThongKeQs() {
   const T = S.tk, ql = isQL(), che = tkChe(), ngay = che === 'ngay', b = S.boot.today;
@@ -4424,7 +4473,6 @@ function vThongKeQs() {
 
   // TOÀN BỘ: thẻ so sánh, hai ca, từng tổ, lý do, (theo tháng) từng ngày, nguồn số
   const coSo = R.to.some((t) => t.pct != null || t.thieu);
-  const khongSo = ngay ? R.to.filter((t) => !t.deleted && !(t.to + t.tl + t.thieu)).map((t) => t.name) : [];
   let theoNgay = '';
   if (!ngay && coSo) {
     // % nghỉ từng ngày của tháng: cột cao theo % nghỉ, đỏ từ ngưỡng; vạch đứt đen = TB tháng, vạch chấm đỏ = ngưỡng
@@ -4444,17 +4492,8 @@ function vThongKeQs() {
     ${tkTom(T, K, ql ? 'Toàn bộ ' + R.to.filter((t) => t.pct != null || t.thieu).length + ' tổ' : 'Tổ của bạn', ca, null, ng)}
     ${!coSo ? `<div class="muted">${ngay ? 'Chưa có số quân số nào trong ngày này.' : 'Chưa có số quân số nào trong tháng này.'}</div>` : `
     ${haiCa(null)}
-    ${(() => {
-      const QS = tkQs(T, K.tu, K.den, null);
-      if (!QS.tong.sTong || !ql) return '';
-      const hang = T.to.filter((u) => QS.to.has(u.id)).map((u) => tkQsDong(QS.to.get(u.id), u.name, false, u.id)).join('');
-      return `<b>Quân số từng tổ${ngay ? '' : ' (trung bình mỗi ngày)'}${ca ? ' · cả hai ca' : ''}</b>
-        <div class="card col" style="gap:0;padding:2px 12px">${tkQsDong(QS.tong, 'Tổng các tổ', true)}${hang}</div>
-        <span class="sm muted row" style="gap:10px;flex-wrap:wrap;line-height:1.4"><span class="row" style="gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:var(--pri)"></span>đi làm</span><span class="row" style="gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:var(--bad)"></span>nghỉ</span><span class="row" style="gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:var(--line)"></span>còn lại: người của ca chưa có số</span><span>· % = đi làm / quân số</span></span>`;
-    })()}
-    <b>% nghỉ từng tổ</b><div class="card col" style="gap:0;padding:4px 12px">${tkHangTo(R, A, B, ng, R.tong.pct, ngay ? '3 ngày' : 'th. trước')}</div>
-    <span class="sm muted" style="line-height:1.4">Cột phải: so với ${esc(K.aTen)} của tổ. Vạch đen đậm: ${esc(K.bTen)} của tổ; vạch đứt mờ: trung bình chung. Đỏ: từ ngưỡng ${T.nguong}%. Chạm một tổ để xem riêng.</span>
-    ${khongSo.length ? `<span class="sm muted" style="line-height:1.4">Không có số ngày này: ${esc(khongSo.join(', '))} (tổ nghỉ, làm ca khác, hoặc ca chưa hết).</span>` : ''}
+    ${ql ? tkBang(T, K, R, A, ca, ng, T.lyDo) : ''}
+    ${ql ? tkNhiet(T, K, ca, ng) : ''}
     <b>Nghỉ theo lý do (${tkSo(R.tong.nghi)} công)</b>${tkLyDoHtml(R.tong, T.lyDo, B.tong, ngay ? 'TB tháng' : 'TB 3 th.')}
     ${ngay ? khacHtml(R.tong.khac, true) : ''}
     ${theoNgay}
@@ -6063,6 +6102,7 @@ const ACTIONS = {
   tkden(d) { if (String(d.v).length === 7) { S.tkThang = d.v; S.tkChe = 'thang'; } else { S.tkNgay = d.v; S.tkChe = 'ngay'; } tkDam(); },
   tkxemngay(d) { S.tkNgay = d.v; S.tkChe = 'ngay'; tkDam(); },
   tkca(d) { S.tkCa = Number(d.v) || 0; render(); },
+  tksx(d) { S.tkSx = d.v === 'to' ? 'to' : 'nghi'; render(); },
   tkto(d) { S.tkTo = d.v === '' || d.v == null ? null : Number(d.v); render(); const b = document.getElementById('body'); if (b) b.scrollTop = 0; },
   tkngmo() { S.tkNgMo = !S.tkNgMo; delete S.form.tkng; render(); },
   tkngluu() {
