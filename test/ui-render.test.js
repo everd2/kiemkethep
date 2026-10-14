@@ -269,7 +269,13 @@ S.loanDt = 5;
 S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }],
   agg: [{ phi_id: 'D8', kind: 'vay', q: 330 }, { phi_id: 'D8', kind: 'tra_vay', q: 110 }, { phi_id: 'D10', kind: 'cho_vay', q: 20 }, { phi_id: 'D10', kind: 'tra_no', q: 30 }],
   items: S.loans.items.map((x) => ({ ...x, voided: 0 })).concat([{ id: 8, doitac_id: 5, doitac_name: 'X', phi_id: 'D8', kind: 'vay', qty: 11, grp: 'g8', user_id: 2, uname: 'An', ts: Date.now() - 864e5, duyet_ts: null, voided: 1 }]) };
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','baocaoca'];
+// thống kê quân số: tổ tự báo, số thiết lập chép lúc hết ca, ca thiếu số, một tổ đã xoá, có lý do khác
+{ const d0 = S.boot.today, d1 = congNgay(S.boot.today, -1), t0 = congNgay(S.boot.today.slice(0, 7) + '-01', -3);
+  S.tk = { tu: t0, den: d0, lyDo: QS_LY_DO, nguong: 15, to: [{ id: 2, name: 'Trần B', deleted: 0 }, { id: 3, name: 'Tổ tên rất dài để thử tràn dòng của tổ', deleted: 0 }, { id: 4, name: 'Lê C', deleted: 0 }],
+    qs: [{ ngay: d0, ca: 1, u: 2, tong: 20, lam: 16, nghi: { om: 2, off: 1, khac: 1 }, ghi_chu: 'đi khám' }, { ngay: d1, ca: 1, u: 2, tong: 20, lam: 20, nghi: {}, ghi_chu: null },
+      { ngay: d0, ca: 2, u: 3, tong: 30, lam: 21, nghi: { phep: 5, que: 4 }, ghi_chu: null }, { ngay: t0, ca: 1, u: 2, tong: 20, lam: 19, nghi: { gd: 1 }, ghi_chu: null }, { ngay: d0, ca: 1, u: 9, tong: 5, lam: 5, nghi: {}, ghi_chu: null }],
+    tl: [{ ngay: d1, ca: 2, u: 3, tong: 30, lam: 28, nghi: { om: 2 }, ghi_chu: null }, { ngay: d1, ca: 1, u: 4, tong: null, lam: null, nghi: {}, ghi_chu: null }] }; }
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','baocaoca','qstk'];
 const out = [];
 function one(label) {
   render();
@@ -277,6 +283,8 @@ function one(label) {
   out.push([label, h.length, /undefined|NaN|\\[object Object\\]/.test(h) ? 'BAD:' + (h.match(/.{0,40}(undefined|NaN|\\[object Object\\]).{0,40}/) || [''])[0] : 'ok']);
 }
 for (const sc of SCREENS) { S.screen = sc; one(sc); }
+S.screen = 'qstk'; S.tkCa = 2; one('qstk+ca-dem'); S.tkCa = 0; S.tkTo = 2; S.tkNgay = S.boot.today; one('qstk+mot-to'); S.tkTo = 4; one('qstk+to-thieu-so'); S.tkTo = null; S.tkNgMo = true; one('qstk+doi-nguong'); S.tkNgMo = false; one('qstk+chon-ngay'); S.tkNgay = null;
+{ const me0 = S.me; S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; one('qstk+tieu-doi-truong'); S.me = me0; }
 // bảng quân số đang xếp thứ tự tổ, và thẻ báo của tổ trưởng đang mở phần người nghỉ + dòng ca kia
 S.screen = 'quanso'; S.qsSx = S.qs.tdt.map((u) => u.id); one('quanso+xep-thu-tu'); S.qsSx = null;
 { const me0 = S.me; S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; S.boot.qs.toi = { tong: 19, hien: null, ke: null, truocHien: { ngay: S.boot.today, ca: 1, tong: 19, lam: 8, ca_kia: 10, nghi: { om: 1 }, ghi_chu: null }, truocKe: null, coDinh: 0 }; S.qsH = null; qhState().mo = true; qhState().nghi = { om: 2, khac: 1 }; S.screen = 'home'; one('home+the-quan-so-mo'); S.boot.qs.toi.coDinh = 1; S.qsH = null; one('home+the-quan-so-ca-co-dinh'); S.qsH = null; delete S.boot.qs.toi; S.me = me0; }
@@ -366,7 +374,7 @@ S.screen = 'duyet'; render();
     ? 'ok' : 'BAD:thiếu dòng khung giờ']); }
 
 // trạng thái đang tải và tải lỗi
-for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail'],['satvun','svs'],['giacong','gc'],['gcdon','gcDetail'],['gcform','gc'],['gcsetup','gc'],['quanso','qs'],['baocaoca','bcc']]) {
+for (const [sc, k] of [['duyet','review'],['nhatky','audit'],['users','users'],['stats','usage'],['vaymuon','loans'],['vaychitiet','loanDetail'],['satvun','svs'],['giacong','gc'],['gcdon','gcDetail'],['gcform','gc'],['gcsetup','gc'],['quanso','qs'],['baocaoca','bcc'],['qstk','tk']]) {
   S.screen = sc; const bak = S[k]; S[k] = null;
   one(sc + '+dang-tai');
   S.loadErr[sc] = 'Không có kết nối mạng'; one(sc + '+loi-tai'); delete S.loadErr[sc];

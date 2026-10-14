@@ -379,3 +379,82 @@ export function qsBoot(rows, st, user, mine = [], bcDa = [], cfgRow = null) {
     // ca đang diễn ra đã chép báo cáo ca chưa (chỉ cần cho CVKTHT trở lên)
     bcDa: capOf(user.role) >= 1 && bcDa.some((r) => caKhoa(r) === caKhoa(hien)) };
 }
+
+/* ========================= THỐNG KÊ QUÂN SỐ =========================
+   Màn riêng, không dính tới báo cáo ca. Đếm theo CÔNG (một người trong một ca). Số của mỗi tổ, mỗi ca lấy theo thứ
+   tự: dòng tổ tự báo (quan_so) → số thiết lập đã chép lúc hết ca (quan_so_tl) → ca thiếu số. Việc cộng và tính phần
+   trăm làm ở máy khách (lọc ca ngày / ca đêm không phải hỏi lại máy chủ). OFF luân phiên tính là nghỉ.
+   % nghỉ = công nghỉ ÷ (công đi làm + công nghỉ); của toàn bộ thì cộng công mọi tổ rồi mới chia. */
+export const QS_NGUONG_MAC = 15;
+const TK_NGAY_MAX = 62;
+const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: congNgay(c.ngay, -1), ca: 2 });
+
+/* LƯU SỐ CỦA CA TỔ KHÔNG BÁO, chạy theo lịch mỗi giờ. Số thiết lập và lịch ca chỉ có một bản, sửa là mất số cũ, nên
+   hết ca nào chép lại ngay ca đó: tổ LÀM ca đó (theo lịch ca; chưa đặt lịch thì theo số thiết lập có người ca đó) mà
+   không có dòng quan_so thì ghi một dòng quan_so_tl — có số thiết lập thì lấy số đó (đi làm = số người ca − nghỉ),
+   không có thì để trống (ca thiếu số). Lịch ca đặt sau lúc hết ca thì bỏ qua ca đó (không chép ngược). Xét ba ca gần nhất đã hết: lịch chạy lỡ vài giờ vẫn bù được. INSERT OR IGNORE:
+   lần chép đầu tiên sau giờ hết ca là lần giữ lại. */
+export async function qsChotCa(env, now = Date.now()) {
+  const cas = [];
+  const [stR, toR, cfgR] = await env.DB.batch([
+    env.DB.prepare(SETTINGS_SQL),
+    env.DB.prepare("SELECT id FROM users WHERE role = 'tieudoi' AND deleted = 0"),
+    env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
+  ]);
+  if (!toR.results.length) return 0;
+  const st = parseSettings(stR.results), cfg = docCfg(cfgR.results[0]);
+  for (let c = caTruoc(caLuc(st, now)); cas.length < 3; c = caTruoc(c)) cas.push(c);
+  const tu = cas[cas.length - 1].ngay;
+  const [coR, daR] = await env.DB.batch([
+    env.DB.prepare('SELECT ngay, ca, user_id FROM quan_so WHERE ngay >= ?').bind(tu),
+    env.DB.prepare('SELECT ngay, ca, user_id FROM quan_so_tl WHERE ngay >= ?').bind(tu),
+  ]);
+  const co = new Set(coR.results.concat(daR.results).map((r) => r.ngay + ':' + r.ca + ':' + r.user_id));
+  const ghi = [];
+  for (const c of cas) {
+    for (const { id } of toR.results) {
+      if (co.has(caKhoa(c) + ':' + id)) continue;
+      const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, L = caLich(cfg, id, c.ngay), het = caGio(st, c).den;
+      if (L ? L !== 3 && L !== c.ca : !s) continue; // tổ không làm ca này (hoặc chưa biết làm ca nào)
+      // lịch ca (hoặc số thiết lập, khi tổ chưa đặt lịch) đặt SAU lúc hết ca thì không biết lúc đó tổ có làm ca này không
+      if ((L ? cfg.lich[id].ts : tl.ts) > het) continue;
+      const nghi = (s && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0);
+      ghi.push(env.DB.prepare('INSERT OR IGNORE INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?,?,?,?,?,?,?,?)')
+        .bind(c.ngay, c.ca, id, s ? tl.tong : null, s ? Math.max(0, s - so) : null, JSON.stringify(s ? nghi : {}), (s && so && tl['gc' + c.ca]) || null, now));
+    }
+  }
+  if (ghi.length) await env.DB.batch(ghi);
+  return ghi.length;
+}
+
+/* Số liệu thô cho màn thống kê, một khoảng ngày (tối đa 62 ngày: tháng đang xem và tháng trước để so sánh). Tiểu đội
+   trưởng chỉ nhận tổ mình. Kèm danh sách tổ (cả tổ đã thôi nhưng có số trong khoảng này) theo thứ tự tổ, và ngưỡng
+   tô đỏ. */
+export async function qsThongKe(env, user, url) {
+  const q = url.searchParams, tu = docCa(q.get('tu'), 1).ngay, den = docCa(q.get('den'), 1).ngay;
+  if (den < tu) throw bad('Khoảng ngày không hợp lệ');
+  if ((Date.parse(den) - Date.parse(tu)) / NGAY >= TK_NGAY_MAX) throw bad(`Xem tối đa ${TK_NGAY_MAX} ngày một lần`);
+  const ql = capOf(user.role) >= 1, rieng = ql ? '' : ' AND user_id = ?3', kem = ql ? [] : [user.id];
+  const [toR, qsR, tlR, ngR] = await env.DB.batch([
+    env.DB.prepare(`SELECT u.id, u.name, u.deleted FROM users u WHERE ${ql ? `(u.role = 'tieudoi' AND u.deleted = 0)
+                      OR u.id IN (SELECT user_id FROM quan_so WHERE ngay BETWEEN ?1 AND ?2 UNION SELECT user_id FROM quan_so_tl WHERE ngay BETWEEN ?1 AND ?2)` : 'u.id = ?3'}
+                    ORDER BY ${TO_SX}`).bind(tu, den, ...kem),
+    env.DB.prepare(`SELECT ngay, ca, user_id u, tong, lam, nghi, ghi_chu FROM quan_so WHERE ngay BETWEEN ?1 AND ?2${rieng}`).bind(tu, den, ...kem),
+    env.DB.prepare(`SELECT ngay, ca, user_id u, tong, lam, nghi, ghi_chu FROM quan_so_tl WHERE ngay BETWEEN ?1 AND ?2${rieng}`).bind(tu, den, ...kem),
+    env.DB.prepare("SELECT value FROM settings WHERE key = 'qs_nguong'"),
+  ]);
+  const dong = (rs) => rs.map((r) => ({ ...r, nghi: docNghi(r.nghi) }));
+  const ng = ngR.results[0] ? Number(ngR.results[0].value) : QS_NGUONG_MAC;
+  return json({ tu, den, lyDo: QS_LY_DO, nguong: ng >= 1 && ng <= 100 ? ng : QS_NGUONG_MAC, to: toR.results, qs: dong(qsR.results), tl: dong(tlR.results) });
+}
+
+// Đổi ngưỡng tô đỏ của màn thống kê (CVKTHT trở lên): % nghỉ từ mức này trở lên thì tô đỏ.
+export async function qsNguong(req, env, user) {
+  const b = await readJson(req), pct = intIn(b.pct, 1, 100, 'Ngưỡng % nghỉ');
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO settings (key, value) VALUES ('qs_nguong', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(String(pct)),
+    auditStmt(env, user, 'qs_nguong', { pct }),
+    bump(env),
+  ]);
+  return json({ ok: true, pct });
+}

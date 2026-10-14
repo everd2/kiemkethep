@@ -10,7 +10,7 @@ import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } 
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
 import { gcCreate, gcDoc, gcList, gcMucAdd, gcMucXoa, gcThuHoi, gcTn, gcTnMoi, gcUpdate, gcViec, gcView } from './giacong.js';
-import { qsHan, qsLich, qsPut, qsThietLap, qsThuTu, qsView } from './quanso.js';
+import { qsChotCa, qsHan, qsLich, qsNguong, qsPut, qsThietLap, qsThongKe, qsThuTu, qsView } from './quanso.js';
 import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { bcPut, bcView } from './baocao.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
@@ -182,6 +182,9 @@ async function route(req, env, url, user, method, p, r0) {
     // lịch ca: tổ trưởng đặt cho tổ mình, CVKTHT đặt hộ (qsLich tự kiểm); số thiết lập: CVKTHT trở lên
     if (method === 'PUT' && p.length === 2 && p[1] === 'lich') return qsLich(req, env, user);
     if (method === 'PUT' && p.length === 2 && p[1] === 'thietlap') { needCap(1); return qsThietLap(req, env, user); }
+    // thống kê quân số theo tháng: mọi vai trò (Tiểu đội trưởng chỉ thấy tổ mình, qsThongKe tự lọc); ngưỡng tô đỏ: CVKTHT trở lên
+    if (method === 'GET' && p.length === 2 && p[1] === 'thongke') return qsThongKe(env, user, url);
+    if (method === 'PUT' && p.length === 2 && p[1] === 'nguong') { needCap(1); return qsNguong(req, env, user); }
   }
 
   /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---
@@ -247,6 +250,11 @@ export default {
     }
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(ensureSchema(env).then(() => hourly(env)).catch((e) => console.error(e && e.stack ? e.stack : e)));
+    const log = (e) => console.error(e && e.stack ? e.stack : e);
+    /* Hai việc chạy độc lập, việc này lỗi không chặn việc kia: tự chốt sổ thép (hourly) và chép số của ca tổ không báo
+       quân số cho thống kê (qsChotCa). Trả lại promise để bộ test đợi được. */
+    const p = ensureSchema(env).then(() => Promise.all([hourly(env).catch(log), qsChotCa(env).catch(log)])).catch(log);
+    ctx.waitUntil(p);
+    return p;
   },
 };

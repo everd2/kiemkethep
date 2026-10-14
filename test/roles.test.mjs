@@ -97,7 +97,7 @@ async function main() {
       ['GET', '/giacong/tnmoi', null, ALL], ['POST', '/giacong/99999/tn', {}, ALL], ['POST', '/giacong/99999/doc', {}, ALL], ['POST', '/giacong/99999/tn/1/thuhoi', {}, ALL],
       ['POST', '/giacong/muc', {}, AD], ['DELETE', '/giacong/muc/99999', null, AD],
       // quân số đầu ca: ai cũng vào được (Tiểu đội trưởng chỉ tổ mình, kiểm kỹ ở quanso.test.mjs); thân sai nên không ghi gì
-      ['GET', '/quanso', null, ALL], ['PUT', '/quanso', {}, ALL], ['PUT', '/quanso/han', {}, C1], ['PUT', '/quanso/lich', {}, ALL], ['PUT', '/quanso/thietlap', {}, C1], ['PUT', '/quanso/thutu', {}, C1],
+      ['GET', '/quanso', null, ALL], ['PUT', '/quanso', {}, ALL], ['PUT', '/quanso/han', {}, C1], ['PUT', '/quanso/lich', {}, ALL], ['PUT', '/quanso/thietlap', {}, C1], ['PUT', '/quanso/thutu', {}, C1], ['GET', '/quanso/thongke?tu=2026-10-01&den=2026-10-02', null, ALL], ['PUT', '/quanso/nguong', {}, C1],
       ['POST', '/receipts', {}, LAP], ['DELETE', '/receipts/99999', null, LAP], ['POST', '/transfers', {}, LAP],
       ['POST', '/adjust', {}, LAP], ['POST', '/xuat', {}, LAP], ['GET', '/report?from=2020-01-01&to=2020-01-02', null, LAP],
       ['PATCH', '/doitac/99999', {}, LAP], ['GET', '/loans/export', null, LAP], ['GET', '/satvun/export', null, LAP],

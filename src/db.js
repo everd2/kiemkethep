@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 38;
+export const SCHEMA_VERSION = 39;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -498,6 +498,14 @@ export const MIGRATIONS = {
      phiếu (9.125 dòng) là ~36.500 dòng mỗi lần thay vì vài chục. Chỉ thêm index, dữ liệu không đổi. */
   38: [
     'CREATE INDEX IF NOT EXISTS idx_receipts_duyet ON receipts(duyet_day)',
+  ],
+  /* THỐNG KÊ QUÂN SỐ: số của CA TỔ KHÔNG BÁO, chép lại lúc hết ca (xem qsChotCa ở src/quanso.js). Số thiết lập và
+     lịch ca chỉ có một bản, sửa là mất số cũ; bảng này giữ lại số đã dùng cho từng ca để thống kê theo tháng. Một
+     bảng mới, không đổi bảng cũ. lam / tong NULL = ca thiếu số (tổ làm ca đó mà không có số nào). */
+  39: [
+    `CREATE TABLE IF NOT EXISTS quan_so_tl (
+       ngay TEXT NOT NULL, ca INTEGER NOT NULL, user_id INTEGER NOT NULL, tong INTEGER, lam INTEGER,
+       nghi TEXT NOT NULL DEFAULT '{}', ghi_chu TEXT, ts INTEGER NOT NULL, PRIMARY KEY (ngay, ca, user_id))`,
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

@@ -522,6 +522,21 @@ CREATE TABLE IF NOT EXISTS quan_so (
 -- lần báo gần nhất của một tổ (điền sẵn tổng quân số cho lần báo sau) tìm thẳng theo tổ, không quét cả bảng
 CREATE INDEX IF NOT EXISTS idx_quan_so_u ON quan_so(user_id, ngay, ca);
 
+-- SỐ CỦA CA TỔ KHÔNG BÁO, chép lúc hết ca để thống kê quân số theo tháng (xem qsChotCa ở src/quanso.js). Tổ làm ca
+-- đó mà không có dòng quan_so: có số thiết lập thì ghi số đó (lam = số người ca − nghỉ), không có thì lam / tong NULL
+-- (ca thiếu số). Dòng quan_so cùng ca, cùng tổ (nếu có) luôn được ưu tiên hơn.
+CREATE TABLE IF NOT EXISTS quan_so_tl (
+  ngay TEXT NOT NULL,
+  ca INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  tong INTEGER,
+  lam INTEGER,
+  nghi TEXT NOT NULL DEFAULT '{}',
+  ghi_chu TEXT,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (ngay, ca, user_id)
+);
+
 -- Danh mục chọn nhanh của đơn gia công, admin lập trước. loai: 'khu' phân khu, 'hm' hạng mục, 'ck' loại cấu kiện,
 -- 'vg' lý do vướng.
 -- Đơn lưu TÊN của mục (don_gc.phan_khu, hang_muc, cau_kien) chứ không lưu id: xoá một mục không đụng tới đơn đã giao.
@@ -588,7 +603,7 @@ CREATE TABLE IF NOT EXISTS don_gc_doc (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 38);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 39);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

@@ -239,6 +239,16 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).
 - **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
 
+### Thống kê quân số
+
+Ở **Thêm → Thống kê quân số**, màn riêng, không dính tới báo cáo ca. CVKTHT trở lên xem mọi tổ; Tiểu đội trưởng xem tổ mình.
+
+- **Đếm theo công** (một người trong một ca). **OFF luân phiên tính là nghỉ.** *% nghỉ = công nghỉ ÷ (công đi làm + công nghỉ)*; % của toàn bộ thì cộng công mọi tổ rồi mới chia (tổ đông người nặng hơn tổ ít người).
+- Chọn tháng (‹ ›) và ca (cả hai ca / ca ngày / ca đêm). Màn tổng quan: % nghỉ toàn bộ kèm so với tháng trước, % nghỉ **từng tổ** (thanh ngang, xếp từ cao xuống, vạch đứt là trung bình chung), nghỉ **theo lý do**, % nghỉ **theo ngày** (chạm một cột để xem ngày đó), và **nguồn số** (tổ tự báo / số thiết lập / thiếu số). Chạm một tổ để xem lịch tháng tô màu theo % nghỉ từng ngày, lý do, các ghi chú "lý do khác".
+- **Ngưỡng tô đỏ** (mặc định 15%): tổ hoặc ngày nghỉ từ mức này trở lên tô đỏ; CVKTHT trở lên đổi được (dòng *Tô đỏ khi nghỉ từ …*).
+- Nút **Chép tóm tắt tháng** ra chữ để dán Zalo.
+- **Số của ca tổ không báo**: hết ca nào, app (lịch chạy mỗi giờ) tự chép ca đó cho tổ làm ca đó mà không báo — có số thiết lập thì lấy số đó (kèm người nghỉ theo lý do), không có thì ghi là **ca thiếu số** (bảng `quan_so_tl`, bản cấu trúc 39). Sửa số thiết lập sau đó không đổi số của ca đã qua. Ca đã qua trước khi có tính năng này, hoặc hết ca trước lúc tổ đặt lịch ca, thì không chép được: các tháng cũ chỉ có số tổ tự báo.
+
 ### Báo cáo ca gửi cấp trên
 
 Ở **Thêm → Báo cáo ca và quân số các tổ** (hoặc thẻ nhắc trên Tổng quan), từ CVKTHT trở lên. Ngay dưới ô chọn ca có **dải bước** *1 · Tổ báo x/y → 2 · Soát → 3 · Chép*: hai nút đầu nhảy tới đúng phần, nút cuối chép cả báo cáo. App ghép sẵn bản **BÁO CÁO QUÂN SỐ CA** đúng mẫu của đơn vị; người soạn soát lại, bấm **3 · Chép** rồi dán vào nhóm Zalo.
