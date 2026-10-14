@@ -140,9 +140,10 @@ async function main() {
       asUser(bt, { id: u.id, name: u.name, role: u.role });
       const home = R('vHome()');
       const choBan = new Set();
-      const m = home.match(/<b style="font-size:18px">([^<]*) chờ bạn duyệt<\/b>/g) || [];
+      // sau giờ làm thẻ có thêm đuôi ", duyệt trước 0h" (nhắc duyệt trước khi số dồn sang ngày mai): vẫn là thẻ này
+      const m = home.match(/<b style="font-size:18px">([^<]*) chờ bạn duyệt(?:, duyệt trước 0h)?<\/b>/g) || [];
       for (const x of m) {
-        const t = x.replace(/<[^>]+>/g, '').replace(' chờ bạn duyệt', '');
+        const t = x.replace(/<[^>]+>/g, '').replace(/ chờ bạn duyệt(, duyệt trước 0h)?$/, '');
         // chỉ thẻ KHU chờ duyệt (thẻ phiếu kho, sổ vay là thẻ khác)
         if (/^\d+ khu$/.test(t)) choBan.add('*' + t);
         else if (rvKhuTen.has(t)) choBan.add(t);
