@@ -200,7 +200,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 36 chỉ thêm bảng sổ xuất sắt vụn (bản sao cũ chưa có thì giữ sổ đang có)
   36: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35],
   // bản 37 chỉ thêm một index cho đơn gia công xong chưa xuất, dữ liệu không đổi
-  37: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36] };
+  37: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
+  // bản 38 chỉ thêm index theo ngày duyệt của phiếu kho, dữ liệu không đổi
+  38: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */

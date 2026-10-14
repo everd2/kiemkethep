@@ -588,7 +588,7 @@ CREATE TABLE IF NOT EXISTS don_gc_doc (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 37);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 38);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

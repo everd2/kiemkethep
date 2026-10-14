@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 37;
+export const SCHEMA_VERSION = 38;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -491,6 +491,13 @@ export const MIGRATIONS = {
      trước tới nay. Chỉ thêm index, dữ liệu không đổi. */
   37: [
     "CREATE INDEX IF NOT EXISTS idx_don_gc_chua_xuat ON don_gc(xong_ts) WHERE tt = 'xong' AND COALESCE(xuat_tt, '') <> 'duyet'",
+  ],
+  /* PHIẾU KHO: index theo NGÀY DUYỆT. schema.sql có idx_receipts_duyet từ bản 1.2 nhưng chưa migration nào tạo nó, nên
+     database nâng cấp dần (máy thật) không có, còn bộ test dựng từ schema.sql thì có — test không bắt được. Thiếu nó thì
+     bốn câu của /bootstrap (danh sách phiếu, innKhu, phieuTs, mvNew) quét CẢ bảng receipts ở mỗi lần tải: đo với một năm
+     phiếu (9.125 dòng) là ~36.500 dòng mỗi lần thay vì vài chục. Chỉ thêm index, dữ liệu không đổi. */
+  38: [
+    'CREATE INDEX IF NOT EXISTS idx_receipts_duyet ON receipts(duyet_day)',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
