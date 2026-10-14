@@ -273,6 +273,66 @@ async function main() {
   R(`delete S.form['tl_${U['Lê Hải Nam']}_t']; ACTIONS.nav({ s: 'baocaoca' })`); await cho();
   eq('quay lại: vẫn là báo cáo của ca đang soạn', [R('S.screen'), R('S.bcc.ngay'), R('S.bcc.ca')], ['baocaoca', D, 2]);
 
+  /* ===== 3b. Một bản dùng chung, nhiều người soạn =====
+     Báo cáo của ca và mẫu là một bản cho mọi người; mỗi máy chỉ giữ riêng phần sửa chưa chép. */
+  {
+    const lay = async (w = CV) => (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, w)).data;
+    const rev = () => S.one("SELECT value FROM meta WHERE key = 'rev'").value;
+    R(`ACTIONS.bcbo()`);
+    eq('bỏ phần sửa chưa chép: về bản chung, nháp trên máy xoá', [R("typeof S.bcM.s7"), R('bcCoKhac(bcKhac())'), Object.keys(store).some((k) => k === `kt:bc:${D}:2`)], ['undefined', false, false]);
+    R(`ACTIONS.bcnguon({ v: 'tl' })`);
+    ok('phần sửa chưa chép được nói rõ trên màn, kèm nút bỏ', R('vBaoCaoCa()').includes('sửa chưa chép</b>') && R('vBaoCaoCa()').includes('data-a="bcbo"'));
+    const r0 = rev();
+    R('ACTIONS.bcchep()'); await cho();
+    const b1 = await lay('Admin');
+    eq('nguồn quân số lưu kèm báo cáo: người khác mở ra cùng một nguồn; lưu thì tăng rev để máy khác tải lại', [b1.bao.nguon, rev() > r0, R('bcCoKhac(bcKhac())')], ['tl', true, false]);
+    const r1 = rev();
+    R('ACTIONS.bcchep()'); await cho();
+    eq('chép lại đúng bản đang lưu: không ghi gì, rev và giờ lưu giữ nguyên', [rev(), (await lay()).bao.ts], [r1, b1.bao.ts]);
+    // Admin (máy khác) chép ca này với mục 8 sửa tay và đổi tên dự án, trong lúc CVKTHT đang sửa dở mục 7
+    R(`S.bcM.s7 = 'Chờ cẩu'; bcNhap()`);
+    const p = await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b1.bao.ts, van_ban: 'bản của Admin', muc: { ...b1.bao.muc, s8: 'Tiến độ: đạt' }, dau: { du_an: 'Dự án mới' }, nguon: 'tl' }, 'Admin');
+    const b2 = await lay();
+    eq('người khác lưu: chỉ ô phần đầu đã gửi đổi, các ô khác giữ theo mẫu', [p.status, b2.mau.dau.du_an, b2.mau.dau.ddt, b2.bao.by_name], [200, 'Dự án mới', 'Vũ Nhật Tài', 'Admin']);
+    const cu = await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b1.bao.ts, van_ban: 'bản dựa trên bản cũ', muc: {} }, CV);
+    eq('lưu dựa trên bản cũ: từ chối, nói rõ ai vừa chép', [cu.status, cu.data.code, String(cu.data.error).startsWith('Admin vừa chép báo cáo ca này')], [409, 'changed', true]);
+    R('ACTIONS.bcchep()'); await cho();
+    eq('máy đang sửa dở bấm chép: bị từ chối, tải bản mới về và ghép — mục 8 và dự án theo người kia, mục 7 đang sửa vẫn giữ',
+      [(await lay()).bao.by_name, R('S.bcM.s8'), R('S.bcDau.du_an'), R('S.bcM.s7'), R('S.toastErr')], ['Admin', 'Tiến độ: đạt', 'Dự án mới', 'Chờ cẩu', true]);
+    R('ACTIONS.bcchep()'); await cho();
+    const b3 = await lay();
+    eq('soát rồi chép lại: lưu được, bản chung có cả hai phần sửa, mẫu không bị đè lại', [b3.bao.by_name, b3.bao.muc.s7, b3.bao.muc.s8, b3.mau.dau.du_an], [CV, 'Chờ cẩu', 'Tiến độ: đạt', 'Dự án mới']);
+    // trả mẫu và mục 7 về như trước để các kiểm tra sau không lệch
+    await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b3.bao.ts, van_ban: b3.bao.van_ban, muc: { ...b3.bao.muc, s7: 'Chờ bản vẽ sửa trục X14' }, dau: { du_an: 'Khu đô thị thể thao quốc tế OLYMPIC' }, nguon: 'to' }, CV);
+    R(`S.bcc = null; go('baocaoca', true)`); await cho();
+  }
+
+  /* ===== 3c. Người nghỉ theo lý do trong số thiết lập =====
+     Tổ không báo kịp thì CVKTHT ghi luôn ai nghỉ, vì sao: báo cáo ca phải có số nghỉ kèm lý do như tổ tự báo. */
+  {
+    const nam = U['Lê Hải Nam'], tlap = (b) => S.call('PUT', '/quanso/thietlap', { user: nam, ...b }, CV);
+    const tl = () => JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data).tl[nam];
+    eq('nghỉ nhiều hơn số người của ca: từ chối', (await tlap({ tong: 20, s1: 3, s2: 0, n1: { om: 4 }, ts: 0 })).status, 400);
+    eq('lý do lạ: từ chối', (await tlap({ tong: 20, s1: 20, s2: 0, n1: { choi: 1 }, ts: 0 })).status, 400);
+    eq('lý do khác mà không ghi rõ: từ chối', (await tlap({ tong: 20, s1: 20, s2: 0, n1: { khac: 1 }, ts: 0 })).status, 400);
+    eq('đặt số thiết lập kèm người nghỉ theo lý do', [(await tlap({ tong: 20, s1: 20, s2: 0, n1: { om: 2, que: 1, khac: 1 }, gc1: 'đi khám nghĩa vụ', ts: 0 })).status, tl().n1, tl().gc1, tl().n2], [200, { om: 2, que: 1, khac: 1 }, 'đi khám nghĩa vụ', undefined]);
+    eq('bản app cũ lưu không gửi người nghỉ: giữ người nghỉ đang có', [(await tlap({ tong: 21, s1: 21, s2: 0, ts: tl().ts })).status, tl().tong, tl().n1], [200, 21, { om: 2, que: 1, khac: 1 }]);
+    await tlap({ tong: 20, s1: 20, s2: 0, n1: { om: 2, que: 1, khac: 1 }, gc1: 'đi khám nghĩa vụ', ts: tl().ts });
+    R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    const s3 = R("bcAuto(S.bcc, 's3')").split('\n');
+    eq('báo cáo của tổ chưa báo: đi làm = số người ca − nghỉ, có số nghỉ và lý do từng người', s3.find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 16/20 cn, nghỉ 4 cn — 2 ốm, 1 về quê, 1 đi khám nghĩa vụ');
+    ok('các số tổng hợp vẫn cộng đúng bằng tổng quân số', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'));
+    ok('bước 1 nói rõ số thiết lập đang lấy, kèm người nghỉ', R('S.bcToMo = true; vBaoCaoCa()').includes('Tạm lấy số thiết lập: đi làm 16/20 · nghỉ 4: 2 ốm, 1 về quê, 1 đi khám nghĩa vụ'));
+    // bảng thiết lập: dòng người nghỉ dưới mỗi tổ, mở ra ghi theo lý do, Lưu tất cả gửi kèm
+    R('ACTIONS.bctl()'); await cho();
+    ok('bảng thiết lập có dòng người nghỉ của từng tổ', R('vQuanSo()').includes('Nghỉ: 4 (2 ốm, 1 về quê, 1 đi khám nghĩa vụ)') && R('vQuanSo()').includes(`data-a="tlnghimo" data-id="${nam}"`));
+    R(`ACTIONS.tlnghimo({ id: '${nam}' }); ACTIONS.tlnghi({ id: '${nam}', ca: '1', k: 'phep' }); ACTIONS.tlnghi({ id: '${nam}', ca: '1', k: 'phep' })`);
+    ok('mở ô ghi: chạm lý do là thêm 1 người, có ô số bên cạnh', R('vQuanSo()').includes(`id="tl_${nam}_n1_phep"`) && R('vQuanSo()').includes('value="2"'));
+    R('ACTIONS.qstlluu()'); await cho();
+    eq('Lưu tất cả: người nghỉ vào số thiết lập', tl().n1, { om: 2, phep: 2, que: 1, khac: 1 });
+    S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
+  }
+
   /* ===== 4. Lưu: kiểm dữ liệu ===== */
   eq('báo cáo trống: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 1, van_ban: '  ' }, CV)).status, 400);
   eq('ca lạ: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 3, van_ban: 'x' }, CV)).status, 400);

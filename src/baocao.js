@@ -1,6 +1,6 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
-import { bad, json, vnDay } from './core.js';
-import { SETTINGS_SQL, auditStmt, parseSettings, readJson } from './helpers.js';
+import { HttpError, bad, json, vnDay } from './core.js';
+import { SETTINGS_SQL, auditStmt, batchGuarded, bump, guardStmt, parseSettings, readJson } from './helpers.js';
 import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, docCfg } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
@@ -66,7 +66,7 @@ export async function bcView(env, url) {
     env.DB.prepare(`SELECT id, name, CASE role WHEN 'admin' THEN chuc_danh ELSE role END role FROM users
                     WHERE deleted = 0 AND (role IN ('daidoi', 'trungdoi', 'cvktht') OR (role = 'admin' AND chuc_danh IN ('daidoi', 'trungdoi', 'cvktht'))) ORDER BY name`),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
-    env.DB.prepare(`SELECT b.data, b.van_ban, b.ts, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id
+    env.DB.prepare(`SELECT b.data, b.van_ban, b.ts, b.by_id, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id
                     WHERE b.ngay = ? AND b.ca = ?`).bind(c.ngay, c.ca),
   ]);
   const r = bc.results[0];
@@ -77,17 +77,29 @@ export async function bcView(env, url) {
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
     lich: docCfg(mau.results[0]).lich, tl: docCfg(mau.results[0]).tl,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
-    bao: r ? { muc: docJ(r.data).muc || {}, van_ban: r.van_ban, ts: r.ts, by_name: r.by_name } : null,
+    bao: r ? { muc: docJ(r.data).muc || {}, nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
     suaDuoc: c.ngay >= vnDay(Date.now() - BC_SUA_NGAY * 864e5),
   });
 }
 
-/* Lưu báo cáo của một ca (lúc người soạn bấm chép / chia sẻ): các mục đã sửa và bản chữ đã gửi. Cùng lúc lưu phần
-   đầu và máy móc vào mẫu để ca sau điền sẵn; dòng kiểm tra chỉ vào mẫu khi gửi kèm kt_mau = true. */
+/* Lưu báo cáo của một ca (lúc người soạn bấm chép / chia sẻ): các mục đã sửa, nguồn quân số và bản chữ đã gửi. Cùng
+   lúc lưu phần đầu và máy móc vào mẫu để ca sau điền sẵn; dòng kiểm tra chỉ vào mẫu khi gửi kèm kt_mau = true.
+   BÁO CÁO VÀ MẪU LÀ MỘT BẢN DÙNG CHUNG cho mọi người soạn, nên:
+   - body.ts là lần lưu của ca này mà người soạn đang nhìn thấy (0 = chưa ai lưu). Người khác đã lưu sau đó thì TỪ CHỐI
+     (409 'changed', nói rõ ai, lúc nào): máy khách tải bản mới, ghép phần đang sửa dở vào rồi mới chép lại. Bản app
+     cũ không gửi ts thì ghi như trước.
+   - body.dau chỉ cần mang các ô phần đầu người soạn ĐÃ SỬA, ô không gửi giữ theo mẫu đang có; body.mmtb chỉ gửi khi
+     mục máy móc được sửa. Máy mở màn từ lâu không đè lại tên dự án / chỉ huy người khác vừa đổi.
+   - Nội dung y như bản đang lưu thì chỉ ghi nhật ký (chép lại nhiều lần không làm mọi máy tải lại); có ghi thì tăng rev
+     để máy khác đang mở báo cáo thấy bản mới. */
 export async function bcPut(req, env, user) {
   const b = await readJson(req);
-  // cài đặt (giờ ca) và mẫu đang có: MỘT lượt D1
-  const [stR, mauR] = await env.DB.batch([env.DB.prepare(SETTINGS_SQL), env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1')]);
+  const ngayCa = [String(b.ngay || ''), Number(b.ca) || 0];
+  // cài đặt (giờ ca), mẫu và báo cáo đang có của ca: MỘT lượt D1
+  const [stR, mauR, cuR] = await env.DB.batch([
+    env.DB.prepare(SETTINGS_SQL), env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
+    env.DB.prepare("SELECT b.data, b.van_ban, b.ts, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id WHERE b.ngay = ? AND b.ca = ?").bind(...ngayCa),
+  ]);
   const st = parseSettings(stR.results);
   const q = new URLSearchParams({ ngay: String(b.ngay || ''), ca: String(b.ca || '') });
   const c = docCa(q, st);
@@ -97,20 +109,45 @@ export async function bcPut(req, env, user) {
   const vao = b.muc && typeof b.muc === 'object' ? b.muc : {};
   const muc = {};
   for (const k of BC_MUC) if (typeof vao[k] === 'string') muc[k] = doan(vao[k], 8000);
+  const bao = cuR.results[0] || null, biet = b.ts == null ? null : Number(b.ts) || 0;
+  if (biet != null && bao && bao.ts !== biet) throw daDoi(bao);
   const cu = docMau(mauR.results[0]);
-  const dau = b.dau && typeof b.dau === 'object' ? Object.fromEntries(BC_DAU.map((k) => [k, chu(b.dau[k], 120)])) : cu.dau;
+  const dau = b.dau && typeof b.dau === 'object' ? Object.fromEntries(BC_DAU.map((k) => [k, b.dau[k] == null ? cu.dau[k] : chu(b.dau[k], 120)])) : cu.dau;
   const mau = { dau, mmtb: b.mmtb != null ? chu(b.mmtb, 400) : cu.mmtb, kt: cu.kt, thu_tu: cu.thu_tu };
   if (b.kt_mau && typeof muc.s6 === 'string') mau.kt = muc.s6.split('\n').map((x) => chu(x, 200)).filter(Boolean);
-  const ts = Date.now();
-  await env.DB.batch([
+  const data = JSON.stringify({ muc, nguon: b.nguon === 'tl' ? 'tl' : undefined });
+  const mauDoi = JSON.stringify([mau.dau, mau.mmtb, mau.kt]) !== JSON.stringify([cu.dau, cu.mmtb, cu.kt]);
+  if (bao && !mauDoi && bao.van_ban === van_ban && JSON.stringify(docJ(bao.data)) === data) {
+    // lần chép nào cũng vào nhật ký, kể cả khi không có gì mới để lưu
+    await auditStmt(env, user, 'bc_luu', { ngay: c.ngay, ca: c.ca, lai: 1 }).run();
+    return json({ ok: true, ngay: c.ngay, ca: c.ca, ts: bao.ts, by_name: bao.by_name });
+  }
+  const ts = Math.max(Date.now(), bao ? bao.ts + 1 : 0);
+  const ghi = [
     env.DB.prepare(`INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?,?,?,?,?,?)
                     ON CONFLICT(ngay, ca) DO UPDATE SET data = excluded.data, van_ban = excluded.van_ban, ts = excluded.ts, by_id = excluded.by_id`)
-      .bind(c.ngay, c.ca, JSON.stringify({ muc }), van_ban, ts, user.id),
+      .bind(c.ngay, c.ca, data, van_ban, ts, user.id),
     // ghi từng nhánh của mẫu: không đè lịch ca / số thiết lập / thứ tự tổ người khác vừa sửa
     env.DB.prepare(MAU_CO),
-    env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), '$.dau', json(?), '$.mmtb', ?, '$.kt', json(?)), ts = ?, by_id = ? WHERE id = 1")
-      .bind(JSON.stringify(mau.dau), mau.mmtb, JSON.stringify(mau.kt), ts, user.id),
+    ...(mauDoi ? [env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), '$.dau', json(?), '$.mmtb', ?, '$.kt', json(?)), ts = ?, by_id = ? WHERE id = 1")
+      .bind(JSON.stringify(mau.dau), mau.mmtb, JSON.stringify(mau.kt), ts, user.id)] : []),
     auditStmt(env, user, 'bc_luu', { ngay: c.ngay, ca: c.ca, kt_mau: b.kt_mau ? 1 : undefined }),
-  ]);
-  return json({ ok: true, ngay: c.ngay, ca: c.ca, ts });
+    bump(env),
+  ];
+  if (biet == null) await env.DB.batch(ghi);
+  else {
+    // chặn lần nữa ngay trong batch: giữa lượt đọc ở trên và lượt ghi vẫn có thể có người khác lưu
+    const chan = guardStmt(env, 'EXISTS (SELECT 1 FROM bao_cao_ca WHERE ngay = ?1 AND ca = ?2 AND ts <> ?3)', c.ngay, c.ca, bao ? bao.ts : 0);
+    try { await batchGuarded(env, chan, ghi, new HttpError(409, 'doi', 'doi')); }
+    catch (e) {
+      if (!(e instanceof HttpError) || e.code !== 'doi') throw e;
+      throw daDoi(await env.DB.prepare("SELECT b.ts, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id WHERE b.ngay = ? AND b.ca = ?").bind(c.ngay, c.ca).first());
+    }
+  }
+  return json({ ok: true, ngay: c.ngay, ca: c.ca, ts, by_name: user.name });
 }
+// lời từ chối khi báo cáo của ca đã có người khác lưu sau bản người soạn đang nhìn
+const daDoi = (r) => {
+  const m = r ? Math.floor(((r.ts + 7 * 3600e3) % 864e5) / 60e3) : 0;
+  return new HttpError(409, `${(r && r.by_name) || 'Người khác'} vừa chép báo cáo ca này${r ? ` lúc ${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : ''}. Màn hình đã tải bản đó, phần bạn đang sửa vẫn giữ. Soát lại rồi bấm chép lần nữa.`, 'changed');
+};

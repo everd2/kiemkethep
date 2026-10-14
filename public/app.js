@@ -183,7 +183,8 @@ const S = {
      qsVe = màn để quay lại ('baocaoca' khi mở từ báo cáo ca), qsSx = mảng id tổ khi đang xếp thứ tự */
   qs: null, qsH: null, qsHanMo: false, qsVe: null, bcNguon: 'to', qsSx: null,
   /* Báo cáo ca: S.bcc = số liệu của ca đang soạn (nạp riêng), bcCa = ca chọn (null = ca đang diễn ra), bcM = các mục
-     người soạn đã sửa tay { s3..s8 }, bcDau = phần đầu đang sửa */
+     đã sửa tay { s3..s8 }, bcDau = phần đầu, bcNguon = nguồn quân số mục 3 — cả ba là bản dùng chung trên máy chủ
+     cộng phần máy này sửa chưa chép (xem bcKhac / bcGhep) */
   bcc: null, bcCa: null, bcM: {}, bcDau: null, bcMo: null, // bcMo: mục đang mở ô sửa ('dau', 's3'..'s8') hoặc null // qsH: thẻ báo quân số trên Tổng quan (qsTheHome)
   hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, legend: false, draftWarn: null, cmp: null, busy: false,
   stale: null, subs: {}, // subs: khu_id -> null (đang tải) | mảng lần báo
@@ -2169,7 +2170,8 @@ function fmtAudit(a) {
       + (d.ghi_chu ? ' — ' + d.ghi_chu : ''), 'qs'],
     bc_luu: ['chép báo cáo ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ' gửi cấp trên' + (d.kt_mau ? ' (đặt lại mẫu kiểm tra)' : ''), 'qs'],
     qs_lich: ['đặt ca cho tổ ' + (d.to || '?') + ': ' + (CA_LICH[d.ca] || '').toLowerCase() + (d.den ? ', đến ' + fmtDay(d.den) : ', đến khi đổi'), 'qs'],
-    qs_thietlap: ['đặt số thiết lập tổ ' + (d.to || '?') + ': tổng ' + d.tong + ', ca ngày ' + d.s1 + ', ca đêm ' + d.s2, 'qs'],
+    qs_thietlap: ['đặt số thiết lập tổ ' + (d.to || '?') + ': tổng ' + d.tong + ', ca ngày ' + d.s1 + ', ca đêm ' + d.s2
+      + [1, 2].map((c) => (qsSoNghi(d['n' + c]) ? `, nghỉ ${CA_TEN[c]} ${qsSoNghi(d['n' + c])} (${qsLyDoTxt(d['n' + c], QS_LY_DO)})` : '')).join(''), 'qs'],
     qs_thutu: ['xếp lại thứ tự ' + (d.n || 0) + ' tổ', 'qs'],
     qs_han: ['đổi hạn báo quân số: ca ngày trước ' + phutGio(d.ca1 || 0) + ', ca đêm trước ' + phutGio(d.ca2 || 0), 'qs'],
     doitac_create: ['thêm đối tác ' + d.name, 'vay'],
@@ -3671,10 +3673,24 @@ function vQuanSo() {
       // ca đang chọn trong ô (chưa lưu) hoặc ca theo lịch; 0 = chưa đặt
       const L = Number(fv(k + 'c', qsLichCa(Q.lich, u.id, Q.hien.ngay))) || 0;
       const gy = (hau) => !tl && S.form[k + hau] === undefined && String(d[hau === 't' ? 'tong' : hau === '1' ? 's1' : 's2']) !== '';
+      /* NGƯỜI NGHỈ theo lý do, từng ca tổ làm: một dòng tóm tắt dưới mỗi tổ, chạm là mở ô ghi (một lúc một tổ). Báo cáo
+         ca của tổ chưa báo lấy đúng các số này: "nghỉ 4 cn — 2 ốm, 2 về quê". */
+      // tổ chưa đặt ca: theo ô số người đang có của từng ca
+      const coCa = [1, 2].filter((c) => (L ? L === 3 || L === c : soTu(fv(k + c, c === 1 ? d.s1 : d.s2)) > 0));
+      const cas = coCa.length ? coCa : [1, 2], moN = S.tlMo === u.id;
+      const tom = cas.map((c) => { const N = qsTlNghi(u.id, c), n = qsSoNghi(N.nghi); return `${cas.length > 1 ? (c === 1 ? 'ngày ' : 'đêm ') : ''}${n ? n + ' (' + bcLyDo({ nghi: N.nghi, ghi_chu: N.gc }, Q.lyDo) + ')' : 'chưa ghi'}`; }).join(' · ');
+      const nghiO = `<button class="sm" style="grid-column:1 / -1;border:0;background:transparent;padding:0;text-align:left;font:inherit;font-size:14px;line-height:1.35;color:var(--pri)" data-a="tlnghimo" data-id="${u.id}" aria-expanded="${moN}">Nghỉ: ${esc(tom)} <span style="text-decoration:underline">${moN ? 'xong' : 'sửa'}</span></button>
+        ${!moN ? '' : `<div class="col gap6" style="grid-column:1 / -1;padding:2px 0 6px">${cas.map((c) => {
+          const N = qsTlNghi(u.id, c);
+          return `<span class="sm b">Nghỉ ${CA_TEN[c]}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${Q.lyDo.map(([ma, ten]) => `<div class="row gap6" style="min-width:0">
+            <button class="chip s f1 ${N.nghi[ma] ? 'on' : ''}" style="min-width:0;padding:6px 6px;border-radius:12px" data-a="tlnghi" data-id="${u.id}" data-ca="${c}" data-k="${ma}">${esc(hoa(ten))}</button>
+            ${N.nghi[ma] ? `<input class="inp s" style="width:48px;flex:none;text-align:center;padding:0 4px;font-weight:700" id="${k}n${c}_${ma}" inputmode="numeric" maxlength="3" autocomplete="off" data-model="${k}n${c}_${ma}" aria-label="Số người ${esc(ten)} ${CA_TEN[c]}" value="${N.nghi[ma]}">` : ''}</div>`).join('')}</div>
+          ${N.nghi.khac ? `<input class="inp s" id="${k}g${c}" maxlength="200" autocomplete="off" placeholder="Ghi rõ lý do khác (bắt buộc)" data-model="${k}g${c}" value="${esc(N.gc)}">` : ''}`;
+        }).join('')}<span class="sm muted">Chạm lý do để thêm 1 người, hoặc gõ số vào ô bên cạnh. Gõ 0 là bỏ. Xong bấm Lưu tất cả.</span></div>`}`;
       return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 74px 50px 50px 50px;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
         <b style="min-width:0;font-size:15px;line-height:1.25;overflow-wrap:anywhere">${esc(u.name)}</b>
         <select class="inp s" style="padding:0 2px;font-size:15px;min-width:0;width:100%" id="${k}c" data-model="${k}c" data-change="tlca" aria-label="Ca của tổ ${esc(u.name)}">${[[0, '—'], [1, 'Ngày'], [2, 'Đêm'], [3, '2 ca']].filter(([c]) => c || !L).map(([c, t]) => `<option value="${c}"${L === c ? ' selected' : ''}>${t}</option>`).join('')}</select>
-        ${o(k + 't', fv(k + 't', d.tong), gy('t'))}${o(k + '1', L === 2 ? '' : fv(k + '1', d.s1), gy('1'), L === 2)}${o(k + '2', L === 1 ? '' : fv(k + '2', d.s2), gy('2'), L === 1)}</div>`;
+        ${o(k + 't', fv(k + 't', d.tong), gy('t'))}${o(k + '1', L === 2 ? '' : fv(k + '1', d.s1), gy('1'), L === 2)}${o(k + '2', L === 1 ? '' : fv(k + '2', d.s2), gy('2'), L === 1)}${nghiO}</div>`;
     }).join('');
     const moi = Object.entries(Q.tl || {}).sort((a, z) => z[1].ts - a[1].ts)[0];
     const tenTo = (id) => (Q.tdt.find((u) => u.id === Number(id)) || {}).name || '';
@@ -3709,6 +3725,12 @@ function qsTlMacDinh(uid) {
   if (tl) return { tong: tl.tong, s1: tl.s1, s2: tl.s2 };
   const tong = toTongKhai(Q.lich, tr, uid) || '';
   return { tong, s1: L === 1 ? tong : '', s2: L === 2 ? tong : '' };
+}
+// người nghỉ theo lý do của một tổ ở một ca trong bảng thiết lập: số đang chọn (chưa lưu) đè lên số đã lưu
+function qsTlNghi(uid, ca) {
+  const tl = (S.qs.tl || {})[uid] || {}, cu = tl['n' + ca] || {}, nghi = {};
+  (S.qs.lyDo || QS_LY_DO).forEach(([ma]) => { const v = soTu(fv(`tl_${uid}_n${ca}_${ma}`, cu[ma] || 0)); if (v) nghi[ma] = v; });
+  return { nghi, gc: String(fv(`tl_${uid}_g${ca}`, tl['gc' + ca] || '')).trim() };
 }
 /* Tổng của bảng thiết lập theo số ĐANG HIỆN trong các ô (đã lưu, gợi ý, hoặc đang gõ dở), tính như lúc lưu (qstlluu):
    tổ một ca mà bỏ trống số ca thì cả tổ làm ca đó. */
@@ -3823,7 +3845,8 @@ function bcQuanSo(B) {
   ds.forEach((u) => {
     const r0 = B.qs.find((x) => x.user_id === u.id && x.ca === ca), p0 = truocDs.find((x) => x.user_id === u.id);
     const tr = B.truoc.find((x) => x.user_id === u.id), tl = (B.tl || {})[u.id];
-    const tlDong = (c) => (tl ? { ca: c, tong: tl.tong, lam: c === 1 ? tl.s1 : tl.s2, ca_kia: 0, nghi: {}, ghi_chu: null, tl: true } : null);
+    // dòng theo số thiết lập: người nghỉ CVKTHT ghi (theo lý do) nằm trong số người của ca, đi làm = số người ca − nghỉ
+    const tlDong = (c) => { if (!tl) return null; const ng = tl['n' + c] || {}; return { ca: c, tong: tl.tong, lam: Math.max(0, (c === 1 ? tl.s1 : tl.s2) - qsSoNghi(ng)), ca_kia: 0, nghi: ng, ghi_chu: tl['gc' + c] || null, tl: true }; };
     const chon = (row, c) => (chiTl ? tlDong(c) || row : row || tlDong(c));
     let L = qsLichCa(B.lich, u.id, B.ngay);
     if (!L) { const th = qsCaCua(r0 ? [r0] : p0 ? [p0] : tr ? [tr] : []); L = th.length === 2 ? 3 : th[0] || ca; }
@@ -3833,7 +3856,7 @@ function bcQuanSo(B) {
     if (L === kia) { sauNhom.push(`Tổ ${u.name} (làm ${caKia})`); kiaTen.push(u.name); kiaSo += tongTo; return; }
     if (!r0) chua.push(u.name);
     // dòng của tổ ở bước 1: số tổ tự báo, hoặc đang tạm lấy số thiết lập của CVKTHT
-    to.push({ name: u.name, da: !!r0, chu: r0 ? qhDongGon(r0, B.lyDo) : tl ? `Tạm lấy số thiết lập: ${ca === 1 ? tl.s1 : tl.s2}/${tl.tong}` : 'Chưa có số thiết lập' });
+    to.push({ name: u.name, da: !!r0, chu: r0 ? qhDongGon(r0, B.lyDo) : tl ? (() => { const d = tlDong(ca); return `Tạm lấy số thiết lập: đi làm ${d.lam}/${d.tong}` + (qsSoNghi(d.nghi) ? ` · nghỉ ${qsSoNghi(d.nghi)}: ${bcLyDo(d, B.lyDo)}` : ' · chưa ghi người nghỉ'); })() : 'Chưa có số thiết lập' });
     const r = chon(r0, ca);
     if (!r) { truocNhom.push(`Tổ ${u.name}: chưa báo quân số ${caNay}`); chuaSo += tongTo; return; }
     if (r.tl) dung.push(u.name);
@@ -3902,17 +3925,45 @@ function bcTao() {
   const P = bcPhan();
   return ['dau'].concat(BC_MUC.map((m) => m[0])).map((k) => P[k].join('\n')).join('\n');
 }
-function bcNhap() { try { localStorage.setItem(bcKey(S.bcc), JSON.stringify({ muc: S.bcM, dau: S.bcDau, ts: Date.now() })); } catch (e) { /* đầy bộ nhớ */ } }
+/* BẢN DÙNG CHUNG VÀ PHẦN SỬA RIÊNG. Báo cáo của ca và mẫu trên máy chủ (S.bcc) là MỘT bản cho mọi người soạn. Máy
+   này chỉ giữ riêng PHẦN SỬA CHƯA CHÉP, tức chỗ đang khác bản dùng chung: mục khác bản đã lưu của ca (chuỗi = chữ đã
+   sửa, null = lấy lại số từ app), ô phần đầu khác mẫu, nguồn quân số nếu khác. Nháp trên máy chỉ lưu phần khác đó,
+   nên người khác chép hay đổi mẫu thì mọi chỗ mình CHƯA đụng tới đều theo bản mới (bcGhep). */
+function bcKhac() {
+  const B = S.bcc, goc = (B.bao && B.bao.muc) || {}, muc = {}, dau = {}, ng = (B.bao && B.bao.nguon) || 'to';
+  BC_MUC.forEach(([k]) => { const a = typeof S.bcM[k] === 'string' ? S.bcM[k] : null, g = typeof goc[k] === 'string' ? goc[k] : null; if (a !== g) muc[k] = a; });
+  BC_DAU.forEach(([k]) => { if ((S.bcDau[k] || '') !== (B.mau.dau[k] || '')) dau[k] = S.bcDau[k] || ''; });
+  return { muc, dau, nguon: S.bcNguon !== ng ? S.bcNguon : undefined };
+}
+const bcCoKhac = (K) => !!(Object.keys(K.muc).length || Object.keys(K.dau).length || K.nguon);
+// đặt bản dùng chung B làm nền rồi ghép phần sửa riêng K (nếu có) lên trên
+function bcGhep(B, K) {
+  S.bcc = B;
+  const muc = { ...((B.bao && B.bao.muc) || {}) };
+  Object.entries((K && K.muc) || {}).forEach(([k, v]) => { if (typeof v === 'string') muc[k] = v; else delete muc[k]; });
+  S.bcM = muc;
+  S.bcDau = { ...B.mau.dau, ...((K && K.dau) || {}) };
+  S.bcNguon = (K && K.nguon) || (B.bao && B.bao.nguon) || 'to';
+}
+function bcNhap() {
+  const K = bcKhac();
+  try {
+    if (bcCoKhac(K)) localStorage.setItem(bcKey(S.bcc), JSON.stringify({ v: 2, ...K, ts: Date.now() }));
+    else localStorage.removeItem(bcKey(S.bcc));
+  } catch (e) { /* đầy bộ nhớ */ }
+}
 async function bcTai() {
   const c = S.bcCa;
   const B = await api('GET', '/baocao' + (c ? `?ngay=${c.ngay}&ca=${c.ca}` : ''));
-  S.bcc = B;
-  // nháp trên máy (mới hơn lần lưu trên server) thắng; không thì lấy các mục đã lưu
   let n = null;
   try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
-  const dung = n && (!B.bao || n.ts >= B.bao.ts) ? n : null;
-  S.bcM = { ...((dung && dung.muc) || (B.bao && B.bao.muc) || {}) };
-  S.bcDau = { ...B.mau.dau, ...((dung && dung.dau) || {}) };
+  // nháp kiểu cũ giữ cả bản chứ không phải phần khác: đọc thành "mọi mục theo nháp"
+  if (n && n.v !== 2) n = { ...n, muc: Object.fromEntries(BC_MUC.map(([k]) => [k, n.muc && typeof n.muc[k] === 'string' ? n.muc[k] : null])) };
+  /* Nháp cũ hơn bản đã lưu thì bỏ khi bản lưu đó là của CHÍNH MÌNH (đã chép từ máy khác, nháp này là đồ thừa). Bản lưu
+     của người khác thì giữ nháp: đó là chữ mình gõ mà chưa chép. */
+  const thua = n && B.bao && n.ts < B.bao.ts && (n.v !== 2 || B.bao.by_id === S.me.id);
+  bcGhep(B, n && !thua ? n : null);
+  if (thua) { try { localStorage.removeItem(bcKey(B)); } catch (e) { /* bỏ qua */ } }
   // phần đầu còn trống (lần đầu dùng): mở sẵn cho điền
   S.bcMo = !S.bcDau.don_vi && !S.bcDau.du_an ? 'dau' : null;
   // dọn nháp báo cáo của các ca hơn một tuần trước
@@ -3966,7 +4017,7 @@ function vBaoCaoCa() {
         return `<span class="sm">${ten}</span>${chon.length ? `<div class="row gap6" style="overflow-x:auto">${chon.map((u) => `<button class="chip s ${D[f] === u.name ? 'on' : ''}" ${dinh} data-a="bcpick" data-k="${f}" data-v="${esc(u.name)}">${esc(u.name)}</button>`).join('')}</div>` : ''}
           <input class="inp s" id="bcd_${f}" maxlength="120" autocomplete="off" placeholder="${esc(goiY || 'Họ tên')}" data-model="bcd_${f}" value="${esc(D[f] || '')}">`;
       }).join('')}
-      <span class="sm muted">Lưu làm mẫu khi chép báo cáo, các ca sau điền sẵn.</span>`;
+      <span class="sm muted" style="line-height:1.4">Khi chép báo cáo, các ô này thành mẫu dùng chung: mọi người soạn và các ca sau đều điền sẵn theo.</span>`;
     const t = bcGet(k);
     // mục 3: chọn nguồn số — số tổ báo (tổ chưa báo lấy số thiết lập), hoặc chỉ số thiết lập
     const nguonO = k !== 's3' ? '' : `<div class="row gap6">${[['to', 'Theo tổ báo'], ['tl', 'Chỉ số thiết lập']].map(([v, n]) => `<button class="chip s f1 ${(S.bcNguon === 'tl' ? 'tl' : 'to') === v ? 'on' : ''}" style="min-width:0;white-space:nowrap" data-a="bcnguon" data-v="${v}">${n}</button>`).join('')}</div>`;
@@ -3976,11 +4027,14 @@ function vBaoCaoCa() {
       <span class="sm muted">Mỗi dòng là một gạch đầu dòng.</span>
       ${k === 's6' && typeof S.bcM[k] === 'string' ? '<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="bcktmau">Đặt các dòng này làm mẫu cho các ca sau</button>' : ''}`;
   };
-  const P = bcPhan();
+  const P = bcPhan(), K = bcKhac(), coRieng = bcCoKhac(K);
   const ib = (a, k, ten, hinh, on) => `<button class="ib${on ? ' on' : ''}" data-a="${a}" data-k="${k}" aria-label="${ten}" title="${ten}">${hinh}</button>`;
   const muc = [['dau', 'Phần đầu']].concat(BC_MUC).map(([k, ten]) => {
     const mo = S.bcMo === k, sua = k !== 'dau' && typeof S.bcM[k] === 'string';
-    const trangThai = k === 'dau' ? (thieu.length ? `<span style="color:var(--warn)">${thieu.length} ô trống</span>` : '')
+    // phần mình sửa mà chưa chép (mới chỉ nằm trên máy này) nói khác hẳn phần đã sửa tay và đã lưu chung
+    const rieng = k === 'dau' ? Object.keys(K.dau).length > 0 : k in K.muc || (k === 's3' && !!K.nguon);
+    const trangThai = rieng ? '<b style="color:var(--warn)">sửa chưa chép</b>'
+      : k === 'dau' ? (thieu.length ? `<span style="color:var(--warn)">${thieu.length} ô trống</span>` : '')
       : sua ? '<b>đã sửa tay</b>' : 'từ ' + nguonTen[k];
     return `<div style="border-bottom:1px solid var(--line);padding:6px 8px 8px 12px"><div class="row gap6"><span class="f1 sm muted" style="min-width:0;line-height:1.3"><b style="color:var(--ink)">${ten}</b>${trangThai ? ' · ' + trangThai : ''}</span>
         ${sua ? ib('bclay', k, 'Lấy lại số từ app cho ' + ten, IC_BC.lay) : ''}${ib('bcchep', k, 'Chép ' + ten, IC_BC.chep)}${ib('bcsua', k, (mo ? 'Sửa xong ' : 'Sửa ') + ten, mo ? IC_BC.xong : IC_BC.sua, mo)}</div>
@@ -3990,7 +4044,8 @@ function vBaoCaoCa() {
   return `${top}${chips}<div class="f1 scroll pad col gap8" id="body">${tinh}${thieuO}
     <b id="bcb2">2 · Soát bản sẽ gửi</b>
     <div class="card" style="padding:0;overflow:hidden">${muc}</div>
-    <span class="sm muted" style="line-height:1.4">Phần đã sửa tay giữ nguyên chữ của bạn; các phần khác tự lấy số mới nhất từ app. Soát xong bấm <b>3 · Chép</b> ở đầu màn: chép cả báo cáo và lưu báo cáo của ca.</span>
+    ${coRieng ? `<div class="row gap8 sm" style="line-height:1.4;align-items:flex-start"><span class="f1" style="min-width:0;color:var(--warn)">Phần <b>sửa chưa chép</b> mới chỉ nằm trên máy này. Bấm <b>3 · Chép</b> để lưu thành bản chung cho mọi người soạn.</span><button class="chip s" style="flex:none" data-a="bcbo">Bỏ phần sửa</button></div>` : ''}
+    <span class="sm muted" style="line-height:1.4">Báo cáo của ca và mẫu là một bản dùng chung. Phần đã sửa tay giữ nguyên chữ; các phần khác tự lấy số mới nhất từ app.</span>
     ${B.bao ? `<span class="sm ${chep === 'doi' ? '' : 'muted'}" style="line-height:1.4${chep === 'doi' ? ';color:var(--warn);font-weight:600' : ''}">Đã chép lúc ${dmy(B.bao.ts)} · ${esc(B.bao.by_name)}${chep === 'doi' ? '. Nội dung đã đổi sau lần chép đó: bấm 3 · Chép lại để gửi bản mới.' : ''}</span>` : ''}
   </div>`;
 }
@@ -4016,13 +4071,25 @@ async function bcChepChu(t) {
   } catch (e) { return false; }
 }
 // lưu báo cáo của ca (và phần đầu, máy móc vào mẫu); xong thì bỏ nháp trên máy
+/* Gửi kèm ts của bản đã lưu mà mình đang nhìn: người khác đã chép sau đó thì server từ chối, app tải bản đó về, ghép
+   phần mình đang sửa lên rồi để người soạn soát và chép lại. Phần đầu chỉ gửi các ô đã sửa, máy móc chỉ gửi khi mục 5
+   vừa được sửa: không đè lại mẫu người khác vừa đổi (xem bcPut ở src/baocao.js). */
 function bcLuu(van_ban, them, okMsg) {
-  const B = S.bcc;
+  const B = S.bcc, K = bcKhac(), mmtb = typeof K.muc.s5 === 'string' ? bcDong(K.muc.s5).join(' – ') : undefined;
   return act(async () => {
-    const r = await api('PUT', '/baocao', { ngay: B.ngay, ca: B.ca, van_ban, muc: S.bcM, dau: S.bcDau, mmtb: bcDong(bcGet('s5')).join(' – '), ...(them || {}) }, 0, false);
+    let r;
+    try { r = await api('PUT', '/baocao', { ngay: B.ngay, ca: B.ca, ts: B.bao ? B.bao.ts : 0, van_ban, muc: S.bcM, dau: K.dau, mmtb, nguon: S.bcNguon, ...(them || {}) }, 0, false); }
+    catch (e) {
+      if (e.code === 'changed') {
+        try { const M = await api('GET', `/baocao?ngay=${B.ngay}&ca=${B.ca}`); if (S.bcc === B) { bcGhep(M, K); bcNhap(); } } catch (er) { /* vòng tự làm mới sẽ tải lại */ }
+      }
+      throw e;
+    }
     try { localStorage.removeItem(bcKey(B)); } catch (e) { /* bỏ qua */ }
-    B.bao = { muc: { ...S.bcM }, van_ban, ts: r.ts, by_name: S.me.name };
-    B.mau = { ...B.mau, dau: { ...S.bcDau }, mmtb: bcDong(bcGet('s5')).join(' – ') };
+    // server không ghi gì (nội dung y như bản đang lưu) thì giữ nguyên dòng "đã chép lúc" của bản đó
+    const giu = B.bao && r.ts === B.bao.ts ? { by_id: B.bao.by_id, by_name: B.bao.by_name } : { by_id: S.me.id, by_name: r.by_name || S.me.name };
+    B.bao = { muc: { ...S.bcM }, nguon: S.bcNguon, van_ban, ts: r.ts, ...giu };
+    B.mau = { ...B.mau, dau: { ...S.bcDau }, ...(mmtb != null ? { mmtb } : {}) };
     if (them && them.kt_mau) B.mau.kt = bcDong(S.bcM.s6);
   }, okMsg);
 }
@@ -5516,7 +5583,15 @@ const ACTIONS = {
       if (L === 2 && s2 == null) s2 = tong;
       s1 = s1 || 0; s2 = s2 || 0;
       if (s1 + s2 > tong) { say(`Tổ ${u.name}: ca ngày ${s1} + ca đêm ${s2} nhiều hơn tổng ${tong}.`, true); render(); return gcFocus(k + 't'); }
-      if (!tl || tl.tong !== tong || tl.s1 !== s1 || tl.s2 !== s2) ds.push({ user: u.id, tong, s1, s2, ts: tl ? tl.ts : 0 });
+      // người nghỉ theo lý do của từng ca; ca tổ không làm (theo ca đã chọn) thì không có ai nghỉ
+      const N = [1, 2].map((c) => (L && L !== 3 && L !== c ? { nghi: {}, gc: '' } : qsTlNghi(u.id, c)));
+      for (const c of [1, 2]) {
+        const n = qsSoNghi(N[c - 1].nghi), s = c === 1 ? s1 : s2;
+        if (n > s) { say(`Tổ ${u.name}: nghỉ ${CA_TEN[c]} ${n} người, nhiều hơn số người ${CA_TEN[c]} (${s}).`, true); S.tlMo = u.id; return render(); }
+        if (N[c - 1].nghi.khac && !N[c - 1].gc) { say(`Tổ ${u.name}: có người nghỉ ${CA_TEN[c]} vì lý do khác, ghi rõ lý do.`, true); S.tlMo = u.id; render(); return gcFocus(`${k}g${c}`); }
+      }
+      const khacN = [1, 2].some((c) => JSON.stringify(N[c - 1].nghi) !== JSON.stringify((tl && tl['n' + c]) || {}) || (qsSoNghi(N[c - 1].nghi) ? N[c - 1].gc : '') !== ((tl && tl['gc' + c]) || ''));
+      if (!tl || tl.tong !== tong || tl.s1 !== s1 || tl.s2 !== s2 || khacN) ds.push({ user: u.id, tong, s1, s2, n1: N[0].nghi, n2: N[1].nghi, gc1: N[0].gc, gc2: N[1].gc, ts: tl ? tl.ts : 0 });
     }
     if (!ds.length) return say('Không có gì thay đổi.'), render();
     const xoa = () => Object.keys(S.form).filter((x) => /^tl_/.test(x)).forEach((x) => delete S.form[x]);
@@ -5529,6 +5604,9 @@ const ACTIONS = {
       try { await Promise.all([qsTai(), loadBoot()]); } catch (e) { /* đã lưu */ }
     }, `Đã lưu ${ds.length} thay đổi.`);
   },
+  // bảng thiết lập: mở / đóng ô ghi người nghỉ của một tổ; chạm một lý do là thêm 1 người (chưa lưu, chờ Lưu tất cả)
+  tlnghimo(d) { const id = Number(d.id); S.tlMo = S.tlMo === id ? null : id; render(); },
+  tlnghi(d) { const k = `tl_${d.id}_n${d.ca}_${d.k}`; S.form[k] = String(qsTlNghi(Number(d.id), Number(d.ca)).nghi[d.k] + 1 || 1); render(); },
   // chép tin nhắc các tổ chưa báo, để dán vào nhóm Zalo
   async bcnhac() {
     const B = S.bcc; if (!B) return;
@@ -5618,6 +5696,8 @@ const ACTIONS = {
   bclay(d) { delete S.bcM[d.k]; bcNhap(); render(); },
   // đổi nguồn quân số là ghép lại mục 3 theo nguồn mới (chữ đã sửa tay ở mục 3 bỏ đi)
   bcnguon(d) { S.bcNguon = d.v === 'tl' ? 'tl' : 'to'; delete S.bcM.s3; bcNhap(); render(); },
+  // bỏ phần sửa chưa chép của máy này: về đúng bản dùng chung đang lưu
+  bcbo() { if (!S.bcc) return; bcGhep(S.bcc, null); bcNhap(); S.bcMo = null; say('Đã bỏ phần sửa chưa chép, về bản chung đang lưu.'); render(); },
   /* Chép cả báo cáo, hoặc riêng một phần (d.k = 'dau', 's3' … 's8'). Lần chép nào cũng lưu cả báo cáo của ca: phần
      đầu và máy móc thành mẫu cho ca sau, thẻ nhắc soạn báo cáo ở Tổng quan thôi nhắc. */
   async bcchep(d) {
@@ -5843,7 +5923,13 @@ async function refresh() {
     if (changed && S.screen === 'baocaoca' && S.bcc && !S.busy && !S.ask) {
       await loadBoot();
       const B = S.bcc, M = await api('GET', `/baocao?ngay=${B.ngay}&ca=${B.ca}`);
-      if (S.bcc === B && S.screen === 'baocaoca') { S.bcc = M; if (!S.bcMo) render(); }
+      if (S.bcc === B && S.screen === 'baocaoca') {
+        // bản dùng chung mới làm nền, phần mình sửa chưa chép ghép lại lên trên; người khác vừa chép thì nói rõ
+        const K = bcKhac(), moi = M.bao && (!B.bao || M.bao.ts !== B.bao.ts) && M.bao.by_id !== S.me.id;
+        bcGhep(M, K); bcNhap();
+        if (moi) say(`${M.bao.by_name} vừa chép báo cáo ca này. Màn hình đã lấy bản đó${bcCoKhac(K) ? ', phần bạn đang sửa vẫn giữ' : ''}.`);
+        if (!S.bcMo) render();
+      }
     }
     /* Chỉ có tin nhắn gia công mới (rev không đổi): hỏi lại tin chưa đọc của mình và đơn / bảng đang mở, không tải lại cả
        dữ liệu chung. Đang gõ dở tin thì không vẽ lại (mất chữ đang gõ), vòng sau hỏi lại. */

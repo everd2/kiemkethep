@@ -71,8 +71,8 @@ const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().s
 /* LỊCH CA VÀ SỐ THIẾT LẬP của từng tổ. Lưu trong mẫu báo cáo (bc_mau.data), không cần bảng riêng:
      lich."<id>" = { ca: 1 ca ngày | 2 ca đêm | 3 cả hai ca, den: 'YYYY-MM-DD' hoặc null (đến khi đổi), ts, by }
        — tổ trưởng tự đặt (CVKTHT đặt hộ được). Tổ thường làm một ca 15–30 ngày rồi đổi; hết hạn thì app hỏi lại.
-     tl."<id>" = { tong, s1, s2, ts, by } — SỐ THIẾT LẬP do CVKTHT trở lên đặt: tổng quân số, người ca ngày, người ca
-       đêm. Là số dự phòng: báo cáo ca dùng nó cho tổ chưa báo (hoặc khi người soạn chọn "chỉ số thiết lập").
+     tl."<id>" = { tong, s1, s2, n1, n2, gc1, gc2, ts, by } — SỐ THIẾT LẬP do CVKTHT trở lên đặt: tổng quân số, người ca
+       ngày, người ca đêm, và người NGHỈ theo lý do của từng ca (n1 / n2, ghi chú gc1 / gc2; xem tlNghi). Là số dự phòng: báo cáo ca dùng nó cho tổ chưa báo (hoặc khi người soạn chọn "chỉ số thiết lập").
    Ghi bằng json_set từng nhánh, không đọc-sửa-ghi cả khối: hai người sửa hai tổ cùng lúc không đè nhau. Hai người
    sửa CÙNG một tổ thì chặn bằng ts: lưu dựa trên bản cũ là bị từ chối và được báo ai vừa sửa (qsThietLap). */
 export const MAU_CO = "INSERT OR IGNORE INTO bc_mau (id, data, ts) VALUES (1, '{}', 0)";
@@ -262,10 +262,11 @@ export async function qsThietLap(req, env, user) {
     if (s1 + s2 > tong) throw bad(`${ds.length > 1 ? 'Tổ ' + t.name + ': ca' : 'Ca'} ngày ${s1} + ca đêm ${s2} nhiều hơn tổng quân số ${tong}`);
     const cu = Number(x.ts) || 0, path = '$.tl."' + uid + '"';
     if (((cfg.tl[uid] || {}).ts || 0) !== cu) throw await tlDaDoi(env, t.name, path);
-    const v = { tong, s1, s2, ts: Math.max(now, cu + 1), by: user.id };
+    const ng1 = tlNghi(x, cfg.tl[uid], 1, s1, t.name), ng2 = tlNghi(x, cfg.tl[uid], 2, s2, t.name);
+    const v = { tong, s1, s2, n1: ng1.n, n2: ng2.n, gc1: ng1.gc, gc2: ng2.gc, ts: Math.max(now, cu + 1), by: user.id };
     // chặn lần nữa ngay trong batch: giữa lượt đọc ở trên và lượt ghi vẫn có thể có người khác lưu
     chan.push([guardStmt(env, "EXISTS (SELECT 1 FROM bc_mau WHERE id = 1 AND COALESCE(json_extract(data, ?1), 0) <> ?2)", path + '.ts', cu), t.name, path, uid, cu]);
-    ghi.push(dat(path, v), auditStmt(env, user, 'qs_thietlap', { to: t.name, tong, s1, s2 }));
+    ghi.push(dat(path, v), auditStmt(env, user, 'qs_thietlap', { to: t.name, tong, s1, s2, n1: v.n1, n2: v.n2 }));
     if (!dau) dau = { user: uid, ...v };
   }
   if (!ghi.length) throw bad('Không có gì để lưu');
@@ -282,6 +283,30 @@ export async function qsThietLap(req, env, user) {
     }
   }
   return json({ ok: true, n: ghi.length / 2, ...(dau || {}) });
+}
+/* NGƯỜI NGHỈ trong số thiết lập, theo từng ca: x.n1 / x.n2 = { mã lý do: số người } (như cột nghi của quan_so), x.gc1 /
+   x.gc2 = ghi chú (bắt buộc khi có "lý do khác"). s là số người của tổ thuộc ca đó: số nghỉ nằm TRONG s, nên đi làm =
+   s − nghỉ. Nhờ vậy báo cáo ca của tổ chưa báo vẫn ghi được "nghỉ 4 cn — 2 ốm, 2 về quê" theo số CVKTHT đặt.
+   Không gửi n (bản app cũ) thì giữ người nghỉ đang có, trừ khi số đó không còn vừa số người của ca. */
+function tlNghi(x, cu, ca, s, tenTo) {
+  const vao = x['n' + ca], ten = CA_TEN[ca];
+  if (vao === undefined) {
+    const n = (cu && cu['n' + ca]) || {}, vua = Object.values(n).reduce((a, v) => a + v, 0) <= s;
+    return vua && Object.keys(n).length ? { n, gc: cu['gc' + ca] || undefined } : {};
+  }
+  const o = vao && typeof vao === 'object' && !Array.isArray(vao) ? vao : {};
+  if (Object.keys(o).some((k) => !QS_LY_DO.some((l) => l[0] === k))) throw bad('Lý do nghỉ không hợp lệ');
+  const n = {};
+  for (const [ma, lyDo] of QS_LY_DO) {
+    const so = o[ma] == null || o[ma] === '' ? 0 : intIn(o[ma], 0, QS_TONG_MAX, 'Số người nghỉ (' + lyDo + ')');
+    if (so) n[ma] = so;
+  }
+  const tong = Object.values(n).reduce((a, v) => a + v, 0);
+  if (!tong) return {};
+  if (tong > s) throw bad(`Tổ ${tenTo}: nghỉ ${ten} ${tong} người, nhiều hơn số người ${ten} (${s})`);
+  const gc = chu(x['gc' + ca], 200) || undefined;
+  if (n.khac && !gc) throw bad(`Tổ ${tenTo}: có người nghỉ ${ten} vì lý do khác, ghi rõ lý do`);
+  return { n, gc };
 }
 // lời từ chối khi số thiết lập của một tổ đã bị người khác sửa: ai sửa, số mới là gì
 async function tlDaDoi(env, tenTo, path) {
