@@ -3391,7 +3391,7 @@ function vGcForm() {
     <b class="sm">Nội dung, khối lượng ${tuy}</b>
     <input class="inp s" id="gcnd" maxlength="300" placeholder="Ví dụ: 2,4 tấn; D16 × 120 thanh, đai D8 a150" autocomplete="off" data-model="gcnd" value="${esc(S.form.gcnd || '')}">
     <b class="sm">Người order ${tuy}</b>
-    <input class="inp s" id="gcodn" maxlength="60" placeholder="Ví dụ: Trung uý Nguyễn Văn A" autocomplete="off" enterkeyhint="next" data-enter="gcdenodd" data-model="gcodn" value="${esc(S.form.gcodn || '')}">
+    <input class="inp s" id="gcodn" maxlength="60" placeholder="Họ tên người order" autocomplete="off" enterkeyhint="next" data-enter="gcdenodd" data-model="gcodn" value="${esc(S.form.gcodn || '')}">
     ${odnGoiY.length ? `<div class="row gap6" ${cuon} data-sx="gcodn">${odnGoiY.map((t) => gcChipGoiY('odn', t, String(S.form.gcodn || '').trim() === t, 'gcodnq')).join('')}</div>` : ''}
     <b class="sm">Đại đội order ${tuy}</b>
     <input class="inp s" id="gcodd" maxlength="40" placeholder="Ví dụ: Đại đội 2" autocomplete="off" enterkeyhint="done" data-enter="gcblur" data-model="gcodd" value="${esc(S.form.gcodd || '')}">
