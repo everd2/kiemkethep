@@ -394,6 +394,17 @@ const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: congNgay(
    không có dòng quan_so thì ghi một dòng quan_so_tl — có số thiết lập thì lấy số đó (đi làm = số người ca − nghỉ),
    không có thì để trống (ca thiếu số). Lịch ca đặt sau lúc hết ca thì bỏ qua ca đó (không chép ngược). Xét ba ca gần nhất đã hết: lịch chạy lỡ vài giờ vẫn bù được. INSERT OR IGNORE:
    lần chép đầu tiên sau giờ hết ca là lần giữ lại. */
+/* Tổ `id` có LÀM ca `c` không (theo lịch ca; chưa đặt lịch thì theo số thiết lập có người ca đó), và số của ca đó theo
+   số thiết lập. Lịch ca (hoặc số thiết lập, khi chưa đặt lịch) đặt SAU mốc `het` thì không biết lúc đó tổ có làm ca này
+   không: null. Kết quả: { tong, lam, nghi, ghi_chu } — tong / lam null nếu tổ làm ca này mà chưa có số thiết lập.
+   Dùng chung cho việc chép lúc hết ca (qsChotCa) và số tạm của ca đang diễn ra trên màn thống kê (qsThongKe). */
+function soTlCa(cfg, id, c, het) {
+  const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, L = caLich(cfg, id, c.ngay);
+  if (L ? L !== 3 && L !== c.ca : !s) return null;
+  if ((L ? cfg.lich[id].ts : tl.ts) > het) return null;
+  const nghi = (s && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0);
+  return { tong: s ? tl.tong : null, lam: s ? Math.max(0, s - so) : null, nghi: s ? nghi : {}, ghi_chu: (s && so && tl['gc' + c.ca]) || null };
+}
 export async function qsChotCa(env, now = Date.now()) {
   const cas = [];
   const [stR, toR, cfgR] = await env.DB.batch([
@@ -414,13 +425,11 @@ export async function qsChotCa(env, now = Date.now()) {
   for (const c of cas) {
     for (const { id } of toR.results) {
       if (co.has(caKhoa(c) + ':' + id)) continue;
-      const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, L = caLich(cfg, id, c.ngay), het = caGio(st, c).den;
-      if (L ? L !== 3 && L !== c.ca : !s) continue; // tổ không làm ca này (hoặc chưa biết làm ca nào)
-      // lịch ca (hoặc số thiết lập, khi tổ chưa đặt lịch) đặt SAU lúc hết ca thì không biết lúc đó tổ có làm ca này không
-      if ((L ? cfg.lich[id].ts : tl.ts) > het) continue;
-      const nghi = (s && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0);
+      // tổ không làm ca này, chưa biết làm ca nào, hoặc lịch ca đặt sau lúc hết ca (không chép ngược)
+      const x = soTlCa(cfg, id, c, caGio(st, c).den);
+      if (!x) continue;
       ghi.push(env.DB.prepare('INSERT OR IGNORE INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?,?,?,?,?,?,?,?)')
-        .bind(c.ngay, c.ca, id, s ? tl.tong : null, s ? Math.max(0, s - so) : null, JSON.stringify(s ? nghi : {}), (s && so && tl['gc' + c.ca]) || null, now));
+        .bind(c.ngay, c.ca, id, x.tong, x.lam, JSON.stringify(x.nghi), x.ghi_chu, now));
     }
   }
   if (ghi.length) await env.DB.batch(ghi);
@@ -430,23 +439,40 @@ export async function qsChotCa(env, now = Date.now()) {
 /* Số liệu thô cho màn thống kê, một khoảng ngày (tối đa 124 ngày: tháng đang xem và ba tháng trước để so sánh — với 3
    ngày trước, TB tháng khi xem ngày; với 3 tháng trước khi xem tháng). Tiểu đội
    trưởng chỉ nhận tổ mình. Kèm danh sách tổ (cả tổ đã thôi nhưng có số trong khoảng này) theo thứ tự tổ, và ngưỡng
-   tô đỏ. */
+   tô đỏ.
+   SỐ TẠM (tam): ca ĐANG DIỄN RA hoặc vừa hết mà lịch chạy chưa kịp chép — tổ làm ca đó chưa báo, có số thiết lập — thì
+   gửi kèm số thiết lập lúc này, như báo cáo ca đang dùng. Nhờ vậy thống kê hôm nay khớp số với báo cáo ca. Tổ chưa có số
+   thiết lập thì không có số tạm (chỉ thành "thiếu số" khi hết ca). */
 export async function qsThongKe(env, user, url) {
   const q = url.searchParams, tu = docCa(q.get('tu'), 1).ngay, den = docCa(q.get('den'), 1).ngay;
   if (den < tu) throw bad('Khoảng ngày không hợp lệ');
   if ((Date.parse(den) - Date.parse(tu)) / NGAY >= TK_NGAY_MAX) throw bad(`Xem tối đa ${TK_NGAY_MAX} ngày một lần`);
   const ql = capOf(user.role) >= 1, rieng = ql ? '' : ' AND user_id = ?3', kem = ql ? [] : [user.id];
-  const [toR, qsR, tlR, ngR] = await env.DB.batch([
+  const [toR, qsR, tlR, ngR, stR, cfgR, tdtR] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name, u.deleted FROM users u WHERE ${ql ? `(u.role = 'tieudoi' AND u.deleted = 0)
                       OR u.id IN (SELECT user_id FROM quan_so WHERE ngay BETWEEN ?1 AND ?2 UNION SELECT user_id FROM quan_so_tl WHERE ngay BETWEEN ?1 AND ?2)` : 'u.id = ?3'}
                     ORDER BY ${TO_SX}`).bind(tu, den, ...kem),
     env.DB.prepare(`SELECT ngay, ca, user_id u, tong, lam, nghi, ghi_chu FROM quan_so WHERE ngay BETWEEN ?1 AND ?2${rieng}`).bind(tu, den, ...kem),
     env.DB.prepare(`SELECT ngay, ca, user_id u, tong, lam, nghi, ghi_chu FROM quan_so_tl WHERE ngay BETWEEN ?1 AND ?2${rieng}`).bind(tu, den, ...kem),
     env.DB.prepare("SELECT value FROM settings WHERE key = 'qs_nguong'"),
+    env.DB.prepare(SETTINGS_SQL),
+    env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
+    env.DB.prepare(`SELECT id FROM users WHERE role = 'tieudoi' AND deleted = 0${ql ? '' : ' AND id = ?'}`).bind(...kem),
   ]);
   const dong = (rs) => rs.map((r) => ({ ...r, nghi: docNghi(r.nghi) }));
   const ng = ngR.results[0] ? Number(ngR.results[0].value) : QS_NGUONG_MAC;
-  return json({ tu, den, lyDo: QS_LY_DO, nguong: ng >= 1 && ng <= 100 ? ng : QS_NGUONG_MAC, to: toR.results, qs: dong(qsR.results), tl: dong(tlR.results) });
+  // số tạm: ca đang diễn ra và hai ca liền trước (vừa hết, lịch mỗi giờ có thể chưa chép)
+  const st = parseSettings(stR.results), cfg = docCfg(cfgR.results[0]), now = Date.now(), tam = [];
+  const co = new Set(qsR.results.concat(tlR.results).map((r) => r.ngay + ':' + r.ca + ':' + r.u));
+  for (let c = caLuc(st, now), i = 0; i < 3; c = caTruoc(c), i++) {
+    if (c.ngay < tu || c.ngay > den) continue;
+    for (const { id } of tdtR.results) {
+      if (co.has(caKhoa(c) + ':' + id)) continue;
+      const x = soTlCa(cfg, id, c, caGio(st, c).den);
+      if (x && x.lam != null) tam.push({ ngay: c.ngay, ca: c.ca, u: id, ...x, tam: 1 });
+    }
+  }
+  return json({ tu, den, lyDo: QS_LY_DO, nguong: ng >= 1 && ng <= 100 ? ng : QS_NGUONG_MAC, to: toR.results, qs: dong(qsR.results), tl: dong(tlR.results), tam });
 }
 
 // Đổi ngưỡng tô đỏ của màn thống kê (CVKTHT trở lên): % nghỉ từ mức này trở lên thì tô đỏ.

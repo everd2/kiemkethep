@@ -64,6 +64,13 @@ async function main() {
   const cv = (await S.call('GET', `/quanso/thongke?tu=${tu}&den=${D}`, undefined, 'Cv')).data;
   ok('CVKTHT: đủ các tổ, dòng tổ báo và dòng chép lúc hết ca', ['An', 'Binh', 'Cuong', 'Dung'].every((n) => cv.to.some((t) => t.name === n)) && cv.qs.some((r) => r.u === U.An) && cv.tl.some((r) => r.u === U.Binh), JSON.stringify(cv.to));
   eq('ngưỡng mặc định 15%', cv.nguong, 15);
+  // số tạm: ca đang diễn ra (ca đêm hôm nay), Dung làm ca đêm chưa báo, có số thiết lập → gửi kèm số tạm như báo cáo ca
+  eq('ca đang diễn ra, tổ chưa báo, chưa có số thiết lập: không có số tạm', cv.tam.filter((r) => r.u === U.Dung), []);
+  await tl({ user: U.Dung, tong: 15, s1: 0, s2: 15, n2: { om: 3 }, ts: 0 });
+  const tam = (await S.call('GET', `/quanso/thongke?tu=${tu}&den=${D}`, undefined, 'Cv')).data.tam.filter((r) => r.u === U.Dung);
+  eq('có số thiết lập: số tạm của ca đang diễn ra (đi làm 12, nghỉ 3 ốm)', tam.map(({ ngay, ca, lam, tong, nghi, tam: t }) => ({ ngay, ca, lam, tong, nghi, t })), [{ ngay: D, ca: 2, lam: 12, tong: 15, nghi: { om: 3 }, t: 1 }]);
+  eq('số tạm chỉ gửi kèm, không ghi vào bảng', S.one('SELECT COUNT(*) n FROM quan_so_tl WHERE user_id = ?', U.Dung).n, 0);
+  S.raw.exec(`UPDATE bc_mau SET data = json_remove(data, '$.tl."${U.Dung}"') WHERE id = 1`);
   const an = (await S.call('GET', `/quanso/thongke?tu=${tu}&den=${D}`, undefined, 'An')).data;
   eq('Tiểu đội trưởng chỉ thấy tổ mình', [an.to.map((t) => t.name), an.qs.every((r) => r.u === U.An), an.tl.length], [['An'], true, 0]);
   eq('xem 4 tháng (tháng đang xem + 3 tháng trước để so sánh): được', (await S.call('GET', `/quanso/thongke?tu=2026-01-01&den=2026-04-30`, undefined, 'Cv')).status, 200);
@@ -106,7 +113,7 @@ async function main() {
   await vao('Cv', 'cvktht');
   ok('Thêm có mục Thống kê quân số', R('vMore()').includes('data-s="qstk"'));
   R(`ACTIONS.nav({ s: 'qstk' })`); await cho();
-  eq('mở màn thống kê: mặc định xem theo ngày, hôm nay', [R('S.screen'), R('tkChe()'), R('tkNgayCua()'), R('tkThangCua()')], ['qstk', 'ngay', D, D.slice(0, 7)]);
+  eq('mở màn thống kê: mặc định xem theo tháng; xem theo ngày thì mặc định hôm qua', [R('S.screen'), R('tkChe()'), R('tkNgayCua()'), R('tkThangCua()')], ['qstk', 'thang', vnDay(Date.parse(D) - 864e5), D.slice(0, 7)]);
   eq('tải đủ tháng đang xem và ba tháng trước', [R('S.tk.tu'), R('S.tk.den')], [R('tkCan().tu'), R('tkCan().den')]);
   R(`ACTIONS.tkche({ v: 'thang' })`); await cho();
   eq('chuyển sang xem theo tháng (không tải lại vì đã đủ số)', [R('tkChe()'), R('tkThangCua()'), R('!!S.tk')], ['thang', D.slice(0, 7), true]);
@@ -115,7 +122,9 @@ async function main() {
   eq('ca ngày: cộng công mọi tổ; OFF tính là nghỉ; ca thiếu số đếm riêng', JSON.parse(tong), { lam: 25, nghi: 5, to: 1, tl: 1, thieu: 1, ly: { om: 2, off: 2, phep: 1 } });
   eq('% nghỉ toàn bộ = 5 / 30 (cộng công rồi mới chia, không lấy trung bình % các tổ)', R('tkPct(tkTinh(S.tk, tkThangCua(), 1).tong.pct)'), '16,7%');
   const man = R('vThongKeQs()');
-  ok('màn hình: % nghỉ toàn bộ, từng tổ, lý do, theo ngày, nguồn số', ['Nghỉ 16,7%', 'Bảng các tổ', '% nghỉ 4 tháng gần đây', 'Nghỉ theo lý do', '% nghỉ theo ngày', '1 ca thiếu số', 'tổ tự báo'].every((x) => man.includes(x)), man.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
+  ok('màn hình: bốn khối (thẻ đầu, bảng các tổ, bảng màu, lý do), cùng cách đếm tổ; không còn biểu đồ, khối quân số lặp', ['Nghỉ 16,7%', 'Toàn bộ · 3/4 tổ có số', 'Bảng các tổ', '% nghỉ 4 tháng gần đây', 'Nghỉ theo lý do', '1 ca thiếu số', 'tổ tự báo'].every((x) => man.includes(x))
+    && !man.includes('% nghỉ theo ngày') && !man.includes('Đi làm / quân số') && !man.includes('Tổng các tổ') && !man.includes('Một <b>công</b>') && man.includes('data-a="tkcach"'), man.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
+  ok('Cách tính: thu gọn, chạm thì mở', R('ACTIONS.tkcach(), vThongKeQs()').includes('Một <b>công</b> là một người trong một ca') && (R('ACTIONS.tkcach()'), true));
   ok('tổ An (20%) từ ngưỡng 15% trở lên: ô % nghỉ tô đỏ; Binh (10%) không', /An<\/span>(?:(?!<button)[\s\S])*?var\(--badbg\);color:var\(--bad\)\">20,0%/.test(man) && /Binh<\/span>(?:(?!<button)[\s\S])*?background:#ECE9E1\">10,0%/.test(man));
   R(`ACTIONS.tkto({ v: '${U.Cuong}' })`);
   ok('chi tiết tổ thiếu số: lịch tháng có ô "?"', R('vThongKeQs()').includes('Tất cả các tổ') && R('vThongKeQs()').includes('>?</b>'));
@@ -143,19 +152,21 @@ async function main() {
   eq('ba ngày liền trước, mốc TB 3 ngày và TB tháng', [ky.truoc, ky.aTu, ky.aDen, ky.bTu], [[qd(3), qd(2), qd(1)], qd(3), qd(1), D.slice(0, 7) + '-01']);
   R(`S.tkCa = 1`);
   const ngMan = R('vThongKeQs()');
-  ok('màn ngày: % nghỉ hôm nay, so với TB 3 ngày trước (5,0%), tăng 11,7 điểm, có cột từng ngày', ['Nghỉ 16,7%', 'So với TB 3 ngày trước <b>5,0%</b>', '▲ 11,7 điểm', 'Hôm nay', `data-v="${qd(1)}"`, 'So với TB tháng'].every((x) => ngMan.includes(x)), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 500));
+  const ngChu = ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  ok('màn ngày (hôm nay): một dòng so với TB 3 ngày trước, lối sang báo cáo ca, bảng màu có các ngày trước', ['Nghỉ 16,7%', '▲ 11,7 điểm so với TB 3 ngày trước (5,0%)', 'Hôm nay đang diễn ra', 'Báo cáo ca ›'].every((x) => ngChu.includes(x)) && ngMan.includes(`data-v="${qd(1)}"`) && ngMan.includes('data-a="nav" data-s="baocaoca"'), ngChu.slice(0, 500));
   ok('từng tổ có chênh với 3 ngày trước của tổ: An ▲ 15,0', /An<\/span>[\s\S]*?20,0%[\s\S]*?▲ 15,0/.test(ngMan));
   ok('tổ không có số ngày này vẫn có dòng trong bảng', /Dung<\/span>[\s\S]*?không có số/.test(ngMan));
   // quân số theo người, cả hai ca: An 20 người (16 làm, 4 nghỉ), Binh 10 (9 làm, 1 nghỉ); Cuong thiếu số → không tính
   const qsHom = JSON.parse(R(`JSON.stringify((({ sTong, sLam, sNghi, soNgay }) => ({ sTong, sLam, sNghi, soNgay }))(tkQs(S.tk, '${D}', '${D}', null).tong))`));
   eq('quân số hôm nay: tổng các tổ 30 người, đi làm 25, nghỉ 5', qsHom, { sTong: 30, sLam: 25, sNghi: 5, soNgay: 1 });
-  ok('màn ngày: bảng các tổ (quân số, đi làm, nghỉ) và bảng màu 7 ngày', ngMan.includes('Bảng các tổ') && ngMan.includes('% nghỉ 7 ngày gần đây') && /An<\/span>[\s\S]*?>20<\/span>[\s\S]*?>16<\/span>[\s\S]*?>4<\/span>/.test(ngMan) && ngMan.includes('Đi làm / quân số: 83,3%'), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 600));
+  ok('màn ngày: bảng các tổ (quân số, đi làm, nghỉ) và bảng màu 7 ngày', ngMan.includes('Bảng các tổ') && ngMan.includes('% nghỉ 7 ngày gần đây') && /An<\/span>[\s\S]*?>20<\/span>[\s\S]*?>16<\/span>[\s\S]*?>4<\/span>/.test(ngMan) && !ngMan.includes('Đi làm / quân số'), ngMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 600));
   // Dung tổng 12 người, ca đêm chưa báo, mới có số ca ngày: 0 đi làm (cả tổ ở ca đêm) → bỏ; tự báo ca đêm 7 làm, 1 nghỉ → còn 4 chưa có số
   S.raw.prepare('INSERT INTO quan_so (ngay, ca, user_id, tong, lam, ca_kia, nghi, ghi_chu, ts, by_id) VALUES (?,2,?,12,7,4,?,NULL,?,?)').run(D, U.Dung, '{"om":1}', Date.now(), U.Dung);
   R(`S.tk = null`); R(`ACTIONS.tkxemngay({ v: '${D}' })`); await cho();
   const dung = JSON.parse(R(`JSON.stringify(tkQs(S.tk, '${D}', '${D}', ${U.Dung}).tong)`));
   eq('tổ còn người chưa có số: quân số 12, đi làm 7, nghỉ 1 (4 người còn lại)', [dung.sTong, dung.sLam, dung.sNghi], [12, 7, 1]);
-  ok('màn hiện phần còn lại', R('vThongKeQs()').includes('còn 4'));
+  ok('bảng các tổ nói rõ người chưa có số (thay cho tỷ lệ đi làm / quân số thấp giả)', R('S.tkCa = 0, vThongKeQs()').includes('còn 4 người chưa có số'));
+  R('S.tkCa = 1');
   S.raw.prepare('DELETE FROM quan_so WHERE user_id = ? AND ngay = ? AND ca = 2').run(U.Dung, D);
   R(`S.tk = null`); R(`ACTIONS.tkxemngay({ v: '${D}' })`); await cho();
   R(`ACTIONS.tkdi({ v: '-1' })`); await cho();
@@ -163,7 +174,7 @@ async function main() {
   R(`ACTIONS.tkdi({ v: '5' })`); await cho();
   eq('tới quá hôm nay: dừng ở hôm nay', R('tkNgayCua()'), D);
   R('ACTIONS.tkchep()'); await cho();
-  ok('tóm tắt ngày có dòng quân số', String(chep).includes('Quân số: 30 người · đi làm 25 (83,3%) · nghỉ 5'), chep);
+  ok('tóm tắt ngày có dòng quân số', String(chep).includes('Quân số: 30 người · đi làm 25 · nghỉ 5'), chep);
   ok('chép tóm tắt ngày kèm so sánh', String(chep).startsWith(`QUÂN SỐ NGÀY ${D.split('-').reverse().join('/')} (ca ngày)`) && String(chep).includes('So với TB 3 ngày trước: 5,0% (tăng 11,7 điểm)'), chep);
   R(`ACTIONS.tkto({ v: '${U.An}' })`);
   const anNgay = R('vThongKeQs()');
@@ -171,7 +182,7 @@ async function main() {
   R(`ACTIONS.tkto({ v: '' }); S.tkCa = 0`);
   R(`ACTIONS.tkche({ v: 'thang' })`); await cho();
   const thMan = R('vThongKeQs()');
-  ok('màn tháng: so với tháng trước và TB 3 tháng trước, biểu đồ 4 tháng', thMan.includes('TB 3 tháng trước') && thMan.includes('Th ' + Number(D.slice(5, 7))) && thMan.includes('data-a="tkden"'), thMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
+  ok('màn tháng: một dòng so với tháng trước, bảng màu 4 tháng (chạm để sang tháng đó)', (R('tkTinh(S.tk, tkKy().aTu, 0, tkKy().aDen).tong.pct') == null || thMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').includes('so với ' + R('tkKy().aTen'))) && !thMan.includes('% nghỉ theo ngày') && thMan.includes('% nghỉ 4 tháng gần đây') && thMan.includes('data-a="tkden"'), thMan.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
 
   await vao('An', 'tieudoi');
   R(`ACTIONS.nav({ s: 'qstk' })`); await cho();

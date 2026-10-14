@@ -183,7 +183,7 @@ async function main() {
   R(`Object.assign(S.bcDau, { ddt: 'Vũ Nhật Tài', tdtr: 'Hà Huy Đạt', cbpt: 'Nguyễn Duy Dũng', don_vi: 'Trung đoàn XD 01, Tiểu Đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1', du_an: 'Khu đô thị thể thao quốc tế OLYMPIC', khu_vuc: 'Bãi gia công trung đoàn' })`);
   const tl1 = R('bcTao()').split('\n');
   eq('tổ chưa báo lấy số thiết lập, viết như dòng thường; tổng cộng thêm tổ đó', [tl1.find((l) => l.includes('Hải Nam')), tl1.find((l) => l.startsWith('3. '))], ['• Tổ Lê Hải Nam: ca ngày 20/20 cn', '3. Quân số đi làm trong ca 1 là: 29 công nhân / (tổng quân số 80)']);
-  ok('bản gửi không có chữ "thiết lập"; màn soạn thì nói rõ đang lấy số thiết lập cho tổ nào', !R('bcTao()').includes('thiết lập') && R('vBaoCaoCa()').includes('Đang lấy số thiết lập cho: Lê Hải Nam.'));
+  ok('bản gửi không có chữ "thiết lập"; màn soạn thì nói rõ đang lấy số thiết lập cho tổ nào', !R('bcTao()').includes('thiết lập') && R('vBaoCaoCa()').includes('Lê Hải Nam (tạm lấy số thiết lập).') && /Tổ Lê Hải Nam: ca ngày 20\/20 cn<\/span><span class="badge (warn|bad)"[^>]*>Chưa báo · số thiết lập</.test(R('vBaoCaoCa()')));
   R("ACTIONS.bcsua({ k: 's3' })");
   ok('mở mục 3: có ô sửa và nút chọn nguồn Theo tổ báo / Chỉ số thiết lập; các mục khác vẫn đóng', R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="to"') && R('vBaoCaoCa()').includes('data-a="bcnguon" data-v="tl"') && (R('vBaoCaoCa()').match(/<textarea/g) || []).length === 1 && R('vBaoCaoCa()').includes('id="bc_s3"'));
   R(`ACTIONS.bcnguon({ v: 'tl' })`);
@@ -195,7 +195,7 @@ async function main() {
   S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   R(`S.bcc = null; go('baocaoca', true)`); await cho();
   R(`Object.assign(S.bcDau, { ddt: 'Vũ Nhật Tài', tdtr: 'Hà Huy Đạt', cbpt: 'Nguyễn Duy Dũng', don_vi: 'Trung đoàn XD 01, Tiểu Đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1', du_an: 'Khu đô thị thể thao quốc tế OLYMPIC', khu_vuc: 'Bãi gia công trung đoàn' })`);
-  ok('tổ chưa báo được nêu tên ở đầu màn để nhắc', R('vBaoCaoCa()').includes('1 tổ chưa báo quân số ca ngày: Lê Hải Nam'));
+  ok('tổ chưa báo được nêu tên ở bước 1 để nhắc, và có nhãn ngay trên dòng của tổ ở mục 3', /(Chưa báo|Quá hạn, chưa báo):<\/b> Lê Hải Nam[ .]/.test(R('vBaoCaoCa()')) && /Tổ Lê Hải Nam: chưa báo quân số ca ngày<\/span><span class="badge (warn|bad)"/.test(R('vBaoCaoCa()')));
 
   /* GÕ THẬT vào từng ô (sự kiện input qua bộ bắt sự kiện của app, như trên điện thoại): mục phải thành "đã sửa",
      bản sẽ gửi đổi ngay, và bản CHÉP đi mang đúng chữ vừa gõ. Trước đây gán thẳng S.bcM nên không bắt được lỗi
@@ -263,7 +263,7 @@ async function main() {
 
   /* Đầu màn có bảng tổng hợp quân số mọi tổ và nút thiết lập: mở thẳng bảng thiết lập (ca, số quân từng tổ, có dòng
      tổng), nút quay lại ở đó về đúng báo cáo của ca đang soạn chứ không nhảy về ca đang diễn ra. */
-  ok('đầu màn: tổng hợp quân số mọi tổ và nút thiết lập', /<span>Tổng \d+ tổ<\/span><b>\d+<\/b>/.test(R('vBaoCaoCa()')) && R('vBaoCaoCa()').includes('<span>Chưa báo</span>') && R('vBaoCaoCa()').includes('data-a="bctl"'));
+  ok('bước 1 gọn: số tổ đã báo và nút thiết lập; không còn ô năm số và danh sách tổ riêng (từng tổ nằm ở mục 3)', /1 · Tổ báo ca (ngày|đêm): \d+\/\d+ tổ/.test(R('vBaoCaoCa()')) && R('vBaoCaoCa()').includes('data-a="bctl"') && !R('vBaoCaoCa()').includes('eq eq5') && !R('vBaoCaoCa()').includes('data-a="bctomo"'));
   ok('các số tổng hợp cộng lại đúng bằng tổng quân số', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong > 0 && Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'), R('JSON.stringify((({ tong, lam, nghi, kiaSo, chuaSo }) => ({ tong, lam, nghi, kiaSo, chuaSo }))(bcQuanSo(S.bcc)))'));
   R('ACTIONS.bctl()'); await cho();
   const tlMan = R('vQuanSo()');
@@ -322,7 +322,7 @@ async function main() {
     const s3 = R("bcAuto(S.bcc, 's3')").split('\n');
     eq('báo cáo của tổ chưa báo: đi làm = số người ca − nghỉ, có số nghỉ và lý do từng người', s3.find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 16/20 cn, nghỉ 4 cn — 2 ốm, 1 về quê, 1 đi khám nghĩa vụ');
     ok('các số tổng hợp vẫn cộng đúng bằng tổng quân số', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'));
-    ok('bước 1 nói rõ số thiết lập đang lấy, kèm người nghỉ', R('S.bcToMo = true; vBaoCaoCa()').includes('Tạm lấy số thiết lập: đi làm 16/20 · nghỉ 4: 2 ốm, 1 về quê, 1 đi khám nghĩa vụ'));
+    ok('bước 1 nói rõ tổ đang lấy số thiết lập; mục 3 có dòng đủ người nghỉ, kèm nhãn "Số thiết lập"', R('vBaoCaoCa()').includes('Lê Hải Nam (tạm lấy số thiết lập).') && /Tổ Lê Hải Nam: ca ngày 16\/20 cn, nghỉ 4 cn — 2 ốm, 1 về quê, 1 đi khám nghĩa vụ<\/span><span class="badge (warn|bad)"/.test(R('vBaoCaoCa()')));
     // bảng thiết lập: dòng người nghỉ dưới mỗi tổ, mở ra ghi theo lý do, Lưu tất cả gửi kèm
     R('ACTIONS.bctl()'); await cho();
     ok('bảng thiết lập có dòng người nghỉ của từng tổ', R('vQuanSo()').includes('Nghỉ: 4 (2 ốm, 1 về quê, 1 đi khám nghĩa vụ)') && R('vQuanSo()').includes(`data-a="tlnghimo" data-id="${nam}"`));

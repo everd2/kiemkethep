@@ -212,7 +212,7 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
   - **Tổ làm cả 2 ca** báo từng ca một (ca tới trước báo trước). Mỗi ca ghi *Người của tổ làm ca ngày / ca đêm* (điền sẵn theo lần trước), số đi làm = số đó − nghỉ.
   - **Mất sóng lúc bấm báo**: app lưu quân số trên máy (theo từng người, máy dùng chung vẫn đúng tên), thẻ ghi *chờ gửi (mất sóng)* và **tự gửi khi có mạng**.
   - Báo xong thẻ thành *Ca ngày …: đã báo lúc …* kèm nút **Sửa** (sửa tại chỗ). Thẻ vàng khi chưa báo trong hạn, đỏ khi quá hạn.
-  - Màn **Thêm → Quân số tổ đã báo** của Tiểu đội trưởng **chỉ để xem** tổ mình đã báo ca nào; báo và sửa đều ở thẻ trên Tổng quan.
+  - Tiểu đội trưởng **chỉ có một chỗ** cho quân số: thẻ *Quân số tổ* trên Tổng quan (báo, sửa, xem đã báo). Báo xong, thẻ có lối *Xem thống kê nghỉ của tổ ›*. Không còn màn "Quân số tổ đã báo" (lặp đúng thẻ này).
 - **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ở dòng *Hạn báo* cuối bảng quân số (thu gọn, bấm **Đổi** mới hiện ô giờ); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
 - **Tổ đang làm ca nào thì chỉ bị nhắc ca đó**, theo **lịch ca** tổ đã đặt. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Tổ chưa đặt lịch thì app tạm đoán theo lần báo gần nhất.
 - **Một lần báo gồm**: tổng quân số của tổ (điền sẵn theo lần báo trước), số nghỉ **theo từng lý do** (ốm, nghỉ phép năm, về quê, việc gia đình, OFF luân phiên, lý do khác — bấm + / −), số đi làm ca này, ghi chú. **OFF luân phiên nằm trong số nghỉ.** Có *lý do khác* thì bắt buộc ghi rõ ở ô ghi chú.
@@ -227,7 +227,7 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
   | Xem quân số tổ khác | Chỉ CVKTHT trở lên — Tiểu đội trưởng chỉ thấy tổ mình |
 
 - **CVKTHT trở lên làm trên một màn theo bước** (Thêm → *Báo cáo ca và quân số các tổ*): 1 Tổ báo → 2 Soát → 3 Chép. Hai loại số tách rõ:
-  - **Bước 1 · Tổ báo** (đầu màn báo cáo ca) — tổng hợp năm số **cộng lại đúng bằng tổng**: *Tổng = Đi làm + Nghỉ + Ca kia + Chưa báo*, rồi mỗi tổ một dòng (đã báo / chưa báo / quá hạn), các tổ làm ca kia gộp thành một dòng cuối *Làm ca đêm: …*; danh sách tự mở khi còn tổ chưa báo. **Chỉ để xem và nhắc**: CVKTHT không ghi vào báo cáo của tổ.
+  - **Bước 1 · Tổ báo** (đầu màn báo cáo ca) — gọn một thẻ: *x/y tổ đã báo*, tổ nào chưa báo (kèm *tạm lấy số thiết lập* nếu có), nút **chép tin nhắc** và nút **bánh răng** (thiết lập). **Từng tổ chỉ nằm ở mục 3**: mỗi dòng của mục 3 kèm nhãn *Đã báo* / *Chưa báo · số thiết lập* / *Chưa báo* (*Quá hạn*); tổ làm ca kia là dòng cuối không nhãn. **Chỉ để xem và nhắc**: CVKTHT không ghi vào báo cáo của tổ.
   - **Thiết lập** (nút bánh răng ở bước 1) — bảng gọn, mỗi tổ một dòng: *Ca* (Ngày / Đêm / 2 ca), *Tổng*, *Ngày*, *Đêm*; ô của ca tổ không làm thì khoá; dòng cuối **Tổng N tổ** cộng quân số mọi tổ. **Một nút LƯU TẤT CẢ** ở đáy lưu mọi thay đổi trên bảng. Số **xám** là gợi ý theo số của chính tổ (số tổ tự khai hoặc lần tổ báo gần nhất, **số nào mới hơn thì lấy**), **chưa lưu** — báo cáo ca chưa dùng cho tới khi bấm Lưu tất cả. Số thiết lập là số dự phòng: báo cáo ca dùng nó cho tổ **chưa báo**.
   - **Người nghỉ theo lý do** (dòng *Nghỉ: … sửa* dưới mỗi tổ): CVKTHT ghi số người nghỉ của từng ca theo lý do, như tổ tự báo (chạm lý do để thêm 1 người; *lý do khác* phải ghi rõ). Số nghỉ nằm **trong** số người của ca: đi làm = số người ca − nghỉ. Báo cáo ca của tổ chưa báo viết đủ *"ca ngày 16/20 cn, nghỉ 4 cn — 2 ốm, 2 về quê"*. Số này giữ nguyên qua các ca cho tới khi sửa.
   - **Nhiều người cùng thiết lập**: hai người sửa hai tổ khác nhau không ảnh hưởng nhau. Hai người sửa **cùng một tổ** thì người lưu sau bị từ chối, app nói rõ *"… vừa sửa số thiết lập tổ …: tổng …, ca ngày …, ca đêm …"* và tải lại số mới để xem rồi quyết.
@@ -243,10 +243,12 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 
 Ở **Thêm → Thống kê quân số**, màn riêng, không dính tới báo cáo ca. CVKTHT trở lên xem mọi tổ; Tiểu đội trưởng xem tổ mình.
 
-- **Đếm theo công** (một người trong một ca). **OFF luân phiên tính là nghỉ.** *% nghỉ = công nghỉ ÷ (công đi làm + công nghỉ)*; % của toàn bộ thì cộng công mọi tổ rồi mới chia (tổ đông người nặng hơn tổ ít người).
-- Chọn tháng (‹ ›) và ca (cả hai ca / ca ngày / ca đêm). Màn tổng quan: % nghỉ toàn bộ kèm so với tháng trước, % nghỉ **từng tổ** (thanh ngang, xếp từ cao xuống, vạch đứt là trung bình chung), nghỉ **theo lý do**, % nghỉ **theo ngày** (chạm một cột để xem ngày đó), và **nguồn số** (tổ tự báo / số thiết lập / thiếu số). Chạm một tổ để xem lịch tháng tô màu theo % nghỉ từng ngày, lý do, các ghi chú "lý do khác".
-- **Ngưỡng tô đỏ** (mặc định 15%): tổ hoặc ngày nghỉ từ mức này trở lên tô đỏ; CVKTHT trở lên đổi được (dòng *Tô đỏ khi nghỉ từ …*).
-- Nút **Chép tóm tắt tháng** ra chữ để dán Zalo.
+- **Mỗi câu hỏi một chỗ trả lời**: *ca đang diễn ra* là việc của **Báo cáo ca**; **Thống kê** là chuyện các ngày đã qua và các tháng. Mặc định **xem theo tháng**; xem theo ngày thì mặc định **hôm qua**; xem hôm nay thì đầu màn có lối *Báo cáo ca ›*.
+- **Bốn khối, không lặp số của nhau**: (1) **thẻ đầu** — % nghỉ, một dòng tăng / giảm so với kỳ liền trước, đi làm / nghỉ, ca thiếu số, nguồn số; (2) **bảng các tổ** — bảng duy nhất có số từng tổ (quân số, đi làm, nghỉ, % nghỉ, tăng / giảm), tổ hai ca mà ca kia chưa có số thì ghi *còn N người chưa có số*; (3) **bảng màu** tổ × 7 ngày hoặc × 4 tháng — cách so sánh duy nhất, chạm ô để sang kỳ đó; (4) **nghỉ theo lý do**. Cách tính thu vào nút *Cách tính*.
+- **Cùng một cách đếm với báo cáo ca**: thẻ đầu ghi *x/y tổ có số*; ca đang diễn ra thì tổ chưa báo **tạm lấy số thiết lập** (như báo cáo ca), nên hai màn ra cùng một số.
+- **Đếm theo công** (một người trong một ca). **OFF luân phiên tính là nghỉ.** *% nghỉ = công nghỉ ÷ (công đi làm + công nghỉ)*; % của toàn bộ thì cộng công mọi tổ rồi mới chia.
+- **Tiểu đội trưởng** vào là thấy thẳng tổ mình, gọn: % nghỉ tháng và tăng / giảm so tháng trước, lịch tháng tô màu, nghỉ theo lý do. Không có bảng so sánh, ngưỡng, nguồn số.
+- **Ngưỡng tô đỏ** (mặc định 15%): CVKTHT trở lên đổi được (dòng *Tô đỏ khi nghỉ từ …*). Nút **Chép tóm tắt** ra chữ để dán Zalo.
 - **Số của ca tổ không báo**: hết ca nào, app (lịch chạy mỗi giờ) tự chép ca đó cho tổ làm ca đó mà không báo — có số thiết lập thì lấy số đó (kèm người nghỉ theo lý do), không có thì ghi là **ca thiếu số** (bảng `quan_so_tl`, bản cấu trúc 39). Sửa số thiết lập sau đó không đổi số của ca đã qua. Ca đã qua trước khi có tính năng này, hoặc hết ca trước lúc tổ đặt lịch ca, thì không chép được: các tháng cũ chỉ có số tổ tự báo.
 
 ### Báo cáo ca gửi cấp trên
