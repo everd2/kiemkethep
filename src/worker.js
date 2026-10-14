@@ -57,7 +57,43 @@ async function handle(req, env, url) {
   if (r0 === 'me' && method === 'GET') return json({ user: { id: user.id, name: user.name, role: user.role, chuc_danh: user.chuc_danh || null, must_change: user.must_change } });
   if (r0 === 'change-pin' && method === 'POST') return changePin(req, env, user);
   if (user.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
+  const res = await route(req, env, url, user, method, p, r0);
+  return method === 'GET' ? res : kemSau(req, env, url, user, r0, res);
+}
 
+/* TẢI LẠI KÈM LỆNH GHI. Sau mỗi lần lưu, máy khách phải tải lại dữ liệu chung và màn đang đứng; làm bằng request
+   riêng thì mỗi lần lưu là 2–3 vòng mạng nối nhau, mà ngoài bãi sóng yếu mỗi vòng có khi vài giây và màn hình đứng ở
+   "Đang lưu..." suốt lúc đó. Nên máy khách gửi kèm lệnh ghi tiêu đề X-Kem: các đường GET nó sắp gọi (tối đa 3, vd
+   "/bootstrap,/review"); ghi xong, server chạy luôn các đường đó — QUA ĐÚNG route(), nên quyền hạn kiểm y như một
+   lần GET thường — và trả kết quả trong khoá `sau` của câu trả lời. Một lần lưu còn đúng MỘT vòng mạng.
+   Phần kèm hỏng (lỗi, hết hạn mức) thì bỏ qua: lệnh ghi đã xong, máy khách không thấy `sau` sẽ tự GET như trước.
+   Không kèm cho lệnh ghi vào /users (đổi tên, vai trò của chính người đang gọi thì dòng `user` đọc lúc xác thực đã
+   cũ) và /restore (cả bảng tài khoản bị thay). */
+const KEM_DUOC = ['bootstrap', 'review', 'giacong', 'quanso', 'satvun', 'loans'];
+async function kemSau(req, env, url, user, r0, res) {
+  const h = req.headers.get('X-Kem');
+  if (!h || !res.ok || r0 === 'users' || r0 === 'restore') return res;
+  if (!(res.headers.get('Content-Type') || '').startsWith('application/json')) return res;
+  let d;
+  try { d = await res.clone().json(); } catch (e) { return res; }
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return res;
+  const paths = [...new Set(h.split(',').map((s) => s.trim()).filter((s) => s.startsWith('/')))].slice(0, 3);
+  const sau = {};
+  await Promise.all(paths.map(async (path) => {
+    try {
+      const u = new URL('/api' + path, url.origin);
+      const pp = u.pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
+      if (!KEM_DUOC.includes(pp[0]) || pp.includes('export')) return;
+      const r = await route(new Request(u, { method: 'GET' }), env, u, user, 'GET', pp, pp[0]);
+      if (r.ok) sau[path] = await r.json();
+    } catch (e) {
+      if (!(e instanceof HttpError)) console.error('kemSau', path, e && e.stack ? e.stack : e);
+    }
+  }));
+  return json({ ...d, sau });
+}
+
+async function route(req, env, url, user, method, p, r0) {
   const ALL = ROLES;
   const need = (roles) => { if (!roles.includes(user.role)) throw new HttpError(403, 'Bạn không có quyền thực hiện việc này'); };
   // cấp duyệt tối thiểu (xem CAP ở core.js). Duyệt được việc CỦA AI thì từng hàm tự kiểm theo người báo.

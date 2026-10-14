@@ -234,7 +234,7 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - **Xếp thứ tự tổ** (thẻ Thiết lập): bấm Lên / Xuống từng tổ rồi Lưu. Thứ tự này dùng cho bảng quân số và mục 3 của báo cáo ca.
 - **Nhắc soạn báo cáo ca**: qua hạn báo mà ca đó chưa chép báo cáo thì Tổng quan của CVKTHT có thẻ *Soạn báo cáo ca … gửi cấp trên* (ghi số tổ đã báo), bấm là mở thẳng màn soạn.
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào là mở màn báo cáo ca, bước 1, để nhắc. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
-- Ca đã qua thì Tiểu đội trưởng không sửa được nữa, phải nhờ CVKTHT trở lên. Mọi lần báo và ghi thay nằm trong **nhật ký**, có chip lọc *Quân số*.
+- Ca đã qua thì Tiểu đội trưởng không sửa được nữa. App **không còn màn ghi thay** cho CVKTHT: tổ không báo thì báo cáo ca dùng số thiết lập, hoặc người soạn sửa tay mục 3. Mọi lần báo nằm trong **nhật ký**, có chip lọc *Quân số*.
 - Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).
 - **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
 
@@ -478,4 +478,7 @@ public/              giao diện: index.html, app.js, style.css, sw.js, manifest
 - *"Mã thiết lập sai"*: SETUP_TOKEN nhập không khớp với giá trị đã đặt.
 - *Đăng nhập báo sai dù đúng PIN sau khi đổi PEPPER*: PEPPER đã bị đổi, cần đặt lại PIN từng người.
 - *Lỗi khi chạy `d1 execute --remote`*: kiểm tra `database_id` trong wrangler.toml đã đúng chưa.
+- *Báo "Mạng quá chậm…" khi lưu*: mỗi lời gọi máy chủ có hạn chờ 20 giây (trước đây sóng yếu là treo mãi ở "Đang lưu..."). Báo cáo đếm và quân số tự xếp hàng gửi lại; các thao tác khác thì xem lại đã lưu chưa rồi bấm lại. Phiếu kho (nhập, chuyển, xuất, điều chỉnh) bấm lại cùng nội dung **không sinh phiếu thứ hai**: mỗi phiếu đã xác nhận mang một khoá chống ghi trùng (`khoa`, xem `receiptCtx` ở `src/phieu.js`).
+- *Lưu chậm*: một lần lưu chỉ còn **một vòng mạng** — lệnh ghi gửi kèm tiêu đề `X-Kem` (các đường GET màn đang đứng sắp tải lại) và server trả luôn kết quả trong khoá `sau` (xem `kemSau` ở `src/worker.js`, `sauGhi` ở `public/app.js`). Mở tab Network mà thấy sau lệnh ghi vẫn còn `GET /api/bootstrap` thì phần kèm đang không chạy (xem log Worker, dòng `kemSau`).
+- *Mở app trắng màn hình khi sóng yếu*: service worker chờ mạng tối đa 4 giây rồi dùng bản giao diện đã lưu trong máy; bản mới tải ngầm cho lần mở sau.
 - *Giao diện không cập nhật sau khi deploy*: app tự phát hiện bản mới (so dấu ETag của `/app.js` mỗi 5 phút và mỗi lần mở lại từ nền) rồi hiện dải **"Có bản mới của app. Bấm vào đây để cập nhật"**. Bấm vào là xong. Máy còn chạy bản cũ mà gửi kiểu cũ lên thì server báo thẳng "bản app trên máy đã cũ". Khi sửa giao diện vẫn nên tăng số `CACHE` trong `public/sw.js`.

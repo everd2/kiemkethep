@@ -86,7 +86,9 @@ export async function bcView(env, url) {
    đầu và máy móc vào mẫu để ca sau điền sẵn; dòng kiểm tra chỉ vào mẫu khi gửi kèm kt_mau = true. */
 export async function bcPut(req, env, user) {
   const b = await readJson(req);
-  const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
+  // cài đặt (giờ ca) và mẫu đang có: MỘT lượt D1
+  const [stR, mauR] = await env.DB.batch([env.DB.prepare(SETTINGS_SQL), env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1')]);
+  const st = parseSettings(stR.results);
   const q = new URLSearchParams({ ngay: String(b.ngay || ''), ca: String(b.ca || '') });
   const c = docCa(q, st);
   if (c.ngay < vnDay(Date.now() - BC_SUA_NGAY * 864e5)) throw bad(`Chỉ lưu được báo cáo trong ${BC_SUA_NGAY} ngày gần đây`);
@@ -95,7 +97,7 @@ export async function bcPut(req, env, user) {
   const vao = b.muc && typeof b.muc === 'object' ? b.muc : {};
   const muc = {};
   for (const k of BC_MUC) if (typeof vao[k] === 'string') muc[k] = doan(vao[k], 8000);
-  const cu = docMau(await env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1').first());
+  const cu = docMau(mauR.results[0]);
   const dau = b.dau && typeof b.dau === 'object' ? Object.fromEntries(BC_DAU.map((k) => [k, chu(b.dau[k], 120)])) : cu.dau;
   const mau = { dau, mmtb: b.mmtb != null ? chu(b.mmtb, 400) : cu.mmtb, kt: cu.kt, thu_tu: cu.thu_tu };
   if (b.kt_mau && typeof muc.s6 === 'string') mau.kt = muc.s6.split('\n').map((x) => chu(x, 200)).filter(Boolean);

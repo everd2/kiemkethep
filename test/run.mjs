@@ -17,6 +17,7 @@ const SUITES = [
   ['Quân số đầu ca: báo theo ca, ca đêm vắt ngày, ghi thay, quyền', 'quanso.test.mjs'],
   ['Báo cáo ca: ghép đúng mẫu, sửa tay, mẫu, chép', 'baocao.test.mjs'],
   ['Phân quyền: bảng quyền + mô phỏng ngẫu nhiên đối chiếu máy/server', 'roles.test.mjs'],
+  ['Tải lại kèm lệnh ghi (một vòng mạng mỗi lần lưu) + hạn chờ lời gọi', 'kem.test.mjs'],
 ];
 
 const run = (file) =>

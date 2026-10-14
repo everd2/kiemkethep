@@ -252,7 +252,7 @@ S.boot.gc = S.gc.items.filter(gcMo).map((d) => ({ user_id: d.user_id, tt: d.tt, 
 // quân số đầu ca: tổ chia hai ca (đã báo cả hai), tổ làm ca đêm (cấp trên ghi thay), tổ chưa báo có lần báo trước, tổ chưa báo lần nào
 S.boot.qs = { hien: { ngay: '${today}', ca: 1 }, ke: { ngay: '${today}', ca: 2 }, den: Date.now() + 1800e3, han: Date.now() - 600e3, hanKe: Date.now() + 3600e3,
   to: [{ id: 1, name: 'Nguyễn Văn A', da: false, daKe: false, ca: [] }, { id: 2, name: 'Trần B', da: true, daKe: true, ca: [1, 2] }, { id: 7, name: 'Vũ E', da: false, daKe: false, ca: [1] }, { id: 8, name: 'Lê G', da: false, daKe: false, ca: [2] }] };
-S.qs = { ngay: '${today}', ca: 1, hien: { ngay: '${today}', ca: 1 }, ke: { ngay: '${today}', ca: 2 }, gio: { tu: Date.now() - 3600e3, den: Date.now() + 3600e3 }, han: Date.now() - 600e3, hanPhut: [420, 1155], lyDo: QS_LY_DO, tongMax: 500, suaDuoc: true,
+S.qs = { ngay: '${today}', ca: 1, hien: { ngay: '${today}', ca: 1 }, ke: { ngay: '${today}', ca: 2 }, gio: { tu: Date.now() - 3600e3, den: Date.now() + 3600e3 }, han: Date.now() - 600e3, hanPhut: [420, 1155], lyDo: QS_LY_DO, 
   chon: [{ ngay: '${today}', ca: 1, gio: { tu: Date.now() - 3600e3, den: Date.now() + 3600e3 }, han: Date.now() - 600e3, row: { ngay: '${today}', ca: 1, tong: 19, lam: 8, ca_kia: 10, nghi: { om: 1 }, ghi_chu: null, ts: Date.now() } },
     { ngay: '${today}', ca: 2, gio: { tu: Date.now() + 3600e3, den: Date.now() + 13 * 3600e3 }, han: Date.now() + 2 * 3600e3, row: null }],
   tdt: [{ id: 2, name: 'Trần B' }, { id: 7, name: 'Vũ E tên rất dài để thử tràn dòng trên màn hình hẹp' }, { id: 8, name: 'Lê G' }, { id: 9, name: 'Tổ chưa báo lần nào' }],
@@ -262,7 +262,6 @@ S.qs = { ngay: '${today}', ca: 1, hien: { ngay: '${today}', ca: 1 }, ke: { ngay:
     { ngay: '${today}', ca: 1, user_id: 7, tong: 21, lam: 0, ca_kia: 21, nghi: {}, ghi_chu: null, ts: Date.now(), by_id: 1, uname: 'Vũ E tên rất dài để thử tràn dòng trên màn hình hẹp', by_name: 'Nguyễn Văn A' },
   ],
   truoc: [{ user_id: 2, ngay: '${yday}', ca: 2, tong: 19, lam: 9, ca_kia: 9 }, { user_id: 8, ngay: '${yday}', ca: 1, tong: 20, lam: 17, ca_kia: 0 }] };
-qsMo(2);
 S.bcc = { ngay: S.boot.today, ca: 1, hien: { ngay: S.boot.today, ca: 1 }, ke: { ngay: S.boot.today, ca: 2 }, gio: { tu: Date.parse(S.boot.today + 'T06:30:00+07:00'), den: Date.parse(S.boot.today + 'T18:30:00+07:00') }, lyDo: QS_LY_DO, tdt: [{ id: 2, name: 'Trần B' }, { id: 7, name: 'Vũ E tên rất dài để thử tràn dòng trên màn hình hẹp' }], qs: [{ ca: 1, user_id: 2, tong: 19, lam: 8, ca_kia: 10, nghi: { om: 1, khac: 1 }, ghi_chu: 'chăm bố ốm', uname: 'Trần B' }], truoc: [], don: [{ id: 1, cau_kien: 'Dầm sàn chéo', hang_muc: null, phan_khu: 'KDC', tang: '7', cote: null, truc: 'X17-X20', user_id: 2, han: S.boot.today, buoi: null, tt: 'lam', pct: 80, vuong: 'Thiếu thép: D16', xong_ts: null }], nguoi: [{ id: 3, name: 'Phạm D', role: 'cvktht' }], mau: { dau: { don_vi: 'Trung đoàn XD 01', ddt: '', tdtr: '', cbpt: 'Phạm D', du_an: 'Olympic', khu_vuc: '' }, mmtb: '7 máy', kt: ['Dọn dẹp: tốt'] }, bao: { muc: {}, van_ban: 'x', ts: Date.now(), by_name: 'Phạm D' }, suaDuoc: true }; S.bcM = { s5: '7 máy – 3 Kato' }; S.bcDau = { ...S.bcc.mau.dau }; S.bcDauMo = true;
 
 // chi tiết công nợ một đối tác: có cả lần chờ, lần đã huỷ, hai chiều nợ
@@ -270,7 +269,7 @@ S.loanDt = 5;
 S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Công ty Thép Hoà Bình tên dài để thử tràn dòng', active: 1 }],
   agg: [{ phi_id: 'D8', kind: 'vay', q: 330 }, { phi_id: 'D8', kind: 'tra_vay', q: 110 }, { phi_id: 'D10', kind: 'cho_vay', q: 20 }, { phi_id: 'D10', kind: 'tra_no', q: 30 }],
   items: S.loans.items.map((x) => ({ ...x, voided: 0 })).concat([{ id: 8, doitac_id: 5, doitac_name: 'X', phi_id: 'D8', kind: 'vay', qty: 11, grp: 'g8', user_id: 2, uname: 'An', ts: Date.now() - 864e5, duyet_ts: null, voided: 1 }]) };
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','qsform','baocaoca'];
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','baocaoca'];
 const out = [];
 function one(label) {
   render();
@@ -290,12 +289,11 @@ S.draftWarn = { uname: 'Trần B', ts: Date.now() }; one('dem+nhap-trung'); S.dr
 S.khu = 'B'; loadDraft(true); one('dem+khu-da-co-nguoi-bao'); S.khu = 'A'; loadDraft(true);
 S.legend = true; one('dem+chu-thich'); S.legend = false;
 S.toast = 'Đã gửi báo cáo'; S.toastErr = false; one('dem+toast');
-// quân số đầu ca dưới mắt Tiểu đội trưởng: màn chọn ca, ô ghi sau khi chọn, thẻ nhắc ở Tổng quan (quá hạn ca này + ca sắp tới)
+// quân số đầu ca dưới mắt Tiểu đội trưởng: màn xem tổ mình đã báo, thẻ nhắc ở Tổng quan (quá hạn ca này + ca sắp tới)
 { const me0 = S.me, sc0 = S.screen;
-  S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; S.screen = 'quanso'; S.qsCa = null; S.qsF = null; one('quanso+chon-ca');
-  S.qsCa = { ngay: S.qs.ngay, ca: 1 }; qsMo(2); one('quanso+o-ghi-to-minh');
+  S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; S.screen = 'quanso'; one('quanso+to-minh-da-bao');
   S.me = { id: 1, name: 'Nguyễn Văn A', role: 'tieudoi' }; S.screen = 'home'; one('home+nhac-quan-so');
-  S.me = me0; S.screen = sc0; S.qsCa = null; qsMo(2); }
+  S.me = me0; S.screen = sc0; }
 S.screen = 'home'; one('home+toast'); S.toast = '';
 S.busy = true; S.busyMsg = 'Đang lưu...'; one('home+dang-luu'); S.busy = false;
 S.ask = { msg: 'Chốt ngày hôm nay?\\nSố đếm thành tồn chuẩn mới.', ok: 'CHỐT NGÀY', danger: false, resolve: () => {} };

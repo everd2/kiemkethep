@@ -24,23 +24,39 @@ export function parseLines(b, ctx) {
   });
 }
 
-export async function receiptCtx(env, khuIds) {
+/* KHOÁ CHỐNG GHI TRÙNG (khoa): máy khách sinh một mã ngẫu nhiên 16 chữ hex cho mỗi phiếu người dùng đã xác nhận và gửi
+   lại ĐÚNG mã đó khi bấm lưu lại cùng nội dung. Mã được dùng làm grp của phiếu. Mạng chậm làm mất câu trả lời thì
+   người lập không biết phiếu đã vào hay chưa và bấm lại: không có khoá này là sinh hai phiếu giống hệt (và với phiếu
+   rút thép, lần bấm lại còn bị báo "khu chỉ còn…" vì chính phiếu đầu đang giữ chỗ). Có khoá thì lần gửi lại nhận
+   về đúng phiếu đã ghi, không ghi thêm gì. Bản app cũ không gửi khoá vẫn chạy như trước. */
+const KHOA_RE = /^[a-f0-9]{16}$/;
+export async function receiptCtx(env, khuIds, khoa) {
   const day = vnDay();
-  const [closedR, phiR, khuR] = await env.DB.batch([
+  const k = KHOA_RE.test(String(khoa || '')) ? String(khoa) : null;
+  const [closedR, phiR, khuR, coR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
     /* kg_per_cay phải có ở đây: postAdjust cân ngưỡng "điều chỉnh rất lớn" theo KHỐI LƯỢNG, và
        thiếu cột thì phép nhân ra NaN, mọi phép so với ngưỡng thành false — chốt chặn im lặng
        không chạy lần nào, đúng kiểu lỗi không ai nhìn thấy cho tới lúc cần nó nhất. */
     env.DB.prepare('SELECT id, bo_size, unit, kg_per_cay FROM phi WHERE active = 1'),
     env.DB.prepare('SELECT id, name FROM khu WHERE active = 1'),
+    ...(k ? [env.DB.prepare('SELECT id, user_id FROM receipts WHERE grp = ? ORDER BY id').bind(k)] : []),
   ]);
+  // phiếu mang khoá này đã ghi rồi: trả về trước mọi kiểm tra khác (ngày chốt, tồn) — đó là việc của lần ghi đầu
+  if (coR && coR.results.length) return { day, khoa: k, daCo: coR.results, khu: {}, phiBy: {} };
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   const khu = Object.fromEntries(khuR.results.map((k) => [k.id, k]));
   for (const id of khuIds) if (!khu[id]) throw bad('Khu không hợp lệ');
   return {
-    day, khu,
+    day, khu, khoa: k,
     phiBy: Object.fromEntries(phiR.results.map((r) => [r.id, r])),
   };
+}
+// trả lời cho lần gửi lại một phiếu đã ghi (xem KHOÁ CHỐNG GHI TRÙNG): đúng dạng câu trả lời của writeReceipt
+function daGhi(ctx, user) {
+  if (ctx.daCo.some((r) => r.user_id !== user.id)) throw bad('Phiếu không hợp lệ, hãy lập lại');
+  const ids = ctx.daCo.map((r) => r.id);
+  return json({ ok: true, grp: ctx.khoa, ids, id: ids[0], trung: true });
 }
 
 /* Tồn thực có của một khu theo từng phi, dùng để chặn chuyển quá số đang có.
@@ -96,7 +112,7 @@ export async function stockOf(env, day, khuId, phis) {
    (duyet_day NULL) nên chưa tác động gì tới tồn — kể cả phiếu do admin tự nhập, vì mọi phiếu
    đều phải có một lần bấm duyệt để chứng từ nào cũng có dấu vết duyệt như nhau. */
 export async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
-  const grp = rand(8);
+  const grp = ctx.khoa || rand(8);
   const ts = Date.now();
   const data = JSON.stringify(rows);
   const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, ctx.day), [
@@ -202,7 +218,8 @@ export async function duyetReceipt(env, user, id) {
 export async function postReceipt(req, env, user) {
   const b = await readJson(req);
   const khuId = String(b.khu || '');
-  const ctx = await receiptCtx(env, [khuId]);
+  const ctx = await receiptCtx(env, [khuId], b.khoa);
+  if (ctx.daCo) return daGhi(ctx, user);
   const lines = parseLines(b, ctx);
   const note = String(b.note || '').trim().slice(0, 200);
   return writeReceipt(env, user, ctx, lines.map((l) => ({ ...l, khu: khuId })), 'nhap', note, { khu: khuId, lines });
@@ -214,7 +231,8 @@ export async function postTransfer(req, env, user) {
   const b = await readJson(req);
   const from = String(b.from || ''), to = String(b.to || '');
   if (from === to) throw bad('Khu đi và khu đến phải khác nhau');
-  const ctx = await receiptCtx(env, [from, to]);
+  const ctx = await receiptCtx(env, [from, to], b.khoa);
+  if (ctx.daCo) return daGhi(ctx, user);
   const lines = parseLines(b, ctx);
   const note = String(b.note || '').trim().slice(0, 200);
   // Chuyển quá số thực có làm tồn khu nguồn âm, số "dự kiến" khi đếm sai theo, và che lỗi gõ ngược chiều
@@ -280,7 +298,8 @@ export const DC_WORD = 'DONG Y';
 export async function postXuat(req, env, user) {
   const b = await readJson(req);
   const khuId = String(b.khu || '');
-  const ctx = await receiptCtx(env, [khuId]);
+  const ctx = await receiptCtx(env, [khuId], b.khoa);
+  if (ctx.daCo) return daGhi(ctx, user);
   const lines = parseLines(b, ctx);
   /* Nơi đến là BẮT BUỘC. Phiếu xuất mà không nói đi đâu thì chỉ là một lần trừ kho không lý do —
      đúng bằng cái mà con số "đã dùng" suy ra sẵn đã nói, tức không thêm được gì. Giá trị duy nhất
@@ -308,7 +327,8 @@ export async function postAdjust(req, env, user) {
   if (dir !== 'tang' && dir !== 'giam') throw bad('Chưa chọn tăng hay giảm tồn');
   const reason = String(b.reason || '');
   if (!DC_REASONS[reason]) throw bad('Chưa chọn lý do điều chỉnh');
-  const ctx = await receiptCtx(env, [khuId]);
+  const ctx = await receiptCtx(env, [khuId], b.khoa);
+  if (ctx.daCo) return daGhi(ctx, user);
   /* Số gửi lên luôn DƯƠNG, chiều do `dir` quyết định. Để người dùng tự gõ dấu trừ trên bàn phím
      số của điện thoại là mời lỗi: thiếu một dấu là điều chỉnh lộn ngược chiều, mà hai chiều lệch
      nhau gấp đôi lượng điều chỉnh. */

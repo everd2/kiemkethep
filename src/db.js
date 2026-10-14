@@ -497,7 +497,14 @@ export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
   SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
   WHERE dung IS NOT NULL AND bt = 0 AND day > date(?1, '-28 days') AND day <= ?1 GROUP BY phi_id`;
 export async function migrate(env) {
-  const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
+  /* Hai câu kiểm (phiên bản cấu trúc, bảng phi đã có dữ liệu) đi chung MỘT lượt gọi: isolate của app ít người dùng bị
+     thu hồi liên tục, nên request "nguội" rất thường gặp và mỗi lượt gọi D1 ở đây là thời gian người dùng phải chờ. */
+  const [sR, pR] = await env.DB.batch([
+    env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'"),
+    env.DB.prepare('SELECT COUNT(*) n FROM phi'),
+  ]);
+  const r = sR.results[0];
+  if (r && r.value >= SCHEMA_VERSION && pR.results[0] && pR.results[0].n) return;
   for (let n = (r ? r.value : 1) + 1; n <= SCHEMA_VERSION; n++) {
     for (const sql of MIGRATIONS[n]) {
       // mảng con = các câu phải chạy trọn trong một giao dịch (dựng lại bảng)

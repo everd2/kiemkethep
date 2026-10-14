@@ -94,7 +94,6 @@ async function main() {
   eq('19h: đang là ca đêm hôm nay, ca kế là ca ngày mai', [v19.hien, v19.ke], [{ ngay: D, ca: 2 }, { ngay: cong(D, 1), ca: 1 }]);
   const q19 = await ghi('An', { ngay: D, ca: 1, tong: 21, lam: 21 });
   eq('ca ngày đã qua: Tiểu đội trưởng không sửa được nữa', [q19.status, q19.data.code, dong(U.An).lam], [409, 'qua', 15]);
-  eq('màn hình cũng biết để khỏi bày nút gửi', (await xem('An', `?ngay=${D}&ca=1`)).suaDuoc, false);
   eq('CVKTHT vẫn sửa được ca đã qua', [(await ghi('Cv', { ngay: D, ca: 1, user: U.An, tong: 21, lam: 14, nghi: { om: 6, khac: 1 }, ghi_chu: 'chăm bố ốm' })).status, dong(U.An).lam, dong(U.An).by_id], [200, 14, U.Cv]);
 
   datGio(2);
@@ -139,7 +138,7 @@ async function main() {
   /* ===== 7. Sửa lùi: CVKTHT được 7 ngày ===== */
   eq('sửa ca của 3 ngày trước: được', (await ghi('Cv', { ngay: cong(D1, -3), ca: 1, user: U.An, tong: 21, lam: 20, nghi: { phep: 1 } })).status, 200);
   eq('sửa ca của 9 ngày trước: từ chối', (await ghi('Cv', { ngay: cong(D1, -9), ca: 1, user: U.An, tong: 21, lam: 20, nghi: { phep: 1 } })).status, 400);
-  eq('nhưng xem lại thì được, và nói rõ chỉ xem', [(await S.call('GET', `/quanso?ngay=${cong(D1, -9)}&ca=1`, undefined, 'Cv')).status, (await xem('Cv', `?ngay=${cong(D1, -9)}&ca=1`)).suaDuoc], [200, false]);
+  eq('nhưng xem lại thì được', (await S.call('GET', `/quanso?ngay=${cong(D1, -9)}&ca=1`, undefined, 'Cv')).status, 200);
 
   /* ===== 8. Tổ trưởng đổi vai trò: dòng đã báo không mất ===== */
   await S.call('POST', `/users/${U.Binh}/role`, { role: 'cvktht', confirm_khu: true }, 'Admin');
@@ -221,7 +220,7 @@ async function main() {
     const vao = async (name, role) => {
       who = name;
       const bt = (await S3.call('GET', '/bootstrap', undefined, name)).data;
-      R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: id3[name], name, role })}; S.ask = null; S.form = {}; S.qs = null; S.qsCa = null; S.qsF = null; S.qsH = null; S.screen = 'home';`);
+      R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: id3[name], name, role })}; S.ask = null; S.form = {}; S.qs = null; S.qsH = null; S.screen = 'home';`);
     };
     const nhac = () => (R('vHome()').match(/<b style="font-size:18px">([^<]*quân số[^<]*)<\/b><span class="sm">([^<]*)</) || []).slice(1);
     const the = () => R('qsTheHome()');
@@ -386,6 +385,16 @@ async function main() {
     ok('và được báo rõ ai vừa sửa, số mới là gì', /^Cv vừa sửa số thiết lập tổ An: tổng 21, ca ngày 21, ca đêm 0\./.test(t2.data.error), t2.data.error);
     eq('Trung lưu lại sau khi đã thấy số của Cv: được', (await tlap('Trung', { user: id3.An, tong: 22, s1: 22, s2: 0, ts: t1.data.ts })).status, 200);
     eq('hai người đặt HAI tổ khác nhau không đè nhau; lịch ca vẫn còn nguyên', [(await tlap('Cv', { user: id3.Binh, tong: 19, s1: 0, s2: 19, ts: 0 })).status, cfg().tl[id3.An].tong, cfg().tl[id3.Binh].s2, cfg().lich[id3.An].ca, cfg().lich[id3.Binh].ca], [200, 22, 19, 1, 2]);
+    // CẢ BẢNG trong MỘT request (nút Lưu tất cả): hoặc ghi hết, hoặc không ghi gì
+    const tsTl = (ten) => cfg().tl[id3[ten]].ts;
+    const nhieu = await tlap('Cv', { ds: [{ user: id3.An, tong: 23, s1: 23, s2: 0, ts: tsTl('An') }, { user: id3.Binh, tong: 20, s1: 0, s2: 20, ts: tsTl('Binh') }] });
+    eq('lưu hai tổ trong một request', [nhieu.status, nhieu.data.n, cfg().tl[id3.An].tong, cfg().tl[id3.Binh].tong], [200, 2, 23, 20]);
+    const hong = await tlap('Cv', { ds: [{ user: id3.An, tong: 24, s1: 24, s2: 0, ts: tsTl('An') }, { user: id3.Binh, tong: 21, s1: 0, s2: 21, ts: 1 }] });
+    eq('một tổ đã bị người khác sửa trước: từ chối CẢ lần lưu, nói rõ tổ nào, không ghi dở tổ nào', [hong.status, /sửa số thiết lập tổ Binh/.test(hong.data.error), cfg().tl[id3.An].tong, cfg().tl[id3.Binh].tong], [409, true, 23, 20]);
+    eq('một mục sai số (ca ngày + ca đêm > tổng): từ chối cả lần lưu', [(await tlap('Cv', { ds: [{ user: id3.An, tong: 25, s1: 25, s2: 0, ts: tsTl('An') }, { user: id3.Binh, tong: 20, s1: 15, s2: 10, ts: tsTl('Binh') }] })).status, cfg().tl[id3.An].tong], [400, 23]);
+    eq('đặt ca hộ trong cùng request: giữ nguyên tổng tổ tự khai; danh sách rỗng thì từ chối', [(await tlap('Cv', { ds: [{ user: id3.Binh, ca: 2 }] })).status, cfg().lich[id3.Binh].ca, cfg().lich[id3.Binh].tong, cfg().lich[id3.Binh].by, (await tlap('Cv', { ds: [] })).status], [200, 2, 19, id3.Cv, 400]);
+    // trả lại số như trước cho các kiểm tra sau
+    await tlap('Cv', { ds: [{ user: id3.An, tong: 22, s1: 22, s2: 0, ts: tsTl('An') }, { user: id3.Binh, tong: 19, s1: 0, s2: 19, ts: tsTl('Binh') }] });
 
     /* ===== F. CVKTHT: hai thẻ Tổ báo / Thiết lập ===== */
     S3.raw.exec(`DELETE FROM quan_so WHERE ngay >= '${ba}'`);
@@ -407,7 +416,7 @@ async function main() {
     R('ACTIONS.bctl()'); await cho();
     const b2 = R('vQuanSo()');
     ok('nút bánh răng mở bảng Thiết lập (không còn thẻ Tổ báo ở đây), nút quay lại về báo cáo ca', R('S.screen') === 'quanso' && !b2.includes('data-a="qstab"') && b2.includes('data-a="nav" data-s="baocaoca"'));
-    ok('thẻ Thiết lập là bảng gọn: mỗi tổ một dòng có ô chọn ca và ô số, MỘT nút Lưu tất cả ở đáy, ghi ai sửa gần nhất', b2.includes('id="tl_' + id3.An + '_c"') && b2.includes('id="tl_' + id3.An + '_t"') && (b2.match(/data-a="qstlluu"/g) || []).length === 1 && /class="sendbar"><button[^>]*data-a="qstlluu"/.test(b2) && /Sửa gần nhất: (Cv · tổ Binh|Trung · tổ An)/.test(b2), (b2.match(/Sửa gần nhất[^<]*/) || [''])[0]);
+    ok('thẻ Thiết lập là bảng gọn: mỗi tổ một dòng có ô chọn ca và ô số, MỘT nút Lưu tất cả ở đáy, ghi ai sửa gần nhất', b2.includes('id="tl_' + id3.An + '_c"') && b2.includes('id="tl_' + id3.An + '_t"') && (b2.match(/data-a="qstlluu"/g) || []).length === 1 && /class="sendbar"><button[^>]*data-a="qstlluu"/.test(b2) && /Sửa gần nhất: (Cv · tổ (Binh|An)|Trung · tổ An)/.test(b2), (b2.match(/Sửa gần nhất[^<]*/) || [''])[0]);
     ok('ô của ca tổ không làm thì khoá: tổ ca ngày khoá ô Đêm, tổ ca đêm khoá ô Ngày, tổ 2 ca mở cả hai', new RegExp('id="tl_' + id3.An + '_2"[^>]*disabled').test(b2) && !new RegExp('id="tl_' + id3.An + '_1"[^>]*disabled').test(b2) && new RegExp('id="tl_' + id3.Binh + '_1"[^>]*disabled').test(b2) && !new RegExp('id="tl_' + id3.Em + '_[12]"[^>]*disabled').test(b2));
     R(`S.form['tl_${id3.Em}_t'] = '19'; S.form['tl_${id3.Em}_1'] = '9'; S.form['tl_${id3.Em}_2'] = '10'; ACTIONS.qstlluu()`); await cho();
     eq('Cv lưu số thiết lập tổ Em trên màn hình', [cfg().tl[id3.Em].tong, cfg().tl[id3.Em].s1, cfg().tl[id3.Em].s2], [19, 9, 10]);

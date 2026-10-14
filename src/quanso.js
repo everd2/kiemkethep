@@ -100,7 +100,7 @@ export async function qsView(env, user, url) {
   const ql = capOf(user.role) >= 1;
   // Tiểu đội trưởng: mọi câu chỉ lấy tổ mình
   const rieng = (n) => (ql ? '' : ` AND u.id = ?${n}`), kem = ql ? [] : [user.id];
-  const [tdt, rows, truoc, cuaToi, truocCa, cfgR, tenR] = await env.DB.batch([
+  const [tdt, rows, truoc, cuaToi, cfgR, tenR] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(1)} ORDER BY ${TO_SX}`).bind(...kem),
     env.DB.prepare(`SELECT q.ngay, q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, q.ts, q.by_id,
                       COALESCE(u.name, '(đã xoá)') uname, COALESCE(b.name, '(đã xoá)') by_name
@@ -110,14 +110,9 @@ export async function qsView(env, user, url) {
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND (x.ngay < ?1 OR (x.ngay = ?1 AND x.ca < ?2))
                       ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(3)}`).bind(c.ngay, c.ca, ...kem),
-    // dòng của chính người đang xem ở ca đang diễn ra và ca kế: màn CHỌN CA của Tiểu đội trưởng ghi ca nào đã báo
+    // dòng của chính người đang xem ở ca đang diễn ra và ca kế: màn "Quân số tổ đã báo" của Tiểu đội trưởng
     env.DB.prepare('SELECT ngay, ca, tong, lam, ca_kia, nghi, ghi_chu, ts FROM quan_so WHERE user_id = ?1 AND ((ngay = ?2 AND ca = ?3) OR (ngay = ?4 AND ca = ?5))')
       .bind(user.id, hien.ngay, hien.ca, ke.ngay, ke.ca),
-    /* Lần báo gần nhất CÙNG CA của từng tổ, đủ cả lý do nghỉ: nút ghi nhanh "Như lần trước" và "Đủ quân" trên bảng
-       của CVKTHT dựng lại đúng lần đó (tổ chia ca giữ nguyên số người ca kia). */
-    env.DB.prepare(`SELECT q.user_id, q.ngay, q.ca, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu FROM users u JOIN quan_so q ON q.rowid = (
-                      SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND x.ca = ?2 AND x.ngay < ?1 ORDER BY x.ngay DESC LIMIT 1)
-                    WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(3)}`).bind(c.ngay, c.ca, ...kem),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare('SELECT id, name FROM users'),
   ]);
@@ -125,18 +120,14 @@ export async function qsView(env, user, url) {
   const loc = (o) => Object.fromEntries(Object.entries(o).filter(([id]) => ql || Number(id) === user.id).map(([id, v]) => [id, { ...v, by_name: ten[v.by] || '' }]));
   const hm = hanMoc(st);
   return json({
-    ngay: c.ngay, ca: c.ca, hien, ke, gio: caGio(st, c), han: caHan(st, c), hanPhut: hm, lyDo: QS_LY_DO, tongMax: QS_TONG_MAX,
-    /* Hai ca báo được lúc này — luôn là một ca ngày và một ca đêm. Tiểu đội trưởng PHẢI tự chọn ca trước khi
-       báo (app không tự chọn hộ theo giờ): tổ ca đêm mở app lúc 17h không được báo nhầm vào ca ngày. */
+    ngay: c.ngay, ca: c.ca, hien, ke, gio: caGio(st, c), han: caHan(st, c), hanPhut: hm, lyDo: QS_LY_DO,
+    // hai ca báo được lúc này (một ca ngày, một ca đêm), kèm dòng tổ mình đã báo: màn xem lại của Tiểu đội trưởng
     chon: [hien, ke].map((x) => {
       const r = cuaToi.results.find((y) => y.ngay === x.ngay && y.ca === x.ca);
       return { ...x, gio: caGio(st, x), han: caHan(st, x), row: r ? { ...r, nghi: docNghi(r.nghi) } : null };
     }),
     tdt: tdt.results, rows: rows.results.map((r) => ({ ...r, nghi: docNghi(r.nghi) })), truoc: truoc.results,
-    truocCa: truocCa.results.map((r) => ({ ...r, nghi: docNghi(r.nghi) })),
     lich: loc(cfg.lich), tl: ql ? loc(cfg.tl) : {},
-    // cùng luật với qsPut, để máy khách khỏi bày nút bấm vào là bị từ chối
-    suaDuoc: ql ? c.ngay >= vnDay(Date.now() - QS_SUA_NGAY * NGAY) : caKhoa(c) >= caKhoa(hien),
   });
 }
 
@@ -149,15 +140,17 @@ export async function qsPut(req, env, user) {
   const uid = b.user == null ? user.id : Number(b.user);
   if (!Number.isInteger(uid)) throw bad('Cần chọn tổ');
   if (!ql && uid !== user.id) throw new HttpError(403, 'Bạn chỉ báo được quân số của tổ mình');
-  const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
-  const hien = caLuc(st);
+  // cài đặt (giờ ca) và tổ cần ghi: MỘT lượt D1. Tổ đã có dòng ở ca này thì sửa được dù người đó vừa thôi làm Tiểu đội
+  // trưởng; ghi MỚI thì chỉ cho tổ đang có.
+  const [stR, toR] = await env.DB.batch([
+    env.DB.prepare(SETTINGS_SQL),
+    env.DB.prepare(`SELECT u.id, u.name, u.role, u.deleted, EXISTS (SELECT 1 FROM quan_so q WHERE q.ngay = ?2 AND q.ca = ?3 AND q.user_id = u.id) co
+                    FROM users u WHERE u.id = ?1`).bind(uid, c.ngay, c.ca),
+  ]);
+  const st = parseSettings(stR.results), hien = caLuc(st), to = toR.results[0];
   if (caKhoa(c) > caKhoa(caKe(hien))) throw bad('Chưa tới ' + caGoi(c) + ': chỉ báo trước được một ca');
   if (!ql && caKhoa(c) < caKhoa(hien)) throw new HttpError(409, CA_TEN[c.ca][0].toUpperCase() + caGoi(c).slice(1) + ' đã qua. Nhờ CVKTHT trở lên sửa giúp.', 'qua');
   if (ql && c.ngay < vnDay(Date.now() - QS_SUA_NGAY * NGAY)) throw bad(`Chỉ sửa được quân số trong ${QS_SUA_NGAY} ngày gần đây`);
-  // tổ đã có dòng ở ca này thì sửa được dù người đó vừa thôi làm Tiểu đội trưởng; ghi MỚI thì chỉ cho tổ đang có
-  const to = await env.DB.prepare(
-    `SELECT u.id, u.name, u.role, u.deleted, EXISTS (SELECT 1 FROM quan_so q WHERE q.ngay = ?2 AND q.ca = ?3 AND q.user_id = u.id) co
-     FROM users u WHERE u.id = ?1`).bind(uid, c.ngay, c.ca).first();
   if (!to || ((to.deleted || to.role !== 'tieudoi') && !to.co)) {
     throw bad(uid === user.id ? 'Chọn tổ cần ghi quân số' : 'Chỉ ghi quân số cho tổ của một Tiểu đội trưởng đang dùng app');
   }
@@ -215,11 +208,14 @@ export async function qsLich(req, env, user) {
     if (den < vnDay()) throw bad('Ngày kết thúc phải từ hôm nay trở đi');
     if (den > vnDay(Date.now() + 366 * NGAY)) throw bad('Ngày kết thúc xa quá một năm');
   }
-  const to = await env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid).first();
+  /* TỔNG QUÂN SỐ TỔ TỰ KHAI (tong): tổ trưởng khai cùng lúc với ca. Lần đặt ca không gửi kèm tổng thì giữ nguyên số tổ
+     đã khai. Khác SỐ THIẾT LẬP (tl) — số của CVKTHT, xem qsThietLap. Tìm tổ và đọc số đã khai trong MỘT lượt D1. */
+  const [toR, cuR] = await env.DB.batch([
+    env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid),
+    env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind('$.lich."' + uid + '".tong'),
+  ]);
+  const to = toR.results[0], cu = cuR.results[0];
   if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ đặt ca cho tổ của một Tiểu đội trưởng đang dùng app');
-  /* TỔNG QUÂN SỐ TỔ TỰ KHAI (tong): tổ trưởng khai cùng lúc với ca. Lần đặt ca không gửi kèm tổng (CVKTHT đặt ca hộ
-     trên bảng thiết lập) thì giữ nguyên số tổ đã khai. Khác SỐ THIẾT LẬP (tl) — số của CVKTHT, xem qsThietLap. */
-  const cu = await env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind('$.lich."' + uid + '".tong').first();
   const tong = b.tong == null || b.tong === '' ? (cu && Number(cu.v)) || undefined : intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số của tổ');
   const v = { ca, den, tong, ts: Date.now(), by: user.id };
   await env.DB.batch([
@@ -231,35 +227,67 @@ export async function qsLich(req, env, user) {
   return json({ ok: true, user: uid, ...v });
 }
 
-/* Đặt số thiết lập của một tổ (CVKTHT trở lên). body: { user, tong, s1, s2, ts } — ts là lần sửa mà người này đang
-   nhìn thấy (null nếu tổ chưa có số thiết lập). Người khác đã sửa sau đó thì từ chối, nói rõ ai sửa, số mới là gì. */
+/* Đặt SỐ THIẾT LẬP (CVKTHT trở lên), một tổ hoặc CẢ BẢNG trong MỘT request.
+   body: { user, tong, s1, s2, ts } cho một tổ, hoặc { ds: [{ user, ca?, tong?, s1?, s2?, ts? }, ...] } cho cả bảng — bảng
+   thiết lập bấm "Lưu tất cả" gửi mọi thay đổi (ca đặt hộ lẫn số) một lần. Trước đây mỗi thay đổi là một request riêng:
+   mười tổ đổi cả ca lẫn số là hai mươi request, màn hình đứng ở "Đang lưu..." suốt lúc đó.
+   Một mục có `ca` là đặt ca hộ tổ (giữ nguyên tổng tổ tự khai), có `tong` là đặt số thiết lập. ts là lần sửa mà người
+   này đang nhìn thấy (0 nếu tổ chưa có số thiết lập): người khác đã sửa sau đó thì TỪ CHỐI CẢ LẦN LƯU, nói rõ ai sửa, số
+   mới là gì. Cả lần lưu là một batch (một giao dịch): hoặc ghi hết, hoặc không ghi gì. D1: một lượt đọc, một lượt ghi. */
 export async function qsThietLap(req, env, user) {
   const b = await readJson(req);
-  const uid = Number(b.user);
-  if (!Number.isInteger(uid)) throw bad('Cần chọn tổ');
-  const to = await env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid).first();
-  if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ thiết lập cho tổ của một Tiểu đội trưởng đang dùng app');
-  const tong = intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số');
-  const s1 = b.s1 == null || b.s1 === '' ? 0 : intIn(b.s1, 0, QS_TONG_MAX, 'Số người ca ngày');
-  const s2 = b.s2 == null || b.s2 === '' ? 0 : intIn(b.s2, 0, QS_TONG_MAX, 'Số người ca đêm');
-  if (s1 + s2 > tong) throw bad(`Ca ngày ${s1} + ca đêm ${s2} nhiều hơn tổng quân số ${tong}`);
-  const cu = Number(b.ts) || 0, path = '$.tl."' + uid + '"';
-  const v = { tong, s1, s2, ts: Math.max(Date.now(), cu + 1), by: user.id };
-  await env.DB.prepare(MAU_CO).run();
-  try {
-    await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM bc_mau WHERE id = 1 AND COALESCE(json_extract(data, ?1), 0) <> ?2)", path + '.ts', cu), [
-      env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind(path, JSON.stringify(v)),
-      auditStmt(env, user, 'qs_thietlap', { to: to.name, tong, s1, s2 }),
-      bump(env),
-    ], new HttpError(409, 'doi', 'doi'));
-  } catch (e) {
-    if (!(e instanceof HttpError) || e.code !== 'doi') throw e;
-    const r = await env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind(path).first();
-    const m = r && r.v ? JSON.parse(r.v) : null;
-    const ai = m ? await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(m.by).first() : null;
-    throw new HttpError(409, m ? `${(ai && ai.name) || 'Người khác'} vừa sửa số thiết lập tổ ${to.name}: tổng ${m.tong}, ca ngày ${m.s1}, ca đêm ${m.s2}. Màn hình đã tải lại số mới, xem rồi sửa lại nếu cần.` : 'Số thiết lập vừa đổi. Tải lại rồi sửa lại.', 'changed');
+  const ds = Array.isArray(b.ds) ? b.ds : [b];
+  if (!ds.length || ds.length > 200) throw bad('Không có gì để lưu');
+  for (const x of ds) if (!x || !Number.isInteger(Number(x.user))) throw bad('Cần chọn tổ');
+  const [toR, mauR] = await env.DB.batch([
+    env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0"),
+    env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
+  ]);
+  const to = new Map(toR.results.map((u) => [u.id, u])), cfg = docCfg(mauR.results[0]);
+  const now = Date.now(), chan = [], ghi = [], dat = (path, v) => env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind(path, JSON.stringify(v));
+  let dau = null;
+  for (const x of ds) {
+    const uid = Number(x.user), t = to.get(uid);
+    if (!t) throw bad('Chỉ thiết lập cho tổ của một Tiểu đội trưởng đang dùng app');
+    if (x.ca != null) {
+      const ca = Number(x.ca);
+      if (![1, 2, 3].includes(ca)) throw bad('Chọn ca ngày, ca đêm hoặc cả hai ca');
+      // đặt ca hộ: đến khi đổi, giữ nguyên tổng quân số tổ tự khai
+      ghi.push(dat('$.lich."' + uid + '"', { ca, den: null, tong: (cfg.lich[uid] || {}).tong || undefined, ts: now, by: user.id }), auditStmt(env, user, 'qs_lich', { to: t.name, ca }));
+    }
+    if (x.tong == null || x.tong === '') continue;
+    const tong = intIn(x.tong, 1, QS_TONG_MAX, 'Tổng quân số');
+    const s1 = x.s1 == null || x.s1 === '' ? 0 : intIn(x.s1, 0, QS_TONG_MAX, 'Số người ca ngày');
+    const s2 = x.s2 == null || x.s2 === '' ? 0 : intIn(x.s2, 0, QS_TONG_MAX, 'Số người ca đêm');
+    if (s1 + s2 > tong) throw bad(`${ds.length > 1 ? 'Tổ ' + t.name + ': ca' : 'Ca'} ngày ${s1} + ca đêm ${s2} nhiều hơn tổng quân số ${tong}`);
+    const cu = Number(x.ts) || 0, path = '$.tl."' + uid + '"';
+    if (((cfg.tl[uid] || {}).ts || 0) !== cu) throw await tlDaDoi(env, t.name, path);
+    const v = { tong, s1, s2, ts: Math.max(now, cu + 1), by: user.id };
+    // chặn lần nữa ngay trong batch: giữa lượt đọc ở trên và lượt ghi vẫn có thể có người khác lưu
+    chan.push([guardStmt(env, "EXISTS (SELECT 1 FROM bc_mau WHERE id = 1 AND COALESCE(json_extract(data, ?1), 0) <> ?2)", path + '.ts', cu), t.name, path, uid, cu]);
+    ghi.push(dat(path, v), auditStmt(env, user, 'qs_thietlap', { to: t.name, tong, s1, s2 }));
+    if (!dau) dau = { user: uid, ...v };
   }
-  return json({ ok: true, user: uid, ...v });
+  if (!ghi.length) throw bad('Không có gì để lưu');
+  const sau = [env.DB.prepare(MAU_CO), ...ghi, bump(env)];
+  if (!chan.length) await env.DB.batch(sau);
+  else {
+    try { await batchGuarded(env, chan[0][0], [...chan.slice(1).map((c) => c[0]), ...sau], new HttpError(409, 'doi', 'doi')); }
+    catch (e) {
+      if (!(e instanceof HttpError) || e.code !== 'doi') throw e;
+      // tìm tổ vừa bị người khác sửa để nói cho đúng
+      const moi = docCfg(await env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1').first());
+      const c = chan.find(([, , , uid, cu]) => ((moi.tl[uid] || {}).ts || 0) !== cu) || chan[0];
+      throw await tlDaDoi(env, c[1], c[2]);
+    }
+  }
+  return json({ ok: true, n: ghi.length / 2, ...(dau || {}) });
+}
+// lời từ chối khi số thiết lập của một tổ đã bị người khác sửa: ai sửa, số mới là gì
+async function tlDaDoi(env, tenTo, path) {
+  const r = await env.DB.prepare("SELECT json_extract(m.data, ?1) v, (SELECT name FROM users WHERE id = json_extract(m.data, ?1 || '.by')) ai FROM bc_mau m WHERE m.id = 1").bind(path).first();
+  const m = r && r.v ? JSON.parse(r.v) : null;
+  return new HttpError(409, m ? `${(r && r.ai) || 'Người khác'} vừa sửa số thiết lập tổ ${tenTo}: tổng ${m.tong}, ca ngày ${m.s1}, ca đêm ${m.s2}. Màn hình đã tải lại số mới, xem rồi sửa lại nếu cần.` : 'Số thiết lập vừa đổi. Tải lại rồi sửa lại.', 'changed');
 }
 
 /* Xếp thứ tự tổ (CVKTHT trở lên). ids: id các Tiểu đội trưởng theo thứ tự mới. Lưu vào mẫu báo cáo, giữ nguyên
