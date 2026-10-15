@@ -194,7 +194,19 @@ async function main() {
   const tl2 = R('bcTao()').split('\n');
   eq('chọn "Chỉ số thiết lập": tổ Khoa (2 ca) đã báo cũng lấy số thiết lập cho cả hai ca; tổ Cơi chưa có số thiết lập thì vẫn lấy số tổ báo', [tl2.find((l) => l.includes('Khoa')), tl2.find((l) => l.includes('Cơi'))],
     ['• Tổ Phạm Văn Khoa: ca ngày 3/21 cn, ca đêm 18/21 cn', '• Tổ Lò Văn Cơi: ca ngày 8/19 cn, ca đêm 9/19 cn, nghỉ 2 cn — ca ngày: 1 ốm; ca đêm: 1 việc gia đình']);
+  ok('chọn "Chỉ số thiết lập": tổng quân số cũng theo số thiết lập, các số tổng hợp cộng đúng bằng tổng', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'));
   R(`ACTIONS.bcnguon({ v: 'to' })`);
+  /* số thiết lập KHÁC số tổ đã báo (Khoa báo tổng 21, CVKTHT đặt 23): theo tổ báo thì tổng giữ số tổ báo; chọn "Chỉ số
+     thiết lập" thì tổng quân số cũng đổi theo số thiết lập, không chỉ dòng của tổ. Trước đây tổng vẫn lấy số tổ báo. */
+  {
+    const tong = () => R('bcQuanSo(S.bcc).tong'), truoc = tong();
+    await S.call('PUT', '/quanso/thietlap', { user: U['Phạm Văn Khoa'], tong: 23, s1: 3, s2: 18, ts: R(`S.bcc.tl[${U['Phạm Văn Khoa']}].ts`) }, CV);
+    R(`S.bcc = null; go('baocaoca', true)`); await cho();
+    const theoTo = tong();
+    R(`ACTIONS.bcnguon({ v: 'tl' })`);
+    eq('số thiết lập khác số tổ báo: theo tổ báo giữ tổng, chỉ số thiết lập thì tổng đổi theo', [theoTo - truoc, tong() - truoc, R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()')], [0, 2, true]);
+    R(`ACTIONS.bcnguon({ v: 'to' })`);
+  }
   // gỡ số thiết lập để các kiểm tra sau chạy trên số tổ báo như cũ
   S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   R(`S.bcc = null; go('baocaoca', true)`); await cho();
@@ -334,6 +346,16 @@ async function main() {
     ok('mở ô ghi: chạm lý do là thêm 1 người, có ô số bên cạnh', R('vQuanSo()').includes(`id="tl_${nam}_n1_phep"`) && R('vQuanSo()').includes('value="2"'));
     R('ACTIONS.qstlluu()'); await cho();
     eq('Lưu tất cả: người nghỉ vào số thiết lập', tl().n1, { om: 2, phep: 2, que: 1, khac: 1 });
+    /* ĐỔI CA của tổ một ca, chỉ chọn lại ô ca, không gõ số: cả tổ sang ca mới. Trước đây ô của ca mới lấy số đã lưu (0),
+       Lưu tất cả là tổ thành 0 người — báo cáo ghi "0/20 cn", hết ca chép thành thiếu số. */
+    const chonCa = (v) => (nghe.change || []).forEach((fn) => fn({ target: { dataset: { model: `tl_${nam}_c`, change: 'tlca' }, value: String(v) } }));
+    const lich = () => JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data).lich[nam];
+    chonCa(2); R('ACTIONS.qstlluu()'); await cho();
+    eq('đổi ca ngày → ca đêm, không gõ số: cả tổ sang ca đêm', [lich().ca, tl().s1, tl().s2, tl().n1], [2, 0, 20, undefined]);
+    chonCa(1); R(`S.form['tl_${nam}_t'] = '22'`); R('ACTIONS.qstlluu()'); await cho();
+    eq('đổi lại ca ngày kèm gõ tổng mới: ca ngày theo tổng mới', [lich().ca, tl().tong, tl().s1, tl().s2], [1, 22, 22, 0]);
+    R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    eq('báo cáo ca theo số sau khi đổi ca', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 22/22 cn');
     S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   }
 

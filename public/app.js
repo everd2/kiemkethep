@@ -3738,12 +3738,19 @@ const qsLichCa = (lich, uid, ngay) => { const r = (lich || {})[uid]; return r &&
    thiết lập và tổng quân số của báo cáo ca. */
 const toTongKhai = (lich, tr, uid) => { const l = (lich || {})[uid]; return l && l.tong && (!tr || !tr.ts || l.ts > tr.ts) ? l.tong : tr ? tr.tong : 0; };
 /* Số hiện sẵn trong ô thiết lập của một tổ: số đã thiết lập; chưa có thì gợi ý theo số TỔ TỰ KHAI, rồi tới lần tổ báo
-   gần nhất (tổ một ca: cả tổ làm ca đó). */
+   gần nhất, kể cả lần báo của ca đang diễn ra (tổ một ca: cả tổ làm ca đó).
+   Tổ MỘT CA theo ca ĐANG CHỌN trong ô (chưa lưu cũng tính): vừa đổi ca (Ngày ↔ Đêm, hai ca → một ca), hoặc số đã lưu
+   của ca đó là 0, thì cả tổ làm ca đó — ô của ca đó lấy theo tổng đang hiện. Trước đây ô lấy số đã lưu của ca mới
+   (là 0), đổi ca rồi Lưu tất cả là tổ thành 0 người. */
 function qsTlMacDinh(uid) {
-  const Q = S.qs, tl = (Q.tl || {})[uid], tr = Q.truoc.find((x) => x.user_id === uid), L = qsLichCa(Q.lich, uid, Q.hien.ngay);
-  if (tl) return { tong: tl.tong, s1: tl.s1, s2: tl.s2 };
-  const tong = toTongKhai(Q.lich, tr, uid) || '';
-  return { tong, s1: L === 1 ? tong : '', s2: L === 2 ? tong : '' };
+  const Q = S.qs, tl = (Q.tl || {})[uid], k = 'tl_' + uid + '_', Lluu = qsLichCa(Q.lich, uid, Q.hien.ngay), L = Number(fv(k + 'c', Lluu)) || 0;
+  const tr = Q.rows.filter((x) => x.user_id === uid).concat(Q.truoc.filter((x) => x.user_id === uid)).sort((a, z) => z.ts - a.ts)[0];
+  const tong = tl ? tl.tong : toTongKhai(Q.lich, tr, uid) || '', tongO = fv(k + 't', tong);
+  // chưa đặt ca: cả tổ làm đúng ca của lần báo gần nhất (lần đó không chia ca)
+  const caCa = (c) => (L === c || (!L && tr && tr.ca === c && tr.lam > 0 && !tr.ca_kia) ? tongO : '');
+  if (!tl) return { tong, s1: caCa(1), s2: caCa(2) };
+  const doi = (c) => L === c && (Lluu !== c || !tl['s' + c]);
+  return { tong, s1: doi(1) ? tongO : tl.s1, s2: doi(2) ? tongO : tl.s2 };
 }
 // người nghỉ theo lý do của một tổ ở một ca trong bảng thiết lập: số đang chọn (chưa lưu) đè lên số đã lưu
 function qsTlNghi(uid, ca) {
@@ -3871,8 +3878,9 @@ function bcQuanSo(B) {
     const chon = (row, c) => (chiTl ? tlDong(c) || row : row || tlDong(c));
     let L = qsLichCa(B.lich, u.id, B.ngay);
     if (!L) { const th = qsCaCua(r0 ? [r0] : p0 ? [p0] : tr ? [tr] : []); L = th.length === 2 ? 3 : th[0] || ca; }
-    // tổng quân số của tổ: lần báo của ngày này, rồi số thiết lập, rồi số của chính tổ (toTongKhai)
-    const tongTo = (r0 || p0 || tl || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
+    /* tổng quân số của tổ, cùng nguồn với dòng của tổ: chọn "Chỉ số thiết lập" thì số thiết lập; theo tổ báo thì lần tổ
+       báo CA NÀY, rồi số thiết lập (CVKTHT vừa sửa thì tổng đổi theo), rồi lần báo ca liền trước, rồi số tổ tự khai */
+    const tongTo = ((chiTl && tl) || r0 || tl || p0 || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
     tong += tongTo;
     if (L === kia) { sauNhom.push(`Tổ ${u.name} (làm ${caKia})`); sauHang.push('kia'); kiaTen.push(u.name); kiaSo += tongTo; return; }
     if (!r0) chua.push(u.name);
@@ -6018,7 +6026,14 @@ const ACTIONS = {
         if (N[c - 1].nghi.khac && !N[c - 1].gc) { say(`Tổ ${u.name}: có người nghỉ ${CA_TEN[c]} vì lý do khác, ghi rõ lý do.`, true); S.tlMo = u.id; render(); return gcFocus(`${k}g${c}`); }
       }
       const khacN = [1, 2].some((c) => JSON.stringify(N[c - 1].nghi) !== JSON.stringify((tl && tl['n' + c]) || {}) || (qsSoNghi(N[c - 1].nghi) ? N[c - 1].gc : '') !== ((tl && tl['gc' + c]) || ''));
-      if (!tl || tl.tong !== tong || tl.s1 !== s1 || tl.s2 !== s2 || khacN) ds.push({ user: u.id, tong, s1, s2, n1: N[0].nghi, n2: N[1].nghi, gc1: N[0].gc, gc2: N[1].gc, ts: tl ? tl.ts : 0 });
+      if (tl && tl.tong === tong && tl.s1 === s1 && tl.s2 === s2 && !khacN) continue;
+      /* có tổng mà không ai làm ca nào (chưa chọn ca, ô ca để trống): lưu vào là báo cáo ghi "0/N cn" cho tổ chưa báo.
+         Dòng chỉ có số gợi ý (chưa đụng tới) thì bỏ qua, không chặn cả lần lưu; dòng đã gõ thì hỏi lại. */
+      if (!s1 && !s2) {
+        if (!tl && !Object.keys(S.form).some((x) => x.startsWith(k))) continue;
+        say(`Tổ ${u.name}: chọn ca (Ngày / Đêm / 2 ca) hoặc ghi số người từng ca.`, true); render(); return gcFocus(k + 'c');
+      }
+      ds.push({ user: u.id, tong, s1, s2, n1: N[0].nghi, n2: N[1].nghi, gc1: N[0].gc, gc2: N[1].gc, ts: tl ? tl.ts : 0 });
     }
     if (!ds.length) return say('Không có gì thay đổi.'), render();
     const xoa = () => Object.keys(S.form).filter((x) => /^tl_/.test(x)).forEach((x) => delete S.form[x]);
@@ -6289,6 +6304,9 @@ document.addEventListener('input', (e) => {
   if (m && /^tl_\d+_[t12]$/.test(m) && S.qs && S.screen === 'quanso') {
     const T = qsTlTong();
     [['tlS_t', T.tong], ['tlS_1', T.s1], ['tlS_2', T.s2]].forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.textContent = v; });
+    // ô của ca chưa gõ tay mà đang theo tổng (tổ một ca, vừa đổi ca hoặc chưa có số): chạy theo tổng đang gõ
+    const uid = Number(m.split('_')[1]), d = qsTlMacDinh(uid);
+    [1, 2].forEach((c) => { const el = document.getElementById(`tl_${uid}_${c}`); if (el && !el.disabled && S.form[`tl_${uid}_${c}`] === undefined) el.value = String(d['s' + c]); });
   }
   // thẻ báo quân số trên Tổng quan: dòng tóm tắt chạy theo ô đang gõ, không vẽ lại cả trang
   if (m && /^qhn_/.test(m) && S.qsH) { const n = soTu(e.target.value); if (n) S.qsH.nghi[m.slice(4)] = n; else delete S.qsH.nghi[m.slice(4)]; }

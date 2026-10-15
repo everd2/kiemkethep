@@ -426,7 +426,8 @@ async function main() {
     R(`S.form['tl_${id3.An}_t'] = '24'; ACTIONS.qstlluu()`); await cho();
     eq('Cv lưu đè số Trung vừa đặt: từ chối, giữ số của Trung, màn hình tải lại số mới', [cfg().tl[id3.An].tong, R(`S.qs.tl[${id3.An}].tong`), R(`S.form['tl_${id3.An}_t']`), /Trung vừa sửa số thiết lập tổ An/.test(R('S.toast'))], [30, 30, undefined, true]);
     R(`S.form['tl_${id3.Em}_c'] = '1'; ACTIONS.qstlluu()`); await cho();
-    eq('Cv đổi ca tổ Em trong bảng rồi Lưu tất cả: đặt ca hộ, ô ca đêm về 0', [cfg().lich[id3.Em].ca, cfg().lich[id3.Em].by, cfg().tl[id3.Em].s1, cfg().tl[id3.Em].s2], [1, id3.Cv, 9, 0]);
+    // tổ đang chia hai ca (9 / 10) chuyển sang chỉ ca ngày: cả tổ làm ca ngày, không để 10 người không thuộc ca nào
+    eq('Cv đổi ca tổ Em trong bảng rồi Lưu tất cả: đặt ca hộ, cả tổ sang ca ngày, ô ca đêm về 0', [cfg().lich[id3.Em].ca, cfg().lich[id3.Em].by, cfg().tl[id3.Em].s1, cfg().tl[id3.Em].s2], [1, id3.Cv, 19, 0]);
     await tlap('Cv', { user: id3.Em, tong: 19, s1: 9, s2: 10, ts: cfg().tl[id3.Em].ts });
     R('ACTIONS.qstlluu()'); await cho();
     ok('không sửa gì mà bấm Lưu tất cả: báo không có gì thay đổi', /Không có gì thay đổi/.test(R('S.toast')), R('S.toast'));
