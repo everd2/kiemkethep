@@ -382,7 +382,7 @@ async function main() {
     eq('Cv đặt số thiết lập tổ An', [t1.status, cfg().tl[id3.An].tong, cfg().tl[id3.An].s1, cfg().tl[id3.An].by], [200, 21, 21, id3.Cv]);
     const t2 = await tlap('Trung', { user: id3.An, tong: 25, s1: 25, s2: 0, ts: 0 });
     eq('Trung lưu dựa trên bản cũ (chưa thấy số Cv vừa đặt): từ chối', [t2.status, t2.data.code, cfg().tl[id3.An].tong], [409, 'changed', 21]);
-    ok('và được báo rõ ai vừa sửa, số mới là gì', /^Cv vừa sửa số thiết lập tổ An: tổng 21, ca ngày 21, ca đêm 0\./.test(t2.data.error), t2.data.error);
+    ok('và được báo rõ ai vừa sửa, số mới là gì', /^Cv vừa sửa số thiết lập tổ An: tổng 21, đi làm ngày 21, đi làm đêm 0\./.test(t2.data.error), t2.data.error);
     eq('Trung lưu lại sau khi đã thấy số của Cv: được', (await tlap('Trung', { user: id3.An, tong: 22, s1: 22, s2: 0, ts: t1.data.ts })).status, 200);
     eq('hai người đặt HAI tổ khác nhau không đè nhau; lịch ca vẫn còn nguyên', [(await tlap('Cv', { user: id3.Binh, tong: 19, s1: 0, s2: 19, ts: 0 })).status, cfg().tl[id3.An].tong, cfg().tl[id3.Binh].s2, cfg().lich[id3.An].ca, cfg().lich[id3.Binh].ca], [200, 22, 19, 1, 2]);
     // CẢ BẢNG trong MỘT request (nút Lưu tất cả): hoặc ghi hết, hoặc không ghi gì
@@ -460,7 +460,7 @@ async function main() {
     // nhật ký
     const a = S3.one("SELECT ts, user_name, action, detail FROM audit WHERE action = 'qs_thietlap' ORDER BY id DESC");
     eq('nhật ký đọc được lần đặt số thiết lập và lần đặt ca', [R(`fmtAudit(${JSON.stringify(a)}).text`), /^đặt ca cho tổ Em: cả 2 ca, đến khi đổi$/.test(R(`fmtAudit(${JSON.stringify(S3.one("SELECT ts, user_name, action, detail FROM audit WHERE action = 'qs_lich' ORDER BY id DESC"))}).text`))],
-      ['đặt số thiết lập tổ Em: tổng 19, ca ngày 9, ca đêm 10', true]);
+      ['đặt số thiết lập tổ Em: tổng 19, đi làm ngày 9, đi làm đêm 10', true]);
   }
 
   const fail = T.filter((x) => x[0] === 'FAIL');

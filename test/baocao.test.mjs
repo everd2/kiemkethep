@@ -368,6 +368,18 @@ async function main() {
     eq('lưu: đi làm 21, nghỉ 1 ốm', [tl().s1, tl().n1], [21, { om: 1 }]);
     R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
     eq('báo cáo ca theo số sau khi đổi ca', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 21/22 cn, nghỉ 1 cn — 1 ốm');
+    // số cũ không hợp lệ (lưu trước khi có luật đi làm + nghỉ ≤ tổng) của một tổ KHÔNG đụng tới không chặn lưu tổ khác
+    const khoa = U['Phạm Văn Khoa'];
+    S.raw.exec(`UPDATE bc_mau SET data = json_set(data, '$.tl."${khoa}"', json('{"tong":20,"s1":20,"s2":0,"n1":{"om":1},"ts":1,"by":1}')) WHERE id = 1`);
+    R('ACTIONS.bctl()'); await cho();
+    R(`S.form['tl_${nam}_t'] = '23'; ACTIONS.qstlluu()`); await cho();
+    eq('dòng cũ vượt tổng của tổ khác không chặn Lưu tất cả', [tl().tong, JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data).tl[khoa].s1], [23, 20]);
+    /* tổ trưởng tự đổi ca mà số thiết lập chưa có số cho ca mới: báo cáo ghi "chưa báo" (như thống kê: ca thiếu số),
+       không ghi "0/23 cn" như thể cả tổ nghỉ không lý do */
+    await S.call('PUT', '/quanso/lich', { ca: 2 }, 'Lê Hải Nam');
+    R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    eq('tổ trưởng tự đổi sang ca đêm, số thiết lập chỉ có ca ngày: báo cáo ghi chưa báo', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: chưa báo quân số ca đêm');
+    await cho(); // chờ hết các lần tải lại còn dở (sau Lưu tất cả) trước khi sang phần sau
     S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   }
 

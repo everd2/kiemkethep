@@ -317,7 +317,7 @@ function tlNghi(x, cu, ca, tenTo) {
 async function tlDaDoi(env, tenTo, path) {
   const r = await env.DB.prepare("SELECT json_extract(m.data, ?1) v, (SELECT name FROM users WHERE id = json_extract(m.data, ?1 || '.by')) ai FROM bc_mau m WHERE m.id = 1").bind(path).first();
   const m = r && r.v ? JSON.parse(r.v) : null;
-  return new HttpError(409, m ? `${(r && r.ai) || 'Người khác'} vừa sửa số thiết lập tổ ${tenTo}: tổng ${m.tong}, ca ngày ${m.s1}, ca đêm ${m.s2}. Màn hình đã tải lại số mới, xem rồi sửa lại nếu cần.` : 'Số thiết lập vừa đổi. Tải lại rồi sửa lại.', 'changed');
+  return new HttpError(409, m ? `${(r && r.ai) || 'Người khác'} vừa sửa số thiết lập tổ ${tenTo}: tổng ${m.tong}, đi làm ngày ${m.s1}, đi làm đêm ${m.s2}. Màn hình đã tải lại số mới, xem rồi sửa lại nếu cần.` : 'Số thiết lập vừa đổi. Tải lại rồi sửa lại.', 'changed');
 }
 
 /* Xếp thứ tự tổ (CVKTHT trở lên). ids: id các Tiểu đội trưởng theo thứ tự mới. Lưu vào mẫu báo cáo, giữ nguyên

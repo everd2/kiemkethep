@@ -2171,7 +2171,7 @@ function fmtAudit(a) {
     bc_luu: ['chép báo cáo ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ' gửi cấp trên' + (d.kt_mau ? ' (đặt lại mẫu kiểm tra)' : ''), 'qs'],
     qs_lich: ['đặt ca cho tổ ' + (d.to || '?') + ': ' + (CA_LICH[d.ca] || '').toLowerCase() + (d.den ? ', đến ' + fmtDay(d.den) : ', đến khi đổi'), 'qs'],
     qs_nguong: ['đặt ngưỡng tô đỏ thống kê quân số: nghỉ từ ' + d.pct + '%', 'qs'],
-    qs_thietlap: ['đặt số thiết lập tổ ' + (d.to || '?') + ': tổng ' + d.tong + ', ca ngày ' + d.s1 + ', ca đêm ' + d.s2
+    qs_thietlap: ['đặt số thiết lập tổ ' + (d.to || '?') + ': tổng ' + d.tong + ', đi làm ngày ' + d.s1 + ', đi làm đêm ' + d.s2
       + [1, 2].map((c) => (qsSoNghi(d['n' + c]) ? `, nghỉ ${CA_TEN[c]} ${qsSoNghi(d['n' + c])} (${qsLyDoTxt(d['n' + c], QS_LY_DO)})` : '')).join(''), 'qs'],
     qs_thutu: ['xếp lại thứ tự ' + (d.n || 0) + ' tổ', 'qs'],
     qs_han: ['đổi hạn báo quân số: ca ngày trước ' + phutGio(d.ca1 || 0) + ', ca đêm trước ' + phutGio(d.ca2 || 0), 'qs'],
@@ -3753,7 +3753,9 @@ function qsTlMacDinh(uid) {
   const caCa = (c) => (L === c || (!L && tr && tr.ca === c && tr.lam > 0 && !tr.ca_kia) ? conLai(c) : '');
   if (!tl) return { tong, s1: caCa(1), s2: caCa(2) };
   const doi = (c) => L === c && (Lluu !== c || !tl['s' + c]);
-  const so = (c) => (doi(c) ? conLai(c) : L === c ? Math.min(tl['s' + c], conLai(c)) : tl['s' + c]);
+  // tổ một ca đang "đủ cả tổ" (đi làm + nghỉ = tổng): sửa tổng / người nghỉ thì đi làm chạy theo; không thì chỉ bớt khi vượt
+  const du = (c) => tl['s' + c] + qsSoNghi(tl['n' + c] || {}) >= tl.tong;
+  const so = (c) => (doi(c) || (L === c && du(c)) ? conLai(c) : L === c ? Math.min(tl['s' + c], conLai(c)) : tl['s' + c]);
   return { tong, s1: so(1), s2: so(2) };
 }
 // người nghỉ theo lý do của một tổ ở một ca trong bảng thiết lập: số đang chọn (chưa lưu) đè lên số đã lưu
@@ -3879,7 +3881,9 @@ function bcQuanSo(B) {
     const r0 = B.qs.find((x) => x.user_id === u.id && x.ca === ca), p0 = truocDs.find((x) => x.user_id === u.id);
     const tr = B.truoc.find((x) => x.user_id === u.id), tl = (B.tl || {})[u.id];
     // dòng theo số thiết lập: ô Ngày / Đêm là SỐ ĐI LÀM, người nghỉ CVKTHT ghi (theo lý do) nằm ngoài số đó
-    const tlDong = (c) => { if (!tl) return null; const ng = tl['n' + c] || {}; return { ca: c, tong: tl.tong, lam: c === 1 ? tl.s1 : tl.s2, ca_kia: 0, nghi: ng, ghi_chu: (ng.khac && tl['gc' + c]) || null, tl: true }; };
+    /* số thiết lập không có số nào cho ca c (tổ trưởng vừa tự đổi ca mà CVKTHT chưa đặt lại số): coi như chưa có số, như
+       thống kê / chép lúc hết ca (soTlCa ở src/quanso.js), không ghi "0/N cn" như thể cả tổ nghỉ không lý do */
+    const tlDong = (c) => { if (!tl) return null; const ng = tl['n' + c] || {}; if (!tl['s' + c] && !qsSoNghi(ng)) return null; return { ca: c, tong: tl.tong, lam: c === 1 ? tl.s1 : tl.s2, ca_kia: 0, nghi: ng, ghi_chu: (ng.khac && tl['gc' + c]) || null, tl: true }; };
     const chon = (row, c) => (chiTl ? tlDong(c) || row : row || tlDong(c));
     let L = qsLichCa(B.lich, u.id, B.ngay);
     if (!L) { const th = qsCaCua(r0 ? [r0] : p0 ? [p0] : tr ? [tr] : []); L = th.length === 2 ? 3 : th[0] || ca; }
@@ -6026,9 +6030,10 @@ const ACTIONS = {
       if (L === 1 && s1 == null) s1 = Math.max(0, tong - n1);
       if (L === 2 && s2 == null) s2 = Math.max(0, tong - n2);
       s1 = s1 || 0; s2 = s2 || 0;
-      if (s1 + s2 + n1 + n2 > tong) { say(`Tổ ${u.name}: đi làm ngày ${s1} + đêm ${s2}${n1 + n2 ? ' + nghỉ ' + (n1 + n2) : ''} = ${s1 + s2 + n1 + n2}, nhiều hơn tổng ${tong}.`, true); render(); return gcFocus(k + 't'); }
       const khacN = [1, 2].some((c) => JSON.stringify(N[c - 1].nghi) !== JSON.stringify((tl && tl['n' + c]) || {}) || N[c - 1].gc !== ((tl && tl['n' + c] && tl['n' + c].khac && tl['gc' + c]) || ''));
+      // dòng không đổi thì bỏ qua TRƯỚC khi kiểm tra: số cũ lưu từ trước khi có luật "đi làm + nghỉ ≤ tổng" không chặn việc sửa tổ khác
       if (tl && tl.tong === tong && tl.s1 === s1 && tl.s2 === s2 && !khacN) continue;
+      if (s1 + s2 + n1 + n2 > tong) { say(`Tổ ${u.name}: đi làm ngày ${s1} + đêm ${s2}${n1 + n2 ? ' + nghỉ ' + (n1 + n2) : ''} = ${s1 + s2 + n1 + n2}, nhiều hơn tổng ${tong}.`, true); render(); return gcFocus(k + 't'); }
       /* có tổng mà không ai làm ca nào (chưa chọn ca, ô ca để trống): lưu vào là báo cáo ghi "0/N cn" cho tổ chưa báo.
          Dòng chỉ có số gợi ý (chưa đụng tới) thì bỏ qua, không chặn cả lần lưu; dòng đã gõ thì hỏi lại. */
       if (!s1 && !s2 && !n1 && !n2) {
@@ -6303,10 +6308,10 @@ document.addEventListener('input', (e) => {
     bcNhap();
   }
   // bảng thiết lập quân số: dòng tổng của mọi tổ chạy theo số đang gõ
-  if (m && /^tl_\d+_[t12]$/.test(m) && S.qs && S.screen === 'quanso') {
+  if (m && /^tl_\d+_([t12]|n[12]_\w+)$/.test(m) && S.qs && S.screen === 'quanso') {
     const T = qsTlTong();
     [['tlS_t', T.tong], ['tlS_1', T.s1], ['tlS_2', T.s2]].forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.textContent = v; });
-    // ô của ca chưa gõ tay mà đang theo tổng (tổ một ca, vừa đổi ca hoặc chưa có số): chạy theo tổng đang gõ
+    // ô đi làm chưa gõ tay mà đang theo tổng (tổ một ca: tổng − nghỉ): chạy theo tổng / số nghỉ đang gõ
     const uid = Number(m.split('_')[1]), d = qsTlMacDinh(uid);
     [1, 2].forEach((c) => { const el = document.getElementById(`tl_${uid}_${c}`); if (el && !el.disabled && S.form[`tl_${uid}_${c}`] === undefined) el.value = String(d['s' + c]); });
   }
