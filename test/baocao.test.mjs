@@ -324,28 +324,35 @@ async function main() {
   }
 
   /* ===== 3c. Người nghỉ theo lý do trong số thiết lập =====
-     Tổ không báo kịp thì CVKTHT ghi luôn ai nghỉ, vì sao: báo cáo ca phải có số nghỉ kèm lý do như tổ tự báo. */
+     Tổ không báo kịp thì CVKTHT ghi luôn ai nghỉ, vì sao: báo cáo ca phải có số nghỉ kèm lý do như tổ tự báo.
+     Ô Ngày / Đêm của số thiết lập là SỐ ĐI LÀM; người nghỉ ghi riêng NGOÀI số đó (đi làm + nghỉ ≤ tổng). Trước đây ô là
+     "số người của ca, gồm cả người nghỉ" nên báo cáo trừ người nghỉ thêm một lần: CVKTHT gõ đi làm 17, nghỉ 2 (tổng 19),
+     báo cáo ra 15/19. */
   {
     const nam = U['Lê Hải Nam'], tlap = (b) => S.call('PUT', '/quanso/thietlap', { user: nam, ...b }, CV);
     const tl = () => JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data).tl[nam];
-    eq('nghỉ nhiều hơn số người của ca: từ chối', (await tlap({ tong: 20, s1: 3, s2: 0, n1: { om: 4 }, ts: 0 })).status, 400);
-    eq('lý do lạ: từ chối', (await tlap({ tong: 20, s1: 20, s2: 0, n1: { choi: 1 }, ts: 0 })).status, 400);
-    eq('lý do khác mà không ghi rõ: từ chối', (await tlap({ tong: 20, s1: 20, s2: 0, n1: { khac: 1 }, ts: 0 })).status, 400);
-    eq('đặt số thiết lập kèm người nghỉ theo lý do', [(await tlap({ tong: 20, s1: 20, s2: 0, n1: { om: 2, que: 1, khac: 1 }, gc1: 'đi khám nghĩa vụ', ts: 0 })).status, tl().n1, tl().gc1, tl().n2], [200, { om: 2, que: 1, khac: 1 }, 'đi khám nghĩa vụ', undefined]);
-    eq('bản app cũ lưu không gửi người nghỉ: giữ người nghỉ đang có', [(await tlap({ tong: 21, s1: 21, s2: 0, ts: tl().ts })).status, tl().tong, tl().n1], [200, 21, { om: 2, que: 1, khac: 1 }]);
-    await tlap({ tong: 20, s1: 20, s2: 0, n1: { om: 2, que: 1, khac: 1 }, gc1: 'đi khám nghĩa vụ', ts: tl().ts });
+    eq('đi làm + nghỉ nhiều hơn tổng: từ chối', (await tlap({ tong: 20, s1: 18, s2: 0, n1: { om: 3 }, ts: 0 })).status, 400);
+    eq('lý do lạ: từ chối', (await tlap({ tong: 20, s1: 19, s2: 0, n1: { choi: 1 }, ts: 0 })).status, 400);
+    eq('lý do khác mà không ghi rõ: từ chối', (await tlap({ tong: 20, s1: 19, s2: 0, n1: { khac: 1 }, ts: 0 })).status, 400);
+    eq('đặt số thiết lập: đi làm 16 + nghỉ 4 theo lý do = tổng 20', [(await tlap({ tong: 20, s1: 16, s2: 0, n1: { om: 2, que: 1, khac: 1 }, gc1: 'đi khám nghĩa vụ', ts: 0 })).status, tl().s1, tl().n1, tl().gc1, tl().n2], [200, 16, { om: 2, que: 1, khac: 1 }, 'đi khám nghĩa vụ', undefined]);
+    eq('bản app cũ lưu không gửi người nghỉ: giữ người nghỉ đang có', [(await tlap({ tong: 21, s1: 17, s2: 0, ts: tl().ts })).status, tl().tong, tl().n1], [200, 21, { om: 2, que: 1, khac: 1 }]);
+    eq('bản app cũ, người nghỉ cũ không còn vừa tổng: bỏ người nghỉ, vẫn lưu', [(await tlap({ tong: 21, s1: 21, s2: 0, ts: tl().ts })).status, tl().s1, tl().n1], [200, 21, undefined]);
+    eq('ghi chú không kèm "lý do khác" thì không lưu (báo cáo khỏi ghi lặp "1 về quê, Về quê")', [(await tlap({ tong: 20, s1: 19, s2: 0, n1: { que: 1 }, gc1: 'Về quê', ts: tl().ts })).status, tl().gc1], [200, undefined]);
+    await tlap({ tong: 20, s1: 16, s2: 0, n1: { om: 2, que: 1, khac: 1 }, gc1: 'đi khám nghĩa vụ', ts: tl().ts });
     R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
     const s3 = R("bcAuto(S.bcc, 's3')").split('\n');
-    eq('báo cáo của tổ chưa báo: đi làm = số người ca − nghỉ, có số nghỉ và lý do từng người', s3.find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 16/20 cn, nghỉ 4 cn — 2 ốm, 1 về quê, 1 đi khám nghĩa vụ');
+    eq('báo cáo của tổ chưa báo: đi làm đúng số đã đặt, kèm số nghỉ và lý do từng người', s3.find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 16/20 cn, nghỉ 4 cn — 2 ốm, 1 về quê, 1 đi khám nghĩa vụ');
     ok('các số tổng hợp vẫn cộng đúng bằng tổng quân số', R('(() => { const Q = bcQuanSo(S.bcc); return Q.tong === Q.lam + Q.nghi + Q.kiaSo + Q.chuaSo; })()'));
     ok('mục 3 có dòng đủ người nghỉ của tổ đang lấy số thiết lập, kèm nhãn', /Tổ Lê Hải Nam: ca ngày 16\/20 cn, nghỉ 4 cn — 2 ốm, 1 về quê, 1 đi khám nghĩa vụ<\/span><span class="badge (warn|bad)"/.test(R('vBaoCaoCa()')));
-    // bảng thiết lập: dòng người nghỉ dưới mỗi tổ, mở ra ghi theo lý do, Lưu tất cả gửi kèm
+    // bảng thiết lập: cột ghi rõ là số đi làm; dòng người nghỉ dưới mỗi tổ, mở ra ghi theo lý do, Lưu tất cả gửi kèm
     R('ACTIONS.bctl()'); await cho();
-    ok('bảng thiết lập có dòng người nghỉ của từng tổ', R('vQuanSo()').includes('Nghỉ: 4 (2 ốm, 1 về quê, 1 đi khám nghĩa vụ)') && R('vQuanSo()').includes(`data-a="tlnghimo" data-id="${nam}"`));
+    ok('bảng thiết lập: cột "Làm ngày / Làm đêm", dòng người nghỉ của từng tổ', R('vQuanSo()').includes('Làm<br>ngày') && R('vQuanSo()').includes('Nghỉ: 4 (2 ốm, 1 về quê, 1 đi khám nghĩa vụ)') && R('vQuanSo()').includes(`data-a="tlnghimo" data-id="${nam}"`));
     R(`ACTIONS.tlnghimo({ id: '${nam}' }); ACTIONS.tlnghi({ id: '${nam}', ca: '1', k: 'phep' }); ACTIONS.tlnghi({ id: '${nam}', ca: '1', k: 'phep' })`);
     ok('mở ô ghi: chạm lý do là thêm 1 người, có ô số bên cạnh', R('vQuanSo()').includes(`id="tl_${nam}_n1_phep"`) && R('vQuanSo()').includes('value="2"'));
-    R('ACTIONS.qstlluu()'); await cho();
-    eq('Lưu tất cả: người nghỉ vào số thiết lập', tl().n1, { om: 2, phep: 2, que: 1, khac: 1 });
+    R('S.toast = ""; ACTIONS.qstlluu()'); await cho();
+    ok('thêm 2 nghỉ phép mà đi làm vẫn 16: 16 + 6 vượt tổng 20, không lưu, nói rõ phép cộng', /đi làm ngày 16 \+ đêm 0 \+ nghỉ 6 = 22, nhiều hơn tổng 20/.test(R('S.toast')) && !tl().n1.phep, R('S.toast'));
+    R(`S.form['tl_${nam}_1'] = '14'; ACTIONS.qstlluu()`); await cho();
+    eq('sửa đi làm còn 14 rồi Lưu tất cả: người nghỉ vào số thiết lập', [tl().s1, tl().n1], [14, { om: 2, phep: 2, que: 1, khac: 1 }]);
     /* ĐỔI CA của tổ một ca, chỉ chọn lại ô ca, không gõ số: cả tổ sang ca mới. Trước đây ô của ca mới lấy số đã lưu (0),
        Lưu tất cả là tổ thành 0 người — báo cáo ghi "0/20 cn", hết ca chép thành thiếu số. */
     const chonCa = (v) => (nghe.change || []).forEach((fn) => fn({ target: { dataset: { model: `tl_${nam}_c`, change: 'tlca' }, value: String(v) } }));
@@ -354,8 +361,13 @@ async function main() {
     eq('đổi ca ngày → ca đêm, không gõ số: cả tổ sang ca đêm', [lich().ca, tl().s1, tl().s2, tl().n1], [2, 0, 20, undefined]);
     chonCa(1); R(`S.form['tl_${nam}_t'] = '22'`); R('ACTIONS.qstlluu()'); await cho();
     eq('đổi lại ca ngày kèm gõ tổng mới: ca ngày theo tổng mới', [lich().ca, tl().tong, tl().s1, tl().s2], [1, 22, 22, 0]);
+    // tổ một ca, ô đi làm chưa gõ tay: thêm người nghỉ thì số đi làm tự bớt theo, không bắt gõ lại
+    R(`ACTIONS.tlnghimo({ id: '${nam}' }); ACTIONS.tlnghi({ id: '${nam}', ca: '1', k: 'om' })`);
+    eq('tổ một ca thêm 1 ốm: ô đi làm tự còn 21', R(`String(qsTlMacDinh(${nam}).s1)`), '21');
+    R('ACTIONS.qstlluu()'); await cho();
+    eq('lưu: đi làm 21, nghỉ 1 ốm', [tl().s1, tl().n1], [21, { om: 1 }]);
     R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
-    eq('báo cáo ca theo số sau khi đổi ca', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 22/22 cn');
+    eq('báo cáo ca theo số sau khi đổi ca', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: ca ngày 21/22 cn, nghỉ 1 cn — 1 ốm');
     S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   }
 

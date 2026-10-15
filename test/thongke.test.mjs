@@ -38,9 +38,10 @@ async function main() {
   // An làm ca ngày, tự báo: 20 người, đi làm 16, nghỉ 2 ốm + 2 OFF
   await S.call('PUT', '/quanso/lich', { ca: 1 }, 'An');
   eq('An tự báo ca ngày', (await S.call('PUT', '/quanso', { ngay: D, ca: 1, tong: 20, lam: 16, nghi: { om: 2, off: 2 } }, 'An')).status, 200);
-  // Binh làm ca ngày, không báo; CVKTHT đã đặt số thiết lập: 10 người ca ngày, 1 nghỉ phép
+  // Binh làm ca ngày, không báo; CVKTHT đã đặt số thiết lập: tổng 10, đi làm ca ngày 9, 1 nghỉ phép
   await S.call('PUT', '/quanso/lich', { ca: 1 }, 'Binh');
-  eq('số thiết lập của Binh', (await tl({ user: U.Binh, tong: 10, s1: 10, s2: 0, n1: { phep: 1 }, ts: 0 })).status, 200);
+  eq('số thiết lập của Binh', (await tl({ user: U.Binh, tong: 10, s1: 9, s2: 0, n1: { phep: 1 }, ts: 0 })).status, 200);
+  eq('đi làm + nghỉ vượt tổng: từ chối', (await tl({ user: U.Cuong, tong: 10, s1: 10, s2: 0, n1: { phep: 1 }, ts: 0 })).status, 400);
   // Cuong làm ca ngày, không báo, không có số thiết lập → ca thiếu số
   await S.call('PUT', '/quanso/lich', { ca: 1 }, 'Cuong');
   // Dung làm ca đêm: ca ngày không phải ca của tổ, không được tính là thiếu
@@ -50,7 +51,7 @@ async function main() {
   datGio(19, 30);
   await S.cron();
   const hom = (u) => S.one('SELECT tong, lam, nghi, ghi_chu FROM quan_so_tl WHERE ngay = ? AND ca = 1 AND user_id = ?', D, u);
-  eq('hết ca ngày: Binh không báo → chép số thiết lập, đi làm = số người ca − nghỉ', hom(U.Binh), { tong: 10, lam: 9, nghi: '{"phep":1}', ghi_chu: null });
+  eq('hết ca ngày: Binh không báo → chép số thiết lập: đi làm đúng số đã đặt, kèm người nghỉ', hom(U.Binh), { tong: 10, lam: 9, nghi: '{"phep":1}', ghi_chu: null });
   eq('Cuong không báo, không có số thiết lập → ca thiếu số', hom(U.Cuong), { tong: null, lam: null, nghi: '{}', ghi_chu: null });
   eq('An đã tự báo, Dung làm ca đêm: không chép', [hom(U.An), hom(U.Dung)], [undefined, undefined]);
   eq('ca hết TRƯỚC lúc đặt lịch ca (hôm qua): không chép ngược', S.one('SELECT COUNT(*) n FROM quan_so_tl WHERE ngay < ?', D).n, 0);
@@ -66,7 +67,7 @@ async function main() {
   eq('ngưỡng mặc định 15%', cv.nguong, 15);
   // số tạm: ca đang diễn ra (ca đêm hôm nay), Dung làm ca đêm chưa báo, có số thiết lập → gửi kèm số tạm như báo cáo ca
   eq('ca đang diễn ra, tổ chưa báo, chưa có số thiết lập: không có số tạm', cv.tam.filter((r) => r.u === U.Dung), []);
-  await tl({ user: U.Dung, tong: 15, s1: 0, s2: 15, n2: { om: 3 }, ts: 0 });
+  await tl({ user: U.Dung, tong: 15, s1: 0, s2: 12, n2: { om: 3 }, ts: 0 });
   const tam = (await S.call('GET', `/quanso/thongke?tu=${tu}&den=${D}`, undefined, 'Cv')).data.tam.filter((r) => r.u === U.Dung);
   eq('có số thiết lập: số tạm của ca đang diễn ra (đi làm 12, nghỉ 3 ốm)', tam.map(({ ngay, ca, lam, tong, nghi, tam: t }) => ({ ngay, ca, lam, tong, nghi, t })), [{ ngay: D, ca: 2, lam: 12, tong: 15, nghi: { om: 3 }, t: 1 }]);
   eq('số tạm chỉ gửi kèm, không ghi vào bảng', S.one('SELECT COUNT(*) n FROM quan_so_tl WHERE user_id = ?', U.Dung).n, 0);

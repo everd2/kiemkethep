@@ -72,7 +72,7 @@ const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().s
      lich."<id>" = { ca: 1 ca ngày | 2 ca đêm | 3 cả hai ca, den: 'YYYY-MM-DD' hoặc null (đến khi đổi), ts, by }
        — tổ trưởng tự đặt (CVKTHT đặt hộ được). Tổ thường làm một ca 15–30 ngày rồi đổi; hết hạn thì app hỏi lại.
      tl."<id>" = { tong, s1, s2, n1, n2, gc1, gc2, ts, by } — SỐ THIẾT LẬP do CVKTHT trở lên đặt: tổng quân số, người ca
-       ngày, người ca đêm, và người NGHỈ theo lý do của từng ca (n1 / n2, ghi chú gc1 / gc2; xem tlNghi). Là số dự phòng: báo cáo ca dùng nó cho tổ chưa báo (hoặc khi người soạn chọn "chỉ số thiết lập").
+       ngày ĐI LÀM, người ca đêm ĐI LÀM, và người NGHỈ (ngoài số đi làm) theo lý do của từng ca (n1 / n2, ghi chú gc1 / gc2; xem tlNghi). Là số dự phòng: báo cáo ca dùng nó cho tổ chưa báo (hoặc khi người soạn chọn "chỉ số thiết lập").
    Ghi bằng json_set từng nhánh, không đọc-sửa-ghi cả khối: hai người sửa hai tổ cùng lúc không đè nhau. Hai người
    sửa CÙNG một tổ thì chặn bằng ts: lưu dựa trên bản cũ là bị từ chối và được báo ai vừa sửa (qsThietLap). */
 export const MAU_CO = "INSERT OR IGNORE INTO bc_mau (id, data, ts) VALUES (1, '{}', 0)";
@@ -257,12 +257,16 @@ export async function qsThietLap(req, env, user) {
     }
     if (x.tong == null || x.tong === '') continue;
     const tong = intIn(x.tong, 1, QS_TONG_MAX, 'Tổng quân số');
-    const s1 = x.s1 == null || x.s1 === '' ? 0 : intIn(x.s1, 0, QS_TONG_MAX, 'Số người ca ngày');
-    const s2 = x.s2 == null || x.s2 === '' ? 0 : intIn(x.s2, 0, QS_TONG_MAX, 'Số người ca đêm');
-    if (s1 + s2 > tong) throw bad(`${ds.length > 1 ? 'Tổ ' + t.name + ': ca' : 'Ca'} ngày ${s1} + ca đêm ${s2} nhiều hơn tổng quân số ${tong}`);
+    const s1 = x.s1 == null || x.s1 === '' ? 0 : intIn(x.s1, 0, QS_TONG_MAX, 'Số đi làm ca ngày');
+    const s2 = x.s2 == null || x.s2 === '' ? 0 : intIn(x.s2, 0, QS_TONG_MAX, 'Số đi làm ca đêm');
     const cu = Number(x.ts) || 0, path = '$.tl."' + uid + '"';
     if (((cfg.tl[uid] || {}).ts || 0) !== cu) throw await tlDaDoi(env, t.name, path);
-    const ng1 = tlNghi(x, cfg.tl[uid], 1, s1, t.name), ng2 = tlNghi(x, cfg.tl[uid], 2, s2, t.name);
+    let ng1 = tlNghi(x, cfg.tl[uid], 1, t.name), ng2 = tlNghi(x, cfg.tl[uid], 2, t.name);
+    const soN = (g) => Object.values(g.n || {}).reduce((a, v) => a + v, 0);
+    // người nghỉ giữ lại từ bản cũ (app cũ không gửi) mà không còn vừa tổng thì bỏ, không chặn cả lần lưu
+    if (s1 + s2 + soN(ng1) + soN(ng2) > tong) { if (ng1.giu) ng1 = {}; if (ng2.giu) ng2 = {}; }
+    const het = s1 + s2 + soN(ng1) + soN(ng2);
+    if (het > tong) throw bad(`${ds.length > 1 ? 'Tổ ' + t.name + ': đi' : 'Đi'} làm ngày ${s1} + đêm ${s2}${soN(ng1) + soN(ng2) ? ' + nghỉ ' + (soN(ng1) + soN(ng2)) : ''} = ${het}, nhiều hơn tổng quân số ${tong}`);
     const v = { tong, s1, s2, n1: ng1.n, n2: ng2.n, gc1: ng1.gc, gc2: ng2.gc, ts: Math.max(now, cu + 1), by: user.id };
     // chặn lần nữa ngay trong batch: giữa lượt đọc ở trên và lượt ghi vẫn có thể có người khác lưu
     chan.push([guardStmt(env, "EXISTS (SELECT 1 FROM bc_mau WHERE id = 1 AND COALESCE(json_extract(data, ?1), 0) <> ?2)", path + '.ts', cu), t.name, path, uid, cu]);
@@ -285,14 +289,15 @@ export async function qsThietLap(req, env, user) {
   return json({ ok: true, n: ghi.length / 2, ...(dau || {}) });
 }
 /* NGƯỜI NGHỈ trong số thiết lập, theo từng ca: x.n1 / x.n2 = { mã lý do: số người } (như cột nghi của quan_so), x.gc1 /
-   x.gc2 = ghi chú (bắt buộc khi có "lý do khác"). s là số người của tổ thuộc ca đó: số nghỉ nằm TRONG s, nên đi làm =
-   s − nghỉ. Nhờ vậy báo cáo ca của tổ chưa báo vẫn ghi được "nghỉ 4 cn — 2 ốm, 2 về quê" theo số CVKTHT đặt.
-   Không gửi n (bản app cũ) thì giữ người nghỉ đang có, trừ khi số đó không còn vừa số người của ca. */
-function tlNghi(x, cu, ca, s, tenTo) {
+   x.gc2 = ghi chú của "lý do khác" (bắt buộc khi có, không có thì không lưu). s1 / s2 là SỐ ĐI LÀM của ca, người nghỉ
+   ghi riêng NGOÀI số đó: đi làm ngày + đi làm đêm + nghỉ ≤ tổng (kiểm ở qsThietLap). Nhờ vậy báo cáo ca của tổ chưa
+   báo ghi được "ca ngày 17/19 cn, nghỉ 2 cn — 1 ốm, 1 về quê" đúng như số CVKTHT gõ.
+   Không gửi n (bản app cũ) thì giữ người nghỉ đang có (giu: bỏ đi nếu không còn vừa tổng). */
+function tlNghi(x, cu, ca, tenTo) {
   const vao = x['n' + ca], ten = CA_TEN[ca];
   if (vao === undefined) {
-    const n = (cu && cu['n' + ca]) || {}, vua = Object.values(n).reduce((a, v) => a + v, 0) <= s;
-    return vua && Object.keys(n).length ? { n, gc: cu['gc' + ca] || undefined } : {};
+    const n = (cu && cu['n' + ca]) || {};
+    return Object.keys(n).length ? { n, gc: (n.khac && cu['gc' + ca]) || undefined, giu: true } : {};
   }
   const o = vao && typeof vao === 'object' && !Array.isArray(vao) ? vao : {};
   if (Object.keys(o).some((k) => !QS_LY_DO.some((l) => l[0] === k))) throw bad('Lý do nghỉ không hợp lệ');
@@ -303,8 +308,8 @@ function tlNghi(x, cu, ca, s, tenTo) {
   }
   const tong = Object.values(n).reduce((a, v) => a + v, 0);
   if (!tong) return {};
-  if (tong > s) throw bad(`Tổ ${tenTo}: nghỉ ${ten} ${tong} người, nhiều hơn số người ${ten} (${s})`);
-  const gc = chu(x['gc' + ca], 200) || undefined;
+  // ghi chú chỉ đi kèm "lý do khác": ghi chú còn sót khi đã bỏ lý do khác thì báo cáo ghi lặp ("1 về quê, Về quê")
+  const gc = (n.khac && chu(x['gc' + ca], 200)) || undefined;
   if (n.khac && !gc) throw bad(`Tổ ${tenTo}: có người nghỉ ${ten} vì lý do khác, ghi rõ lý do`);
   return { n, gc };
 }
@@ -399,11 +404,12 @@ const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: congNgay(
    không: null. Kết quả: { tong, lam, nghi, ghi_chu } — tong / lam null nếu tổ làm ca này mà chưa có số thiết lập.
    Dùng chung cho việc chép lúc hết ca (qsChotCa) và số tạm của ca đang diễn ra trên màn thống kê (qsThongKe). */
 function soTlCa(cfg, id, c, het) {
-  const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, L = caLich(cfg, id, c.ngay);
-  if (L ? L !== 3 && L !== c.ca : !s) return null;
+  // s: số ĐI LÀM của ca theo số thiết lập; người nghỉ ghi riêng ngoài số đó
+  const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, nghi = (tl && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0), co = s + so > 0;
+  const L = caLich(cfg, id, c.ngay);
+  if (L ? L !== 3 && L !== c.ca : !co) return null;
   if ((L ? cfg.lich[id].ts : tl.ts) > het) return null;
-  const nghi = (s && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0);
-  return { tong: s ? tl.tong : null, lam: s ? Math.max(0, s - so) : null, nghi: s ? nghi : {}, ghi_chu: (s && so && tl['gc' + c.ca]) || null };
+  return { tong: co ? tl.tong : null, lam: co ? s : null, nghi: co ? nghi : {}, ghi_chu: (co && nghi.khac && tl['gc' + c.ca]) || null };
 }
 export async function qsChotCa(env, now = Date.now()) {
   const cas = [];
