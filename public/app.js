@@ -2370,6 +2370,7 @@ function vMore() {
     <button class="menu" data-a="nav" data-s="ton">Tồn bãi theo đường kính</button>
     <button class="menu" data-a="nav" data-s="lichsu">Xem lại ngày cũ</button>
     ${canIn() ? '<button class="menu" data-a="nav" data-s="baocao">Báo cáo Nhập – Dùng – Tồn theo kỳ</button>' : ''}
+    <button class="menu" data-a="nav" data-s="tracuu">Tra cứu thép: kg/m, cây mỗi bó, tấn mỗi bó</button>
     ${isQL() ? `<div class="card col gap6"><b>Xuất Excel (CSV) bảng khu × phi</b><div class="row gap6"><input class="inp s f1" type="date" id="exday" data-model="exday" max="${S.boot.today}" value="${esc(fv('exday', S.boot.today))}"><button class="btn s" data-a="exportday">Tải về</button></div></div>` : ''}
     ${a ? `${nhom('Quản trị')}
     <button class="menu" data-a="nav" data-s="users">Người dùng và PIN</button>
@@ -2382,6 +2383,24 @@ function vMore() {
     <button class="menu" data-a="nav" data-s="pin">Đổi PIN của tôi</button>
     <button class="menu" style="color:var(--bad)" data-a="logout">Đăng xuất</button>
     <div class="sm muted" style="text-align:center;padding-top:8px">Bãi Gia Công · phiên bản 1.3</div>
+  </div>`;
+}
+/* TRA CỨU: bảng tham khảo cố định, không phụ thuộc số liệu bãi. kg/m = 0,00617 × d² (TCVN 1651-2);
+   cây dài 11,7 m; cây mỗi bó theo bó Hòa Phát (khớp PHI_DEFAULTS ở src/core.js). D6, D8 là thép cuộn. */
+const TRA_CUU_BO = { 10: 440, 12: 320, 14: 222, 16: 180, 18: 138, 20: 114, 22: 90, 25: 72, 28: 57, 32: 45 };
+function vTraCuu() {
+  const dec = (x, n) => x.toFixed(n).replace('.', ',');
+  const rows = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32].map((d) => {
+    const m = 0.00617 * d * d, cay = m * 11.7, bo = TRA_CUU_BO[d];
+    const p = S.boot && S.boot.phiBy['D' + d];
+    // bãi đặt số cây mỗi bó khác bảng thì ghi thêm số của bãi, kẻo đối chiếu nhầm
+    const bai = p && p.unit !== 'cuon' && bo && p.bo_size !== bo ? `<div class="sm muted">bãi đặt ${fmtInt(p.bo_size)}</div>` : '';
+    return `<tr><th>D${d}</th><td>${dec(m, 3)}</td><td>${bo ? dec(cay, 2) : '—'}</td><td>${bo ? fmtInt(bo) + bai : 'cuộn'}</td><td>${bo ? dec(bo * cay / 1000, 2) : '~2'}</td></tr>`;
+  }).join('');
+  return `${head('Tra cứu thép', 'Số liệu tham khảo', 'more')}
+  <div class="f1 scroll pad col gap12" id="body">
+    <div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>ɸ</th><th>kg/m</th><th>kg/cây</th><th>Cây/bó</th><th>Tấn/bó</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <span class="sm muted" style="line-height:1.45">• kg/m theo trọng lượng riêng lý thuyết: 0,00617 × d² (d tính bằng mm).<br>• kg/cây tính cho cây dài <b>11,7 m</b>.<br>• Cây/bó theo bó Hòa Phát, mỗi bó khoảng 3,2 tấn. Nhà máy khác (Pomina, Việt Nhật, Việt Úc…) đóng bó khác: đếm theo thẻ bó thực tế.<br>• D6, D8 là thép cuộn, mỗi cuộn khoảng 2 tấn tùy nhà máy.</span>
   </div>`;
 }
 function vPin() {
@@ -4704,7 +4723,7 @@ function vReset() {
 
 /* ===================== KHUNG CHÍNH ===================== */
 function tabsHtml() {
-  const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more', satvun: 'more', giacong: 'giacong', gcdon: 'giacong', gcform: 'giacong', gcsetup: 'giacong', quanso: 'more', baocaoca: 'more', qstk: 'more' }[S.screen];
+  const on = { home: 'home', ton: 'home', khu: 'dem', dem: 'dem', nhap: 'nhap', duyet: 'duyet', nhatky: 'more', lichsu: 'more', baocao: 'more', more: 'more', stats: 'more', users: 'more', settings: 'more', pin: 'more', vaymuon: 'more', vaychitiet: 'more', satvun: 'more', giacong: 'giacong', gcdon: 'giacong', gcform: 'giacong', gcsetup: 'giacong', quanso: 'more', baocaoca: 'more', qstk: 'more', tracuu: 'more' }[S.screen];
   const T = [['home', 'Tổng quan', IC.home, true], ['dem', 'Báo cáo', IC.count, true], ['giacong', 'Gia công', IC.gc, true], ['nhap', 'Nhập', IC.inn, canIn()], ['duyet', 'Duyệt', IC.shield, isQL()], ['more', 'Thêm', IC.more, true]].filter((t) => t[3]);
   // đủ 6 tab (CVKTHT trở lên) thì chữ nhỏ lại một cỡ cho vừa màn hình hẹp
   return `<nav class="tabs${T.length > 5 ? ' n6' : ''}">${T.map((t) => `<button class="tab ${on === t[0] ? 'on' : ''}" data-a="nav" data-s="${t[0]}">${t[2]}${t[1]}</button>`).join('')}</nav>`;
@@ -4737,6 +4756,7 @@ function vMain() {
     case 'quanso': body = vQuanSo(); break;
     case 'baocaoca': body = vBaoCaoCa(); break;
     case 'qstk': body = vThongKeQs(); break;
+    case 'tracuu': body = vTraCuu(); break;
     default: body = vHome();
   }
   const showToast = S.toast && S.screen !== 'dem';
