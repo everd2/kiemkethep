@@ -2387,10 +2387,10 @@ function vMore() {
 }
 /* TRA CỨU: bảng tham khảo cố định, không phụ thuộc số liệu bãi. kg/m = 0,00617 × d² (TCVN 1651-2);
    cây dài 11,7 m; cây mỗi bó theo bó Hòa Phát (khớp PHI_DEFAULTS ở src/core.js). D6, D8 là thép cuộn. */
-const TRA_CUU_BO = { 10: 440, 12: 320, 14: 222, 16: 180, 18: 138, 20: 114, 22: 90, 25: 72, 28: 57, 32: 45 };
+const TRA_CUU_BO = { 10: 440, 12: 320, 14: 222, 16: 180, 18: 138, 20: 114, 22: 90, 25: 72, 28: 57, 32: 45, 36: 35 };
 function vTraCuu() {
   const dec = (x, n) => x.toFixed(n).replace('.', ',');
-  const rows = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32].map((d) => {
+  const rows = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36].map((d) => {
     const m = 0.00617 * d * d, cay = m * 11.7, bo = TRA_CUU_BO[d];
     const p = S.boot && S.boot.phiBy['D' + d];
     // bãi đặt số cây mỗi bó khác bảng thì ghi thêm số của bãi, kẻo đối chiếu nhầm
