@@ -19,6 +19,7 @@ const SUITES = [
   ['Thống kê quân số: chép số ca tổ không báo, % nghỉ, quyền', 'thongke.test.mjs'],
   ['Phân quyền: bảng quyền + mô phỏng ngẫu nhiên đối chiếu máy/server', 'roles.test.mjs'],
   ['Tải lại kèm lệnh ghi (một vòng mạng mỗi lần lưu) + hạn chờ lời gọi', 'kem.test.mjs'],
+  ['Ảnh biên bản: tải lên, xem, xoá, quyền, R2 lỗi', 'anh.test.mjs'],
 ];
 
 const run = (file) =>

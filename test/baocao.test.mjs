@@ -123,7 +123,13 @@ async function main() {
   vm.createContext(ctx);
   vm.runInContext(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8'), ctx, { filename: 'app.js' });
   const R = (src) => vm.runInContext(src, ctx);
-  const cho = async () => { for (let k = 0; k < 300; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && k > 40) return; } };
+  /* go() không bật S.busy (chỉ act() bật), nên chỉ nhìn S.busy thì cho() chỉ chờ đủ 40 vòng rồi đi tiếp dù go() chưa
+     nạp xong — đọc S.bcc lúc đó ra null, test hỏng ngẫu nhiên tuỳ máy nhanh chậm. Bọc go() để đếm số lần chuyển màn
+     đang chạy dở, cho() chờ tới khi về 0 thật. */
+  let dangGo = 0;
+  const go0 = ctx.go;
+  ctx.go = (...a) => { dangGo++; return Promise.resolve(go0(...a)).finally(() => { dangGo--; }); };
+  const cho = async () => { for (let k = 0; k < 3000; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && !dangGo && k > 40) return; } };
   const bt = (await S.call('GET', '/bootstrap', undefined, CV)).data;
   R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: U[CV], name: CV, role: 'cvktht' })}; S.form = {}; S.screen = 'more';`);
   ok('Thêm của CVKTHT có mục Báo cáo ca', R('vMore()').includes('data-s="baocaoca"'));

@@ -105,7 +105,11 @@ async function main() {
   vm.createContext(ctx);
   vm.runInContext(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8'), ctx, { filename: 'app.js' });
   const R = (src) => vm.runInContext(src, ctx);
-  const cho = async () => { for (let k = 0; k < 300; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && k > 40) return; } };
+  // như cho() ở baocao.test.mjs: go() không bật S.busy, nên đếm số lần chuyển màn đang chạy dở và chờ về 0 thật
+  let dangGo = 0;
+  const go0 = ctx.go;
+  ctx.go = (...a) => { dangGo++; return Promise.resolve(go0(...a)).finally(() => { dangGo--; }); };
+  const cho = async () => { for (let k = 0; k < 3000; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && !dangGo && k > 40) return; } };
   const vao = async (ten, role) => {
     who = ten;
     const bt = (await S.call('GET', '/bootstrap', undefined, ten)).data;

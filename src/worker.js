@@ -12,6 +12,7 @@ import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, v
 import { gcCreate, gcDoc, gcList, gcMucAdd, gcMucXoa, gcThuHoi, gcTn, gcTnMoi, gcUpdate, gcViec, gcView } from './giacong.js';
 import { qsChotCa, qsHan, qsLich, qsNguong, qsPut, qsThietLap, qsThongKe, qsThuTu, qsView } from './quanso.js';
 import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
+import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
@@ -139,6 +140,17 @@ async function route(req, env, url, user, method, p, r0) {
     if (method === 'POST' && p.length === 1) return postSv(req, env, user);
     if (method === 'DELETE' && p.length === 2) return voidSv(req, env, user, Number(p[1]));
     if (method === 'POST' && p.length === 3 && p[2] === 'duyet') { needCap(1); return duyetSv(env, user, Number(p[1])); }
+  }
+  /* Ảnh biên bản (vay mượn, sắt vụn, gia công xuất): xem/thêm mở cho mọi vai trò, đúng với quyền
+     xem/ghi của ba sổ chứa ảnh (đã mở cho ALL) — ảnh đi theo đúng quyền của sổ, không có luật riêng.
+     Xoá ảnh thì deleteAnh tự kiểm (xem src/anh.js): người tải lên trong 10 phút, hoặc CVKTHT trở lên. */
+  if (r0 === 'anh') {
+    need(ALL);
+    if (method === 'GET' && p.length === 3) return listAnh(env, p[1], p[2]); // /anh/{loai}/{id}: danh sách
+    if (method === 'POST' && p.length === 3) return postAnh(req, env, user, p[1], p[2]);
+    if (method === 'GET' && p.length === 2) return getAnh(env, p[1], url); // /anh/{id}: ảnh thật
+    if (method === 'DELETE' && p.length === 2) return deleteAnh(env, user, p[1]);
+    throw new HttpError(404, 'Không tìm thấy');
   }
   // Danh bạ đối tác: tạo mở cho mọi vai trò (thêm tên mới khi cần), sửa tên/ẩn thì trừ Tiểu đội trưởng
   if (r0 === 'doitac') {

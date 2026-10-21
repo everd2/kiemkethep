@@ -13,6 +13,12 @@ binding = "DB"
 database_name = "kho-thep"
 database_id = "997fcdde-fa8f-4b94-9b20-620a920258c2"
 
+# Ảnh biên bản (vay mượn, sắt vụn, gia công xuất) — xem src/anh.js. Bucket KHÔNG public, chỉ
+# phục vụ qua Worker nên mọi lượt xem đều qua đúng quyền đăng nhập như các route khác.
+[[r2_buckets]]
+binding = "ANH"
+bucket_name = "kho-thep-anh"
+
 # Việc tự động MỖI GIỜ (phút 5): tự chốt sổ ngày cũ nhất chưa chốt nếu ngày đó đã qua (lần 0h05 giờ
 # VN chốt hôm qua; lỡ lần nào thì giờ sau tự bù), dọn phiên hết hạn. Xem hourly ở src/review.js.
 # Gói Free cho 5 Cron, app chỉ dùng 1.

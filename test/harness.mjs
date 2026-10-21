@@ -78,6 +78,22 @@ class D1 {
   }
 }
 
+/* ---------- shim R2 trong bộ nhớ (binding ANH, ảnh biên bản) ----------
+   Đủ ba lệnh src/anh.js dùng: put / get / delete. hong = true thì put báo lỗi, để thử nhánh R2 hỏng. */
+class R2 {
+  constructor() { this.obj = new Map(); this.hong = false; }
+  async put(key, val, o = {}) {
+    if (this.hong) throw new Error('R2 lỗi giả');
+    const buf = new Uint8Array(val instanceof ArrayBuffer ? val : await new Response(val).arrayBuffer());
+    this.obj.set(key, { buf, httpMetadata: { ...(o.httpMetadata || {}) } });
+  }
+  async get(key) {
+    const o = this.obj.get(key);
+    return o ? { body: new Response(o.buf).body, httpMetadata: o.httpMetadata } : null;
+  }
+  async delete(key) { this.obj.delete(key); }
+}
+
 /* ---------- dựng môi trường ----------
    reuse: dùng lại một database đã có thay vì dựng mới từ schema.sql. Dùng để thử NÂNG CẤP:
    worker ghi nhớ "đã nâng cấp rồi" theo từng isolate (ensureSchema), nên muốn migration chạy
@@ -92,25 +108,29 @@ export async function boot(root, reuse) {
   const env = {
     DB, PEPPER: 'pepper-test', SETUP_TOKEN: 'setup-tok', RECOVERY_TOKEN: 'rec-tok',
     ASSETS: { fetch: () => new Response('static') },
+    ANH: new R2(),
   };
   const mod = await import(pathToFileURL(path.join(root, 'src/worker.js')).href + '?t=' + Date.now());
   const worker = mod.default;
 
   const jars = {};
-  const call = async (method, p, body, who = 'admin') => {
+  // body là Uint8Array / ArrayBuffer thì gửi nguyên bytes (ảnh), kèm type làm Content-Type
+  const call = async (method, p, body, who = 'admin', type) => {
     const headers = { Origin: 'https://test.local' };
     if (jars[who]) headers.Cookie = jars[who];
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const nhiPhan = body instanceof Uint8Array || body instanceof ArrayBuffer;
+    if (body !== undefined) headers['Content-Type'] = type || (nhiPhan ? 'image/jpeg' : 'application/json');
     const req = new Request('https://test.local/api' + p, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+      method, headers, body: body === undefined ? undefined : nhiPhan ? body : JSON.stringify(body),
     });
     const res = await worker.fetch(req, env);
     const sc = res.headers.get('Set-Cookie');
     if (sc) jars[who] = sc.split(';')[0];
-    const txt = await res.text();
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const txt = new TextDecoder().decode(bytes);
     let data = null;
     try { data = JSON.parse(txt); } catch (e) { data = txt; }
-    return { status: res.status, data, res };
+    return { status: res.status, data, res, bytes };
   };
   const login = async (who, phone, pin) => {
     const r = await call('POST', '/login', { phone, pin }, who);

@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 40;
+export const SCHEMA_VERSION = 41;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -512,6 +512,16 @@ export const MIGRATIONS = {
   40: [
     'ALTER TABLE don_gc ADD COLUMN od_nguoi TEXT',
     'ALTER TABLE don_gc ADD COLUMN od_dd TEXT',
+  ],
+  /* ẢNH BIÊN BẢN: vay mượn, sắt vụn, gia công xuất đều bắt tick "đã có biên bản/đã chụp ảnh gửi
+     nhóm Zalo" nhưng ảnh thật không lưu trong app (xem src/anh.js). Bảng mới, không đổi bảng cũ;
+     ảnh thật nằm ở R2 (bucket ANH), bảng này chỉ giữ metadata để liệt kê nhanh theo dòng sổ. */
+  41: [
+    `CREATE TABLE IF NOT EXISTS anh_bb (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, loai TEXT NOT NULL CHECK (loai IN ('loan','satvun','gc')),
+       entity_id INTEGER NOT NULL, r2_key TEXT NOT NULL, ten TEXT, kich_thuoc INTEGER NOT NULL,
+       user_id INTEGER NOT NULL, user_name TEXT, ts INTEGER NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id)',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

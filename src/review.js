@@ -8,6 +8,7 @@ import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, b
 import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
 import { checkTransferStock, rutCtx } from './phieu.js';
 import { SV_CHO_SQL } from './satvun.js';
+import { anhJson, docAnh } from './anh.js';
 
 /* ========================= DUYỆT / CHỐT NGÀY =========================
    Một quy tắc duy nhất: chưa duyệt thì không vào tồn. Màn Duyệt vì thế không còn là màn
@@ -87,7 +88,7 @@ export async function computeReview(env, day, opt = {}) {
        Lần ghi có kèm phiếu kho thì KHÔNG lấy ở đây: phiếu đó đã nằm trong danh sách phiếu chờ
        duyệt, duyệt phiếu là duyệt luôn sổ — bày cả hai là một việc hiện thành hai. */
     db.prepare(`SELECT l.id, l.grp, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.ts, l.user_id, l.cap,
-                  l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so, ${UNAME}
+                  l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so, ${UNAME}, ${anhJson('loan', 'l.id')}
                 FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
                 WHERE l.voided = 0 AND l.duyet_ts IS NULL
                   AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay')
@@ -224,6 +225,16 @@ export async function computeReview(env, day, opt = {}) {
     pendBy[g].lines.push({ phi: r.phi_id, khu: r.khu_id, qty: r.qty });
   });
   const phieu = pendOrder.map((g) => pendBy[g]);
+  /* Phiếu kho của sổ vay mượn: lần ghi sổ đi kèm KHÔNG nằm ở mục sổ vay chờ duyệt (duyệt phiếu là duyệt luôn sổ), nên
+     ảnh biên bản của nó phải theo thẻ phiếu, kẻo người duyệt không thấy. Ảnh nằm ở dòng loans có id nhỏ nhất của nhóm
+     (như thẻ ở màn Vay mượn). Chỉ hỏi khi có phiếu vay chờ duyệt: hàm này còn chạy cho việc tự chốt mỗi giờ. */
+  const vayGrp = phieu.filter((v) => v.kind === 'vay' && v.grp).map((v) => v.grp);
+  if (vayGrp.length) {
+    const rs = (await db.prepare(`SELECT l.grp, l.id, ${anhJson('loan', 'l.id')} FROM loans l
+      WHERE l.id IN (SELECT MIN(id) FROM loans WHERE grp IN (SELECT value FROM json_each(?)) GROUP BY grp)`).bind(JSON.stringify(vayGrp)).all()).results.map(docAnh);
+    const by = Object.fromEntries(rs.map((x) => [x.grp, x]));
+    phieu.forEach((v) => { const x = v.kind === 'vay' && by[v.grp]; if (x) { v.loan_id = x.id; v.anh = x.anh; } });
+  }
   /* Một phiếu nhiều phi có NHIỀU dòng cùng một khu, nên phải lọc trùng: không lọc thì thẻ khu
      báo "còn 3 phiếu chờ duyệt" trong khi thực tế là một phiếu ba phi, và con số "việc cần xử lý"
      cũng phồng theo. Phiếu chuyển khu nằm ở cả hai khu là đúng — nó là một chứng từ của hai khu. */
@@ -362,8 +373,8 @@ export async function computeReview(env, day, opt = {}) {
       changed: slotSt.slot_changed_at && vnDay(slotSt.slot_changed_at) === day
         ? { at: slotSt.slot_changed_at, by: (slotByR.results[0] || {}).name || null } : null,
     },
-    loans: loanR.results,
-    satvun: svR.results,
+    loans: loanR.results.map(docAnh),
+    satvun: svR.results.map(docAnh),
     reports: repR.results.filter((r) => r.day === day), khu: khuR.results,
   };
 }

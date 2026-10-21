@@ -1,6 +1,7 @@
 // Đơn giao gia công cấu kiện: giao cho Tiểu đội trưởng, họ nhận, cập nhật tiến độ, xác nhận xong.
 import { DAY_RE, HttpError, bad, capOf, fmtDay, json, vnDay } from './core.js';
 import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js';
+import { anhJson, docAnh } from './anh.js';
 
 /* ========================= GIA CÔNG CẤU KIỆN =========================
    Tách hẳn khỏi phần đếm thép: đơn gia công KHÔNG đụng tới tồn, số đếm hay phiếu kho.
@@ -72,7 +73,7 @@ function docNguoi(d) {
   delete d.nguoi_json;
   d.nguoi = ds;
   d.uname = ds.map((n) => n.ten).join(', ');
-  return d;
+  return docAnh(d);
 }
 const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
 /* Tầng chỉ lưu phần riêng của nó: "1", "2", "B1", "Mái". Người giao gõ "Tầng 5" hay "5" đều thành "5", nên đơn
@@ -167,7 +168,11 @@ export async function gcList(env) {
 export async function gcView(env, id, user) {
   if (!Number.isInteger(id)) throw khongThay();
   const [don, log, muc, tn, doc] = await env.DB.batch([
-    env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id),
+    /* Ảnh biên bản xuất (xem src/anh.js) chỉ cần ở MÀN CHI TIẾT MỘT đơn, nên bọc riêng ở đây —
+       không nhét vào GC_SELECT: đường đó còn chạy cho gcList (bảng chung, UNION ALL ba nhánh, tải
+       lại mỗi lần ai cập nhật một đơn), thêm một subquery vào đó cho MỌI đơn chỉ để một màn chi
+       tiết dùng là phí. Cột ngoài phải gọi g.id: viết trơn "id" thì SQLite hiểu là a.id của anh_bb. */
+    env.DB.prepare(`SELECT g.*, ${anhJson('gc', 'g.id')} FROM (${GC_SELECT} WHERE d.id = ?) g`).bind(id),
     env.DB.prepare(`SELECT l.id, l.ts, l.viec, l.pct, l.note, COALESCE(u.name, '(đã xoá)') uname
                     FROM don_gc_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.don_id = ? ORDER BY l.id DESC`).bind(id),
     env.DB.prepare(MUC_SQL),

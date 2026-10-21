@@ -606,7 +606,26 @@ CREATE TABLE IF NOT EXISTS don_gc_doc (
 );
 INSERT OR IGNORE INTO meta (key, value) VALUES ('tn', 1);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 40);
+-- Ảnh biên bản đính kèm (bản 41, xem src/anh.js). Ảnh thật lưu ở R2 (bucket ANH), bảng này chỉ giữ
+-- metadata để liệt kê nhanh theo từng dòng sổ. loai + entity_id trỏ tới MỘT dòng ở loans / satvun /
+-- don_gc (không dùng khoá ngoại thật vì ba bảng khác nhau). r2_key sinh RANDOM lúc tải lên, không
+-- dùng id tự tăng của bảng này, để ghi được vào R2 trước rồi mới ghi dòng này (an toàn hơn chiều
+-- ngược lại: lỡ ghi R2 xong mà ghi DB lỗi thì chỉ orphan một object R2 vô hại, không phải một dòng
+-- DB trỏ tới ảnh không có thật).
+CREATE TABLE IF NOT EXISTS anh_bb (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  loai TEXT NOT NULL CHECK (loai IN ('loan','satvun','gc')),
+  entity_id INTEGER NOT NULL,
+  r2_key TEXT NOT NULL,
+  ten TEXT,
+  kich_thuoc INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  user_name TEXT,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id);
+
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 41);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

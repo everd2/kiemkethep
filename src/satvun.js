@@ -2,6 +2,7 @@
 import { CAP_TREN, DAY_RE, HttpError, bad, capOf, daysBetween, duyetCap, duyetCuaNguoi, fmtDay, json, vnDay } from './core.js';
 import { CSV_HEAD, UNAME, auditStmt, batchGuarded, bump, csvDec, csvRow, guardStmt, readJson } from './helpers.js';
 import { bbKhoa } from './loans.js';
+import { anhJson, docAnh } from './anh.js';
 
 /* ========================= SẮT VỤN XUẤT RA NGOÀI =========================
    Sắt vụn là thép thừa, đầu mẩu TRỘN NHIỀU PHI, nên chỉ có KHỐI LƯỢNG (cân theo tấn), không có số cây.
@@ -160,7 +161,7 @@ export async function svView(env, url) {
   const K = svKy(url ? url.searchParams.get('ky') : '', nam);
   const tu = (() => { const [y, m] = thang.split('-').map(Number); const t = (y * 12 + m - 1) - 12; return Math.floor(t / 12) + '-' + String(t % 12 + 1).padStart(2, '0'); })();
   const [itemR, thangR, khuR, noiR, tongR] = await env.DB.batch([
-    env.DB.prepare(`SELECT ${SV_COLS} FROM satvun s LEFT JOIN users u ON u.id = s.user_id
+    env.DB.prepare(`SELECT ${SV_COLS}, ${anhJson('satvun', 's.id')} FROM satvun s LEFT JOIN users u ON u.id = s.user_id
                     WHERE (s.voided = 0 AND s.duyet_ts IS NULL) OR ${K.thang
                       ? '(s.ngay >= ?1 AND s.ngay < ?2)'
                       : '(?1 = ?1 AND ?2 = ?2 AND s.id >= COALESCE((SELECT MIN(id) FROM (SELECT id FROM satvun ORDER BY id DESC LIMIT 300)), 0))'}
@@ -176,7 +177,7 @@ export async function svView(env, url) {
   // nơi nhận gần đây, cho nút chọn nhanh (tên gõ lại mỗi lần dễ lệch chữ, thống kê theo nơi nhận bị tách đôi)
   const noiGan = (await env.DB.prepare('SELECT noi FROM satvun WHERE voided = 0 GROUP BY noi ORDER BY MAX(id) DESC LIMIT 8').all()).results.map((x) => x.noi);
   const kyTong = khuR.results.reduce((a, x) => ({ n: a.n + x.n, kg: a.kg + x.kg }), { n: 0, kg: 0 });
-  return json({ items: itemR.results, thang: thangR.results, khu: khuR.results, noi: noiR.results, tong: tongR.results[0], noiGan, nam, thangNay: thang, ky: K.ky, kyTong });
+  return json({ items: itemR.results.map(docAnh), thang: thangR.results, khu: khuR.results, noi: noiR.results, tong: tongR.results[0], noiGan, nam, thangNay: thang, ky: K.ky, kyTong });
 }
 
 /* TỆP EXCEL: mọi lần xuất từ trước tới nay (cả chờ duyệt và đã huỷ, có cột trạng thái), rồi tổng theo tháng
@@ -222,4 +223,5 @@ export async function svCsv(env) {
 }
 
 // lần xuất chờ duyệt (cho Tổng quan và màn Duyệt)
-export const SV_CHO_SQL = `SELECT ${SV_COLS} FROM satvun s LEFT JOIN users u ON u.id = s.user_id WHERE s.voided = 0 AND s.duyet_ts IS NULL ORDER BY s.id`;
+// lần xuất chờ duyệt cho màn Duyệt: kèm ảnh biên bản / phiếu cân để người duyệt đối chiếu ngay tại đó
+export const SV_CHO_SQL = `SELECT ${SV_COLS}, ${anhJson('satvun', 's.id')} FROM satvun s LEFT JOIN users u ON u.id = s.user_id WHERE s.voided = 0 AND s.duyet_ts IS NULL ORDER BY s.id`;

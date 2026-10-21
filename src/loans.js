@@ -4,6 +4,7 @@ import { CSV_HEAD, DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, LOAN_AM_COND, UN
   loanAmErr, loanAmRows, qtyWord, readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
 import { checkTransferStock, receiptCtx } from './phieu.js';
+import { anhJson, docAnh } from './anh.js';
 
 /* ========================= VAY MƯỢN NGOÀI BÃI =========================
    Sổ công nợ thép với đối tác NGOÀI bãi — KHÔNG đụng tới tồn kho (counts/receipts), xem chú thích
@@ -358,7 +359,7 @@ export async function loansView(env, url) {
            COALESCE((SELECT uv.name FROM users uv WHERE uv.id = l.voided_by), l.voided_name) voided_uname, l.voided_note,
            l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so,
            l.user_id, l.cap, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
-           (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' LIMIT 1) kho
+           (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' LIMIT 1) kho, ${anhJson('loan', 'l.id')}
          FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
            ${DUYET_JOIN_LOAN}
          WHERE l.doitac_id = ? ORDER BY l.ngay DESC, l.id DESC LIMIT 2000`
@@ -367,14 +368,14 @@ export async function loansView(env, url) {
     ]);
     if (!dR.results[0]) throw new HttpError(404, 'Không tìm thấy đối tác');
     const lotR = await env.DB.prepare(LOAN_LOT_SQL.replace('ORDER BY', 'AND doitac_id = ? ORDER BY')).bind(dtId).all();
-    return json({ doitac: dR.results, items: itemR.results, agg: aggR.results, chiTiet: true, lots: loanLots(lotR.results, vnDay()) });
+    return json({ doitac: dR.results, items: itemR.results.map(docAnh), agg: aggR.results, chiTiet: true, lots: loanLots(lotR.results, vnDay()) });
   }
   const [dR, itemR, aggR] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, active FROM doitac ORDER BY name'),
     env.DB.prepare(
       `SELECT l.id, l.doitac_id, d.name doitac_name, l.phi_id, l.kind, l.qty, l.note, l.grp,
          l.ngay, l.han, l.so_bb, l.nguoi, l.bien_so, l.user_id, l.cap, ${UNAME}, l.ts, l.duyet_ts, l.duyet_by, ${DUYET_NAME_LOAN},
-         (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' AND r.voided = 0 LIMIT 1) kho
+         (SELECT r.khu_id FROM receipts r WHERE r.grp = l.grp AND r.kind = 'vay' AND r.voided = 0 LIMIT 1) kho, ${anhJson('loan', 'l.id')}
        FROM loans l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN doitac d ON d.id = l.doitac_id
          ${DUYET_JOIN_LOAN}
        WHERE l.voided = 0
@@ -386,7 +387,7 @@ export async function loansView(env, url) {
     env.DB.prepare('SELECT doitac_id, phi_id, kind, SUM(qty) q FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL GROUP BY doitac_id, phi_id, kind'),
   ]);
   const lotR = await env.DB.prepare(LOAN_LOT_SQL).all();
-  return json({ doitac: dR.results, items: itemR.results, agg: aggR.results, lots: loanLots(lotR.results, vnDay()) });
+  return json({ doitac: dR.results, items: itemR.results.map(docAnh), agg: aggR.results, lots: loanLots(lotR.results, vnDay()) });
 }
 
 /* TỆP EXCEL CỦA CẢ SỔ: mọi lần ghi từ trước tới nay (cả chờ duyệt và đã huỷ, có cột trạng thái), rồi

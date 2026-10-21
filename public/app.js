@@ -1653,6 +1653,7 @@ function loanSec(R) {
         <span>${esc(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '))}</span>
         ${ct ? `<span class="sm">${ct}</span>` : ''}
         <span class="sm muted">${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>
+        ${anhStrip('loan', id, loanAnh(rows, id))}
         ${R.closed ? '' : duyetDuoc(r0) ? `<div class="row gap6"><button class="btn s ok f1" data-a="lduyet" data-id="${id}">DUYỆT</button><button class="btn s bad f1" data-a="lvoid" data-id="${id}">TỪ CHỐI</button></div>` : choCapTren('Lần ghi do CVKTHT hoặc cấp trên ghi')}</div>`;
     }).join('')}</div>`;
 }
@@ -1665,6 +1666,7 @@ function svSec(R) {
     ${L.map((r) => `<div class="card col gap6"><b>${ngayNgan(r.ngay)} · ${svT(r.kg)} tấn → ${esc(r.noi)}</b>
       <span class="sm">${esc(svCt(r))}</span>
       <span class="sm muted">${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>
+      ${anhStrip('satvun', r.id, r.anh)}
       ${R.closed ? '' : `<div class="row gap6"><button class="btn s ok f1" data-a="svduyet" data-id="${r.id}">DUYỆT</button><button class="btn s bad f1" data-a="svvoid" data-id="${r.id}">TỪ CHỐI</button></div>`}</div>`).join('')}</div>`;
 }
 
@@ -1729,6 +1731,7 @@ function vDuyet() {
     return `<div class="card ${dc ? 'bad' : 'warn'} col gap8"><div class="col" style="gap:2px"><b style="font-size:18px">${title}</b>
       <span style="font-size:16px">${esc(kemTan(what, kg))}</span>
       <span class="sm muted">${esc(v.uname)} · ${hhmm(v.ts)}${cuNgay}${v.note ? ' · ' + esc(v.note) : ''}</span>${canhBao}</div>
+      ${vay && v.loan_id ? anhStrip('loan', v.loan_id, v.anh) : ''}
       ${R.closed ? '' : duyetCap(v.cap) ? `<div class="row gap6"><button class="btn s ok f1" data-a="pduyet" data-id="${v.id}">DUYỆT PHIẾU</button><button class="btn s bad f1" data-a="preject" data-id="${v.id}">TỪ CHỐI</button></div>` : choCapTren('Phiếu kho')}</div>`;
   };
   // phiếu kho chỉ cấp chỉ huy duyệt: người khác không có việc gì ở mục này (khu bị vướng phiếu đã tự nói)
@@ -2094,6 +2097,10 @@ const loanAuditTxt = (d) => (d.doitac ? loanTitle(d.kind, d.doitac) : ((LOAN_KIN
   + (d.lines && d.lines.length ? ': ' + lineTxt(d) : '') + (d.ly_do ? ' · lý do: ' + d.ly_do : '');
 const gcAuditTxt = (d) => (d.cau_kien || '') + (d.truc ? ' (trục ' + d.truc + ')' : '');
 const svAuditTxt = (d) => (d.ngay ? fmtDay(d.ngay) + ' · ' : '') + svT(d.kg || 0) + ' tấn cho ' + (d.noi || '?') + (d.so_phieu ? ' (phiếu ' + d.so_phieu + ')' : '') + (d.ly_do ? ' · lý do: ' + d.ly_do : '');
+// ảnh của dòng sổ nào: "sổ vay 21/10/2026 · BB BB-01 · Cty Hoà Bình", "sắt vụn ... · phiếu PC-1 · Cty A", "đơn gia công Dầm D1 · X1-X2"
+const anhAuditTxt = (d) => ({ loan: 'sổ vay', satvun: 'sắt vụn', gc: 'đơn gia công' }[d.loai] || 'sổ')
+  + [d.ngay ? fmtDay(d.ngay) : '', d.so_bb ? (d.loai === 'satvun' ? 'phiếu ' : 'BB ') + d.so_bb : '', d.ten || ''].filter(Boolean).map((x, i) => (i ? ' · ' : ' ') + x).join('')
+  + (d.ngay || d.so_bb || d.ten ? '' : ' #' + (d.entity_id || '?'));
 function fmtAudit(a) {
   let d = {};
   try { d = a.detail ? JSON.parse(a.detail) : {}; } catch (e) { d = {}; }
@@ -2175,6 +2182,9 @@ function fmtAudit(a) {
       + [1, 2].map((c) => (qsSoNghi(d['n' + c]) ? `, nghỉ ${CA_TEN[c]} ${qsSoNghi(d['n' + c])} (${qsLyDoTxt(d['n' + c], QS_LY_DO)})` : '')).join(''), 'qs'],
     qs_thutu: ['xếp lại thứ tự ' + (d.n || 0) + ' tổ', 'qs'],
     qs_han: ['đổi hạn báo quân số: ca ngày trước ' + phutGio(d.ca1 || 0) + ', ca đêm trước ' + phutGio(d.ca2 || 0), 'qs'],
+    // ảnh biên bản: theo chip của sổ chứa ảnh; XOÁ ảnh là xoá chứng từ nên vào "Cần chú ý"
+    anh_bb_add: ['thêm ảnh biên bản ' + anhAuditTxt(d), d.loai === 'gc' ? 'gc' : 'vay'],
+    anh_bb_xoa: ['xoá ảnh biên bản ' + anhAuditTxt(d) + (d.cua ? ' (ảnh ' + d.cua + ' tải lên)' : ''), 'flag'],
     doitac_create: ['thêm đối tác ' + d.name, 'vay'],
     doitac_update: ['sửa đối tác ' + d.name + (d.active ? '' : ' (ẩn)'), 'vay'],
     khu_create: ['thêm ' + d.name, 'admin'], khu_update: ['sửa ' + d.name + (d.active ? '' : ' (ẩn)'), 'admin'],
@@ -2520,6 +2530,8 @@ function hanTxt(han, conNo) {
     : n <= 3 ? `<b style="color:var(--warn)">${n === 0 ? 'đến hạn hôm nay' : 'còn ' + n + ' ngày'}</b> (hẹn ${ngayNgan(han)})`
     : `hẹn trả ${ngayNgan(han)}`;
 }
+// ảnh của một lần ghi nằm ở dòng có id NHỎ NHẤT của nhóm (cùng id mà nút thêm ảnh gửi lên), không phải rows[0]
+const loanAnh = (rows, id) => { const r = rows.find((x) => x.id === id); return (r && r.anh) || []; };
 function loanCard(rows) {
   const b = S.boot;
   const r0 = rows[0], cho = !r0.duyet_ts, mine = r0.user_id === S.me.id, huy = !!r0.voided;
@@ -2545,7 +2557,7 @@ function loanCard(rows) {
     r0.kho ? 'phiếu kho ' + esc(kName(r0.kho)) : ''].filter(Boolean).join(' · ');
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
     ${esc(kemTan(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '), kg))}<br>
-    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${nut}</div>`;
+    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${anhStrip('loan', id, loanAnh(rows, id), !huy)}${nut}</div>`;
 }
 // gom các dòng cùng lần ghi (grp), giữ thứ tự mới nhất trước như server trả về
 const loanGroups = (items) => {
@@ -2708,7 +2720,7 @@ function svCard(r) {
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r.voided_uname ? ' · ' + esc(r.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>'
     : `<span class="badge ok">Đã duyệt${r.duyet_uname ? ' · ' + esc(r.duyet_uname) : ''}</span>`;
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
-    <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${nut}</div>`;
+    <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${anhStrip('satvun', r.id, r.anh, !huy)}${nut}</div>`;
 }
 function vSatVun() {
   const b = S.boot, V = S.svs, F = S.sv;
@@ -3246,9 +3258,11 @@ function vGcDon() {
       <span><b>Xuất cho:</b> ${esc(d.xuat_cho || '')}</span>
       <span class="sm">✓ Đã ký biên bản giao nhận · ✓ Đã kiểm đếm · ✓ Đã chụp ảnh gửi nhóm</span>
       ${d.xuat_note ? `<span class="sm">Ghi chú: ${esc(d.xuat_note)}</span>` : ''}
+      ${anhStrip('gc', d.id, d.anh)}
       ${!gcCuaToi(d) && isQL() ? '<div class="row gap6"><button class="btn ok f1" data-a="gcduyetxuat">DUYỆT XUẤT</button><button class="btn bad f1" data-a="gctuchoixuat">Không duyệt</button></div>' : '<span class="sm muted">Chờ CVKTHT trở lên duyệt.</span>'}</div>`
     : `<div class="card ok col gap6" style="padding:10px 12px"><b>Đã xuất</b><span><b>Xuất cho:</b> ${esc(d.xuat_cho || '')}</span>
-      <span class="sm">${d.xuat_name ? esc(d.xuat_name) + ' gửi ' + dmy(d.xuat_ts) + ' · ' : ''}${d.xuat_duyet_name ? esc(d.xuat_duyet_name) + ' duyệt ' + dmy(d.xuat_duyet_ts) : 'duyệt ' + (d.xuat_duyet_ts ? dmy(d.xuat_duyet_ts) : '')}</span></div>`;
+      <span class="sm">${d.xuat_name ? esc(d.xuat_name) + ' gửi ' + dmy(d.xuat_ts) + ' · ' : ''}${d.xuat_duyet_name ? esc(d.xuat_duyet_name) + ' duyệt ' + dmy(d.xuat_duyet_ts) : 'duyệt ' + (d.xuat_duyet_ts ? dmy(d.xuat_duyet_ts) : '')}</span>
+      ${anhStrip('gc', d.id, d.anh)}</div>`;
   const choTl = d.cho_tl && mo ? `<div class="card warn col gap6" style="padding:8px 12px"><b>Chờ ${esc(gcTenNguoi(d))} trả lời</b><span class="sm">Người giao đã hỏi và cần câu trả lời. Xem ở mục Trao đổi bên dưới.</span></div>` : '';
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${thongTin}${xuat}${choTl}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
@@ -4761,7 +4775,7 @@ function vMain() {
   }
   const showToast = S.toast && S.screen !== 'dem';
   const noTabs = S.screen === 'dem' && S.sel;
-  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}${gcVgHtml()}${gcXuatHtml()}`;
+  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}${gcVgHtml()}${gcXuatHtml()}${anhXemHtml()}`;
 }
 
 function render() {
@@ -4925,6 +4939,123 @@ async function download(path, fname) {
   } catch (e) { say(e.net ? 'Không có kết nối mạng' : e.message, true); }
   finally { S.busy = false; S.busyMsg = ''; }
   render();
+}
+
+/* ========================= ẢNH BIÊN BẢN =========================
+   Đính ảnh SAU khi ghi sổ, từ chính dòng sổ đang xem (loanCard, svCard, màn chi tiết đơn gia công
+   xuất) — không chặn lúc ghi sổ, không có bước tìm/khớp ảnh với dòng nào. Xem src/anh.js. */
+// Co ảnh về tối đa 1600px cạnh dài, JPEG 75%: đủ đọc chữ trên biên bản mà còn vài trăm KB, quan
+// trọng vì bãi sóng yếu (xem đầu worker.js) và giữ hạn mức lưu trữ R2 free dùng được nhiều năm.
+function resizeAnh(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1600;
+      const ty = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * ty)), h = Math.max(1, Math.round(img.naturalHeight * ty));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      // nền trắng: PNG trong suốt (ảnh chụp màn hình) sang JPEG thì phần trong suốt thành ĐEN, chữ đen biến mất
+      g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+      g.drawImage(img, 0, 0, w, h);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error('Không đọc được ảnh'))), 'image/jpeg', 0.75);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Máy không đọc được ảnh "' + (file.name || '') + '". Chụp lại bằng camera, hoặc chọn ảnh JPEG/PNG.')); };
+    img.src = url;
+  });
+}
+// Tải lần lượt từng ảnh (không đồng thời, như mọi request khác của app — giữ đúng một vòng mạng
+// mỗi lúc cho mạng yếu ở bãi). Trả về số ảnh tải thành công; lỗi từng ảnh chỉ báo rồi bỏ qua ảnh đó.
+const ANH_CHO_MS = 60e3; // mỗi ảnh (vài trăm KB): quá hạn này coi như rớt mạng, không để màn "đang tải" treo mãi
+async function anhTaiLen(loai, id, files) {
+  let okN = 0;
+  for (const f of Array.from(files || [])) {
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const hen = ctl ? setTimeout(() => ctl.abort(), ANH_CHO_MS) : 0;
+    try {
+      const blob = await resizeAnh(f);
+      let r;
+      try {
+        r = await fetch('/api/anh/' + loai + '/' + id, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'image/jpeg' }, body: blob, ...(ctl ? { signal: ctl.signal } : {}) });
+      } catch (e) { throw new Error(ctl && ctl.signal.aborted ? 'Mạng quá chậm, chưa tải được ảnh. Thử lại khi sóng khá hơn.' : 'Không có kết nối mạng'); }
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Không tải ảnh lên được (lỗi ' + r.status + ')'); }
+      okN++;
+    } catch (e) { say(e.message || 'Không tải ảnh lên được', true); }
+    finally { if (hen) clearTimeout(hen); }
+  }
+  return okN;
+}
+// Nạp lại đúng màn đang giữ dòng sổ đó, giống reloadLoanScreen/svReload/gcDo — ảnh mới (hay vừa
+// xoá) hiện ra nhờ anh_json đi kèm sẵn trong /loans, /satvun, /giacong (xem docAnh ở src/anh.js).
+async function anhTai(loai, eid) {
+  if (loai === 'loan') return reloadLoanScreen();
+  if (loai === 'satvun') return svReload();
+  if (loai === 'gc') { if (S.screen === 'giacong') S.gc = await api('GET', '/giacong'); else S.gcDetail = await api('GET', '/giacong/' + eid); }
+}
+/* Mảng ảnh của một dòng sổ (loai + id) cho hộp xem lớn. Cùng một dòng có thể nằm ở nhiều bản trong máy (sổ vay,
+   chi tiết đối tác, màn Duyệt) mà chỉ bản của MÀN ĐANG MỞ là mới (anhTai chỉ nạp lại màn đó), nên dò bản đó
+   trước. Gia công: chỉ màn chi tiết đơn có ảnh — bảng chung cố ý không kèm (luôn rỗng), không được dò ở đó. */
+function anhListCuaDong(loai, eid) {
+  eid = Number(eid);
+  const sc = S.screen, it = (x) => (x && x.items) || [];
+  // màn Duyệt: sổ vay chờ duyệt, và lần ghi sổ đi kèm phiếu kho vay mượn (ảnh theo thẻ phiếu, xem computeReview)
+  const R = S.review || {};
+  const nguon = loai === 'loan' ? (sc === 'duyet' ? [R.loans || [], (R.phieu || []).filter((v) => v.loan_id).map((v) => ({ id: v.loan_id, anh: v.anh }))] : sc === 'vaychitiet' ? [it(S.loanDetail)] : [it(S.loans)])
+    : loai === 'satvun' ? (sc === 'duyet' ? [R.satvun || []] : [it(S.svs)])
+    : loai === 'gc' ? [S.gcDetail && S.gcDetail.don ? [S.gcDetail.don] : []] : [];
+  const r = [].concat(...nguon).find((x) => x && x.id === eid);
+  return (r && r.anh) || [];
+}
+// Dải thumbnail + nút thêm ảnh, chèn ngay vào đúng dòng sổ đang hiện (list đã có r.anh JOIN sẵn từ
+// server, không cần tải riêng). Bấm thumbnail mở lớn (anhxem). themDuoc = false (dòng đã huỷ): chỉ xem.
+function anhStrip(loai, id, list, themDuoc = true) {
+  const ds = list || [];
+  if (!ds.length && !themDuoc) return '';
+  return `<div class="row gap6" style="flex-wrap:wrap;align-items:center;margin-top:4px">
+    ${ds.map((a, i) => `<button class="btn s" style="padding:0;width:48px;height:48px;overflow:hidden;border-radius:6px;flex:none" data-a="anhxem" data-loai="${loai}" data-eid="${id}" data-i="${i}" aria-label="Xem ảnh biên bản ${i + 1}"><img src="/api/anh/${a.id}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></button>`).join('')}
+    ${themDuoc ? `<button class="chip s" data-a="anhpick" data-loai="${loai}" data-eid="${id}">${ds.length ? '+ Thêm ảnh' : '📷 Thêm ảnh biên bản'}</button>` : ''}
+  </div>`;
+}
+/* Ô chọn tệp tạo RIÊNG, ngoài vùng app vẽ lại: người dùng ở trong camera cả chục giây, vòng tự làm mới mà vẽ lại
+   màn thì ô nằm trong HTML bị thay, sự kiện change rơi vào phần tử đã tách khỏi trang và ảnh chụp xong mất lặng
+   lẽ. Không đặt capture: trên Android nó chỉ mở camera, không chọn được ảnh có sẵn (ảnh đã gửi nhóm Zalo). */
+function anhChon(loai, eid) {
+  // bấm huỷ trong hộp chọn thì trình duyệt không báo change: ô của lần trước còn nằm lại, gỡ ở đây
+  if (anhChon.inp) anhChon.inp.remove();
+  const inp = anhChon.inp = document.createElement('input');
+  // ẩn bằng cách đẩy ra ngoài màn, KHÔNG display:none: vài bản Safari iOS không mở hộp chọn cho ô display:none
+  inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+  inp.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0';
+  inp.onchange = () => {
+    const files = Array.from(inp.files || []);
+    inp.remove();
+    if (!files.length) return;
+    if (S.busy) { say('Đang bận một việc khác, chờ xong rồi thêm ảnh lại.', true); render(); return; }
+    act(async () => {
+      const okN = await anhTaiLen(loai, eid, files);
+      if (okN) { await anhTai(loai, Number(eid)); say(okN === files.length ? `Đã thêm ${okN} ảnh.` : `Đã thêm ${okN}/${files.length} ảnh.`, okN !== files.length); }
+    }, '', 'Đang tải ảnh lên...');
+  };
+  document.body.appendChild(inp);
+  inp.click();
+}
+// Xem lớn / tải xuống / xoá — một ảnh tại một thời điểm, điều hướng Trước/Sau nếu dòng có nhiều ảnh.
+function anhXemHtml() {
+  const X = S.anhXem;
+  if (!X || S.ask) return '';
+  const ds = anhListCuaDong(X.loai, X.eid);
+  if (!ds.length) return '';
+  const i = Math.max(0, Math.min(X.i, ds.length - 1));
+  const a = ds[i];
+  return `<div class="modal" role="dialog" aria-modal="true" aria-label="Ảnh biên bản"><div class="box col gap8" style="align-items:center">
+    <img src="/api/anh/${a.id}" alt="Ảnh biên bản" style="max-width:100%;max-height:60vh;border-radius:8px;object-fit:contain">
+    ${ds.length > 1 ? `<div class="row gap6"><button class="btn s" data-a="anhnav" data-d="-1" ${i === 0 ? 'disabled' : ''}>‹ Trước</button><span class="sm muted">${i + 1}/${ds.length}</span><button class="btn s" data-a="anhnav" data-d="1" ${i === ds.length - 1 ? 'disabled' : ''}>Sau ›</button></div>` : ''}
+    <div class="row gap6 full"><button class="btn s f1" data-a="anhtaixuong" data-id="${a.id}">Tải xuống</button><button class="btn s bad f1" data-a="anhxoa" data-id="${a.id}">Xoá</button></div>
+    <button class="btn full" data-a="anhdong">Đóng</button>
+  </div></div>`;
 }
 
 // mã ngẫu nhiên 16 chữ hex cho khoá chống ghi trùng của phiếu kho
@@ -5952,6 +6083,24 @@ const ACTIONS = {
     const d = S.gcDetail && S.gcDetail.don; if (!d) return;
     const ly = await askText(`Không duyệt xuất "${d.cau_kien}"?\nĐơn về "chưa xuất", tổ sửa rồi gửi lại. Ghi lý do.`, 'KHÔNG DUYỆT', 'Lý do (ví dụ: thiếu chữ ký bên nhận)', 'Phải ghi lý do.');
     if (ly) gcDo('tuchoixuat', { ly_do: ly }, 'Đã trả lại cho tổ.');
+  },
+  // ảnh biên bản (xem đầu mục ẢNH BIÊN BẢN phía trên)
+  anhpick(d) { anhChon(d.loai, d.eid); },
+  anhxem(d) { S.anhXem = { loai: d.loai, eid: Number(d.eid), i: Number(d.i) || 0 }; render(); },
+  anhnav(d) { if (S.anhXem) S.anhXem.i += Number(d.d); render(); },
+  anhdong() { S.anhXem = null; render(); },
+  anhtaixuong(d) { download('/anh/' + d.id + '?dl=1', 'bien-ban-' + d.id + '.jpg'); },
+  async anhxoa(d) {
+    if (!(await ask('Xoá ảnh này?', 'XOÁ', true))) return;
+    const X = S.anhXem;
+    act(async () => {
+      await api('DELETE', '/anh/' + d.id);
+      if (X) {
+        await anhTai(X.loai, X.eid);
+        const ds = anhListCuaDong(X.loai, X.eid);
+        if (!ds.length) S.anhXem = null; else S.anhXem.i = Math.min(X.i, ds.length - 1);
+      }
+    }, 'Đã xoá ảnh.');
   },
   // hiển thị: danh sách gọn / thẻ; thu gọn / mở một nhóm
   gcgon() { S.gcHien = null; S.gcGon = !gcGon(); try { localStorage.setItem('kt:gcgon', S.gcGon ? '1' : ''); } catch (e) { /* đầy bộ nhớ */ } render(); },
