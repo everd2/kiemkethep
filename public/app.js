@@ -1653,7 +1653,7 @@ function loanSec(R) {
         <span>${esc(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '))}</span>
         ${ct ? `<span class="sm">${ct}</span>` : ''}
         <span class="sm muted">${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>
-        ${anhStrip('loan', id, loanAnh(rows, id))}
+        ${anhStrip('loan', id, loanAnh(rows, id), false, true)}
         ${R.closed ? '' : duyetDuoc(r0) ? `<div class="row gap6"><button class="btn s ok f1" data-a="lduyet" data-id="${id}">DUYỆT</button><button class="btn s bad f1" data-a="lvoid" data-id="${id}">TỪ CHỐI</button></div>` : choCapTren('Lần ghi do CVKTHT hoặc cấp trên ghi')}</div>`;
     }).join('')}</div>`;
 }
@@ -1666,7 +1666,7 @@ function svSec(R) {
     ${L.map((r) => `<div class="card col gap6"><b>${ngayNgan(r.ngay)} · ${svT(r.kg)} tấn → ${esc(r.noi)}</b>
       <span class="sm">${esc(svCt(r))}</span>
       <span class="sm muted">${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>
-      ${anhStrip('satvun', r.id, r.anh)}
+      ${anhStrip('satvun', r.id, r.anh, false, true)}
       ${R.closed ? '' : `<div class="row gap6"><button class="btn s ok f1" data-a="svduyet" data-id="${r.id}">DUYỆT</button><button class="btn s bad f1" data-a="svvoid" data-id="${r.id}">TỪ CHỐI</button></div>`}</div>`).join('')}</div>`;
 }
 
@@ -1731,7 +1731,7 @@ function vDuyet() {
     return `<div class="card ${dc ? 'bad' : 'warn'} col gap8"><div class="col" style="gap:2px"><b style="font-size:18px">${title}</b>
       <span style="font-size:16px">${esc(kemTan(what, kg))}</span>
       <span class="sm muted">${esc(v.uname)} · ${hhmm(v.ts)}${cuNgay}${v.note ? ' · ' + esc(v.note) : ''}</span>${canhBao}</div>
-      ${vay && v.loan_id ? anhStrip('loan', v.loan_id, v.anh) : ''}
+      ${vay && v.loan_id ? anhStrip('loan', v.loan_id, v.anh, false, true) : ''}
       ${R.closed ? '' : duyetCap(v.cap) ? `<div class="row gap6"><button class="btn s ok f1" data-a="pduyet" data-id="${v.id}">DUYỆT PHIẾU</button><button class="btn s bad f1" data-a="preject" data-id="${v.id}">TỪ CHỐI</button></div>` : choCapTren('Phiếu kho')}</div>`;
   };
   // phiếu kho chỉ cấp chỉ huy duyệt: người khác không có việc gì ở mục này (khu bị vướng phiếu đã tự nói)
@@ -2558,7 +2558,7 @@ function loanCard(rows) {
   // chữ và dải ảnh chung MỘT cột bên trái: .li là hàng space-between, dải ảnh đứng riêng sẽ thành cột giữa ép chữ hẹp lại
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
     ${esc(kemTan(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '), kg))}<br>
-    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${anhStrip('loan', id, loanAnh(rows, id), !huy)}</div>${nut}</div>`;
+    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${anhStrip('loan', id, loanAnh(rows, id), !huy && mine)}</div>${nut}</div>`;
 }
 // gom các dòng cùng lần ghi (grp), giữ thứ tự mới nhất trước như server trả về
 const loanGroups = (items) => {
@@ -2673,7 +2673,8 @@ function vVayMuon() {
     <input class="inp s" id="lnote" maxlength="200" placeholder="Ghi chú thêm (không bắt buộc)" data-model="lnote" value="${esc(S.form.lnote || '')}">
     ${tickBox('bb', F.bb, 'Đã có biên bản giao nhận')}
     ${tickBox('zl', F.zl, 'Đã gửi biên bản lên nhóm Zalo')}
-    <button class="btn ${F.bb && F.zl ? 'pri' : 'dis'} full" style="min-height:56px;font-size:18px" data-a="lsave">GHI SỔ</button>
+    ${anhChoHtml('loan')}
+    <button class="btn ${F.bb && F.zl ? 'pri' : 'dis'} full" style="min-height:56px;font-size:18px" data-a="lsave">GHI SỔ${anhCho('loan').length ? ` + GỬI ${anhCho('loan').length} ẢNH` : ''}</button>
     ${F.bb && F.zl ? '' : '<span class="sm muted" style="line-height:1.4">Đánh dấu đủ hai ô trên mới ghi sổ được: biên bản giao nhận là chứng từ gốc, sổ này chỉ là bản ghi nhớ.</span>'}</div>`;
 
   /* --- Lịch sử, gom theo lần ghi (grp) để duyệt/huỷ cả lần như một phiếu --- */
@@ -2688,6 +2689,7 @@ function vVayMuon() {
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${vmTabs('vaymuon')}
     ${F.done ? `<div class="card warn col gap6"><b style="font-size:18px">Đã ghi sổ · chờ cấp trên duyệt</b><span>${esc(F.done)}</span><span class="sm">Chỉ tính vào dư nợ sau khi được duyệt.</span></div>` : ''}
+    ${anhLoiHtml('loan')}
     <h2 class="sec">Công nợ hiện tại</h2>${duNo}
     ${form}
     ${cho.length ? `<h2 class="sec">Chờ duyệt (${cho.length})</h2><div class="card" style="padding:0;overflow:hidden">${cho.map(loanCard).join('')}</div>` : ''}
@@ -2721,7 +2723,7 @@ function svCard(r) {
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r.voided_uname ? ' · ' + esc(r.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>'
     : `<span class="badge ok">Đã duyệt${r.duyet_uname ? ' · ' + esc(r.duyet_uname) : ''}</span>`;
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
-    <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${anhStrip('satvun', r.id, r.anh, !huy)}</div>${nut}</div>`;
+    <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${anhStrip('satvun', r.id, r.anh, !huy && mine)}</div>${nut}</div>`;
 }
 function vSatVun() {
   const b = S.boot, V = S.svs, F = S.sv;
@@ -2767,12 +2769,14 @@ function vSatVun() {
     <input class="inp s" id="svphieu" maxlength="40" placeholder="Số phiếu cân / biên bản (bắt buộc)" data-model="svphieu" value="${esc(fv('svphieu', ''))}">
     <div class="row gap6"><input class="inp s f1" id="svnguoi" maxlength="60" placeholder="Người nhận" data-model="svnguoi" value="${esc(fv('svnguoi', ''))}" style="min-width:0"><input class="inp s" id="svbienso" maxlength="20" placeholder="Biển số xe" data-model="svbienso" value="${esc(fv('svbienso', ''))}" style="width:130px"></div>
     <input class="inp s" id="svnote" maxlength="200" placeholder="Ghi chú (không bắt buộc)" data-model="svnote" value="${esc(fv('svnote', ''))}">
-    <button class="btn pri full" style="min-height:56px;font-size:18px" data-a="svsave">GHI SỔ</button></div>`;
+    ${anhChoHtml('satvun')}
+    <button class="btn pri full" style="min-height:56px;font-size:18px" data-a="svsave">GHI SỔ${anhCho('satvun').length ? ` + GỬI ${anhCho('satvun').length} ẢNH` : ''}</button></div>`;
   const items = V.items || [];
   const cho = items.filter((r) => !r.duyet_ts && !r.voided), ls = items.filter((r) => r.duyet_ts || r.voided);
   return `${top}<div class="f1 scroll pad col gap12" id="body">
     ${vmTabs('satvun')}
     ${F.done ? `<div class="card warn col gap6"><b style="font-size:18px">Đã ghi · chờ cấp trên duyệt</b><span>${esc(F.done)}</span><span class="sm">Chỉ tính vào thống kê sau khi được duyệt.</span></div>` : ''}
+    ${anhLoiHtml('satvun')}
     ${tong}
     ${form}
     ${cho.length ? `<h2 class="sec">Chờ duyệt (${cho.length})</h2><div class="card" style="padding:0;overflow:hidden">${cho.map(svCard).join('')}</div>` : ''}
@@ -3179,6 +3183,7 @@ function vGiaCong() {
       <span style="flex:none;width:1px;align-self:stretch;background:var(--line)"></span>
       ${F.map((f) => `<button class="chip s ${cur[0] === f[0] ? 'on' : ''}" ${nho}${cur[0] === f[0] ? ' data-cur="1"' : ''} data-a="gcf" data-v="${f[0]}">${f[1]} ${f[2].length}</button>`).join('')}</div></div>
   <div class="f1 scroll pad col gap12" id="body">
+    ${anhLoiHtml('gc')}
     <div class="col gap12" data-gcds="1"${q ? ' style="display:none"' : ''}>${khoiBiet}${nhom || (khoiBiet ? '' : `<div class="muted">${trong}</div>`)}</div>
     <div class="col gap6" data-gctim="1"${q ? '' : ' style="display:none"'}>${gcTimKhoi(q)}</div>
     ${ranh.length && !q ? `<div class="sm muted" style="line-height:1.4">Đang không có đơn nào mở: ${esc(ranh.map((u) => u.name).join(', '))}</div>` : ''}
@@ -3259,14 +3264,14 @@ function vGcDon() {
       <span><b>Xuất cho:</b> ${esc(d.xuat_cho || '')}</span>
       <span class="sm">✓ Đã ký biên bản giao nhận · ✓ Đã kiểm đếm · ✓ Đã chụp ảnh gửi nhóm</span>
       ${d.xuat_note ? `<span class="sm">Ghi chú: ${esc(d.xuat_note)}</span>` : ''}
-      ${anhStrip('gc', d.id, d.anh)}
+      ${anhStrip('gc', d.id, d.anh, gcCuaToi(d), true)}
       ${!gcCuaToi(d) && isQL() ? '<div class="row gap6"><button class="btn ok f1" data-a="gcduyetxuat">DUYỆT XUẤT</button><button class="btn bad f1" data-a="gctuchoixuat">Không duyệt</button></div>' : '<span class="sm muted">Chờ CVKTHT trở lên duyệt.</span>'}</div>`
     : `<div class="card ok col gap6" style="padding:10px 12px"><b>Đã xuất</b><span><b>Xuất cho:</b> ${esc(d.xuat_cho || '')}</span>
       <span class="sm">${d.xuat_name ? esc(d.xuat_name) + ' gửi ' + dmy(d.xuat_ts) + ' · ' : ''}${d.xuat_duyet_name ? esc(d.xuat_duyet_name) + ' duyệt ' + dmy(d.xuat_duyet_ts) : 'duyệt ' + (d.xuat_duyet_ts ? dmy(d.xuat_duyet_ts) : '')}</span>
-      ${anhStrip('gc', d.id, d.anh)}</div>`;
+      ${anhStrip('gc', d.id, d.anh, gcCuaToi(d))}</div>`;
   const choTl = d.cho_tl && mo ? `<div class="card warn col gap6" style="padding:8px 12px"><b>Chờ ${esc(gcTenNguoi(d))} trả lời</b><span class="sm">Người giao đã hỏi và cần câu trả lời. Xem ở mục Trao đổi bên dưới.</span></div>` : '';
   return `${top}<div class="f1 scroll pad col gap12" id="body">
-    ${thongTin}${xuat}${choTl}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
+    ${thongTin}${anhLoiHtml('gc')}${xuat}${choTl}${bietBtn}${xemVuong}${cuaNguoiLam}${vuongBtn}${chiXem}${ql}
     ${isQL() ? '<button class="btn full" data-a="gccopy">Giao đơn mới giống đơn này</button>' : ''}
     <h2 class="sec">Trao đổi và lịch sử${tins.length ? ` <span class="sm muted" style="font-weight:400">· ${tins.length} tin</span>` : ''}</h2><div class="col gap8">${ls}</div>
     ${tnDuoc ? '' : '<span class="sm muted" style="line-height:1.4">' + (gcCuaToi(d) || isQL() ? 'Đơn đã đóng quá 7 ngày, không trao đổi thêm được.' : 'Chỉ người làm đơn này và CVKTHT trở lên mới nhắn được. Bạn xem được toàn bộ trao đổi.') + '</span>'}
@@ -3467,7 +3472,8 @@ function vGcSetup() {
 /* Một việc trên một đơn (mặc định: đơn đang mở). Làm xong hay bị từ chối cũng tải lại — bị từ chối thường
    là vì đơn vừa đổi (người giao sửa hạn, giao lại cho người khác), màn hình phải bày đúng cái đang có.
    Đang ở bảng chung (bấm nút làm nhanh trên thẻ đơn) thì tải lại bảng, đang mở một đơn thì tải lại đơn đó. */
-function gcDo(viec, body, okMsg, id = S.gcId) {
+// sau: việc chạy tiếp khi server ĐÃ NHẬN (vd gửi ảnh biên bản kèm lần xuất), trước khi tải lại
+function gcDo(viec, body, okMsg, id = S.gcId, sau) {
   const tai = async () => { if (S.screen === 'giacong') S.gc = await api('GET', '/giacong'); else S.gcDetail = await api('GET', '/giacong/' + id); };
   return act(async () => {
     let r;
@@ -3480,6 +3486,7 @@ function gcDo(viec, body, okMsg, id = S.gcId) {
     const ap = (x) => { if (x && x.id === id) { x.tt = r.tt; x.pct = r.pct; } };
     ((S.gc && S.gc.items) || []).forEach(ap);
     if (S.gcDetail) ap(S.gcDetail.don);
+    if (sau) await sau();
     try { await Promise.all([tai(), loadBoot()]); } catch (e) { /* đã ghi xong */ }
   }, okMsg);
 }
@@ -3833,14 +3840,21 @@ function gcXuatHtml() {
     <b style="font-size:18px">Xuất${d ? ': ' + esc(d.cau_kien) + (d.truc ? ' · ' + esc(d.truc) : '') : ''}</b>
     <span class="sm">Làm đủ ba việc rồi tick, sau đó gửi CVKTHT duyệt:</span>
     ${o('bb', 'Đã ký biên bản giao nhận')}${o('dem', 'Đã kiểm đếm')}${o('anh', 'Đã chụp ảnh, gửi lên nhóm Zalo')}
+    ${anhChoHtml('gc')}
     <input class="inp s" id="gcxcho" maxlength="120" autocomplete="off" placeholder="Xuất cho ai / vị trí lắp dựng (bắt buộc)" data-model="gcxcho" value="${esc(S.form.gcxcho || '')}">
     <input class="inp s" id="gcxnote" maxlength="200" autocomplete="off" placeholder="Ghi chú (không bắt buộc)" data-model="gcxnote" value="${esc(S.form.gcxnote || '')}">
-    <button class="btn ${du ? 'pri' : 'dis'} full" data-a="gcxgui">GỬI DUYỆT XUẤT</button>
+    <button class="btn ${du ? 'pri' : 'dis'} full" data-a="gcxgui">GỬI DUYỆT XUẤT${anhCho('gc').length ? ` + ${anhCho('gc').length} ẢNH` : ''}</button>
     ${du ? '' : '<span class="sm muted" style="line-height:1.4">Tick đủ ba ô và ghi xuất cho ai thì mới gửi được.</span>'}
     <button class="btn full" data-a="gcxdong">Quay lại</button>
   </div></div>`;
 }
-const gcXuatMo = (id) => { S.gcXu = { id, bb: false, dem: false, anh: false }; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]); render(); };
+/* ảnh chọn trong hộp XUẤT là của ĐÚNG đơn đã chọn: mở hộp cho đơn KHÁC thì bỏ, kẻo ảnh đơn này đi theo sang đơn kia. Cùng
+   đơn (bấm Quay lại rồi mở lại, hay lần gửi xuất bị server từ chối) thì giữ, khỏi chụp lại. */
+const gcXuatMo = (id) => {
+  S.gcXu = { id, bb: false, dem: false, anh: false }; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]);
+  if (S.anhChoGc !== id) anhChoBo('gc');
+  S.anhChoGc = id; render();
+};
 // tab Duyệt: đơn gia công chờ duyệt xuất (của người khác), bấm là mở đơn để xem rồi duyệt
 function gcXuatSec() {
   const ds = ((S.boot && S.boot.gc) || []).filter((d) => d.tt === 'xong' && d.xuat_tt === 'cho' && !gcCuaToi(d));
@@ -4969,10 +4983,11 @@ function resizeAnh(file) {
   });
 }
 // Tải lần lượt từng ảnh (không đồng thời, như mọi request khác của app — giữ đúng một vòng mạng
-// mỗi lúc cho mạng yếu ở bãi). Trả về số ảnh tải thành công; lỗi từng ảnh chỉ báo rồi bỏ qua ảnh đó.
+// mỗi lúc cho mạng yếu ở bãi). Trả về { ok: số ảnh lên được, loi: các tệp chưa lên } để còn gửi lại.
 const ANH_CHO_MS = 60e3; // mỗi ảnh (vài trăm KB): quá hạn này coi như rớt mạng, không để màn "đang tải" treo mãi
 async function anhTaiLen(loai, id, files) {
   let okN = 0;
+  const loi = [];
   for (const f of Array.from(files || [])) {
     const ctl = typeof AbortController === 'function' ? new AbortController() : null;
     const hen = ctl ? setTimeout(() => ctl.abort(), ANH_CHO_MS) : 0;
@@ -4984,10 +4999,51 @@ async function anhTaiLen(loai, id, files) {
       } catch (e) { throw new Error(ctl && ctl.signal.aborted ? 'Mạng quá chậm, chưa tải được ảnh. Thử lại khi sóng khá hơn.' : 'Không có kết nối mạng'); }
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Không tải ảnh lên được (lỗi ' + r.status + ')'); }
       okN++;
-    } catch (e) { say(e.message || 'Không tải ảnh lên được', true); }
+    } catch (e) { loi.push(f); say(e.message || 'Không tải ảnh lên được', true); }
     finally { if (hen) clearTimeout(hen); }
   }
-  return okN;
+  /* Bản tải lại kèm lệnh ghi (SAU) mà GHI SỔ / XUẤT vừa nhận được chụp TRƯỚC khi gửi ảnh: dùng nó thì lần ghi vừa rồi
+     hiện ra không có ảnh. Có ảnh lên thì bỏ hết, lần tải lại sau đó hỏi server thật. */
+  if (okN) Object.keys(SAU).forEach((k) => delete SAU[k]);
+  return { ok: okN, loi };
+}
+/* ẢNH CHỌN SẴN TRONG FORM GHI SỔ (vay mượn, sắt vụn, hộp XUẤT gia công): người ghi chụp/chọn ảnh ngay lúc ghi, bấm GHI SỔ
+   là lưu sổ rồi gửi luôn ảnh vào đúng lần ghi đó — người duyệt chỉ xem lại. Không bắt buộc (hộp xác nhận nhắc khi chưa có).
+   S.anhCho[loai] = [{ f: File, u: link xem trước }]. Ảnh nào chưa lên (rớt mạng) thì giữ ở S.anhLoi kèm id lần ghi, có nút
+   Gửi lại — sổ đã lưu rồi, không được để mất ảnh lặng lẽ. */
+const anhCho = (loai) => { const C = S.anhCho || (S.anhCho = {}); return C[loai] || (C[loai] = []); };
+function anhChoBo(loai) {
+  anhCho(loai).forEach((x) => { try { URL.revokeObjectURL(x.u); } catch (e) { /* bỏ qua */ } });
+  S.anhCho[loai] = [];
+}
+function anhChoHtml(loai) {
+  const ds = anhCho(loai);
+  return `<div class="col" style="gap:6px"><b class="sm">Ảnh biên bản <span class="muted" style="font-weight:400">(không bắt buộc, nên chụp gửi kèm)</span></b>
+    <div class="row gap6" style="flex-wrap:wrap;align-items:center">
+    ${ds.map((x, i) => `<div style="position:relative;width:64px;height:64px;flex:none"><img src="${x.u}" alt="Ảnh ${i + 1}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;border:2px solid var(--pri);display:block">
+      <button style="position:absolute;top:-10px;right:-10px;width:32px;height:32px;border-radius:999px;border:2px solid #fff;background:var(--bad);color:#fff;font-size:18px;font-weight:700;line-height:1;padding:0" data-a="anhchobo" data-loai="${loai}" data-i="${i}" aria-label="Bỏ ảnh ${i + 1}">×</button></div>`).join('')}
+    <button class="chip s" style="flex:none;white-space:nowrap" data-a="anhchothem" data-loai="${loai}">${ds.length ? '+ Thêm ảnh' : '📷 Chụp / chọn ảnh biên bản'}</button></div></div>`;
+}
+// dòng nhắc trong hộp xác nhận GHI SỔ: không bắt buộc ảnh, nhưng chưa có thì nói thẳng ra trước khi ghi
+const anhNhac = (loai) => (anhCho(loai).length ? `\n✓ Gửi kèm ${anhCho(loai).length} ảnh biên bản`
+  : '\n⚠ CHƯA CÓ ẢNH biên bản trong app — nên bấm "Quay lại", chụp ảnh rồi ghi (người duyệt sẽ xem ảnh để đối chiếu).');
+// sau khi lần ghi đã lưu (biết id): gửi các ảnh chọn sẵn; trả về chữ ghép vào lời báo
+async function anhGuiKem(loai, eid) {
+  const ds = anhCho(loai).slice();
+  if (!ds.length) return '';
+  S.busyMsg = `Đang gửi ${ds.length} ảnh biên bản...`; render();
+  const { ok, loi } = await anhTaiLen(loai, eid, ds.map((x) => x.f));
+  anhChoBo(loai);
+  if (loi.length) S.anhLoi = { loai, eid, files: loi };
+  return loi.length ? ` · ${ok}/${ds.length} ảnh đã gửi, ${loi.length} ảnh chưa gửi được` : ` · kèm ${ok} ảnh`;
+}
+// thẻ báo ảnh chưa gửi được của lần ghi vừa rồi, đặt ngay trên form ghi sổ
+function anhLoiHtml(loai) {
+  const L = S.anhLoi;
+  if (!L || L.loai !== loai) return '';
+  return `<div class="card warn col gap8"><b>${L.files.length} ảnh biên bản chưa gửi được</b>
+    <span class="sm" style="line-height:1.4">Lần ghi đã lưu, chỉ còn ảnh chưa lên (mạng yếu). Ảnh vẫn giữ trên máy: bấm gửi lại khi sóng khá hơn.</span>
+    <div class="row gap6"><button class="btn s pri f1" data-a="anhguilai">GỬI LẠI ẢNH</button><button class="btn s" data-a="anhloibo">Bỏ</button></div></div>`;
 }
 // Nạp lại đúng màn đang giữ dòng sổ đó, giống reloadLoanScreen/svReload/gcDo — ảnh mới (hay vừa
 // xoá) hiện ra nhờ anh_json đi kèm sẵn trong /loans, /satvun, /giacong (xem docAnh ở src/anh.js).
@@ -5012,9 +5068,10 @@ function anhListCuaDong(loai, eid) {
 }
 // Dải thumbnail + nút thêm ảnh, chèn ngay vào đúng dòng sổ đang hiện (list đã có r.anh JOIN sẵn từ
 // server, không cần tải riêng). Bấm thumbnail mở lớn (anhxem). themDuoc = false (dòng đã huỷ): chỉ xem.
-function anhStrip(loai, id, list, themDuoc = true) {
+// baoThieu: dòng chưa có ảnh thì ghi rõ (màn Duyệt — người duyệt cần biết là KHÔNG CÓ ảnh, không phải chưa tải xong)
+function anhStrip(loai, id, list, themDuoc = true, baoThieu = false) {
   const ds = list || [];
-  if (!ds.length && !themDuoc) return '';
+  if (!ds.length && !themDuoc) return baoThieu ? '<span class="sm b" style="color:var(--warn)">Chưa có ảnh biên bản</span>' : '';
   return `<div class="row gap6" style="flex-wrap:wrap;align-items:center;margin-top:4px">
     ${ds.map((a, i) => `<button class="btn s" style="padding:0;width:48px;height:48px;overflow:hidden;border-radius:6px;flex:none" data-a="anhxem" data-loai="${loai}" data-eid="${id}" data-i="${i}" aria-label="Xem ảnh biên bản ${i + 1}"><img src="/api/anh/${a.id}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></button>`).join('')}
     ${themDuoc ? `<button class="chip s" style="flex:none;white-space:nowrap" data-a="anhpick" data-loai="${loai}" data-eid="${id}">${ds.length ? '+ Thêm ảnh' : '📷 Thêm ảnh biên bản'}</button>` : ''}
@@ -5023,25 +5080,30 @@ function anhStrip(loai, id, list, themDuoc = true) {
 /* Ô chọn tệp tạo RIÊNG, ngoài vùng app vẽ lại: người dùng ở trong camera cả chục giây, vòng tự làm mới mà vẽ lại
    màn thì ô nằm trong HTML bị thay, sự kiện change rơi vào phần tử đã tách khỏi trang và ảnh chụp xong mất lặng
    lẽ. Không đặt capture: trên Android nó chỉ mở camera, không chọn được ảnh có sẵn (ảnh đã gửi nhóm Zalo). */
-function anhChon(loai, eid) {
+function anhMoChon(cb) {
   // bấm huỷ trong hộp chọn thì trình duyệt không báo change: ô của lần trước còn nằm lại, gỡ ở đây
-  if (anhChon.inp) anhChon.inp.remove();
-  const inp = anhChon.inp = document.createElement('input');
+  if (anhMoChon.inp) anhMoChon.inp.remove();
+  const inp = anhMoChon.inp = document.createElement('input');
   // ẩn bằng cách đẩy ra ngoài màn, KHÔNG display:none: vài bản Safari iOS không mở hộp chọn cho ô display:none
   inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
   inp.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0';
   inp.onchange = () => {
     const files = Array.from(inp.files || []);
     inp.remove();
-    if (!files.length) return;
-    if (S.busy) { say('Đang bận một việc khác, chờ xong rồi thêm ảnh lại.', true); render(); return; }
-    act(async () => {
-      const okN = await anhTaiLen(loai, eid, files);
-      if (okN) { await anhTai(loai, Number(eid)); say(okN === files.length ? `Đã thêm ${okN} ảnh.` : `Đã thêm ${okN}/${files.length} ảnh.`, okN !== files.length); }
-    }, '', 'Đang tải ảnh lên...');
+    if (files.length) cb(files);
   };
   document.body.appendChild(inp);
   inp.click();
+}
+// thêm ảnh vào một dòng sổ ĐÃ GHI (người ghi quên chụp lúc ghi, hoặc gửi bổ sung)
+function anhChon(loai, eid) {
+  anhMoChon((files) => {
+    if (S.busy) { say('Đang bận một việc khác, chờ xong rồi thêm ảnh lại.', true); render(); return; }
+    act(async () => {
+      const { ok } = await anhTaiLen(loai, eid, files);
+      if (ok) { await anhTai(loai, Number(eid)); say(ok === files.length ? `Đã thêm ${ok} ảnh.` : `Đã thêm ${ok}/${files.length} ảnh.`, ok !== files.length); }
+    }, '', 'Đang tải ảnh lên...');
+  });
 }
 // Xem lớn / tải xuống / xoá — một ảnh tại một thời điểm, điều hướng Trước/Sau nếu dòng có nhiều ảnh.
 function anhXemHtml() {
@@ -5060,7 +5122,7 @@ function anhXemHtml() {
     </div>
     <span class="sm muted" style="text-align:center">${to ? 'Kéo để xem các góc · chạm ảnh để thu nhỏ' : 'Chạm ảnh để phóng to đọc chữ'}</span>
     ${ds.length > 1 ? `<div class="row gap6" style="width:100%;align-items:center"><button class="btn s f1" data-a="anhnav" data-d="-1" ${i === 0 ? 'disabled' : ''}>‹ Trước</button><span class="sm b" style="min-width:44px;text-align:center">${i + 1}/${ds.length}</span><button class="btn s f1" data-a="anhnav" data-d="1" ${i === ds.length - 1 ? 'disabled' : ''}>Sau ›</button></div>` : ''}
-    <div class="row gap6" style="width:100%"><button class="btn s f1" style="white-space:nowrap" data-a="anhtaixuong" data-id="${a.id}">Tải xuống</button><button class="btn s bad f1" data-a="anhxoa" data-id="${a.id}">Xoá ảnh</button></div>
+    <div class="row gap6" style="width:100%"><button class="btn s f1" style="white-space:nowrap" data-a="anhtaixuong" data-id="${a.id}">Tải xuống</button>${S.screen === 'duyet' ? '' : `<button class="btn s bad f1" data-a="anhxoa" data-id="${a.id}">Xoá ảnh</button>`}</div>
     <button class="btn full" data-a="anhdong">Đóng</button>
   </div></div>`;
 }
@@ -5157,7 +5219,9 @@ const ACTIONS = {
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
     render();
   },
-  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.qsH = null; S.err = ''; render(); },
+  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.qsH = null; S.err = '';
+    // ảnh đang chọn / chưa gửi là của người vừa đăng xuất: máy dùng chung thì người sau không được gửi nhầm vào lần ghi của mình
+    ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null; render(); },
   async changepin() {
     if (S.busy) return;
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
@@ -5836,19 +5900,23 @@ const ACTIONS = {
       + (han ? `\nHạn trả: ${fmtDay(han)}` : '')
       + `\nBiên bản số: ${soBB}${bienSo ? ' · xe ' + bienSo : ''}${nguoi ? ' · ' + nguoi : ''}`
       + '\n✓ Đã có biên bản giao nhận\n✓ Đã gửi biên bản lên nhóm Zalo'
+      + anhNhac('loan')
       + '\nCần cấp trên duyệt. Đúng chưa?';
     if (!(await ask(msg, 'GHI SỔ'))) return;
     /* Server dừng lại khi số biên bản này đã có trong sổ (cùng đối tác, loại, phi): hỏi rồi mới gửi
        lại kèm trung. Hỏi NGOÀI act, vì hộp hỏi không mở được khi màn đang "Đang lưu...". */
     let trungMsg = '';
     const gui = (trung) => act(async () => {
+      let r;
       try {
-        await api('POST', '/loans', { doitac: F.doitac, kind: F.kind, lines, note, bienban: true, zalo: true, ngay, han: han || null, so_bb: soBB, nguoi, bien_so: bienSo, ...(kho ? { khu: kho } : {}), ...(trung ? { trung: true } : {}) });
+        r = await api('POST', '/loans', { doitac: F.doitac, kind: F.kind, lines, note, bienban: true, zalo: true, ngay, han: han || null, so_bb: soBB, nguoi, bien_so: bienSo, ...(kho ? { khu: kho } : {}), ...(trung ? { trung: true } : {}) });
       } catch (e) { if (e.code !== 'trung_bb' || trung) throw e; trungMsg = e.message; return; }
       // hai ô xác nhận và các trường chứng từ là của lần ghi VỪA RỒI: lần sau phải nhập lại cho biên bản mới
       F.lines = []; S.form.lqty = ''; S.form.lnote = ''; F.bb = false; F.zl = false;
       ['lngay', 'lhan', 'lsobb', 'lnguoi', 'lbienso'].forEach((k) => delete S.form[k]);
-      F.done = `${loanTitle(F.kind, ten)}: ${lines.map((l) => l.phi + ' ' + fmtQs(l.qty, l.phi)).join(' · ')}`;
+      // ảnh gắn vào dòng id NHỎ NHẤT của lần ghi — cùng chỗ thẻ sổ và màn Duyệt đọc ảnh (loanAnh, computeReview)
+      const kem = r && r.ids && r.ids.length ? await anhGuiKem('loan', Math.min(...r.ids)) : '';
+      F.done = `${loanTitle(F.kind, ten)}: ${lines.map((l) => l.phi + ' ' + fmtQs(l.qty, l.phi)).join(' · ')}${kem}`;
       [S.loans] = await Promise.all([api('GET', '/loans'), loadBoot()]);
     });
     await gui(false);
@@ -5901,16 +5969,19 @@ const ACTIONS = {
     const msg = `Xuất sắt vụn ${svT(kg)} tấn (${fmtInt(kg)} kg)\nCho: ${noi}\nTừ: ${F.khu ? kName(F.khu) : 'nhiều khu / chung'}\nNgày xuất: ${fmtDay(ngay)}`
       + (soNgay(ngay, today) > 7 ? ` (ghi bù ${soNgay(ngay, today)} ngày — kiểm tra lại ngày trên phiếu cân)` : '')
       + `\nPhiếu cân / biên bản: ${soPhieu}${bienSo ? ' · xe ' + bienSo : ''}${nguoi ? ' · ' + nguoi : ''}`
+      + anhNhac('satvun')
       + '\n\nKhông tính vào tồn bãi. Cần cấp trên duyệt. Đúng chưa?';
     if (!(await ask(msg, 'GHI SỔ'))) return;
     // trùng số phiếu cân: server dừng lại hỏi, xác nhận thì gửi lại kèm trung (hỏi ngoài act, như sổ vay)
     let trungMsg = '';
     const gui = (trung) => act(async () => {
+      let r;
       try {
-        await api('POST', '/satvun', { ngay, khu: F.khu || null, tan: tanTxt, noi, so_phieu: soPhieu, nguoi, bien_so: bienSo, note, ...(trung ? { trung: true } : {}) });
+        r = await api('POST', '/satvun', { ngay, khu: F.khu || null, tan: tanTxt, noi, so_phieu: soPhieu, nguoi, bien_so: bienSo, note, ...(trung ? { trung: true } : {}) });
       } catch (e) { if (e.code !== 'trung_sv' || trung) throw e; trungMsg = e.message; return; }
       ['svngay', 'svtan', 'svphieu', 'svnguoi', 'svbienso', 'svnote'].forEach((k) => delete S.form[k]);
-      F.done = `${svT(kg)} tấn cho ${noi} · phiếu ${soPhieu}`;
+      const kem = r && r.id ? await anhGuiKem('satvun', r.id) : '';
+      F.done = `${svT(kg)} tấn cho ${noi} · phiếu ${soPhieu}${kem}`;
       [S.svs] = await Promise.all([svTai(), loadBoot()]);
     });
     await gui(false);
@@ -6079,7 +6150,11 @@ const ACTIONS = {
     if (!cho) { say('Ghi xuất cho ai / vị trí lắp dựng.', true); render(); return gcFocus('gcxcho'); }
     const note = String(S.form.gcxnote || '').trim();
     S.gcXu = null; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]);
-    gcDo('xuat', { bien_ban: 1, kiem_dem: 1, anh: 1, xuat_cho: cho, note }, 'Đã gửi xuất, chờ CVKTHT duyệt.', X.id);
+    // gửi xuất trước, được nhận rồi mới gửi ảnh vào đơn (xuất bị từ chối thì ảnh còn giữ trên máy, không lên)
+    gcDo('xuat', { bien_ban: 1, kiem_dem: 1, anh: 1, xuat_cho: cho, note }, '', X.id, async () => {
+      const kem = await anhGuiKem('gc', X.id);
+      say('Đã gửi xuất, chờ CVKTHT duyệt' + kem + '.', !!S.anhLoi);
+    });
   },
   async gcduyetxuat() {
     const d = S.gcDetail && S.gcDetail.don; if (!d) return;
@@ -6093,6 +6168,29 @@ const ACTIONS = {
   },
   // ảnh biên bản (xem đầu mục ẢNH BIÊN BẢN phía trên)
   anhpick(d) { anhChon(d.loai, d.eid); },
+  // chọn ảnh vào form ghi sổ (chưa gửi): xem trước ngay, bấm GHI SỔ mới gửi
+  anhchothem(d) {
+    anhMoChon((files) => {
+      const ds = anhCho(d.loai), them = files.slice(0, Math.max(0, 20 - ds.length));
+      them.forEach((f) => ds.push({ f, u: URL.createObjectURL(f) }));
+      if (them.length < files.length) say('Mỗi lần ghi tối đa 20 ảnh.', true);
+      render();
+    });
+  },
+  anhchobo(d) { const ds = anhCho(d.loai), x = ds[Number(d.i)]; if (x) { try { URL.revokeObjectURL(x.u); } catch (e) { /* bỏ qua */ } ds.splice(Number(d.i), 1); } render(); },
+  anhguilai() {
+    const L = S.anhLoi; if (!L) return;
+    act(async () => {
+      const { ok, loi } = await anhTaiLen(L.loai, L.eid, L.files);
+      S.anhLoi = loi.length ? { ...L, files: loi } : null;
+      if (ok) await anhTai(L.loai, L.eid);
+      if (!loi.length) say(`Đã gửi ${ok} ảnh.`);
+    }, '', 'Đang gửi lại ảnh...');
+  },
+  async anhloibo() {
+    if (!(await ask('Bỏ các ảnh chưa gửi được?\nLần ghi vẫn giữ nguyên, chỉ không có các ảnh này. Muốn gửi sau thì mở lần ghi trong danh sách, bấm "+ Thêm ảnh".', 'BỎ ẢNH', true))) return;
+    S.anhLoi = null; render();
+  },
   anhxem(d) { S.anhXem = { loai: d.loai, eid: Number(d.eid), i: Number(d.i) || 0 }; render(); },
   anhnav(d) { if (S.anhXem) { S.anhXem.i += Number(d.d); S.anhXem.to = false; } render(); },
   anhto() { if (S.anhXem) S.anhXem.to = !S.anhXem.to; render(); },

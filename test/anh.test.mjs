@@ -167,7 +167,34 @@ async function main() {
   ok('Thêm ảnh: ô chọn tệp riêng ngoài vùng vẽ lại, nhiều ảnh, không ép camera, không display:none', o1 && o1.type === 'file' && o1.accept === 'image/*' && o1.multiple && o1.bam && !('capture' in o1) && !/display:\s*none/.test(o1.style.cssText || ''));
   R("ACTIONS.anhpick({ loai: 'gc', eid: '4' })");
   ok('mở lần nữa (lần trước bấm huỷ): ô cũ được gỡ', o1.go === true);
-  R("S.boot = { khuBy: {}, phiBy: {} }");
+  /* quy trình: người ghi chụp/chọn ảnh NGAY TRONG FORM ghi sổ, bấm GHI SỔ là gửi luôn; người duyệt chỉ xem lại */
+  const f1 = { name: 'a.jpg' }, f2 = { name: 'b.jpg' };
+  ctx.__f = [f1, f2];
+  R("ACTIONS.anhchothem({ loai: 'loan' })");
+  const o3 = tao[tao.length - 1];
+  o3.files = ctx.__f; o3.onchange();
+  eq('form ghi sổ: chọn 2 ảnh, giữ trên máy chờ GHI SỔ (chưa gửi gì)', R("anhCho('loan').length"), 2);
+  ok('form: hiện xem trước, nút bỏ từng ảnh, nút thêm ảnh', (() => { const h = R("anhChoHtml('loan')"); return (h.match(/data-a="anhchobo"/g) || []).length === 2 && h.includes('+ Thêm ảnh') && h.includes('không bắt buộc'); })());
+  ok('hộp xác nhận GHI SỔ nói kèm bao nhiêu ảnh', R("anhNhac('loan')").includes('Gửi kèm 2 ảnh'));
+  R("ACTIONS.anhchobo({ loai: 'loan', i: '0' })");
+  eq('bỏ một ảnh', R("anhCho('loan').length"), 1);
+  R("anhChoBo('loan')");
+  ok('chưa có ảnh: vẫn ghi được, nhưng hộp xác nhận nhắc thẳng', R("anhNhac('loan')").includes('CHƯA CÓ ẢNH'));
+  R("ACTIONS.anhchothem({ loai: 'satvun' })");
+  const o4 = tao[tao.length - 1]; o4.files = Array.from({ length: 25 }, (_, i) => ({ name: i + '.jpg' })); o4.onchange();
+  eq('chọn quá 20 ảnh: chỉ giữ 20, có báo', [R("anhCho('satvun').length"), R('S.toastErr')], [20, true]);
+  R("anhChoBo('satvun')");
+  ok('màn Duyệt: không có nút thêm, lần ghi chưa có ảnh thì báo rõ', R("anhStrip('loan', 7, [], false, true)").includes('Chưa có ảnh biên bản') && !R("anhStrip('loan', 7, [{id:1}], false, true)").includes('anhpick'));
+  R("S.screen = 'duyet'; S.review = { loans: [{ id: 7, anh: [{ id: 3 }] }], satvun: [], phieu: [] }; ACTIONS.anhxem({ loai: 'loan', eid: '7', i: '0' })");
+  ok('màn Duyệt: hộp xem lớn chỉ xem / tải xuống, không có Xoá', R('anhXemHtml()').includes('anhtaixuong') && !R('anhXemHtml()').includes('anhxoa'));
+  R('ACTIONS.anhdong()');
+  R("S.anhLoi = { loai: 'satvun', eid: 4, files: [{}, {}] }");
+  ok('ảnh chưa gửi được: thẻ báo + nút gửi lại, chỉ ở đúng sổ', R("anhLoiHtml('satvun')").includes('2 ảnh biên bản chưa gửi được') && R("anhLoiHtml('satvun')").includes('anhguilai') && R("anhLoiHtml('loan')") === '');
+  R("S.anhLoi = null; S.anhCho = { gc: [{ f: {}, u: 'x' }] }; S.anhChoGc = 5; gcXuatMo(5)");
+  eq('mở lại hộp XUẤT cùng đơn: giữ ảnh đã chọn', R("anhCho('gc').length"), 1);
+  R('gcXuatMo(6)');
+  eq('mở hộp XUẤT đơn khác: bỏ ảnh của đơn trước', R("anhCho('gc').length"), 0);
+  R("S.gcXu = null; S.boot = { khuBy: {}, phiBy: {} }");
   eq('nhật ký: thêm ảnh nói rõ biên bản nào, chip Vay mượn', R(`(() => { const f = fmtAudit({ action: 'anh_bb_add', detail: JSON.stringify({ loai: 'loan', ngay: '2026-10-21', so_bb: 'BB-01', ten: 'Cty Hoà Bình' }) }); return [f.text, f.type]; })()`),
     ['thêm ảnh biên bản sổ vay 21/10/2026 · BB BB-01 · Cty Hoà Bình', 'vay']);
   eq('nhật ký: xoá ảnh vào "Cần chú ý"', R(`fmtAudit({ action: 'anh_bb_xoa', detail: JSON.stringify({ loai: 'gc', ten: 'Dầm D1 · X1-X2', cua: 'An' }) }).flag`), true);
