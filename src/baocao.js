@@ -9,8 +9,9 @@ import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, docCfg } fr
    - Số liệu app chỉ là BẢN ĐIỀN SẴN: mục nào người soạn đã sửa thì lưu nguyên chữ (data.muc[k]), lần mở sau dùng
      chữ đó; mục chưa sửa thì ghép lại từ số mới nhất.
    - MẪU (bc_mau, một dòng): phần đầu (đơn vị, chỉ huy, dự án, khu vực), máy móc thiết bị và các dòng kiểm tra mặc
-     định. Phần đầu và máy móc lưu lại mỗi lần chép báo cáo (ca sau dùng tiếp); dòng kiểm tra chỉ đổi khi người soạn
-     bấm "đặt làm mẫu", để một nhận xét xấu của hôm nay không tự lặp lại sang hôm sau. */
+     định. Phần đầu và máy móc lưu lại mỗi lần chép báo cáo (ca sau dùng tiếp); dòng kiểm tra của mẫu chỉ đổi khi
+     người soạn bấm "đặt làm mẫu". Ngoài mẫu, chữ đã sửa của ca hôm trước (cùng ca) cũng mang sang làm bản điền sẵn:
+     xem homTruoc. */
 // mẫu mặc định: năm dòng kiểm tra, giám sát của đơn vị
 export const BC_KT = [
   'Quản lý máy 3 ca: bố trí việc hợp lý, đúng; ký nhật trình đúng',
@@ -37,7 +38,7 @@ const docMau = (row) => {
        KHÔNG ghi ngược vào đơn gia công), an = bỏ khỏi báo cáo;
      them = [id đơn] — đơn chưa có % mà người soạn chạm để đưa vào báo cáo;
      tu = [{ id, ten, tt }] — việc ngoài app người soạn tự thêm (id để hai người sửa cùng lúc ghép được theo từng dòng);
-       việc chưa xong mang sang ca sau (bcView: viecTruoc).
+       việc chưa xong mang sang cùng ca hôm sau (bcView: homTruoc).
    Chỉ là phần chỉnh: dòng nào không chỉnh vẫn theo số mới nhất của đơn. Đọc lại luôn qua đây để dữ liệu lạ không lọt. */
 const ttHop = (v) => (v === 'xong' ? 'xong' : Number.isInteger(v) && v >= 0 && v <= 100 ? v : null);
 export function docViec(v) {
@@ -53,13 +54,20 @@ export function docViec(v) {
     .filter((x) => x.ten && x.tt != null).slice(0, 60);
   return { d, them, tu };
 }
-/* Việc ngoài app mang từ báo cáo ca trước sang: chỉ việc chưa xong. Ca trước chép mục 4 BẰNG CHỮ thì không mang gì: các
-   dòng theo app có thể đã bị xoá trong chữ, mang sang là làm sống lại dòng người soạn đã bỏ. */
-function viecTruoc(row) {
-  const d = row ? docJ(row.data) : null;
-  if (!d || (d.muc && typeof d.muc.s4 === 'string')) return [];
-  return docViec(d.viec).tu.filter((x) => x.tt !== 'xong');
+/* HÔM SAU GIỮ NHƯ HÔM TRƯỚC (chốt 2026-10-21): ca chưa ai chép thì lấy báo cáo đã lưu gần nhất CÙNG CA (ca ngày theo ca
+   ngày, ca đêm theo ca đêm — các tổ làm cố định một ca nhiều ngày) trong BC_MANG_NGAY ngày trước làm bản điền sẵn, người
+   soạn chỉ sửa chỗ đã đổi. Mang sang: chữ đã sửa của mục 4, 6, 7, 8; phần chỉnh mục 4 theo dòng; nguồn quân số.
+   KHÔNG mang chữ mục 3 (số người đổi từng ca, chữ cũ là số sai — quân số "như hôm trước" đã có số thiết lập lo) và
+   mục 5 (máy móc vốn nằm trong mẫu). Lọc phần chỉnh mục 4 theo đơn còn hay không làm ở máy khách (bcVGoc), vì
+   ở đó có danh sách đơn của ca. */
+const BC_MANG_NGAY = 7, BC_MANG_MUC = ['s4', 's6', 's7', 's8'];
+function homTruoc(row) {
+  if (!row) return null;
+  const d = docJ(row.data), m = d.muc && typeof d.muc === 'object' ? d.muc : {};
+  return { ngay: row.ngay, muc: Object.fromEntries(BC_MANG_MUC.filter((k) => typeof m[k] === 'string').map((k) => [k, m[k]])), viec: docViec(d.viec), nguon: d.nguon === 'tl' ? 'tl' : 'to' };
 }
+// app bản cũ chỉ đọc viecTruoc: việc ngoài app chưa xong; mục 4 chép bằng chữ thì không mang (dòng có thể đã bị xoá trong chữ)
+const viecTruoc = (H) => (!H || typeof H.muc.s4 === 'string' ? [] : H.viec.tu.filter((x) => x.tt !== 'xong'));
 function docCa(q, st) {
   const hien = caLuc(st);
   if (!q.get('ngay') && !q.get('ca')) return hien;
@@ -98,12 +106,12 @@ export async function bcView(env, url) {
                     WHERE b.ngay = ? AND b.ca = ?`).bind(c.ngay, c.ca),
     // loại cấu kiện trong danh mục gia công: chọn nhanh khi thêm việc ngoài app vào mục 4
     env.DB.prepare("SELECT ten FROM gc_muc WHERE loai = 'ck' ORDER BY sort, id"),
-    /* báo cáo đã lưu GẦN NHẤT TRƯỚC ca này, trong 2 ngày: các việc ngoài app chưa xong mang sang ca này. Báo cáo cũ hơn
-       thì thôi (nghỉ soạn một tuần không kéo việc của tuần trước về). */
-    env.DB.prepare('SELECT data FROM bao_cao_ca WHERE ngay >= ?3 AND (ngay < ?1 OR (ngay = ?1 AND ca < ?2)) ORDER BY ngay DESC, ca DESC LIMIT 1')
-      .bind(c.ngay, c.ca, new Date(Date.parse(c.ngay) - 2 * 864e5).toISOString().slice(0, 10)),
+    /* báo cáo đã lưu GẦN NHẤT CÙNG CA trước ngày này, trong BC_MANG_NGAY ngày (xem homTruoc). Cũ hơn thì thôi: nghỉ soạn
+       lâu không kéo chữ của nửa tháng trước về. */
+    env.DB.prepare('SELECT ngay, data FROM bao_cao_ca WHERE ca = ?2 AND ngay < ?1 AND ngay >= ?3 ORDER BY ngay DESC LIMIT 1')
+      .bind(c.ngay, c.ca, new Date(Date.parse(c.ngay) - BC_MANG_NGAY * 864e5).toISOString().slice(0, 10)),
   ]);
-  const r = bc.results[0];
+  const r = bc.results[0], H = homTruoc(bcTr.results[0]);
   return json({
     ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, han: caHan(st, c), lyDo: QS_LY_DO,
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
@@ -112,7 +120,7 @@ export async function bcView(env, url) {
     lich: docCfg(mau.results[0]).lich, tl: docCfg(mau.results[0]).tl,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     ck: ck.results.map((x) => x.ten),
-    viecTruoc: viecTruoc(bcTr.results[0]),
+    homTruoc: H, viecTruoc: viecTruoc(H),
     bao: r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
     suaDuoc: c.ngay >= vnDay(Date.now() - BC_SUA_NGAY * 864e5),
   });

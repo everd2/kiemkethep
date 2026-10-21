@@ -3891,7 +3891,9 @@ const gcVgMo = (id) => { S.gcVg = { id, loai: null, dung: false }; delete S.form
      - 4. công việc: đơn gia công đang làm (kèm %) và đơn xong trong giờ ca;
      - 6. kiểm tra: các dòng mặc định của mẫu; 7. vướng mắc, 8. tiến độ: từ đơn đang vướng / trễ hạn.
    Người soạn sửa thẳng trong ô; mục đã sửa giữ nguyên chữ của họ (có nút lấy lại số từ app). Chép cả báo cáo hay
-   chép riêng một phần đều lưu báo cáo của ca đó. Nháp đang sửa lưu trên máy theo ca, mất mạng hay lỡ thoát cũng không mất. */
+   chép riêng một phần đều lưu báo cáo của ca đó. Nháp đang sửa lưu trên máy theo ca, mất mạng hay lỡ thoát cũng không mất.
+   HÔM SAU GIỮ NHƯ HÔM TRƯỚC: ca chưa ai chép thì chữ đã sửa của mục 4, 6, 7, 8, phần chỉnh mục 4 và nguồn quân số lấy
+   theo cùng ca hôm trước (B.homTruoc; bcMGoc, bcNGoc, bcVGoc), người soạn chỉ sửa chỗ đã đổi. */
 const BC_DAU = [['don_vi', 'Đơn vị', 'Trung đoàn XD 01, Tiểu đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1'], ['ddt', 'Đại đội trưởng', '', 'daidoi'],
   ['tdtr', 'Trung đội trưởng', '', 'trungdoi'], ['cbpt', 'CBPT', '', 'cvktht'], ['du_an', 'Dự án', 'Tên dự án'], ['khu_vuc', 'Khu vực thi công', 'Ví dụ: Bãi gia công trung đoàn']];
 const BC_MUC = [['s3', '3. Quân số'], ['s4', '4. Công việc trong ngày'], ['s5', '5. Máy móc thiết bị (MMTB)'], ['s6', '6. Kiểm tra, giám sát'], ['s7', '7. Vướng mắc'], ['s8', '8. Đánh giá tiến độ']];
@@ -3972,8 +3974,32 @@ const bcTre = (B, d) => gcMo(d) && (d.han < B.ngay || (d.han === B.ngay && B.ca 
    cáo, KHÔNG ghi ngược vào đơn gia công. Việc ngoài app chưa xong tự mang sang ca sau (bcVGoc). "Sửa bằng chữ" vẫn còn:
    khi đó S.bcM.s4 là chữ và thắng các dòng. */
 const bcVRong = () => ({ d: {}, them: [], tu: [] });
-// phần chỉnh mục 4 của bản chung: báo cáo đã lưu của ca; ca chưa ai lưu thì mang các việc ngoài app chưa xong của ca trước
-const bcVGoc = (B) => JSON.parse(JSON.stringify(B.bao ? B.bao.viec || bcVRong() : { ...bcVRong(), tu: B.viecTruoc || [] }));
+/* phần chỉnh mục 4 của bản chung: báo cáo đã lưu của ca. Ca chưa ai lưu thì mang từ CÙNG CA HÔM TRƯỚC (B.homTruoc, xem
+   homTruoc ở src/baocao.js), lọc theo đơn của ca này để số không kẹt lại cũ:
+   - % đã chỉnh còn cao hơn số của đơn thì giữ (g = số đơn bây giờ: chỉ nhắc "khác số đơn" khi đơn đi tiếp trong ca này);
+     đơn đã bằng / vượt số đó thì theo đơn;
+   - đơn hôm trước đã báo hoàn thành mà đơn chưa đóng: không đưa lại vào công việc trong ngày (về danh sách chạm để thêm);
+   - đơn đã ẩn, đơn đã chạm thêm: giữ nếu đơn còn trong ca; việc ngoài app: giữ việc chưa xong.
+   Hôm trước mục 4 chép bằng chữ thì chữ đó mang sang (bcMGoc), không mang dòng nào. */
+function bcVGoc(B) {
+  if (B.bao) return JSON.parse(JSON.stringify(B.bao.viec || bcVRong()));
+  const H = B.homTruoc, V = bcVRong();
+  if (!H) return { ...V, tu: JSON.parse(JSON.stringify(B.viecTruoc || [])) };
+  if (typeof H.muc.s4 === 'string') return V;
+  Object.entries(H.viec.d || {}).forEach(([k, o]) => {
+    const don = B.don.find((x) => String(x.id) === k);
+    if (!don) return;
+    const app = bcDonTt(don);
+    if (o.an || (o.tt === 'xong' && app !== 'xong')) V.d[k] = { an: 1 };
+    else if (typeof o.tt === 'number' && typeof app === 'number' && o.tt > app) V.d[k] = { tt: o.tt, g: app };
+  });
+  V.them = (H.viec.them || []).filter((id) => B.don.some((x) => x.id === id) && !(V.d[id] && V.d[id].an));
+  V.tu = (H.viec.tu || []).filter((x) => x.tt !== 'xong').map((x) => ({ ...x }));
+  return V;
+}
+// chữ các mục và nguồn quân số của bản chung: báo cáo đã lưu của ca, ca chưa ai lưu thì theo cùng ca hôm trước
+const bcMGoc = (B) => (B.bao ? B.bao.muc || {} : (B.homTruoc && B.homTruoc.muc) || {});
+const bcNGoc = (B) => (B.bao ? B.bao.nguon || 'to' : (B.homTruoc && B.homTruoc.nguon) || 'to');
 // tên việc tự thêm chuẩn hoá y như server (chu ở src/baocao.js): chữ chép đi và chữ lưu lại phải khớp nhau
 const bcTenViec = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim().slice(0, 160);
 const bcViecChu = (x) => `${x.ten}: ${x.tt === 'xong' ? 'hoàn thành' : 'đang gia công ' + x.tt + '%'}`;
@@ -4061,15 +4087,28 @@ function bcViecHtml(B) {
     <span class="sm muted" style="line-height:1.4">Số chỉnh ở đây chỉ vào báo cáo, không đổi tiến độ của đơn gia công. Dòng không chạm vẫn theo số mới nhất của đơn. +10 ở 90% là hoàn thành.</span>
     <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="bcvchu">Sửa bằng chữ</button>`;
 }
+// đơn đang vướng (mục 7) và đơn trễ hạn chưa xong theo mục 4 (mục 8), mỗi đơn một dòng
+const bcVuong = (B) => B.don.filter((d) => gcMo(d) && d.vuong).map((d) => ({ d, l: `${bcDon(d)}: ${d.vuong}` }));
+function bcTreDs(B) {
+  const V = B === S.bcc && S.bcV ? S.bcV : bcVGoc(B);
+  return B.don.filter((d) => bcTre(B, d) && bcVTt(V, d) !== 'xong').map((d) => ({ d, l: `${bcDon(d)}: hạn ${ngayNgan(d.han)}, đang ${bcVTt(V, d)}%` }));
+}
+/* mục 7, 8 đang là chữ (sửa tay, hay giữ từ hôm trước): đơn đang vướng / trễ hạn mà chữ chưa nhắc tới thì nêu ra để chạm
+   thêm, chữ cũ không che mất vấn đề mới */
+function bcMoi(B, k) {
+  const t = S.bcM[k];
+  if (typeof t !== 'string' || (k !== 's7' && k !== 's8')) return [];
+  return (k === 's7' ? bcVuong(B) : bcTreDs(B)).filter((x) => !t.includes(bcDon(x.d))).map((x) => x.l);
+}
 function bcAuto(B, k) {
   if (k === 's3') { const Q = bcQuanSo(B); return [Q.dau].concat(Q.dong).join('\n'); }
   if (k === 's4') return bcViecDs(B, B === S.bcc && S.bcV ? S.bcV : bcVGoc(B)).dong.map(bcViecChu).join('\n');
   if (k === 's5') return B.mau.mmtb || '';
   if (k === 's6') return (B.mau.kt || []).join('\n');
-  if (k === 's7') { const v = B.don.filter((d) => gcMo(d) && d.vuong).map((d) => `${bcDon(d)}: ${d.vuong}`); return v.length ? v.join('\n') : 'Hiện tại chưa có'; }
+  if (k === 's7') { const v = bcVuong(B).map((x) => x.l); return v.length ? v.join('\n') : 'Hiện tại chưa có'; }
   // mục 8 theo đúng tiến độ đã soát ở mục 4: đơn người soạn đánh "Xong" thì không còn là trễ, % lấy số đã chỉnh
-  const V = B === S.bcc && S.bcV ? S.bcV : bcVGoc(B), t = B.don.filter((d) => bcTre(B, d) && bcVTt(V, d) !== 'xong');
-  return t.length ? [`Nguy cơ chậm tiến độ: ${t.length} đơn trễ hạn`].concat(t.map((d) => `${bcDon(d)}: hạn ${ngayNgan(d.han)}, đang ${bcVTt(V, d)}%`)).join('\n') : 'Nguy cơ chậm tiến độ: Không có';
+  const t = bcTreDs(B).map((x) => x.l);
+  return t.length ? [`Nguy cơ chậm tiến độ: ${t.length} đơn trễ hạn`].concat(t).join('\n') : 'Nguy cơ chậm tiến độ: Không có';
 }
 const bcGet = (k) => (typeof S.bcM[k] === 'string' ? S.bcM[k] : bcAuto(S.bcc, k));
 // dòng của một mục, bỏ dấu đầu dòng người soạn tự gõ (app tự thêm "• ")
@@ -4107,7 +4146,7 @@ function bcTao() {
    sửa, null = lấy lại số từ app), ô phần đầu khác mẫu, nguồn quân số nếu khác. Nháp trên máy chỉ lưu phần khác đó,
    nên người khác chép hay đổi mẫu thì mọi chỗ mình CHƯA đụng tới đều theo bản mới (bcGhep). */
 function bcKhac() {
-  const B = S.bcc, goc = (B.bao && B.bao.muc) || {}, muc = {}, dau = {}, ng = (B.bao && B.bao.nguon) || 'to';
+  const B = S.bcc, goc = bcMGoc(B), muc = {}, dau = {}, ng = bcNGoc(B);
   BC_MUC.forEach(([k]) => { const a = typeof S.bcM[k] === 'string' ? S.bcM[k] : null, g = typeof goc[k] === 'string' ? goc[k] : null; if (a !== g) muc[k] = a; });
   BC_DAU.forEach(([k]) => { if ((S.bcDau[k] || '') !== (B.mau.dau[k] || '')) dau[k] = S.bcDau[k] || ''; });
   return { muc, dau, nguon: S.bcNguon !== ng ? S.bcNguon : undefined, viec: bcVKhac(bcVGoc(B), S.bcV) };
@@ -4116,11 +4155,11 @@ const bcCoKhac = (K) => !!(Object.keys(K.muc).length || Object.keys(K.dau).lengt
 // đặt bản dùng chung B làm nền rồi ghép phần sửa riêng K (nếu có) lên trên
 function bcGhep(B, K) {
   S.bcc = B;
-  const muc = { ...((B.bao && B.bao.muc) || {}) };
+  const muc = { ...bcMGoc(B) };
   Object.entries((K && K.muc) || {}).forEach(([k, v]) => { if (typeof v === 'string') muc[k] = v; else delete muc[k]; });
   S.bcM = muc;
   S.bcDau = { ...B.mau.dau, ...((K && K.dau) || {}) };
-  S.bcNguon = (K && K.nguon) || (B.bao && B.bao.nguon) || 'to';
+  S.bcNguon = (K && K.nguon) || bcNGoc(B);
   S.bcV = bcVGhep(bcVGoc(B), K && K.viec);
 }
 function bcNhap() {
@@ -4193,7 +4232,7 @@ function vBaoCaoCa() {
       ${k === 's4' ? '<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="bclay" data-k="s4">Về soạn theo dòng (bỏ chữ đã sửa)</button>' : ''}
       ${k === 's6' && typeof S.bcM[k] === 'string' ? '<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="bcktmau">Đặt các dòng này làm mẫu cho các ca sau</button>' : ''}`;
   };
-  const P = bcPhan(), K = bcKhac(), coRieng = bcCoKhac(K);
+  const P = bcPhan(), K = bcKhac(), coRieng = bcCoKhac(K), H = !B.bao && B.homTruoc;
   // mục 3 đọc được ngay tổ nào tự báo, tổ nào đang lấy số thiết lập, tổ nào chưa báo (bản chép đi vẫn đúng chữ của mẫu)
   const nhan = { da: '<span class="badge ok" style="flex:none;font-size:12px;padding:2px 8px">Đã báo</span>', tlda: '<span class="badge pri" style="flex:none;font-size:12px;padding:2px 8px">Số thiết lập</span>',
     tl: `<span class="badge ${quaHan ? 'bad' : 'warn'}" style="flex:none;font-size:12px;padding:2px 8px">Chưa báo · số thiết lập</span>`,
@@ -4206,19 +4245,23 @@ function vBaoCaoCa() {
     const rieng = k === 'dau' ? Object.keys(K.dau).length > 0 : k in K.muc || (k === 's3' && !!K.nguon) || (k === 's4' && !!K.viec);
     // mục 4: dòng đã chỉnh mà đơn đã đi tiếp thì luôn nhắc, kể cả khi đang có phần sửa chưa chép
     const lech = k === 's4' && typeof S.bcM.s4 !== 'string' ? bcViecDs(B, S.bcV).dong.filter((x) => x.lech).length : 0;
+    // phần mang từ cùng ca hôm trước (ca này chưa ai chép): nói rõ để người soạn soát lại chỗ đã đổi
+    const giu = H && (k === 's4' && typeof S.bcM.s4 !== 'string' ? !!(Object.keys(S.bcV.d).length || S.bcV.tu.length) : typeof S.bcM[k] === 'string' && S.bcM[k] === H.muc[k]);
     const trangThai = rieng ? '<b style="color:var(--warn)">sửa chưa chép</b>' + (lech ? ` · <b style="color:var(--warn)">${lech} dòng khác số đơn</b>` : '')
       : k === 'dau' ? (thieu.length ? `<span style="color:var(--warn)">${thieu.length} ô trống</span>` : '')
-      : k === 's4' && typeof S.bcM.s4 !== 'string' ? bcVNhan(B) : sua ? '<b>đã sửa tay</b>'
+      : k === 's4' && typeof S.bcM.s4 !== 'string' ? bcVNhan(B) + (giu ? ` · <b>giữ như ${ngayNgan(H.ngay)}</b>` : '') : giu ? `<b>giữ như ${ngayNgan(H.ngay)}</b>` : sua ? '<b>đã sửa tay</b>'
       : k === 's5' && thieuMm ? '<b style="color:var(--warn)">chưa có, bấm sửa để điền</b>' : 'từ ' + nguonTen[k];
     return `<div style="border-bottom:1px solid var(--line);padding:6px 8px 8px 12px${k === 's3' ? ';scroll-margin-top:8px' : ''}"${k === 's3' ? ' id="bcb3"' : ''}><div class="row gap6"><span class="f1 sm muted" style="min-width:0;line-height:1.3"><b style="color:var(--ink)">${ten}</b>${trangThai ? ' · ' + trangThai : ''}</span>
         ${k === 's3' ? '<button class="ib" data-a="bctl" aria-label="Thiết lập ca và quân số các tổ" title="Thiết lập ca và quân số các tổ">' + IC_BC.cai + '</button>' : ''}${sua ? ib('bclay', k, 'Lấy lại số từ app cho ' + ten, IC_BC.lay) : ''}${ib('bcchep', k, 'Chép ' + ten, IC_BC.chep)}${ib('bcsua', k, (mo ? 'Sửa xong ' : 'Sửa ') + ten, mo ? IC_BC.xong : IC_BC.sua, mo)}</div>
       ${mo ? `<div class="col gap6" style="padding:6px 4px 2px 0">${suaO(k)}</div>` : k === 's3' && typeof S.bcM.s3 !== 'string' ? s3Html
         : `<pre style="white-space:pre-wrap;word-break:break-word;margin:2px 4px 0 0;font:inherit;font-size:15px;line-height:1.45">${esc(P[k].join('\n'))}</pre>`}
+      ${!mo && bcMoi(B, k).length ? `<button class="btn s full" style="margin-top:6px" data-a="bcmoi" data-k="${k}">+ Thêm ${bcMoi(B, k).length} ${k === 's7' ? 'vướng mắc' : 'đơn trễ hạn'} mới từ đơn gia công</button>` : ''}
       ${k === 's3' && !mo && Q.chua.length && caKhoa(B) >= caKhoa(B.hien) ? `<button class="btn s full" style="margin-top:6px" data-a="bcnhac">Chép tin nhắc ${Q.chua.length} tổ chưa báo (dán vào Zalo)</button>` : ''}</div>`;
   }).join('');
   return `${top}${chips}<div class="f1 scroll pad col gap8" id="body">
     <div class="card" style="padding:0;overflow:hidden">${muc}</div>
     ${coRieng ? `<div class="row gap8 sm" style="line-height:1.4;align-items:flex-start"><span class="f1" style="min-width:0;color:var(--warn)">Phần <b>sửa chưa chép</b> mới chỉ nằm trên máy này. Bấm <b>Chép báo cáo</b> để lưu thành bản chung cho mọi người soạn.</span><button class="chip s" style="flex:none" data-a="bcbo">Bỏ phần sửa</button></div>` : ''}
+    ${H ? `<span class="sm" style="line-height:1.4">Ca này chưa ai chép: báo cáo điền sẵn <b>giữ như ${esc(caGoi({ ngay: H.ngay, ca: B.ca }))}</b> (công việc, kiểm tra, vướng mắc, tiến độ, nguồn quân số). Chỉ cần sửa chỗ đã đổi rồi chép. Quân số luôn lấy số mới của ca này.</span>` : ''}
     <span class="sm muted" style="line-height:1.4">Báo cáo của ca và mẫu là một bản dùng chung. Phần đã sửa tay giữ nguyên chữ; các phần khác tự lấy số mới nhất từ app.</span>
     ${B.bao ? `<span class="sm ${chep === 'doi' ? '' : 'muted'}" style="line-height:1.4${chep === 'doi' ? ';color:var(--warn);font-weight:600' : ''}">Đã chép lúc ${dmy(B.bao.ts)} · ${esc(B.bao.by_name)}${chep === 'doi' ? '. Nội dung đã đổi sau lần chép đó: bấm Chép lại để gửi bản mới.' : ''}</span>` : ''}
   </div>`;
@@ -6505,6 +6548,14 @@ const ACTIONS = {
   },
   // chuyển mục 4 sang sửa bằng chữ, bắt đầu từ đúng chữ đang hiện
   bcvchu() { S.bcM.s4 = bcGet('s4'); bcNhap(); render(); },
+  // mục 7 / 8 đang là chữ: thêm các đơn vướng / trễ mới mà chữ chưa nhắc; chữ chỉ có dòng "chưa có / không có" thì thay hẳn
+  bcmoi(d) {
+    const k = d.k, moi = S.bcc ? bcMoi(S.bcc, k) : [];
+    if (!moi.length) return;
+    const cu = bcDong(S.bcM[k]).filter((l) => !/^(hiện tại chưa có|nguy cơ chậm tiến độ: không có)\.?$/i.test(l));
+    S.bcM[k] = cu.length ? cu.concat(moi).join('\n') : bcAuto(S.bcc, k);
+    bcNhap(); render();
+  },
   // đổi nguồn quân số là ghép lại mục 3 theo nguồn mới (chữ đã sửa tay ở mục 3 bỏ đi)
   bcnguon(d) { S.bcNguon = d.v === 'tl' ? 'tl' : 'to'; delete S.bcM.s3; bcNhap(); render(); },
   // bỏ phần sửa chưa chép của máy này: về đúng bản dùng chung đang lưu

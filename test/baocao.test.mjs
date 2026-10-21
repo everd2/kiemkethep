@@ -4,7 +4,8 @@
    2. Bản chữ đúng mẫu của đơn vị: phần đầu, quân số từng tổ (tổ chia ca, tổ làm ca kia, tổ chưa báo), công việc từ
       gia công, máy móc, kiểm tra, vướng mắc, tiến độ.
    3. Mục đã sửa tay giữ nguyên chữ của người soạn; phần đầu và máy móc thành mẫu cho ca sau; dòng kiểm tra chỉ thành
-      mẫu khi bấm đặt làm mẫu. */
+      mẫu khi bấm đặt làm mẫu.
+   4. Hôm sau giữ như hôm trước: ca chưa ai chép điền sẵn theo báo cáo cùng ca hôm trước (mục 4, 6, 7, 8, nguồn quân số). */
 import { boot, advance, vnDay } from './harness.mjs';
 
 const ROOT = process.argv[2] || '.';
@@ -448,8 +449,19 @@ async function main() {
     const luu = JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', D).data).viec;
     eq('chép: phần chỉnh lưu kèm báo cáo; tiến độ đơn gia công KHÔNG đổi', [luu.tu.map(({ ten, tt }) => ({ ten, tt })), S.one('SELECT pct FROM don_gc WHERE id = ?', d1).pct, S.one('SELECT tt FROM don_gc WHERE id = ?', d4).tt],
       [[{ ten: 'LK11, LK12 (thấp tầng)', tt: 60 }, { ten: 'Cột tầng 3 trục A-B', tt: 'xong' }], 80, 'lam']);
+    /* HÔM SAU GIỮ NHƯ HÔM TRƯỚC: ca chưa ai chép lấy báo cáo đã lưu CÙNG CA hôm trước làm bản điền sẵn. Ca ngày mai lấy
+       theo ca ngày hôm nay: dựng ca ngày hôm nay từ bản ca đêm vừa soạn (cất bản thật để trả lại sau). */
     const sau = vnDay(Date.parse(D) + 864e5);
-    R(`S.bcCa = { ngay: '${sau}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    const ca1Cu = S.one('SELECT data, van_ban, ts, by_id FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D);
+    const datNguon = (data) => {
+      S.raw.prepare('DELETE FROM bao_cao_ca WHERE ngay = ? AND ca = 1').run(D);
+      S.raw.prepare('INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?, 1, ?, ?, 1, ?)').run(D, JSON.stringify(data), 'x', U[CV]);
+    };
+    const dem2 = JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', D).data);
+    datNguon({ ...dem2, muc: {} });
+    const moSau = async () => { R(`S.bcCa = { ngay: '${sau}', ca: 1 }; S.bcc = null; go('baocaoca', true)`); await cho(); };
+    await moSau();
+    eq('ca ngày lấy theo ca ngày hôm trước, không theo ca đêm liền trước', R('S.bcc.homTruoc.ngay'), D);
     ok('ca sau (chưa ai lưu): việc tự thêm chưa xong mang sang, việc đã hoàn thành thì không; đơn theo số của đơn', s4().includes('LK11, LK12 (thấp tầng): đang gia công 60%') && !s4().some((l) => l.startsWith('Cột tầng 3')) && s4().includes('Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 80%'), s4().join(' | '));
     R("ACTIONS.bcsua({ k: 's4' }); ACTIONS.bcvchu()");
     ok('Sửa bằng chữ: ô chữ bắt đầu từ đúng chữ đang hiện, có nút về soạn theo dòng', R('vBaoCaoCa()').includes('id="bc_s4"') && R("S.bcM.s4").includes('LK11') && R('vBaoCaoCa()').includes('data-a="bclay" data-k="s4"'));
@@ -462,21 +474,41 @@ async function main() {
     const b5 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, CV)).data;
     eq('app bản cũ chép (không gửi phần chỉnh mục 4): phần chỉnh đang lưu giữ nguyên', [(await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b5.bao.ts, van_ban: b5.bao.van_ban + ' ', muc: b5.bao.muc }, CV)).status,
       JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', D).data).viec.tu.map((x) => x.ten)], [200, ['LK11, LK12 (thấp tầng)', 'Cột tầng 3 trục A-B']]);
-    // ca trước chép mục 4 BẰNG CHỮ: không mang việc tự thêm sang (có thể đã bị xoá trong chữ)
-    const b6 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, CV)).data;
-    await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b6.bao.ts, van_ban: b6.bao.van_ban, muc: { ...b6.bao.muc, s4: 'Chữ tự gõ' }, viec: b6.bao.viec }, CV);
-    eq('ca trước chép mục 4 bằng chữ: không mang việc tự thêm sang', (await S.call('GET', `/baocao?ngay=${sau}&ca=1`, undefined, CV)).data.viecTruoc, []);
-    const b7 = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, CV)).data;
-    await S.call('PUT', '/baocao', { ngay: D, ca: 2, ts: b7.bao.ts, van_ban: b7.bao.van_ban, muc: Object.fromEntries(Object.entries(b7.bao.muc).filter(([k]) => k !== 's4')), viec: b7.bao.viec }, CV);
-    // chỉ mang từ báo cáo trong 2 ngày
-    const xa = vnDay(Date.parse(D) - 4 * 864e5);
-    S.raw.prepare('INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?, 1, ?, ?, 1, ?)').run(xa, JSON.stringify({ muc: {}, viec: { d: {}, them: [], tu: [{ id: 'cu1', ten: 'Việc cũ', tt: 40 }] } }), 'x', U[CV]);
-    eq('mang sang chỉ từ báo cáo trong 2 ngày: cách 2 ngày thì có, cách 3 ngày thì không', [(await S.call('GET', `/baocao?ngay=${vnDay(Date.parse(D) - 2 * 864e5)}&ca=1`, undefined, CV)).data.viecTruoc.map((x) => x.ten), (await S.call('GET', `/baocao?ngay=${vnDay(Date.parse(D) - 864e5)}&ca=1`, undefined, CV)).data.viecTruoc],
-      [['Việc cũ'], []]);
+    // hôm trước chép mục 4 BẰNG CHỮ: chữ đó mang sang, không mang dòng nào (app bản cũ đọc viecTruoc: rỗng)
+    datNguon({ ...dem2, muc: { s4: 'Chữ tự gõ' } });
+    const h1 = (await S.call('GET', `/baocao?ngay=${sau}&ca=1`, undefined, CV)).data;
+    eq('hôm trước chép mục 4 bằng chữ: chữ mang sang, việc tự thêm thì không', [h1.homTruoc.muc.s4, h1.viecTruoc], ['Chữ tự gõ', []]);
+    await moSau();
+    eq('mở ca sau: mục 4 là đúng chữ hôm trước', [R("bcGet('s4')"), R('bcCoKhac(bcKhac())')], ['Chữ tự gõ', false]);
+    /* chữ mục 6, 7, 8 và nguồn quân số giữ như hôm trước; chữ mục 3 thì không (số người đổi từng ca). Mục 4: % đã chỉnh còn
+       cao hơn đơn thì giữ, thấp hơn thì theo đơn; đơn hôm trước báo xong mà đơn chưa đóng thì không lặp lại */
+    datNguon({ muc: { s3: 'Quân số cũ 99 cn', s6: 'Dọn dẹp: tổ Nam chưa dọn', s7: 'Chờ cẩu tháp', s8: 'Tiến độ: đạt' }, nguon: 'tl',
+      viec: { d: { [d1]: { tt: 90, g: 80 }, [d2]: { tt: 20, g: 50 }, [d4]: { tt: 'xong', g: 30 } }, them: [], tu: [{ id: 'k1', ten: 'Cọc thử', tt: 30 }, { id: 'k2', ten: 'Cọc xong', tt: 'xong' }] } });
+    await moSau();
+    eq('chữ mục 6, 7, 8 và nguồn quân số giữ như hôm trước; mục 3 không giữ chữ', [R("bcGet('s6')"), R("bcGet('s7')"), R("bcGet('s8')"), R('S.bcNguon'), R('typeof S.bcM.s3')],
+      ['Dọn dẹp: tổ Nam chưa dọn', 'Chờ cẩu tháp', 'Tiến độ: đạt', 'tl', 'undefined']);
+    ok('mục 4: % chỉnh cao hơn đơn thì giữ, thấp hơn thì theo đơn, đơn đã báo xong không lặp lại, việc ngoài app chưa xong giữ', s4().includes('Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 90%')
+      && s4().some((l) => l.startsWith('Vách W1') && l.endsWith(': đang gia công 50%')) && !s4().some((l) => l.startsWith('Thang bộ')) && s4().includes('Cọc thử: đang gia công 30%') && !s4().some((l) => l.startsWith('Cọc xong')), s4().join(' | '));
+    ok('giữ từ hôm trước: không tính là phần sửa chưa chép, có nhãn "giữ như" và dòng nói rõ', !R('bcCoKhac(bcKhac())') && R('vBaoCaoCa()').includes('<b>giữ như ') && R('vBaoCaoCa()').includes('Ca này chưa ai chép'));
+    const nV = R('bcVuong(S.bcc).length');
+    eq('vướng mắc của đơn mà chữ giữ lại chưa nhắc: có nút thêm', [R("bcMoi(S.bcc, 's7').length"), R('vBaoCaoCa()').includes('data-a="bcmoi" data-k="s7"')], [nV, nV > 0]);
+    R(`ACTIONS.bcmoi({ k: 's7' })`);
+    ok('chạm thêm: chữ cũ giữ, vướng mắc mới nối vào, hết nút thêm', R("bcGet('s7')").startsWith('Chờ cẩu tháp') && R("bcMoi(S.bcc, 's7').length") === 0 && R('bcCoKhac(bcKhac())'), R("bcGet('s7')"));
+    R(`ACTIONS.bclay({ k: 's6' })`);
+    eq('lấy lại từ app: mục 6 về dòng kiểm tra của mẫu', R("bcGet('s6')"), R("S.bcc.mau.kt.join('\\n')"));
+    R('ACTIONS.bcbo()');
+    // chỉ lấy CÙNG CA, trong 7 ngày
+    const xa = vnDay(Date.parse(D) - 9 * 864e5);
+    S.raw.prepare('INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?, 1, ?, ?, 1, ?)').run(xa, JSON.stringify({ muc: { s7: 'Việc cũ' }, viec: { d: {}, them: [], tu: [] } }), 'x', U[CV]);
+    const hT = async (n, ca) => (await S.call('GET', `/baocao?ngay=${vnDay(Date.parse(D) - n * 864e5)}&ca=${ca}`, undefined, CV)).data.homTruoc;
+    eq('lấy cùng ca trong 7 ngày: cách 7 ngày thì có, cách 8 ngày thì không, ca kia thì không', [((await hT(2, 1)) || {}).ngay, await hT(1, 1), await hT(2, 2)], [xa, null, null]);
     S.raw.exec(`DELETE FROM bao_cao_ca WHERE ngay = '${xa}'`);
+    S.raw.prepare('DELETE FROM bao_cao_ca WHERE ngay = ? AND ca = 1').run(D);
+    if (ca1Cu) S.raw.prepare('INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?, 1, ?, ?, ?, ?)').run(D, ca1Cu.data, ca1Cu.van_ban, ca1Cu.ts, ca1Cu.by_id);
     // chỉnh trên một đơn không còn trong báo cáo của ca (đã huỷ, hay xong từ ca trước): không làm mục 4 thành "đã chỉnh"
     R(`S.bcc = null; go('baocaoca', true)`); await cho();
-    R("S.bcV.d['99999'] = { tt: 40, g: 20 }; S.bcV.them.push(88888)");
+    // soạn theo dòng (ca ngày hôm trước chép mục 4 bằng chữ nên ca này giữ chữ đó)
+    R("delete S.bcM.s4; S.bcV.d['99999'] = { tt: 40, g: 20 }; S.bcV.them.push(88888)");
     ok('chỉnh trên đơn không còn trong ca: mục 4 không bị gắn nhãn "đã chỉnh", không có nút lấy lại', !R('vBaoCaoCa()').includes('đã chỉnh trên đơn') && !R('vBaoCaoCa()').includes('data-a="bclay" data-k="s4"'));
     R("delete S.bcV.d['99999']; S.bcV.them.pop()");
     R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
