@@ -152,6 +152,10 @@ async function main() {
   eq('chi tiết đối tác: đọc bản của màn đang mở, không phải S.loans cũ', dangXem(), '2');
   R("ACTIONS.anhnav({ d: '-1' })");
   eq('Trước ‹', dangXem(), '1');
+  R('ACTIONS.anhto()');
+  ok('chạm ảnh: hiện cỡ thật để đọc chữ, có lời chỉ cách thu nhỏ', /data-a="anhto"[^>]*max-width:none/.test(R('anhXemHtml()')) && R('anhXemHtml()').includes('thu nhỏ'));
+  R("ACTIONS.anhnav({ d: '1' })");
+  ok('sang ảnh khác thì về cỡ vừa màn', !/max-width:none/.test(R('anhXemHtml()')));
   R("S.screen = 'duyet'; S.review = { loans: [], satvun: [{ id: 3, anh: [{ id: 40 }] }], phieu: [{ kind: 'vay', loan_id: 7, anh: [{ id: 31 }] }] }; ACTIONS.anhxem({ loai: 'loan', eid: '7', i: '0' })");
   eq('màn Duyệt: ảnh theo thẻ phiếu kho vay mượn', dangXem(), '31');
   R("ACTIONS.anhxem({ loai: 'satvun', eid: '3', i: '0' })");

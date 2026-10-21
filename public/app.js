@@ -2555,9 +2555,10 @@ function loanCard(rows) {
   const conNo = !huy && !cho && loanLotsHien().some((l) => l.grp === r0.grp && l.con > 0);
   const ct = [r0.so_bb ? 'BB ' + esc(r0.so_bb) : '', hanTxt(r0.han, conNo), r0.bien_so ? 'xe ' + esc(r0.bien_so) : '', r0.nguoi ? esc(r0.nguoi) : '',
     r0.kho ? 'phiếu kho ' + esc(kName(r0.kho)) : ''].filter(Boolean).join(' · ');
-  return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
+  // chữ và dải ảnh chung MỘT cột bên trái: .li là hàng space-between, dải ảnh đứng riêng sẽ thành cột giữa ép chữ hẹp lại
+  return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
     ${esc(kemTan(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '), kg))}<br>
-    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${anhStrip('loan', id, loanAnh(rows, id), !huy)}${nut}</div>`;
+    ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${anhStrip('loan', id, loanAnh(rows, id), !huy)}</div>${nut}</div>`;
 }
 // gom các dòng cùng lần ghi (grp), giữ thứ tự mới nhất trước như server trả về
 const loanGroups = (items) => {
@@ -2719,8 +2720,8 @@ function svCard(r) {
     : quyen || (mine && (cho || Date.now() - r.duyet_ts < 10 * 60e3)) ? `<button class="btn s bad" data-a="svvoid" data-id="${r.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>` : '';
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r.voided_uname ? ' · ' + esc(r.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>'
     : `<span class="badge ok">Đã duyệt${r.duyet_uname ? ' · ' + esc(r.duyet_uname) : ''}</span>`;
-  return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
-    <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${anhStrip('satvun', r.id, r.anh, !huy)}${nut}</div>`;
+  return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
+    <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${anhStrip('satvun', r.id, r.anh, !huy)}</div>${nut}</div>`;
 }
 function vSatVun() {
   const b = S.boot, V = S.svs, F = S.sv;
@@ -5016,7 +5017,7 @@ function anhStrip(loai, id, list, themDuoc = true) {
   if (!ds.length && !themDuoc) return '';
   return `<div class="row gap6" style="flex-wrap:wrap;align-items:center;margin-top:4px">
     ${ds.map((a, i) => `<button class="btn s" style="padding:0;width:48px;height:48px;overflow:hidden;border-radius:6px;flex:none" data-a="anhxem" data-loai="${loai}" data-eid="${id}" data-i="${i}" aria-label="Xem ảnh biên bản ${i + 1}"><img src="/api/anh/${a.id}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></button>`).join('')}
-    ${themDuoc ? `<button class="chip s" data-a="anhpick" data-loai="${loai}" data-eid="${id}">${ds.length ? '+ Thêm ảnh' : '📷 Thêm ảnh biên bản'}</button>` : ''}
+    ${themDuoc ? `<button class="chip s" style="flex:none;white-space:nowrap" data-a="anhpick" data-loai="${loai}" data-eid="${id}">${ds.length ? '+ Thêm ảnh' : '📷 Thêm ảnh biên bản'}</button>` : ''}
   </div>`;
 }
 /* Ô chọn tệp tạo RIÊNG, ngoài vùng app vẽ lại: người dùng ở trong camera cả chục giây, vòng tự làm mới mà vẽ lại
@@ -5050,10 +5051,16 @@ function anhXemHtml() {
   if (!ds.length) return '';
   const i = Math.max(0, Math.min(X.i, ds.length - 1));
   const a = ds[i];
-  return `<div class="modal" role="dialog" aria-modal="true" aria-label="Ảnh biên bản"><div class="box col gap8" style="align-items:center">
-    <img src="/api/anh/${a.id}" alt="Ảnh biên bản" style="max-width:100%;max-height:60vh;border-radius:8px;object-fit:contain">
-    ${ds.length > 1 ? `<div class="row gap6"><button class="btn s" data-a="anhnav" data-d="-1" ${i === 0 ? 'disabled' : ''}>‹ Trước</button><span class="sm muted">${i + 1}/${ds.length}</span><button class="btn s" data-a="anhnav" data-d="1" ${i === ds.length - 1 ? 'disabled' : ''}>Sau ›</button></div>` : ''}
-    <div class="row gap6 full"><button class="btn s f1" data-a="anhtaixuong" data-id="${a.id}">Tải xuống</button><button class="btn s bad f1" data-a="anhxoa" data-id="${a.id}">Xoá</button></div>
+  /* Co vừa màn thì cả tờ biên bản chỉ rộng ~360px, chữ không đọc được — mà đọc số trên biên bản là mục đích chính.
+     Chạm ảnh: hiện cỡ thật (ảnh đã nén về 1600px) trong khung cuộn, kéo để xem từng góc; chạm lần nữa: co lại. */
+  const to = !!X.to;
+  return `<div class="modal" role="dialog" aria-modal="true" aria-label="Ảnh biên bản"><div class="box col gap8">
+    <div style="width:100%;max-height:62vh;overflow:auto;border-radius:8px;background:#E4E0D6;${to ? '' : 'display:flex;justify-content:center'}">
+      <img src="/api/anh/${a.id}" alt="Ảnh biên bản ${i + 1}" data-a="anhto" style="display:block;cursor:${to ? 'zoom-out' : 'zoom-in'};${to ? 'max-width:none' : 'max-width:100%;max-height:62vh;object-fit:contain'}">
+    </div>
+    <span class="sm muted" style="text-align:center">${to ? 'Kéo để xem các góc · chạm ảnh để thu nhỏ' : 'Chạm ảnh để phóng to đọc chữ'}</span>
+    ${ds.length > 1 ? `<div class="row gap6" style="width:100%;align-items:center"><button class="btn s f1" data-a="anhnav" data-d="-1" ${i === 0 ? 'disabled' : ''}>‹ Trước</button><span class="sm b" style="min-width:44px;text-align:center">${i + 1}/${ds.length}</span><button class="btn s f1" data-a="anhnav" data-d="1" ${i === ds.length - 1 ? 'disabled' : ''}>Sau ›</button></div>` : ''}
+    <div class="row gap6" style="width:100%"><button class="btn s f1" style="white-space:nowrap" data-a="anhtaixuong" data-id="${a.id}">Tải xuống</button><button class="btn s bad f1" data-a="anhxoa" data-id="${a.id}">Xoá ảnh</button></div>
     <button class="btn full" data-a="anhdong">Đóng</button>
   </div></div>`;
 }
@@ -6087,11 +6094,12 @@ const ACTIONS = {
   // ảnh biên bản (xem đầu mục ẢNH BIÊN BẢN phía trên)
   anhpick(d) { anhChon(d.loai, d.eid); },
   anhxem(d) { S.anhXem = { loai: d.loai, eid: Number(d.eid), i: Number(d.i) || 0 }; render(); },
-  anhnav(d) { if (S.anhXem) S.anhXem.i += Number(d.d); render(); },
+  anhnav(d) { if (S.anhXem) { S.anhXem.i += Number(d.d); S.anhXem.to = false; } render(); },
+  anhto() { if (S.anhXem) S.anhXem.to = !S.anhXem.to; render(); },
   anhdong() { S.anhXem = null; render(); },
   anhtaixuong(d) { download('/anh/' + d.id + '?dl=1', 'bien-ban-' + d.id + '.jpg'); },
   async anhxoa(d) {
-    if (!(await ask('Xoá ảnh này?', 'XOÁ', true))) return;
+    if (!(await ask('Xoá ảnh biên bản này?\nẢnh xoá rồi không lấy lại được.', 'XOÁ ẢNH', true))) return;
     const X = S.anhXem;
     act(async () => {
       await api('DELETE', '/anh/' + d.id);
