@@ -1726,6 +1726,7 @@ const run = async () => {
     rel1(); await p1;
     ok('loadAudit: trả lời chậm của bộ lọc cũ không đè kết quả mới', r('S.audit.length') === 1 && r('S.audit[0].id') === 2, r('JSON.stringify(S.audit)'));
     ctx.fetch = f0;
+  }
   // ---- 1d2. rà soát app.js 2400-4800: giờ VN, giờ server, chạy đua khi tải ----
   // giờ hiển thị luôn là giờ Việt Nam (UTC+7), không theo múi giờ của máy
   ok('hhmm: 17:30 UTC là 00:30 giờ VN', r('hhmm(Date.UTC(2026, 0, 1, 17, 30))') === '00:30', r('hhmm(Date.UTC(2026, 0, 1, 17, 30))'));
