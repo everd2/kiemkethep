@@ -1,14 +1,15 @@
 // Báo cáo sản lượng gửi cấp trên: quân số đã báo của các tổ + số công gia công thép + thiết lập => sản lượng.
 import { HttpError, bad, json, vnDay } from './core.js';
 import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js';
-import { MAU_CO, QS_TONG_MAX, TO_SX } from './quanso.js';
+import { MAU_CO, QS_TONG_MAX, TO_SX, caLich, docCfg } from './quanso.js';
 
 /* ========================= BÁO CÁO SẢN LƯỢNG =========================
    Cùng khuôn với báo cáo ca (src/baocao.js): CVKTHT trở lên soạn, phần đầu (đơn vị, chỉ huy, dự án, khu vực) dùng CHUNG
    mẫu bc_mau với báo cáo ca. Khác ở chỗ: MỘT báo cáo gộp ca ngày và ca đêm, mỗi tổ một dòng.
    - QUÂN SỐ CỦA MỘT TỔ trong báo cáo ngày D: số tổ đã báo của CA NGÀY ngày D, và/hoặc của CA ĐÊM NGÀY HÔM TRƯỚC (ca đêm D-1 kết thúc
      sáng D) nếu tổ làm đêm. Tổ chia hai ca thì cộng cả hai. Không có phần nghỉ / lý do nghỉ. Tổ không báo thì lấy số thiết lập đã
-     chép lúc hết ca (quan_so_tl).
+     chép lúc hết ca (quan_so_tl), chưa chép thì lấy THIẾT LẬP QUÂN SỐ đang đặt (bc_mau.data.tl, đúng nguồn báo cáo ca dùng khi tổ
+     chưa báo) — nên tổ đã có số thiết lập là có mặt trong báo cáo, không phải đợi hết ca.
    - CÔNG GIA CÔNG THÉP của tổ: mặc định = số ĐI LÀM ở trên; CVKTHT trở lên sửa được từng tổ (data.cong, chỉ lưu ô đã sửa).
    - THIẾT LẬP (lưu ở bc_mau.data.sl, dùng cho mọi ngày, CVKTHT trở lên sửa):
        chuan  công chuẩn, kg/công (mặc định 158)
@@ -79,10 +80,20 @@ export async function slView(env, url) {
     env.DB.prepare("SELECT s.data, s.ts, s.by_id, COALESCE(u.name, '(đã xoá)') by_name FROM san_luong s LEFT JOIN users u ON u.id = s.by_id WHERE s.ngay = ?").bind(ngay),
   ]);
   const bao = new Map(qs.results.map((r) => [r.user_id + ':' + r.ca, r])), chep = new Map(tl.results.map((r) => [r.user_id + ':' + r.ca, r]));
+  const cfg = docCfg(mau.results[0]);
+  // thiết lập quân số đang đặt cho tổ ở ca `ca` (số ĐI LÀM s1 / s2); lịch ca nói tổ không làm ca này thì không có dòng
+  const dongTl = (uid, ca, n) => {
+    const t = cfg.tl[uid];
+    if (!t) return null;
+    const L = caLich(cfg, uid, n);
+    if (L && L !== 3 && L !== ca) return null;
+    const s = Number(t['s' + ca]) || 0, nghi = Object.values(t['n' + ca] || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+    return s + nghi > 0 ? { ngay: n, tong: t.tong, lam: s, nguon: 'tl' } : null;
+  };
   const dong = (uid, ca, n) => {
     const b = bao.get(uid + ':' + ca), t = chep.get(uid + ':' + ca);
-    // dòng tổ báo luôn hơn số thiết lập đã chép; tổ không làm ca đó thì không có dòng nào (null)
-    return b ? { ngay: n, tong: b.tong, lam: b.lam, nguon: 'bao' } : t && t.lam != null ? { ngay: n, tong: t.tong, lam: t.lam, nguon: 'tl' } : null;
+    // thứ tự: tổ báo > số thiết lập đã chép lúc hết ca > thiết lập quân số đang đặt; tổ không làm ca đó thì không có dòng nào (null)
+    return b ? { ngay: n, tong: b.tong, lam: b.lam, nguon: 'bao' } : t && t.lam != null ? { ngay: n, tong: t.tong, lam: t.lam, nguon: 'tl' } : dongTl(uid, ca, n);
   };
   const to = tdt.results.map((u) => {
     const ngayCa = dong(u.id, 1, ngay), dem = dong(u.id, 2, hom), cs = [ngayCa, dem].filter(Boolean);

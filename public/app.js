@@ -4275,17 +4275,25 @@ function slDau(L) {
 }
 // quân số của tổ trong báo cáo: ca ngày hôm nay và/hoặc ca đêm hôm trước
 const slNguon = (u) => [u.ngay && `ca ngày ${u.ngay.lam}/${u.ngay.tong}`, u.dem && `ca đêm ${fmtDay(u.dem.ngay).slice(0, 5)} ${u.dem.lam}/${u.dem.tong}`].filter(Boolean).join(' + ');
-// bản chữ đúng khuôn báo cáo quân số, để dán vào Zalo
+/* Bản chữ để dán vào Zalo, đúng mẫu đơn vị đang dùng: tiêu đề, phần đầu, rồi MỖI TỔ MỘT DÒNG (cn = công nhân, kg = sản lượng của tổ).
+     • Tổ A: ca ngày 12/21 cn gia công thép 8532 kg
+     • Tổ B: ca ngày 7/19 cn, ca đêm 7/19 cn, nghỉ 5 cn — gia công thép 8395 kg   (tổ làm cả hai ca; nghỉ = tổng − đi làm hai ca)
+     • Tổ C (làm ca đêm) 16/20 cn gia công thép 10112 kg
+   Tổ làm ca ngày xếp trước, tổ chỉ làm đêm sau, tổ chưa có quân số cuối. Không có dòng tổng: tổng chỉ hiện trên màn hình. */
 function slTao() {
-  const L = S.sl, T = slTinh(), cs = T.cs;
-  const co = T.dong.filter((r) => r.u.ngay || r.u.dem || r.cong);
-  return [`BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}`].concat(slDau(L).map((x) => '• ' + x), [
-    `2. Quân số đi làm trong ngày là: ${T.lam} công nhân / (tổng quân số ${T.tong})`],
-  co.map((r) => `• Tổ ${r.u.name}: ${slNguon(r.u) || 'chưa báo'}; gia công thép ${r.cong} công`),
-  [`• Quân số gia công thép được: ${T.cong} công`,
-    `3. Sản lượng (công chuẩn ${slFmt(cs.chuan)} kg/công; tỷ lệ giá ${slFmt(cs.gia)})`],
-  co.map((r) => `• Tổ ${r.u.name}: ${r.cong} công × ${slFmt(cs.chuan)} kg × ${slFmt(r.gc)} ÷ ${slFmt(cs.gia)} = ${fmtInt(r.kg)} kg`),
-  [`• Tổng sản lượng: ${fmtInt(T.kg)} kg (${slTan(T.kg)})`]).map((l) => l.trimEnd()).join('\n');
+  const L = S.sl, T = slTinh(), kg = (r) => Math.round(r.kg);
+  const nhom = (r) => (r.u.ngay ? 0 : r.u.dem ? 1 : 2);
+  const dong = T.dong.slice().sort((a, b) => nhom(a) - nhom(b)).filter((r) => nhom(r) < 2 || r.cong).map((r) => {
+    const u = r.u, ten = 'Tổ ' + u.name;
+    if (u.ngay && u.dem) {
+      const nghi = Math.max(0, u.tong - u.ngay.lam - u.dem.lam);
+      return `• ${ten}: ca ngày ${u.ngay.lam}/${u.ngay.tong} cn, ca đêm ${u.dem.lam}/${u.dem.tong} cn${nghi ? `, nghỉ ${nghi} cn` : ''} — gia công thép ${kg(r)} kg`;
+    }
+    if (u.ngay) return `• ${ten}: ca ngày ${u.ngay.lam}/${u.ngay.tong} cn gia công thép ${kg(r)} kg`;
+    if (u.dem) return `• ${ten} (làm ca đêm) ${u.dem.lam}/${u.dem.tong} cn gia công thép ${kg(r)} kg`;
+    return `• ${ten}: chưa báo quân số — gia công thép ${kg(r)} kg`;
+  });
+  return [`BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}`].concat(slDau(L).map((x) => '• ' + x), dong).map((l) => l.trimEnd()).join('\n');
 }
 function vSanLuong() {
   const L = S.sl, top = head('Báo cáo sản lượng', L ? fmtDay(L.ngay) : '', 'more');

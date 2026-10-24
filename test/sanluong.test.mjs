@@ -17,7 +17,7 @@ async function main() {
   await S.call('POST', '/setup', { token: 'setup-tok', name: 'Admin', phone: '0900000001', pin: '2468' });
   await S.login('Admin', '0900000001', '2468');
   const U = {};
-  const ds = [['Phạm Văn Khoa', 'tieudoi'], ['Lò Văn Cơi', 'tieudoi'], ['Lê Hải Nam', 'tieudoi'], ['Nguyễn Duy Dũng', 'cvktht']];
+  const ds = [['Phạm Văn Khoa', 'tieudoi'], ['Lò Văn Cơi', 'tieudoi'], ['Lê Hải Nam', 'tieudoi'], ['Nguyễn Văn Hoàng', 'tieudoi'], ['Nguyễn Đức Sơn', 'tieudoi'], ['Lý Đình Trường', 'tieudoi'], ['Nguyễn Duy Dũng', 'cvktht']];
   let i = 2;
   for (const [name, role] of ds) {
     const phone = '09000000' + String(i++).padStart(2, '0');
@@ -34,6 +34,13 @@ async function main() {
   await q(CV, { ngay: D, ca: 1, user: U['Phạm Văn Khoa'], tong: 21, lam: 18, nghi: { om: 3 } });
   await q(CV, { ngay: hom, ca: 2, user: U['Lò Văn Cơi'], tong: 19, lam: 9, nghi: { gd: 1 } });
   await q(CV, { ngay: D, ca: 2, user: U['Lê Hải Nam'], tong: 20, lam: 7, nghi: { om: 1 } });
+  // Trường làm CẢ HAI ca: ca ngày hôm nay 7/19 và ca đêm hôm qua 7/19 (tổng 19 => nghỉ 5)
+  await q(CV, { ngay: D, ca: 1, user: U['Lý Đình Trường'], tong: 19, lam: 7 });
+  await q(CV, { ngay: hom, ca: 2, user: U['Lý Đình Trường'], tong: 19, lam: 7 });
+  // Hoàng và Sơn KHÔNG báo gì, chỉ có "Thiết lập quân số" do CVKTHT đặt: Hoàng làm ca ngày 12/15, Sơn làm ca đêm 17/19
+  const tlq = (b) => S.call('PUT', '/quanso/thietlap', b, CV);
+  eq('đặt thiết lập quân số cho Hoàng (ca ngày)', (await tlq({ user: U['Nguyễn Văn Hoàng'], tong: 15, s1: 12, s2: 0, ts: 0 })).status, 200);
+  eq('đặt thiết lập quân số cho Sơn (ca đêm)', (await tlq({ user: U['Nguyễn Đức Sơn'], tong: 19, s1: 0, s2: 17, ts: 0 })).status, 200);
 
   /* ===== 1. Quyền ===== */
   eq('Tiểu đội trưởng không mở được báo cáo sản lượng', (await S.call('GET', '/sanluong', undefined, 'Phạm Văn Khoa')).status, 403);
@@ -48,6 +55,10 @@ async function main() {
   eq('Khoa (ca ngày): 18/21, không có phần nghỉ', [khoa.lam, khoa.tong, khoa.ngay.nghi, khoa.dem], [18, 21, undefined, null]);
   eq('Cơi (ca đêm hôm trước): 9/19', [coi.lam, coi.tong, coi.dem.ngay, coi.ngay], [9, 19, hom, null]);
   eq('Nam báo ca đêm HÔM NAY: chưa vào báo cáo hôm nay', [nam.lam, nam.tong, nam.ngay, nam.dem], [0, 0, null, null]);
+  const hoang = V.to.find((t) => t.name === 'Nguyễn Văn Hoàng'), son = V.to.find((t) => t.name === 'Nguyễn Đức Sơn'), truong = V.to.find((t) => t.name === 'Lý Đình Trường');
+  eq('Hoàng chỉ có thiết lập quân số: vẫn vào báo cáo, ca ngày 12/15 (nguồn thiết lập)', [hoang.lam, hoang.tong, hoang.ngay.nguon, hoang.dem], [12, 15, 'tl', null]);
+  eq('Sơn chỉ có thiết lập quân số ca đêm: ca đêm hôm trước 17/19', [son.lam, son.tong, son.dem.nguon, son.dem.ngay, son.ngay], [17, 19, 'tl', hom, null]);
+  eq('Trường làm cả hai ca: 7 + 7, tổng 19', [truong.ngay.lam, truong.dem.lam, truong.lam, truong.tong], [7, 7, 14, 19]);
   eq('ngày mai chưa tới', (await S.call('GET', '/sanluong?ngay=' + vnDay(Date.now() + 864e5 * 3), undefined, CV)).status, 400);
   eq('ngày không có thật bị từ chối', (await S.call('GET', '/sanluong?ngay=2026-13-45', undefined, CV)).status, 400);
   const Vm = (await S.call('GET', '/sanluong?ngay=' + vnDay(Date.now() + 864e5), undefined, CV));
@@ -143,39 +154,39 @@ async function main() {
   eq('màn lấy đúng ngày hôm nay', R('S.sl.ngay'), D);
   ok('menu Thêm của CVKTHT có mục Báo cáo sản lượng', R('vMore()').includes('data-a="slmo"'));
   const kg = (cong, chuan, gc, gia) => Math.round((cong * chuan * gc) / gia);
-  // báo cáo đã lưu: dùng ảnh chụp (tỷ lệ giá 0,25), không theo thiết lập hiện tại (0,5)
-  // tổ xếp theo tên; lấy theo mã tổ cho khỏi lệ thuộc thứ tự
   const cua = (T, u) => T.dong.find((r) => r.u.id === u.id);
+  // báo cáo đã lưu: dùng ảnh chụp (tỷ lệ giá 0,25), không theo thiết lập hiện tại (0,5)
   const T1 = R('slTinh()');
-  eq('công: Khoa 15 (đã sửa) + Cơi 9 + Nam 0', [cua(T1, khoa).cong, cua(T1, coi).cong, cua(T1, nam).cong, T1.cong], [15, 9, 0, 24]);
-  eq('đi làm / tổng quân số: 27 / 40', [T1.lam, T1.tong], [27, 40]);
-  eq('sản lượng từng tổ = (công x 158 x tỷ lệ gia công) / 0,25', [cua(T1, khoa).kg, cua(T1, coi).kg, cua(T1, nam).kg], [kg(15, 158, 0.8, 0.25), kg(9, 158, 0.6, 0.25), 0]);
-  eq('tổng bằng cộng các tổ', T1.kg, kg(15, 158, 0.8, 0.25) + kg(9, 158, 0.6, 0.25));
+  eq('công: Khoa 15 (đã sửa), Cơi 9, Hoàng 12 (thiết lập), Sơn 17 (thiết lập), Trường 14, Nam 0', [khoa, coi, hoang, son, truong, nam].map((u) => cua(T1, u).cong), [15, 9, 12, 17, 14, 0]);
+  eq('đi làm / tổng quân số', [T1.lam, T1.tong], [18 + 9 + 12 + 17 + 14, 21 + 19 + 15 + 19 + 19]);
+  const gcCh = (u) => R('slGcCua(slCS(), ' + u.id + ')');
+  eq('sản lượng từng tổ = (công x 158 x tỷ lệ gia công) / 0,25', [khoa, coi, hoang].map((u) => cua(T1, u).kg), [kg(15, 158, 0.8, 0.25), kg(9, 158, 0.6, 0.25), kg(12, 158, gcCh(hoang), 0.25)]);
   ok('báo cáo đã lưu khác thiết lập hiện tại: có nút tính lại', R('vSanLuong()').includes('data-a="slai"'));
   R(`ACTIONS.slai()`);
   const T2 = R('slTinh()');
-  eq('tính lại theo thiết lập hiện tại (tỷ lệ giá 0,5)', [cua(T2, khoa).kg, cua(T2, coi).kg, cua(T2, nam).kg], [kg(15, 158, 0.8, 0.5), kg(9, 158, 0.6, 0.5), 0]);
+  eq('tính lại theo thiết lập hiện tại (tỷ lệ giá 0,5)', [khoa, coi].map((u) => cua(T2, u).kg), [kg(15, 158, 0.8, 0.5), kg(9, 158, 0.6, 0.5)]);
   // sửa công của Nam, rồi xem bản chữ
   R(`S.form['slc_${nam.id}'] = '5'`);
-  const gcNam = V.tl.gc[nam.id];
   const T3 = R('slTinh()');
-  eq('công mới: Nam 5; chỉ ô khác số đi làm được lưu (Khoa 15, Nam 5)', [T3.cong, T3.sua], [29, { [khoa.id]: 15, [nam.id]: 5 }]);
-  eq('sản lượng Nam theo tỷ lệ gia công RIÊNG của tổ', cua(T3, nam).kg, kg(5, 158, gcNam, 0.5));
+  eq('chỉ ô khác số đi làm được lưu (Khoa 15, Nam 5)', T3.sua, { [khoa.id]: 15, [nam.id]: 5 });
+  eq('sản lượng Nam theo tỷ lệ gia công RIÊNG của tổ', cua(T3, nam).kg, kg(5, 158, V.tl.gc[nam.id], 0.5));
   R(`S.form['slc_${nam.id}'] = '2x'`);
   ok('công gõ sai: báo lỗi nêu tên tổ', R('slTinh()').loi.includes('Lê Hải Nam'));
   R(`S.form['slc_${nam.id}'] = '5'`);
-  const chu = R('slTao()'), dong = chu.split('\n');
+  const chu = R('slTao()'), dong = chu.split('\n'), kgv = (u) => cua(R('slTinh()'), u).kg;
+  eq('đúng mẫu: tiêu đề + phần đầu + mỗi tổ một dòng, không mục 2/3, không dòng tổng', dong.length, 1 + 1 + 6);
   ok('tiêu đề đúng khuôn', dong[0] === `BÁO CÁO SẢN LƯỢNG ngày ${D.split('-').reverse().join('/')}`, dong[0]);
-  ok('có tổng số tổ ở phần đầu', dong.includes('• Tổng số tổ: 3 tổ'), dong.slice(0, 4).join(' | '));
-  ok('mục 2: đi làm / tổng quân số của cả hai ca gộp', dong.includes('2. Quân số đi làm trong ngày là: 27 công nhân / (tổng quân số 40)'), dong.filter((l) => l.startsWith('2.')).join(''));
-  ok('Khoa: ca ngày hôm nay, công gia công thép 15', dong.includes('• Tổ Phạm Văn Khoa: ca ngày 18/21; gia công thép 15 công'), chu);
-  ok('Cơi: ca đêm hôm trước, công gia công thép 9', dong.includes(`• Tổ Lò Văn Cơi: ca đêm ${ddmm(hom)} 9/19; gia công thép 9 công`), chu);
-  ok('Nam: chưa báo quân số nhưng có công 5', dong.includes('• Tổ Lê Hải Nam: chưa báo; gia công thép 5 công'), chu);
-  ok('không còn chữ nghỉ hay lý do nghỉ', !/nghỉ|ốm|lý do/i.test(chu), chu);
-  ok('có dòng quân số gia công thép được', dong.includes('• Quân số gia công thép được: 29 công'), chu);
-  ok('mục 3 nêu công chuẩn và tỷ lệ giá chung (đã tính lại: 0,5)', dong.includes('3. Sản lượng (công chuẩn 158 kg/công; tỷ lệ giá 0,5)'), chu);
-  ok('mục 3 nêu phép tính từng tổ với tỷ lệ gia công riêng', dong.some((l) => l === `• Tổ Phạm Văn Khoa: 15 công × 158 kg × 0,8 ÷ 0,5 = ${String(kg(15, 158, 0.8, 0.5)).replace(/\B(?=(\d{3})+(?!\d))/g, '.')} kg`), chu);
-  ok('có dòng tổng sản lượng kg và tấn', dong.some((l) => /^• Tổng sản lượng: [\d.]+ kg \([\d,]+ tấn\)$/.test(l)), dong[dong.length - 1]);
+  ok('có tổng số tổ ở phần đầu', dong[1] === '• Tổng số tổ: 6 tổ', dong[1]);
+  const tu = dong.slice(2);
+  eq('tổ ca ngày: dòng đúng mẫu', tu.find((l) => l.includes('Khoa')), `• Tổ Phạm Văn Khoa: ca ngày 18/21 cn gia công thép ${kgv(khoa)} kg`);
+  eq('Hoàng (chỉ thiết lập quân số): ca ngày 12/15', tu.find((l) => l.includes('Hoàng')), `• Tổ Nguyễn Văn Hoàng: ca ngày 12/15 cn gia công thép ${kgv(hoang)} kg`);
+  eq('Trường làm hai ca: có đêm và nghỉ = 19 - 7 - 7', tu.find((l) => l.includes('Trường')), `• Tổ Lý Đình Trường: ca ngày 7/19 cn, ca đêm 7/19 cn, nghỉ 5 cn — gia công thép ${kgv(truong)} kg`);
+  eq('Cơi chỉ làm đêm: (làm ca đêm) 9/19', tu.find((l) => l.includes('Cơi')), `• Tổ Lò Văn Cơi (làm ca đêm) 9/19 cn gia công thép ${kgv(coi)} kg`);
+  eq('Sơn (chỉ thiết lập quân số) làm đêm: 17/19', tu.find((l) => l.includes('Sơn')), `• Tổ Nguyễn Đức Sơn (làm ca đêm) 17/19 cn gia công thép ${kgv(son)} kg`);
+  eq('Nam chưa báo nhưng có công 5: vẫn có dòng, xếp cuối', tu[tu.length - 1], `• Tổ Lê Hải Nam: chưa báo quân số — gia công thép ${kgv(nam)} kg`);
+  ok('tổ ca ngày xếp trước, tổ chỉ làm đêm sau, tổ chưa báo cuối', tu.findIndex((l) => l.includes('(làm ca đêm)')) > tu.findIndex((l) => l.includes('Trường')) && tu.findIndex((l) => l.includes('chưa báo')) === tu.length - 1, tu.join(' | '));
+  ok('không còn chữ nghỉ ngoài dòng tổ hai ca', dong.filter((l) => /nghỉ/.test(l)).length === 1 && !/ốm|lý do/i.test(chu), chu);
+  ok('kg là số nguyên trơn (không dấu chấm nghìn)', tu.every((l) => /\d+ kg$/.test(l) && !/\d\.\d{3} kg$/.test(l)), tu.join(' | '));
   // chép: lưu ảnh chụp thiết lập hiện tại (đã bấm tính lại) + các ô công đã sửa
   R(`ACTIONS.slchep()`); await cho();
   ok('đã chép vào bộ nhớ tạm đúng bản chữ', chep === chu, chep && chep.slice(0, 60));
