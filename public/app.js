@@ -3580,7 +3580,8 @@ async function qsFlush() {
   try {
     for (const j of toi) {
       try { await api('PUT', '/quanso', j.body); doi = true; }
-      catch (e) { if (e.net || e.retry) break; say('Lần báo quân số lúc mất sóng không gửi được: ' + e.message, true); doi = true; }
+      // 401 (hết phiên) cũng dừng và GIỮ hàng chờ: không xoá lần báo chỉ vì phải đăng nhập lại
+      catch (e) { if (e.net || e.retry || e.status === 401) break; say('Lần báo quân số lúc mất sóng không gửi được: ' + e.message, true); doi = true; }
       qsGhiHang(qsHangDoi().filter((x) => x.id !== j.id));
     }
   } finally { qsDangGui = false; }
@@ -5284,16 +5285,33 @@ function settle(kind) {
   S.sel = nx; fillSel(nx); S.scrollSel = nx;
 }
 
+/* Quên dữ liệu của người đăng nhập trước: máy dùng chung, người sau không được thấy danh sách người dùng, nhật ký, sổ vay,
+   đơn gia công... người trước còn để lại trong bộ nhớ, cũng không được thừa hưởng phiếu / sổ đang gõ dở. */
+function quenNguoiTruoc() {
+  Object.assign(S, {
+    review: null, audit: null, auditMore: false, users: null, pinShown: null, usage: null, loans: null, loanDetail: null, svs: null,
+    gc: null, gcDetail: null, gcForm: null, gcId: null, gcXu: null, gcVg: null, qs: null, qsH: null, bcc: null, bcM: {}, bcDau: null, bcMo: null,
+    tk: null, cmp: null, subs: {}, kuEdit: null, kuPick: [], bkFile: null, uRename: null, sel: null, ask: null, loadErr: {},
+    hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, cc: { days: 7, data: null, mo: {} }, _dataUid: null,
+  });
+  Object.assign(S.nhap, { lines: [], qty: 0, done: null, khoa: null, reason: null });
+  Object.assign(S.loan, { lines: [], bb: false, zl: false, done: null });
+  S.sv.done = null;
+  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
+}
+
 const ACTIONS = {
   async login() {
     if (S.busy) return; // bấm nhiều lần khi mạng chậm sẽ tính thành nhiều lần sai PIN
-    const phone = val('phone'), pin = val('pin');
+    const phone = val('phone').trim(), pin = val('pin');
     S.form.phone = phone;
     if (!phone || pin.length !== 4) { S.err = 'Nhập số điện thoại và PIN 4 số'; return render(); }
     S.busy = true; S.busyMsg = 'Đang đăng nhập...'; S.err = ''; render();
     try {
       const r = await api('POST', '/login', { phone, pin });
       try { localStorage.setItem('kt:phone', phone); } catch (e) { /* bỏ qua */ }
+      // đăng nhập người KHÁC với người dùng máy trước đó (phiên hết hạn, không bấm Đăng xuất): bỏ dữ liệu người trước
+      if (S._dataUid && S._dataUid !== r.user.id) quenNguoiTruoc();
       S.me = r.user; S.err = ''; S.screen = 'home';
       if (!r.user.must_change) { await loadBoot(); flushPending(); }
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
@@ -5303,14 +5321,21 @@ const ACTIONS = {
   },
   async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.qsH = null; S.err = '';
     // ảnh đang chọn / chưa gửi là của người vừa đăng xuất: máy dùng chung thì người sau không được gửi nhầm vào lần ghi của mình
-    ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null; render(); },
+    const a = S.ask; quenNguoiTruoc(); if (a) a.resolve(false); // hộp xác nhận đang mở của người trước không được sống sang màn đăng nhập
+    render(); },
   async changepin() {
     if (S.busy) return;
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
     if (!/^\d{4}$/.test(n1)) { S.err = 'PIN mới phải là 4 chữ số'; return render(); }
     if (n1 !== n2) { S.err = 'Hai lần nhập PIN mới không giống nhau'; return render(); }
     S.busy = true; S.busyMsg = 'Đang lưu PIN...'; render();
-    try { await api('POST', '/change-pin', { pin: a, newPin: n1 }); S.err = ''; S.me.must_change = 0; await loadBoot(); S.screen = 'home'; say('Đã đổi PIN.'); }
+    try {
+      await api('POST', '/change-pin', { pin: a, newPin: n1 });
+      S.err = '';
+      // PIN đã đổi bên server: tải dữ liệu lỗi thì không được để màn chính vẽ với S.boot rỗng, cũng không bắt nhập lại PIN cũ
+      try { await loadBoot(); S.me.must_change = 0; S.screen = 'home'; say('Đã đổi PIN.'); }
+      catch (e2) { S.me = null; S.boot = null; S.screen = 'login'; S.err = 'Đã đổi PIN nhưng chưa tải được dữ liệu (' + e2.message + '). Hãy đăng nhập lại bằng PIN mới.'; }
+    }
     catch (e) { S.err = e.message; }
     finally { S.busy = false; S.busyMsg = ''; }
     render();
@@ -5614,7 +5639,7 @@ const ACTIONS = {
     act(async () => { await api('POST', '/reopen', { note }); S.form.reopenNote = ''; await Promise.all([reloadReview(), loadBoot()]); }, 'Đã hoàn tác lần đặt lại số liệu.');
   },
   hprev() { loadHist(ydayOf(S.hist.date)); },
-  hnext() { const n = new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
+  hnext() { if (!S.hist.date) return; const n =new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
   rquick(d) { [S.bc.from, S.bc.to] = repRange(d.v); S.form.rfrom = S.bc.from; S.form.rto = S.bc.to; loadRep(); },
   rload() { const a = val('rfrom'), z = val('rto'); if (!a || !z || a > z) return say('Chọn khoảng ngày hợp lệ.', true), render(); S.bc.from = a; S.bc.to = z; loadRep(); },
   rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
@@ -6286,7 +6311,7 @@ const ACTIONS = {
       if (X) {
         await anhTai(X.loai, X.eid);
         const ds = anhListCuaDong(X.loai, X.eid);
-        if (!ds.length) S.anhXem = null; else S.anhXem.i = Math.min(X.i, ds.length - 1);
+        if (!ds.length) S.anhXem = null; else if (S.anhXem) S.anhXem.i = Math.min(X.i, ds.length - 1); // người dùng có thể đã đóng hộp xem
       }
     }, 'Đã xoá ảnh.');
   },
@@ -6806,13 +6831,19 @@ function pollEvery() {
   if (h < 6 || h >= 20) return 15 * 60e3;
   return Date.now() - lastAct > 5 * 60e3 ? 5 * 60e3 : 60e3;
 }
+let refreshing = false;
 async function refresh() {
-  if (!S.me || document.hidden || S.me.must_change) return;
+  if (!S.me || document.hidden || S.me.must_change || refreshing) return; // refreshing: online + visibilitychange + tick không chạy chồng nhau
   if (Date.now() - lastScroll < 2000) return; // đang cuộn: để yên, vòng sau hỏi lại
   lastPoll = Date.now();
+  refreshing = true;
+  try { await refreshInner(); } finally { refreshing = false; }
+}
+async function refreshInner() {
   try {
     // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ
     const r = await api('GET', '/rev');
+    if (!S.me) return; // trong lúc chờ đã đăng xuất / hết phiên: không tải dữ liệu cho phiên không còn
     const healed = S.netBad; S.netBad = false; S.netOk = Date.now();
     checkVer();
     if (readPending().some((j) => !j.err && ofMe(j))) flushPending();
