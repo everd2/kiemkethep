@@ -286,6 +286,25 @@ export async function restoreData(req, env, user) {
   if (Number(f.schema) !== now && !(BK_COMPAT[now] || []).includes(Number(f.schema))) {
     throw bad(`Bản sao thuộc cấu trúc ${f.schema}, hệ thống đang ở ${now}. Không nạp được bản sao khác phiên bản cấu trúc.`);
   }
+  /* Kiểm tra tệp TRƯỚC khi dựng câu lệnh nào: kiểu bảng, kiểu từng dòng, giá trị lồng nhau. Không kiểm
+     thì dòng không phải object làm sập (500) giữa chừng, bảng bắt buộc thiếu/sai kiểu bị coi là rỗng nên
+     nạp xong là xoá sạch bảng đó, và tệp không có admin nào khiến cả bãi mất người quản lý. */
+  if (f.ban !== undefined && Number(f.ban) !== 1) throw bad('Bản sao thuộc định dạng ' + f.ban + ', ứng dụng chỉ nạp được định dạng 1.');
+  if (typeof f.bang !== 'object' || Array.isArray(f.bang)) throw bad('Tệp không phải bản sao của ứng dụng này');
+  for (const t of BK_STATE) {
+    const v = f.bang[t];
+    if (v === undefined && (BK_GIU_NEU_THIEU.includes(t) || t === 'khu_report_log')) continue; // khu_report_log: bản 14 chưa có, thiếu = rỗng
+    if (!Array.isArray(v)) throw bad(`Bản sao thiếu hoặc sai kiểu bảng ${t}. Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.`);
+    for (const r of v) {
+      if (!r || typeof r !== 'object' || Array.isArray(r)) throw bad(`Bản sao có dòng không hợp lệ ở bảng ${t}. Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.`);
+      for (const x of Object.values(r)) {
+        if (x !== null && typeof x === 'object') throw bad(`Bản sao có giá trị lồng nhau ở bảng ${t}. Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.`);
+      }
+    }
+  }
+  if (!f.bang.users.some((u) => u.role === 'admin' && !u.deleted)) {
+    throw bad('Bản sao không có tài khoản admin nào còn dùng được. Nạp vào sẽ không ai quản lý được hệ thống nên chưa nạp gì cả.');
+  }
   /* Tài khoản nằm trong bản sao kèm PIN đã băm. Băm đó vô dụng nếu không có PEPPER, mà PEPPER
      chỉ nằm trên máy chủ chứ không nằm trong tệp — nên tệp rơi ra ngoài cũng không mở được tài
      khoản nào. Nhưng đổi PEPPER rồi nạp lại bản sao cũ thì mọi PIN cũ thành sai: phải đặt lại. */
@@ -327,6 +346,8 @@ export async function restoreData(req, env, user) {
      phụ trách của nó; dòng của đơn không còn trong bảng đơn thì bỏ. */
   stmts.push(env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id NOT IN (SELECT id FROM don_gc)'));
   stmts.push(env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id, biet_ts) SELECT id, user_id, biet_ts FROM don_gc WHERE id NOT IN (SELECT don_id FROM don_gc_nguoi)'));
+  // phiên của tài khoản không còn trong bảng vừa nạp phải bị thu hồi, không thì người đó còn vào được bằng phiên cũ
+  stmts.push(env.DB.prepare('DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)'));
   stmts.push(env.DB.prepare('UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL'));
   stmts.push(
     auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),

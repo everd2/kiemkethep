@@ -6620,8 +6620,18 @@ document.addEventListener('click', (e) => {
   if (!t || !ACTIONS[t.dataset.a]) return;
   ACTIONS[t.dataset.a](t.dataset, e);
 });
+/* Ô số (bàn phím số): chạm vào là chọn sẵn cả số cũ, gõ đè luôn, khỏi xoá từng chữ số. */
+document.addEventListener('focusin', (e) => {
+  const t = e.target;
+  if (t.tagName !== 'INPUT' || !/^(numeric|decimal)$/.test(t.inputMode || '') || t.type === 'password' || !t.value) return;
+  setTimeout(() => { try { if (document.activeElement === t) t.select(); } catch (er) { /* bỏ qua */ } }, 0);
+});
 document.addEventListener('input', (e) => {
   const m = e.target.dataset && e.target.dataset.model;
+  /* Ô chỉ nhận số nguyên: dán "1.200", "12 cây", khoảng trắng... thì giữ lại đúng các chữ số, khỏi lưu chữ lạ rồi mới báo lỗi. */
+  if (e.target.tagName === 'INPUT' && e.target.inputMode === 'numeric' && e.target.type !== 'tel' && /\D/.test(e.target.value)) {
+    e.target.value = e.target.value.replace(/\D/g, '');
+  }
   if (m) S.form[m] = e.target.value;
   if (m === 'gcq') gcLoc();
   if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucCua() || 'chưa nhập'; }
@@ -6730,7 +6740,15 @@ document.addEventListener('change', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.enter) { e.preventDefault(); ACTIONS[e.target.dataset.enter](); }
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.enter) { e.preventDefault(); ACTIONS[e.target.dataset.enter](); return; }
+  /* Ô nhập một dòng chưa gắn việc riêng: Enter nhảy sang ô kế tiếp, hết ô thì thu bàn phím. */
+  const t = e.target;
+  if (e.key === 'Enter' && !e.isComposing && t.tagName === 'INPUT' && /^(text|tel|password|number|search)$/.test(t.type)) {
+    e.preventDefault();
+    const all = [...document.querySelectorAll('input:not([disabled]):not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]), textarea:not([disabled])')].filter((x) => x.offsetParent);
+    const nx = all[all.indexOf(t) + 1];
+    if (nx && !t.closest('.pad-sheet')) nx.focus(); else t.blur();
+  }
 });
 
 /* ===================== KHỞI ĐỘNG ===================== */

@@ -49,6 +49,29 @@ async function main() {
   const cs = await S.call('GET', '/export', undefined, 'Admin');
   ok('export tồn: tên khu công thức được bọc', cs.data.includes('"=""=HYPERLINK'), '');
 
+  // 6. phiBulk cũng từ chối đổi bo_size khi phi còn thép; khuCreate trùng mã là 400
+  if (khu) {
+    const pb = await S.call('PUT', '/phi', { items: [{ id: 'D6', bo_size: 77 }] }, 'Admin');
+    eq('phiBulk: phi còn thép, đổi bo_size bị từ chối', pb.status, 400);
+    eq('và bo_size không đổi', S.one("SELECT bo_size FROM phi WHERE id='D6'").bo_size !== 77, true);
+    eq('phiBulk: phi hết thép vẫn đổi được', (await S.call('PUT', '/phi', { items: [{ id: 'D16', bo_size: 33 }] }, 'Admin')).status, 200);
+  }
+  eq('khu: tạo mã X', (await S.call('POST', '/khu', { name: 'Khu X', id: 'XQ' }, 'Admin')).status, 200);
+  eq('khu: trùng mã là 400', (await S.call('POST', '/khu', { name: 'Khu X2', id: 'XQ' }, 'Admin')).status, 400);
+
+  // 7. nạp bản sao: tệp hỏng bị từ chối TRƯỚC khi ghi gì, dữ liệu giữ nguyên
+  const bk = (await S.call('GET', '/backup', undefined, 'Admin')).data;
+  const nKhu = S.sql('SELECT 1 FROM khu').length;
+  const nap = (file) => S.call('POST', '/restore', { confirm: 'NAP LAI', file }, 'Admin');
+  eq('nạp: dòng không phải object -> 400', (await nap({ ...bk, bang: { ...bk.bang, khu: [null] } })).status, 400);
+  eq('nạp: bảng bắt buộc sai kiểu -> 400', (await nap({ ...bk, bang: { ...bk.bang, phi: 'x' } })).status, 400);
+  eq('nạp: thiếu bảng bắt buộc -> 400', (await nap({ ...bk, bang: { ...bk.bang, counts: undefined } })).status, 400);
+  eq('nạp: giá trị lồng nhau -> 400', (await nap({ ...bk, bang: { ...bk.bang, khu: [{ id: 'Z', name: { a: 1 } }] } })).status, 400);
+  eq('nạp: không còn admin -> 400', (await nap({ ...bk, bang: { ...bk.bang, users: bk.bang.users.map((u) => ({ ...u, role: 'tieudoi' })) } })).status, 400);
+  eq('nạp: định dạng lạ -> 400', (await nap({ ...bk, ban: 2 })).status, 400);
+  eq('các lần nạp hỏng không đổi gì', S.sql('SELECT 1 FROM khu').length, nKhu);
+  eq('nạp bản sao đúng vẫn được', (await nap(bk)).status, 200);
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

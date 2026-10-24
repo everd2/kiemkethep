@@ -237,11 +237,17 @@ export async function khuCreate(req, env, admin) {
   if (!id) throw bad('Không tạo được mã khu');
   if (all.results.some((r) => r.id === id)) throw bad('Mã khu đã tồn tại');
   const sort = all.results.reduce((m, r) => Math.max(m, r.sort), 0) + 1;
-  await env.DB.batch([
-    env.DB.prepare('INSERT INTO khu (id, name, sort, active) VALUES (?,?,?,1)').bind(id, name, sort),
-    auditStmt(env, admin, 'khu_create', { id, name }),
-    bump(env),
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO khu (id, name, sort, active) VALUES (?,?,?,1)').bind(id, name, sort),
+      auditStmt(env, admin, 'khu_create', { id, name }),
+      bump(env),
+    ]);
+  } catch (e) {
+    // hai người tạo cùng lúc: người sau trùng mã (race giữa lúc đọc danh sách và lúc ghi)
+    if (/UNIQUE|PRIMARY KEY|constraint/i.test(String((e && e.message) || ''))) throw bad('Mã khu đã tồn tại');
+    throw e;
+  }
   return json({ ok: true, id });
 }
 
@@ -368,6 +374,12 @@ export async function phiBulk(req, env, admin) {
     const min = intIn(it.min_stock ?? p.min_stock, 0, 99999, 'Mức tối thiểu của ' + p.id);
     const kg = Number(String(it.kg_per_cay ?? p.kg_per_cay).replace(',', '.'));
     if (!(kg > 0 && kg < 1000)) throw bad('Khối lượng mỗi cây của ' + p.id + ' không hợp lệ');
+    if (bo !== p.bo_size) {
+      // như phiUpdate: còn thép thì các số đã đếm (bó x cây + lẻ) không còn khớp, chỉ đổi khi phi hết
+      const ks = (await env.DB.prepare('SELECT id FROM khu').all()).results;
+      const co = await tonCells(env, vnDay(), ks.map((k) => ({ khu: k.id, phi: p.id })), false);
+      if (Object.values(co).some((x) => x !== 0)) throw bad(`Phi ${p.id} còn thép trong bãi nên chưa đổi được số cây mỗi bó. Đếm về 0 hoặc dùng hết trước`);
+    }
     if (bo === p.bo_size && min === p.min_stock && kg === p.kg_per_cay) continue;
     stmts.push(env.DB.prepare('UPDATE phi SET bo_size = ?, min_stock = ?, kg_per_cay = ? WHERE id = ?').bind(bo, min, kg, p.id));
     log.push({ id: p.id, bo, min, kg });
