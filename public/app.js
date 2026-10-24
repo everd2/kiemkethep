@@ -132,8 +132,10 @@ const fmtQe = (v, p) => {
 const two = (n) => String(n).padStart(2, '0');
 // cắt tên dài cho nhãn nút khỏi tràn
 const cut = (s, n) => { const t = String(s == null ? '' : s); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-const hhmm = (ts) => { const d = new Date(ts); return two(d.getHours()) + ':' + two(d.getMinutes()); };
-const dmy = (ts) => { const d = new Date(ts); return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + hhmm(ts); };
+/* Giờ Việt Nam (UTC+7, không có giờ mùa hè), không theo múi giờ của máy: cùng một mốc ts phải ra cùng một giờ
+   trên mọi máy, và khớp với vnDayOf / vnHourNow bên dưới. */
+const hhmm = (ts) => { const d = new Date(ts + 7 * 3600e3); return two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()); };
+const dmy = (ts) => { const d = new Date(ts + 7 * 3600e3); return two(d.getUTCDate()) + '/' + two(d.getUTCMonth() + 1) + ' ' + hhmm(ts); };
 /* Vai trò theo cấp bậc. CAP là cấp DUYỆT, chép
    từ src/core.js: 0 chỉ báo; 1 = CVKTHT, duyệt báo cáo đếm và sổ vay của cấp 0; 2 = Trung đội trưởng,
    Đại đội trưởng, admin, duyệt được hết. PHIẾU KHO chỉ cấp 2 duyệt. Phần hệ thống (tài khoản, khu, phi, quy tắc) chỉ vai trò admin.
@@ -259,6 +261,7 @@ async function apiGoi(method, path, body, ctl, het, quaLau, xin) {
   let d = {};
   // quá hạn giữa lúc đọc thân trả lời: không được coi {} là trả lời thành công
   try { d = await r.json(); } catch (e) { if (het()) throw quaLau(); /* không phải JSON */ }
+  if (d === null || typeof d !== 'object') d = {}; // thân "null" / số / chuỗi: d.error bên dưới không được nổ
   if (!r.ok) {
     // 429 không có JSON là Cloudflare chặn (thường do hết hạn mức miễn phí trong ngày, tự phục hồi 7:00 sáng)
     const quota = r.status === 429 && !d.error;
@@ -780,7 +783,8 @@ async function flushPending() {
          không theo lúc có mạng lại. Gửi THỜI GIAN ĐÃ TRÔI chứ không gửi giờ máy: máy để sai giờ thì
          hiệu hai mốc vẫn đúng, server tự lấy giờ của nó trừ đi. */
       try { await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items, tuoi: Math.max(0, Date.now() - job.ts) }); sent++; boNhapDaGui(job); }
-      catch (e) { if (e.retry) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
+      /* 401 = hết phiên, không phải báo cáo sai: giữ nguyên để gửi lại sau khi đăng nhập, đừng gắn lỗi vĩnh viễn */
+      catch (e) { if (e.retry || e.status === 401) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
     }
   } finally {
     // giữ các báo cáo mới được thêm trong lúc đang gửi
@@ -820,7 +824,9 @@ async function sendCountsInner() {
     /* Lần gửi này là số mới nhất của mình cho khu + ngày đó: bản cũ còn nằm trong hàng chờ (lần
        trước gửi lỗi) phải bỏ đi, không thì lát nữa nó tự gửi lại và ĐÈ số cũ lên số vừa gửi. */
     writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day && ofMe(x))));
-    await loadBoot();
+    /* Server ĐÃ nhận. Tải lại số liệu hỏng (mạng) không được rơi xuống catch bên dưới: ở đó báo cáo bị xếp hàng
+       gửi lại lần nữa và người dùng đọc "chưa gửi được" dù số đã lưu. */
+    try { await loadBoot(); } catch (er) { /* bỏ qua: vòng làm mới sau sẽ tải lại */ }
     S.sel = null; S.screen = 'khu'; pushNav();
     say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, cấp trên sẽ xem.' : '. Cảm ơn bạn!'));
   } catch (e) {
@@ -2007,7 +2013,7 @@ function treoTxt(json) {
 async function loadHist(date) {
   S.hist = { date, data: null }; delete S.loadErr.lichsu; render();
   try { const d = await api('GET', '/day?date=' + date); if (S.hist.date === date) S.hist.data = d; }
-  catch (e) { S.loadErr.lichsu = e.message; say(e.message, true); }
+  catch (e) { if (S.hist.date !== date) return; /* đã sang ngày khác: lỗi của lần cũ không phải của màn đang xem */ S.loadErr.lichsu = e.message; say(e.message, true); }
   render();
 }
 
@@ -2079,7 +2085,10 @@ function repRange(kind) {
 async function loadRep() {
   const R = S.bc;
   R.data = null; delete S.loadErr.baocao; render();
-  try { R.data = await api('GET', `/report?from=${R.from}&to=${R.to}`); } catch (e) { S.loadErr.baocao = e.message; say(e.message, true); }
+  const from = R.from, to = R.to;
+  // bấm XEM hai lần với hai khoảng khác nhau: chỉ lần sau cùng được ghi, trả lời chậm của lần trước không đè lên
+  const cungKy = () => S.bc === R && R.from === from && R.to === to;
+  try { const d = await api('GET', `/report?from=${from}&to=${to}`); if (cungKy()) R.data = d; } catch (e) { if (!cungKy()) return; S.loadErr.baocao = e.message; say(e.message, true); }
   render();
 }
 
@@ -2238,15 +2247,18 @@ async function reloadLoanScreen() {
 /* Nạp nhật ký theo bộ lọc ngày/chữ. more = nối thêm trang cũ hơn (before = id nhỏ nhất đang có).
    Chip loại (Báo đếm, Vay mượn...) vẫn lọc trên máy, trên những dòng đã tải. */
 async function loadAudit(more) {
+  const seq = ++loadAudit.seq;
   const AF = S.auditF, qs = ['limit=300'];
   if (AF.ngay) qs.push('ngay=' + AF.ngay);
   if (AF.q) qs.push('q=' + encodeURIComponent(AF.q));
   if (more && S.audit && S.audit.length) qs.push('before=' + S.audit[S.audit.length - 1].id);
   if (!more) { S.audit = null; render(); }
   const r = await api('GET', '/audit?' + qs.join('&'));
+  if (seq !== loadAudit.seq) return; // có lần nạp mới hơn (đổi bộ lọc): bỏ trả lời cũ
   S.audit = more ? (S.audit || []).concat(r.items) : r.items;
   S.auditMore = !!r.more;
 }
+loadAudit.seq = 0;
 
 /* --- Thống kê --- */
 /* --- Chấm công báo cáo (admin) ---
@@ -2259,7 +2271,8 @@ async function loadChamCong() {
   const to = ydayOf(S.boot.today);
   let from = to;
   for (let i = 1; i < C.days; i++) from = ydayOf(from);
-  try { C.data = await api('GET', `/cham-cong?from=${from}&to=${to}`); } catch (e) { S.loadErr.chamcong = e.message; say(e.message, true); }
+  const ngay = C.days;
+  try { const d = await api('GET', `/cham-cong?from=${from}&to=${to}`); if (C.days === ngay) C.data = d; } catch (e) { if (C.days !== ngay) return; S.loadErr.chamcong = e.message; say(e.message, true); }
   render();
 }
 /* Thân mục "Thống kê báo cáo" của màn Nhật ký. MỘT kiểu dòng cho cả người lẫn khu: tên + một dòng

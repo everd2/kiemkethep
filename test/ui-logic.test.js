@@ -1645,6 +1645,53 @@ const run = async () => {
   ok('lần giữ nguyên là của hôm qua (chuyển sang): vẫn chặn khi chạm trần', /quá nhiều ngày/.test(r("keepBlock('A','D10')")), r("keepBlock('A','D10')"));
   r(`S.form = {}; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
+  /* ---- Rà soát app.js dòng 1-2400 ---- */
+  {
+    // giờ hiển thị theo múi Việt Nam, không theo múi của máy: 17:30 UTC = 00:30 hôm sau ở VN
+    const ts = Date.UTC(2026, 9, 24, 17, 30);
+    ok('hhmm theo giờ VN (UTC+7)', r(`hhmm(${ts})`) === '00:30', r(`hhmm(${ts})`));
+    ok('dmy theo giờ VN, sang ngày mới', r(`dmy(${ts})`) === '25/10 00:30', r(`dmy(${ts})`));
+    // thân trả lời "null" của lỗi HTTP không được làm api() nổ TypeError
+    const f0 = ctx.fetch;
+    ctx.fetch = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve(null) });
+    let er = null;
+    try { await r(`api('POST', '/x', {})`); } catch (e) { er = e; }
+    ok('thân "null" + lỗi 500: ra Error có status/retry, không phải TypeError', er && er.status === 500 && er.retry === true && !(er instanceof TypeError), er && er.message);
+    // gửi báo cáo thành công nhưng tải lại số liệu hỏng mạng: KHÔNG xếp hàng gửi lại lần nữa
+    r(`S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.khu = 'A'; S.screen = 'dem'; localStorage.removeItem('kt:pending'); loadDraft(true); S.toast = '';
+       S.draft.cells = { D10: { v: 100, kind: 'dem', bo: 10, le: 0 } };`);
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/bootstrap') === 0
+      ? Promise.reject(new Error('mạng')) : f0(url, opt));
+    await r('sendCounts()');
+    ok('PUT xong rồi loadBoot hỏng: không xếp hàng lại báo cáo đã gửi', r('readPending().length') === 0 && r('S.screen') === 'khu', r('JSON.stringify(readPending())') + ' | ' + r('S.toast'));
+    // gửi bù gặp 401: giữ báo cáo, không gắn lỗi vĩnh viễn
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/counts') === 0
+      ? Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'hết phiên' }) }) : f0(url, opt));
+    r(`S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); indexBoot(S.boot); S.screen = 'home';
+       writePending([{ khu: 'A', day: S.boot.today, ts: Date.now(), uid: 1, uname: 'A', items: [{ phi: 'D10', v: 5, kind: 'dem' }] }]);`);
+    await r('flushPending()');
+    ok('gửi bù gặp 401: báo cáo còn nguyên, không bị gắn err', r('readPending().length') === 1 && !r('readPending()[0].err'), r('JSON.stringify(readPending())'));
+    ctx.fetch = f0;
+    r(`localStorage.removeItem('kt:pending'); S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); indexBoot(S.boot); S.screen = 'home'; S.toast = '';`);
+    // nhật ký: trả lời cũ (đổi bộ lọc giữa chừng) không được đè kết quả mới
+    const mkRes = (o) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(o) });
+    let rel1;
+    ctx.fetch = (url, opt) => {
+      if (String(url).indexOf('/api/audit') === 0) {
+        if (/q=cu/.test(url)) return new Promise((res) => { rel1 = () => res({ ok: true, status: 200, json: () => Promise.resolve({ items: [{ id: 1, action: 'login', ts: 1 }], more: false }) }); });
+        return mkRes({ items: [{ id: 2, action: 'login', ts: 2 }], more: false });
+      }
+      return f0(url, opt);
+    };
+    r(`S.auditF = { ngay: '', q: 'cu' };`);
+    const p1 = r('loadAudit(false)');
+    r(`S.auditF = { ngay: '', q: '' };`);
+    await r('loadAudit(false)');
+    rel1(); await p1;
+    ok('loadAudit: trả lời chậm của bộ lọc cũ không đè kết quả mới', r('S.audit.length') === 1 && r('S.audit[0].id') === 2, r('JSON.stringify(S.audit)'));
+    ctx.fetch = f0;
+  }
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');
