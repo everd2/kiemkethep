@@ -254,11 +254,12 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa. App **không còn màn ghi thay** cho CVKTHT: tổ không báo thì báo cáo ca dùng số thiết lập, hoặc người soạn sửa tay mục 3. Mọi lần báo nằm trong **nhật ký**, có chip lọc *Quân số*.
 
 ### Báo cáo sản lượng (Thêm → *Báo cáo sản lượng*, CVKTHT trở lên)
-Cùng khuôn với báo cáo ca, tính theo **ngày** (cả ca ngày và ca đêm), mặc định hôm qua. Mã nguồn: `src/sanluong.js`, bảng `san_luong` (cấu trúc bản 44).
+Cùng khuôn với báo cáo ca nhưng là **một báo cáo gộp ca ngày và ca đêm** cho cả ngày, mặc định hôm nay. Mã nguồn: `src/sanluong.js`, bảng `san_luong` (cấu trúc bản 44); thiết lập nằm trong mẫu `bc_mau` (khoá `sl`).
 - **Phần đầu** dùng chung mẫu với báo cáo ca (đơn vị, chỉ huy, dự án, khu vực); sửa ở màn Báo cáo ca.
-- **Mục 2 Quân số**: nguyên số đi làm / tổng quân số các tổ đã báo (tổ không báo thì lấy số thiết lập đã chép lúc hết ca); không có phần nghỉ và lý do nghỉ. Thêm **số công gia công thép** của từng tổ, từng ca: mặc định bằng số đi làm, CVKTHT trở lên sửa được (chỉ ô đã sửa mới được lưu, ô còn lại luôn theo số báo mới nhất).
-- **Mục 3 Sản lượng**: `kg = (công × 158 × tỷ lệ gia công) ÷ tỷ lệ giá`, làm tròn kg theo từng ca. Công chuẩn 158 kg/công. Tỷ lệ giá 0,2 – 1 (mặc định 0,2). Tỷ lệ gia công 0,5 – 1, mặc định ngẫu nhiên 0,70 – 0,80 nhưng cố định theo ngày (mở lại không đổi), sửa được.
-- Nút *Chép báo cáo* chép bản chữ đúng khuôn vào bộ nhớ tạm và lưu tỷ lệ cùng các ô công đã sửa; hai người lưu chồng nhau thì người sau được báo tải lại.
+- **Mục 2 Quân số**: mỗi tổ một dòng. Quân số của tổ = số đã báo của **ca ngày của ngày báo cáo** và/hoặc **ca đêm hôm trước** (tổ làm đêm; tổ chia hai ca thì cộng cả hai). Không có phần nghỉ và lý do nghỉ. Tổ không báo thì lấy số thiết lập đã chép lúc hết ca. Thêm **số công gia công thép** của từng tổ: mặc định bằng số đi làm, sửa được (chỉ ô đã sửa mới được lưu).
+- **Thiết lập** (nút bánh răng, CVKTHT trở lên): **công chuẩn** kg/công (mặc định 158), **tỷ lệ giá** (0,2 – 1, mặc định 0,2) **chung cho mọi tổ**, **tỷ lệ gia công riêng từng tổ** (0,5 – 1; tổ chưa đặt thì tạm ngẫu nhiên 0,70 – 0,80, cố định theo tổ).
+- **Mục 3 Sản lượng**: mỗi tổ `kg = (công × công chuẩn × tỷ lệ gia công của tổ) ÷ tỷ lệ giá`, làm tròn kg; tổng = cộng các tổ. Tự tính theo thiết lập. Lưu báo cáo của một ngày thì **chụp lại thiết lập đang dùng**: đổi thiết lập sau này không làm đổi báo cáo cũ (có nút *Tính lại* khi muốn áp thiết lập hiện tại).
+- Nút *Chép báo cáo* chép bản chữ đúng khuôn vào bộ nhớ tạm và lưu; hai người lưu chồng nhau thì người sau được báo tải lại.
 
 - Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).
 - **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
