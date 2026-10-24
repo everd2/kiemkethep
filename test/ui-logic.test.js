@@ -1645,6 +1645,35 @@ const run = async () => {
   ok('lần giữ nguyên là của hôm qua (chuyển sang): vẫn chặn khi chạm trần', /quá nhiều ngày/.test(r("keepBlock('A','D10')")), r("keepBlock('A','D10')"));
   r(`S.form = {}; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
 
+  // ---- 1d2. rà soát app.js 2400-4800: giờ VN, giờ server, chạy đua khi tải ----
+  // giờ hiển thị luôn là giờ Việt Nam (UTC+7), không theo múi giờ của máy
+  ok('hhmm: 17:30 UTC là 00:30 giờ VN', r('hhmm(Date.UTC(2026, 0, 1, 17, 30))') === '00:30', r('hhmm(Date.UTC(2026, 0, 1, 17, 30))'));
+  ok('dmy: 17:30 UTC ngày 1/1 là 02/01 00:30 giờ VN', r('dmy(Date.UTC(2026, 0, 1, 17, 30))') === '02/01 00:30', r('dmy(Date.UTC(2026, 0, 1, 17, 30))'));
+  // mốc ca có lẻ giây / mili giây không được ra "14h30.25"
+  ok('gioH: mốc có giây lẻ vẫn ra 14h30', r('gioH(Date.UTC(2026, 0, 1, 7, 30, 15, 500))') === '14h30', r('gioH(Date.UTC(2026, 0, 1, 7, 30, 15, 500))'));
+  // hạn 7 ngày tính theo giờ server: máy lệch giờ thì không được mở / khoá nhầm
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
+  r(`S.boot.skew = 0; globalThis._dg = { tt: 'xong', user_id: 1, xong_ts: Date.now() - 6.5 * 864e5 };`);
+  ok('đơn xong 6,5 ngày trước: còn nhắn được', r('gcTnDuoc(_dg)') === true);
+  r('S.boot.skew = 1.5 * 864e5');
+  ok('đồng hồ máy chậm 1,5 ngày so với server: đơn đã quá 7 ngày thì khoá nhắn', r('gcTnDuoc(_dg)') === false);
+  r('S.boot.skew = 0');
+  // đổi nhanh sang ca khác trong lúc bản báo cáo ca trước còn đang tải: bản về chậm không được đè
+  {
+    const f0 = ctx.fetch, giu = {};
+    ctx.fetch = (url) => new Promise((res) => {
+      const m = /ca=(\d)/.exec(String(url));
+      giu[m ? m[1] : '0'] = () => res({ ok: true, status: 200, json: () => Promise.resolve({ ngay: '2026-01-05', ca: Number(m[1]), mau: { dau: { don_vi: 'ca' + m[1] } }, don: [], tdt: [], qs: [], truoc: [] }) });
+    });
+    r(`S.bcCa = { ngay: '2026-01-05', ca: 1 }; S.bcc = null; globalThis._p1 = bcTai();`);
+    r(`S.bcCa = { ngay: '2026-01-05', ca: 2 }; globalThis._p2 = bcTai();`);
+    giu['2'](); await r('_p2');
+    giu['1'](); await r('_p1');
+    ok('báo cáo ca: bản của ca 1 về chậm không đè bản ca 2 đang xem', r('S.bcc && S.bcc.ca') === 2, r('S.bcc && S.bcc.ca'));
+    ctx.fetch = f0;
+    r(`S.bcCa = null; S.bcc = null;`);
+  }
+
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));
   const codeNoComment = code.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join(' ');
