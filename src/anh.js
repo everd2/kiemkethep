@@ -3,7 +3,7 @@
 // schema.sql). Thêm ẢNH KHÔNG chặn lúc ghi sổ: ảnh được đính SAU, từ chính dòng sổ đang xem, nên
 // luôn tự gắn đúng dòng — không có bước tìm/khớp ảnh với dòng nào.
 import { HttpError, bad, capOf, json, rand } from './core.js';
-import { auditStmt, bump } from './helpers.js';
+import { auditStmt, batchGuarded, bump, guardStmt } from './helpers.js';
 
 export const ANH_LOAI = ['loan', 'satvun', 'gc'];
 // Các view loans/satvun/giacong/review JOIN kèm cột anh_json (mảng {id, ts}) để hiện thumbnail ngay trong
@@ -60,12 +60,17 @@ export async function postAnh(req, env, user, loai, eid) {
   const ts = Date.now();
   let res;
   try {
-    res = await env.DB.batch([
-      env.DB.prepare('INSERT INTO anh_bb (loai, entity_id, r2_key, kich_thuoc, user_id, user_name, ts) VALUES (?,?,?,?,?,?,?)')
-        .bind(loai, entityId, key, buf.byteLength, user.id, user.name, ts),
-      auditStmt(env, user, 'anh_bb_add', { loai, entity_id: entityId, ngay: dong.ngay, so_bb: dong.so_bb, ten: dong.ten }),
-      bump(env),
-    ]);
+    /* Kiểm tra `dong.n` ở trên chỉ để báo lỗi sớm: hai ảnh gửi cùng lúc đều thấy 19 rồi cùng chèn. Chặn thật nằm TRONG
+       lượt ghi: bảo vệ đếm lại ngay lúc ghi, đủ ANH_MAX_DONG thì cả lượt (ảnh + nhật ký) bị huỷ. */
+    res = await batchGuarded(env,
+      guardStmt(env, '(SELECT COUNT(*) FROM anh_bb WHERE loai = ? AND entity_id = ?) >= ?', loai, entityId, ANH_MAX_DONG),
+      [
+        env.DB.prepare('INSERT INTO anh_bb (loai, entity_id, r2_key, kich_thuoc, user_id, user_name, ts) VALUES (?,?,?,?,?,?,?)')
+          .bind(loai, entityId, key, buf.byteLength, user.id, user.name, ts),
+        auditStmt(env, user, 'anh_bb_add', { loai, entity_id: entityId, ngay: dong.ngay, so_bb: dong.so_bb, ten: dong.ten }),
+        bump(env),
+      ],
+      bad(`Mỗi dòng sổ tối đa ${ANH_MAX_DONG} ảnh. Xoá bớt ảnh thừa rồi thêm.`));
   } catch (e) {
     await env.ANH.delete(key).catch(() => {});
     throw e;

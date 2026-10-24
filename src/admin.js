@@ -306,10 +306,17 @@ export async function phiUpdate(req, env, admin, id) {
   if (!p) throw new HttpError(404, 'Không tìm thấy phi');
   const bo = intIn(b.bo_size ?? p.bo_size, 1, 9999, boWord(p) + ' mỗi bó');
   const min = intIn(b.min_stock ?? p.min_stock, 0, 99999, 'Mức tối thiểu');
+  if (b.kg_per_cay !== undefined && typeof b.kg_per_cay !== 'number') throw bad('Khối lượng mỗi ' + unitWord(p) + ' không hợp lệ');
   const kg = Number(b.kg_per_cay ?? p.kg_per_cay);
   if (!(kg > 0 && kg < 1000)) throw bad('Khối lượng mỗi ' + unitWord(p) + ' không hợp lệ');
   const active = b.active === undefined ? p.active : (b.active ? 1 : 0);
   const stmts = [];
+  if (bo !== p.bo_size) {
+    // đổi số cây mỗi bó khi phi còn thép: các số đã đếm (bó x cây + lẻ) không còn khớp, nên chỉ đổi lúc phi hết
+    const ks = (await env.DB.prepare('SELECT id FROM khu').all()).results;
+    const co = await tonCells(env, vnDay(), ks.map((k) => ({ khu: k.id, phi: id })), false);
+    if (Object.values(co).some((x) => x !== 0)) throw bad(`Phi ${id} còn thép trong bãi nên chưa đổi được số cây mỗi bó. Đếm về 0 hoặc dùng hết trước`);
+  }
   if (p.active && !active) {
     // ẩn phi còn thép sẽ làm số tồn "đóng băng" đúng như trường hợp ẩn khu
     const day = vnDay();

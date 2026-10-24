@@ -72,7 +72,7 @@ function docCa(q, st) {
   const hien = caLuc(st);
   if (!q.get('ngay') && !q.get('ca')) return hien;
   const ngay = String(q.get('ngay') || ''), ca = Number(q.get('ca'));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(ngay) || (ca !== 1 && ca !== 2)) throw bad('Ca không hợp lệ');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ngay) || (ca !== 1 && ca !== 2) || !(Date.parse(ngay + 'T00:00:00Z') > 0) || vnDay(Date.parse(ngay + 'T00:00:00Z') + 7 * 3600e3) !== ngay) throw bad('Ca không hợp lệ');
   const c = { ngay, ca };
   if (caKhoa(c) > caKhoa(caKe(hien))) throw bad('Chưa tới ca này');
   return c;

@@ -106,13 +106,39 @@ export async function recoverAdmin(req, env) {
 export async function changePin(req, env, user) {
   const b = await readJson(req);
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
-  if (!safeEq(await hashPin(env, u.pin_salt, String(b.pin || '')), u.pin_hash)) throw new HttpError(401, 'PIN hiện tại không đúng');
+  /* Nhập sai "PIN hiện tại" tính vào đúng bộ đếm / khoá của đăng nhập (fail_count, locked_until): không thì ai cầm máy
+     đang mở sẵn dò được PIN không giới hạn. Đang bị khoá thì không cho thử. */
+  if (u.locked_until > Date.now()) {
+    const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
+    throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`);
+  }
+  if (!safeEq(await hashPin(env, u.pin_salt, String(b.pin || '')), u.pin_hash)) {
+    const n = u.fail_count + 1;
+    if (n >= LOCK_AFTER) {
+      const level = u.lock_level || 0;
+      const ms = LOCK_STEPS[Math.min(level, LOCK_STEPS.length - 1)];
+      await env.DB.batch([
+        env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = ?, lock_level = ? WHERE id = ?').bind(Date.now() + ms, level + 1, u.id),
+        auditStmt(env, u, 'login_locked', { phone: u.phone, mins: ms / 60e3, ip: req.headers.get('CF-Connecting-IP') || 'unknown', qua: 'change_pin' }),
+      ]);
+    } else {
+      await env.DB.batch([
+        env.DB.prepare('UPDATE users SET fail_count = ? WHERE id = ?').bind(n, u.id),
+        auditStmt(env, u, 'login_fail', { n, qua: 'change_pin' }),
+      ]);
+    }
+    throw new HttpError(401, 'PIN hiện tại không đúng');
+  }
   const np = String(b.newPin || '');
   checkPin(np);
   if (np === String(b.pin)) throw bad('PIN mới phải khác PIN cũ');
   const salt = rand(16);
+  // PIN đổi thì các máy khác đang đăng nhập bằng PIN cũ phải đăng nhập lại; giữ phiên của máy đang đổi
+  const m = (req.headers.get('Cookie') || '').match(/(?:^|;s*)sid=([a-f0-9]{64})/);
+  const giu = m ? await sha256(m[1]) : '';
   await env.DB.batch([
-    env.DB.prepare('UPDATE users SET pin_salt = ?, pin_hash = ?, must_change = 0 WHERE id = ?').bind(salt, await hashPin(env, salt, np), user.id),
+    env.DB.prepare('UPDATE users SET pin_salt = ?, pin_hash = ?, must_change = 0, fail_count = 0 WHERE id = ?').bind(salt, await hashPin(env, salt, np), user.id),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').bind(user.id, giu),
     auditStmt(env, user, 'change_pin', null),
   ]);
   return json({ ok: true });

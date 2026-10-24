@@ -426,10 +426,10 @@ export async function loansCsv(env) {
   const du = {};
   for (const r of rowR.results) {
     const p = phiBy[r.phi_id];
-    lines.push(csvRow([esc(r.ngay ? fmtDay(r.ngay) : ''), txt(r.doitac_name || '#' + r.doitac_id), esc(TEN[r.kind] || r.kind), esc(r.phi_id), esc(p ? csvUnit(p) : ''),
-      p ? csvQty(r.qty, p) : r.qty, tan(r.qty, p), txt(r.so_bb), esc(r.han ? fmtDay(r.han) : ''), txt(r.nguoi), txt(r.bien_so), txt(r.note), esc(r.kho),
-      esc(r.uname), esc(gio(r.ts)), esc(r.voided ? 'Đã huỷ' : r.duyet_ts ? 'Đã duyệt' : 'Chờ duyệt'), esc(r.duyet_ts ? r.duyet_uname : ''), esc(gio(r.duyet_ts)),
-      esc(r.voided ? r.voided_uname : ''), esc(r.voided ? gio(r.voided_ts) : ''), txt(r.voided_note)]));
+    lines.push(csvRow([esc(r.ngay ? fmtDay(r.ngay) : ''), txt(r.doitac_name || '#' + r.doitac_id), esc(TEN[r.kind] || r.kind), txt(r.phi_id), esc(p ? csvUnit(p) : ''),
+      p ? csvQty(r.qty, p) : r.qty, tan(r.qty, p), txt(r.so_bb), esc(r.han ? fmtDay(r.han) : ''), txt(r.nguoi), txt(r.bien_so), txt(r.note), txt(r.kho),
+      txt(r.uname), esc(gio(r.ts)), esc(r.voided ? 'Đã huỷ' : r.duyet_ts ? 'Đã duyệt' : 'Chờ duyệt'), txt(r.duyet_ts ? r.duyet_uname : ''), esc(gio(r.duyet_ts)),
+      txt(r.voided ? r.voided_uname : ''), esc(r.voided ? gio(r.voided_ts) : ''), txt(r.voided_note)]));
     if (r.voided || !r.duyet_ts) continue;
     const k = r.doitac_id + '|' + r.phi_id;
     const x = du[k] || (du[k] = { ten: r.doitac_name || '#' + r.doitac_id, phi: r.phi_id, vay: 0, tra_vay: 0, cho_vay: 0, tra_no: 0 });
@@ -441,7 +441,7 @@ export async function loansCsv(env) {
   for (const x of Object.values(du).sort((a, z) => a.ten.localeCompare(z.ten, 'vi') || (thuTu[a.phi] ?? 99) - (thuTu[z.phi] ?? 99))) {
     const p = phiBy[x.phi], q = (v) => (p ? csvQty(v, p) : v);
     const no = x.vay - x.tra_vay, co = x.cho_vay - x.tra_no;
-    lines.push(csvRow([txt(x.ten), esc(x.phi), esc(p ? csvUnit(p) : ''), q(x.vay), q(x.tra_vay), q(no), tan(no, p), q(x.cho_vay), q(x.tra_no), q(co), tan(co, p)]));
+    lines.push(csvRow([txt(x.ten), txt(x.phi), esc(p ? csvUnit(p) : ''), q(x.vay), q(x.tra_vay), q(no), tan(no, p), q(x.cho_vay), q(x.tra_no), q(co), tan(co, p)]));
   }
   return new Response(CSV_HEAD + lines.join('\r\n'), {
     headers: {

@@ -208,7 +208,7 @@ export async function report(env, url) {
    được nếu nó nằm trong 300 dòng gần nhất. */
 export async function auditList(env, url) {
   const q = url.searchParams;
-  const limit = Math.min(Number(q.get('limit')) || 150, 500);
+  const limit = Math.max(1, Math.min(Math.floor(Number(q.get('limit'))) || 150, 500)); // LIMIT âm trong SQLite = không giới hạn
   const where = [], bind = [];
   const before = Number(q.get('before'));
   if (before > 0) { where.push('id < ?'); bind.push(before); }
@@ -229,7 +229,7 @@ export async function auditList(env, url) {
 }
 
 export async function usage(env, url) {
-  const days = Math.min(Number(url.searchParams.get('days')) || 30, 180);
+  const days = Math.max(1, Math.min(Math.floor(Number(url.searchParams.get('days'))) || 30, 180)); // LIMIT âm / số lẻ: không dùng được
   const { results } = await env.DB.prepare('SELECT day, used_json, span FROM day_close ORDER BY day DESC LIMIT ?').bind(days).all();
   /* kg: kg/cây LÚC CHỐT của từng ngày (số tấn không trôi theo kg/cây hiện tại); xuat: phần dùng
      có phiếu xuất, để Thống kê tách được "có phiếu" và "không rõ" như màn Duyệt và báo cáo kỳ. */
@@ -318,6 +318,8 @@ export async function exportCsv(env, url) {
   });
   const phis = phiR.results.filter((p) => p.active !== 0 || hasData.has(p.id));
   const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+  // chữ người dùng gõ (tên khu) mà bắt đầu bằng = + - @ thì Excel hiểu là công thức: ghi dạng ="..."
+  const txt = (x) => (/^[=+\-@\t\r]/.test(String(x)) ? esc('="' + String(x).replace(/"/g, '""') + '"') : esc(x));
   // cột thép cuộn ghi số cuộn; "Tổng (cây)" chỉ cộng thép cây, không lẫn số phần của cuộn
   const head = ['Khu', ...phis.map((p) => (isCuon(p) ? p.id + ' (cuộn)' : p.id)), 'Tổng thép cây (cây)', 'Tổng (tấn)'];
   const lines = [csvRow(head.map(esc))];
@@ -334,7 +336,7 @@ export async function exportCsv(env, url) {
     });
     allKg += kg;
     // khu đã ẩn mà còn thép vẫn nằm trong tổng của app, nên tệp xuất ra phải có để khớp số
-    lines.push(csvRow([esc(k.name + (k.active ? '' : ' (đã ẩn)')), ...cells, sum, csvDec(kg / 1000, 2)]));
+    lines.push(csvRow([txt(k.name + (k.active ? '' : ' (đã ẩn)')), ...cells, sum, csvDec(kg / 1000, 2)]));
   }
   const sumCay = phis.reduce((a, p, i) => a + (isCuon(p) ? 0 : colV[i]), 0);
   lines.push(csvRow([esc('TỔNG'), ...colV.map((v, i) => csvQty(v, phis[i])), sumCay, csvDec(allKg / 1000, 2)]));

@@ -244,7 +244,7 @@ export async function gcUpdate(req, env, user, id) {
   /* Đổi người: thêm / bớt người cùng làm thì đơn giữ nguyên trạng thái. Đổi HẲN sang những người khác (không còn ai
      của nhóm cũ) mới là giao lại: đơn về "mới giao", người mới phải tự nhận. */
   const cuIds = d.nguoi.map((n) => n.id);
-  const doiNguoi = f.user_ids.join() !== cuIds.join();
+  const doiNguoi = f.user_id !== d.user_id || [...f.user_ids].sort((a, z) => a - z).join() !== [...cuIds].sort((a, z) => a - z).join(); // thứ tự người phụ không phải là đổi người
   const giaoLai = !f.user_ids.some((i) => cuIds.includes(i));
   if (doiNguoi) doi.push((giaoLai ? 'giao lại: ' : 'người làm: ') + d.uname + ' → ' + f.uname);
   if (!doi.length) return json({ ok: true, id, doi: 0 });

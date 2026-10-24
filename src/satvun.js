@@ -27,7 +27,7 @@ export async function postSv(req, env, user) {
   const b = await readJson(req);
   const today = vnDay();
   const ngay = b.ngay == null || b.ngay === '' ? today : String(b.ngay);
-  if (!DAY_RE.test(ngay) || ngay > today) throw bad('Ngày xuất không hợp lệ (không được sau hôm nay)');
+  if (!DAY_RE.test(ngay) || ngay > today || vnDay(Date.parse(ngay + 'T00:00:00Z') + 7 * 3600e3) !== ngay) throw bad('Ngày xuất không hợp lệ (không được sau hôm nay)');
   if (daysBetween(ngay, today) > 366) throw bad('Ngày xuất quá xa (hơn một năm trước). Kiểm tra lại năm');
   const kg = tanToKg(b.tan);
   if (!(kg >= 1 && kg <= SV_KG_MAX)) throw bad('Khối lượng không hợp lệ: ghi số tấn, ví dụ 2,5 — tối đa ba số lẻ (tới kg), tối đa 1.000 tấn một lần');
@@ -202,8 +202,8 @@ export async function svCsv(env) {
   const thang = {}, noi = {};
   for (const r of rowR.results) {
     lines.push(csvRow([esc(fmtDay(r.ngay)), esc(r.khu_id ? kn[r.khu_id] || r.khu_id : 'Nhiều khu'), tan(r.kg), txt(r.noi), txt(r.so_phieu), txt(r.bien_so), txt(r.nguoi), txt(r.note),
-      esc(r.uname), esc(gio(r.ts)), esc(r.voided ? 'Đã huỷ' : r.duyet_ts ? 'Đã duyệt' : 'Chờ duyệt'), esc(r.duyet_ts ? r.duyet_uname : ''), esc(gio(r.duyet_ts)),
-      esc(r.voided ? r.voided_uname : ''), esc(r.voided ? gio(r.voided_ts) : ''), txt(r.voided_note)]));
+      txt(r.uname), esc(gio(r.ts)), esc(r.voided ? 'Đã huỷ' : r.duyet_ts ? 'Đã duyệt' : 'Chờ duyệt'), txt(r.duyet_ts ? r.duyet_uname : ''), esc(gio(r.duyet_ts)),
+      txt(r.voided ? r.voided_uname : ''), esc(r.voided ? gio(r.voided_ts) : ''), txt(r.voided_note)]));
     if (r.voided || !r.duyet_ts) continue;
     const t = r.ngay.slice(0, 7);
     (thang[t] = thang[t] || { n: 0, kg: 0 }).n++; thang[t].kg += r.kg;
