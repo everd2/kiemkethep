@@ -165,7 +165,9 @@ export async function putCounts(req, env, user) {
     if (kind === 'dem' && bo !== null && le !== null && bo * pi.bo_size + le !== v) {
       throw bad(`Số liệu phi ${phi} không khớp: ${bo} × ${pi.bo_size} + ${le} khác ${v}`);
     }
-    return { phi, kind, v, bo, le };
+    // chỉ ô ĐẾM mới có cặp bó/lẻ, và phải đủ cả hai: một nửa hoặc kèm giữ nguyên / để trống là cặp mâu thuẫn với v
+    const coCap = kind === 'dem' && bo !== null && le !== null;
+    return { phi, kind, v, bo: coCap ? bo : null, le: coCap ? le : null };
   });
 
   /* Người đếm KHÔNG phải điền 0 cho phi khu không có: để trống là mặc định 0 (kind 'zero').
@@ -191,7 +193,7 @@ export async function putCounts(req, env, user) {
      vẫn đúng dù đồng hồ máy chạy sai giờ — gửi thẳng giờ máy (b.at, bản app cũ) thì máy chậm một
      tiếng là lần đếm rơi sang khung trước. Chỉ nhận mốc trong đúng ngày đếm và không ở tương lai;
      lệch giờ tới quá SLOT_LATE_MS thì màn Duyệt nói ra. */
-  const tuoi = Number(b.tuoi);
+  const tuoi = b.tuoi == null ? NaN : Number(b.tuoi); // null không phải "tuổi 0"
   const atIn = Number.isFinite(tuoi) && tuoi >= 0 ? ts - tuoi : Number(b.at);
   const at = Number.isFinite(atIn) && atIn <= ts && vnDay(atIn) === day ? Math.round(atIn) : ts;
   /* Mốc để so XUNG ĐỘT: chỉ lần báo của người khác TRONG CÙNG KHUNG GIỜ mới đem so. Bắt đếm 2 lần/ngày
@@ -317,9 +319,11 @@ export async function conflictResolve(req, env, user) {
   const b = await readJson(req);
   const khu = String(b.khu || '');
   const day = vnDay();
-  if (b.mark !== undefined) {
-    const k = (await computeReview(env, day)).khus.find((x) => x.khu === khu);
-    if (!k || k.mark !== b.mark) throw new HttpError(409, 'Khu vừa báo lại số khác. Màn Duyệt đã tải lại, hãy so sánh lại rồi chọn.', 'changed');
+  const k = (await computeReview(env, day)).khus.find((x) => x.khu === khu);
+  if (b.mark !== undefined && (!k || k.mark !== b.mark)) throw new HttpError(409, 'Khu vừa báo lại số khác. Màn Duyệt đã tải lại, hãy so sánh lại rồi chọn.', 'changed');
+  // chọn số là sửa báo cáo đang chờ: cùng luật cấp bậc với huỷ báo cáo, CVKTHT không đụng được số do cấp trên báo
+  if (k && k.waiting && !duyetCap(user.role, k.capBao)) {
+    throw new HttpError(403, `Báo cáo ${k.name} do CVKTHT hoặc cấp trên báo: cần ${CAP_TREN} chọn số.`, 'cap');
   }
   const [closedR, curR, repR] = await env.DB.batch([
     env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day),
@@ -349,7 +353,9 @@ export async function conflictResolve(req, env, user) {
     if (!(phi in cur)) throw bad('Phi không có trong báo cáo: ' + phi);
     const v = intIn(pick[phi], 0, 99999, 'Số đếm của ' + phi);
     const kind = v === 0 && logKind[srcTs(phi) + '|' + phi] === 'zero' ? 'zero' : 'dem';
-    if (v !== cur[phi].v || kind !== cur[phi].kind) changes.push({ phi, prev: cur[phi].v, v, kind });
+    // ô đang "giữ nguyên" mà admin chọn đúng số cũ: không đổi gì, khỏi thành "đếm" và chờ duyệt lại
+    const giuNguyen = cur[phi].kind === 'giu' && v === cur[phi].v && kind === 'dem';
+    if (!giuNguyen && (v !== cur[phi].v || kind !== cur[phi].kind)) changes.push({ phi, prev: cur[phi].v, v, kind });
   }
   // mốc phải vượt mọi mốc cũ của khu, cùng lý do như putCounts
   const ts = Math.max(Date.now(), curR.results.reduce((m, r) => Math.max(m, r.ts || 0, r.duyet_at || 0), 0) + 1);
@@ -383,7 +389,15 @@ export async function conflictResolve(req, env, user) {
     auditStmt(env, user, 'conflict_resolve', { khu, changes: changes.map((c) => ({ phi: c.phi, from: c.prev, to: c.v })) }),
     bump(env)
   );
-  await batchGuarded(env, guardStmt(env, IS_CLOSED, day), stmts, closedErr());
+  /* Chặn thêm khi khu vừa báo lại giữa lúc đọc và lúc ghi (mốc ts mới hơn mọi mốc đã đọc): không thì số admin chọn
+     đè mất lần báo mới mà không ai thấy. */
+  const moc = curR.results.reduce((m, r) => Math.max(m, r.ts || 0, r.duyet_at || 0), 0);
+  try {
+    await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR EXISTS (SELECT 1 FROM counts WHERE day = ? AND khu_id = ? AND MAX(ts, COALESCE(duyet_at, 0)) > ?)`, day, day, khu, moc), stmts, closedErr());
+  } catch (e) {
+    if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
+    throw new HttpError(409, 'Khu vừa báo lại số khác. Màn Duyệt đã tải lại, hãy so sánh lại rồi chọn.', 'changed');
+  }
   return json({ ok: true, changed: changes.length });
 }
 

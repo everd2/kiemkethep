@@ -14,6 +14,7 @@ import { qsChotCa, qsHan, qsLich, qsNguong, qsPut, qsThietLap, qsThongKe, qsThuT
 import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
+import { slPut, slView } from './sanluong.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -207,6 +208,9 @@ async function route(req, env, url, user, method, p, r0) {
   // báo cáo ca gửi cấp trên: CVKTHT trở lên soạn (gom quân số đầu ca + gia công theo mẫu), xem src/baocao.js
   if (r0 === 'baocao' && !p[1] && method === 'GET') return bcView(env, url);
   if (r0 === 'baocao' && !p[1] && method === 'PUT') return bcPut(req, env, user);
+  // báo cáo sản lượng theo ngày: cùng khuôn, cùng người soạn (CVKTHT trở lên), xem src/sanluong.js
+  if (r0 === 'sanluong' && !p[1] && method === 'GET') return slView(env, url);
+  if (r0 === 'sanluong' && !p[1] && method === 'PUT') return slPut(req, env, user);
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
   // huỷ báo cáo đang chờ duyệt của một khu, kèm lý do. Giữ đường dẫn /recount: bản app cũ còn trong
   // cache gọi tới sẽ bị đòi lý do (400) thay vì lặng lẽ treo một lá cờ không còn ai đọc.
@@ -248,17 +252,31 @@ async function route(req, env, url, user, method, p, r0) {
   throw new HttpError(404, 'Không tìm thấy');
 }
 
+/* Header bảo vệ cho MỌI phản hồi (trang tĩnh lẫn API): không nhúng app vào khung của trang khác (clickjacking), không đoán
+   kiểu nội dung, không gửi địa chỉ trang đi nơi khác. Không đặt CSP script-src vì các trang cài đặt / khôi phục dùng script nội tuyến. */
+const HEADER_AN_TOAN = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'same-origin',
+  'Content-Security-Policy': "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+};
+function anToan(res) {
+  const h = new Headers(res.headers);
+  for (const [k, v] of Object.entries(HEADER_AN_TOAN)) if (!h.has(k)) h.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
-    if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') return env.ASSETS.fetch(req);
+    if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') return anToan(await env.ASSETS.fetch(req));
     try {
       await ensureSchema(env);
-      return await handle(req, env, url);
+      return anToan(await handle(req, env, url));
     } catch (e) {
-      if (e instanceof HttpError) return json({ error: e.message, code: e.code }, e.status);
+      if (e instanceof HttpError) return anToan(json({ error: e.message, code: e.code }, e.status));
       console.error(e && e.stack ? e.stack : e);
-      return json({ error: 'Lỗi máy chủ, thử lại sau' }, 500);
+      return anToan(json({ error: 'Lỗi máy chủ, thử lại sau' }, 500));
     }
   },
   async scheduled(event, env, ctx) {

@@ -5,6 +5,21 @@ import { auditStmt, checkPin, createSession, normPhone, readJson, sessionCookie 
 
 /* ========================= ĐĂNG NHẬP ========================= */
 
+const REC_FAIL_MAX = 20; // số lần thử sai token khôi phục tối đa mỗi địa chỉ mỗi ngày
+
+/* Tính lượt thử TRƯỚC khi băm PIN, bằng một câu nguyên tử: gửi hàng loạt yêu cầu song song cũng chỉ
+   được đúng LOCK_AFTER lượt, mọi lượt dư bị từ chối mà không được thử PIN. Trả null nếu tài khoản
+   đã khoá hoặc hết lượt (người gọi trả 429). Đúng PIN thì người gọi đặt lại về 0. */
+async function lanThu(env, uid) {
+  const r = await env.DB.prepare('UPDATE users SET fail_count = fail_count + 1 WHERE id = ? AND locked_until <= ? AND fail_count < ? RETURNING fail_count')
+    .bind(uid, Date.now(), LOCK_AFTER).first();
+  return r ? r.fail_count : null;
+}
+const khoaTxt = (u) => {
+  const mins = Math.max(1, Math.ceil((u.locked_until - Date.now()) / 60000));
+  return `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`;
+};
+
 export async function setup(req, env, url) {
   const b = await readJson(req);
   if (!env.SETUP_TOKEN || !env.PEPPER) throw new HttpError(500, 'Chưa cấu hình SETUP_TOKEN và PEPPER');
@@ -17,9 +32,11 @@ export async function setup(req, env, url) {
   if (!name) throw bad('Cần nhập tên');
   const salt = rand(16);
   const hash = await hashPin(env, salt, b.pin);
+  // một câu duy nhất: hai yêu cầu thiết lập cùng lúc thì chỉ một người thành admin
   const r = await env.DB.prepare(
-    "INSERT INTO users (name, phone, role, pin_salt, pin_hash, must_change, created_at) VALUES (?,?,'admin',?,?,0,?)"
+    "INSERT INTO users (name, phone, role, pin_salt, pin_hash, must_change, created_at) SELECT ?,?,'admin',?,?,0,? WHERE NOT EXISTS (SELECT 1 FROM users)"
   ).bind(name, phone, salt, hash, Date.now()).run();
+  if (!r.meta.changes) throw new HttpError(403, 'Hệ thống đã được thiết lập');
   await auditStmt(env, { id: r.meta.last_row_id, name }, 'setup', null).run();
   return json({ ok: true });
 }
@@ -49,9 +66,10 @@ export async function login(req, env, url) {
     const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
     throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`);
   }
+  const n = await lanThu(env, u.id);
+  if (n === null) throw new HttpError(429, 'Đang có quá nhiều lượt thử, hãy đợi một lát rồi thử lại');
   const ok = safeEq(await hashPin(env, u.pin_salt, pin), u.pin_hash);
   if (!ok) {
-    const n = u.fail_count + 1;
     const ua = (req.headers.get('User-Agent') || '').slice(0, 80);
     if (n >= LOCK_AFTER) {
       const level = u.lock_level || 0;
@@ -63,7 +81,6 @@ export async function login(req, env, url) {
       ]);
     } else {
       await env.DB.batch([
-        env.DB.prepare('UPDATE users SET fail_count = ? WHERE id = ?').bind(n, u.id),
         auditStmt(env, u, 'login_fail', { n, ua, ip }),
         ipFail,
       ]);
@@ -87,7 +104,15 @@ export async function logout(req, env, url) {
 export async function recoverAdmin(req, env) {
   if (!env.RECOVERY_TOKEN || !env.PEPPER) throw new HttpError(503, 'Chưa cấu hình recovery');
   const b = await readJson(req);
-  if (!b.token || !safeEq(String(b.token), env.RECOVERY_TOKEN)) throw new HttpError(403, 'Token không đúng');
+  /* Thử token khôi phục cũng có trần theo địa chỉ mỗi ngày (dùng chung bảng login_fail, khoá riêng 'rec:'): token dài nên
+     khó đoán, nhưng thử sai không được là miễn phí và không để lại dấu vết nào. */
+  const ip = 'rec:' + (req.headers.get('CF-Connecting-IP') || 'unknown'), today = vnDay();
+  const dem = await env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today).first();
+  if (dem && dem.n >= REC_FAIL_MAX) throw new HttpError(429, 'Thử token sai quá nhiều lần hôm nay, hãy thử lại vào ngày mai');
+  if (!b.token || !safeEq(String(b.token), env.RECOVERY_TOKEN)) {
+    await env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today).run();
+    throw new HttpError(403, 'Token không đúng');
+  }
   const phone = String(b.phone || '').replace(/\D/g, '');
   if (!phone) throw bad('Thiếu số điện thoại');
   const np = String(b.newPin || '');
@@ -108,12 +133,10 @@ export async function changePin(req, env, user) {
   const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
   /* Nhập sai "PIN hiện tại" tính vào đúng bộ đếm / khoá của đăng nhập (fail_count, locked_until): không thì ai cầm máy
      đang mở sẵn dò được PIN không giới hạn. Đang bị khoá thì không cho thử. */
-  if (u.locked_until > Date.now()) {
-    const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
-    throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`);
-  }
+  if (u.locked_until > Date.now()) throw new HttpError(429, khoaTxt(u));
+  const n = await lanThu(env, u.id);
+  if (n === null) throw new HttpError(429, 'Đang có quá nhiều lượt thử, hãy đợi một lát rồi thử lại');
   if (!safeEq(await hashPin(env, u.pin_salt, String(b.pin || '')), u.pin_hash)) {
-    const n = u.fail_count + 1;
     if (n >= LOCK_AFTER) {
       const level = u.lock_level || 0;
       const ms = LOCK_STEPS[Math.min(level, LOCK_STEPS.length - 1)];
@@ -122,10 +145,7 @@ export async function changePin(req, env, user) {
         auditStmt(env, u, 'login_locked', { phone: u.phone, mins: ms / 60e3, ip: req.headers.get('CF-Connecting-IP') || 'unknown', qua: 'change_pin' }),
       ]);
     } else {
-      await env.DB.batch([
-        env.DB.prepare('UPDATE users SET fail_count = ? WHERE id = ?').bind(n, u.id),
-        auditStmt(env, u, 'login_fail', { n, qua: 'change_pin' }),
-      ]);
+      await auditStmt(env, u, 'login_fail', { n, qua: 'change_pin' }).run();
     }
     throw new HttpError(401, 'PIN hiện tại không đúng');
   }
@@ -134,7 +154,7 @@ export async function changePin(req, env, user) {
   if (np === String(b.pin)) throw bad('PIN mới phải khác PIN cũ');
   const salt = rand(16);
   // PIN đổi thì các máy khác đang đăng nhập bằng PIN cũ phải đăng nhập lại; giữ phiên của máy đang đổi
-  const m = (req.headers.get('Cookie') || '').match(/(?:^|;s*)sid=([a-f0-9]{64})/);
+  const m = (req.headers.get('Cookie') || '').match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
   const giu = m ? await sha256(m[1]) : '';
   await env.DB.batch([
     env.DB.prepare('UPDATE users SET pin_salt = ?, pin_hash = ?, must_change = 0, fail_count = 0 WHERE id = ?').bind(salt, await hashPin(env, salt, np), user.id),

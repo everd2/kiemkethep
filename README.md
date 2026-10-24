@@ -252,6 +252,14 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - **Nhắc soạn báo cáo ca**: qua hạn báo mà ca đó chưa chép báo cáo thì Tổng quan của CVKTHT có thẻ *Soạn báo cáo ca … gửi cấp trên* (ghi số tổ đã báo), bấm là mở thẳng màn soạn.
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào là mở màn báo cáo ca, bước 1, để nhắc. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa. App **không còn màn ghi thay** cho CVKTHT: tổ không báo thì báo cáo ca dùng số thiết lập, hoặc người soạn sửa tay mục 3. Mọi lần báo nằm trong **nhật ký**, có chip lọc *Quân số*.
+
+### Báo cáo sản lượng (Thêm → *Báo cáo sản lượng*, CVKTHT trở lên)
+Cùng khuôn với báo cáo ca, tính theo **ngày** (cả ca ngày và ca đêm), mặc định hôm qua. Mã nguồn: `src/sanluong.js`, bảng `san_luong` (cấu trúc bản 44).
+- **Phần đầu** dùng chung mẫu với báo cáo ca (đơn vị, chỉ huy, dự án, khu vực); sửa ở màn Báo cáo ca.
+- **Mục 2 Quân số**: nguyên số đi làm / tổng quân số các tổ đã báo (tổ không báo thì lấy số thiết lập đã chép lúc hết ca); không có phần nghỉ và lý do nghỉ. Thêm **số công gia công thép** của từng tổ, từng ca: mặc định bằng số đi làm, CVKTHT trở lên sửa được (chỉ ô đã sửa mới được lưu, ô còn lại luôn theo số báo mới nhất).
+- **Mục 3 Sản lượng**: `kg = (công × 158 × tỷ lệ gia công) ÷ tỷ lệ giá`, làm tròn kg theo từng ca. Công chuẩn 158 kg/công. Tỷ lệ giá 0,2 – 1 (mặc định 0,2). Tỷ lệ gia công 0,5 – 1, mặc định ngẫu nhiên 0,70 – 0,80 nhưng cố định theo ngày (mở lại không đổi), sửa được.
+- Nút *Chép báo cáo* chép bản chữ đúng khuôn vào bộ nhớ tạm và lưu tỷ lệ cùng các ô công đã sửa; hai người lưu chồng nhau thì người sau được báo tải lại.
+
 - Chưa có: màn chỉnh giờ ca (giờ ca đang là 6h30 / 18h30, lưu ở cài đặt `ca1_tu` / `ca2_tu` tính bằng phút), gửi lại tự động khi mất mạng, nay đã có ở mục [Báo cáo ca gửi cấp trên](#báo-cáo-ca-gửi-cấp-trên).
 - **Xoá sạch dữ liệu thép không xoá quân số**; bản sao toàn bộ có chứa quân số, nạp lại bản sao cũ chưa có bảng này thì quân số hiện tại được giữ nguyên.
 

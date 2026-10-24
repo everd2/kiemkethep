@@ -15,7 +15,7 @@ export function parseLines(b, ctx) {
   const sum = {};
   for (const it of raw) {
     const phi = String((it && it.phi) || '');
-    if (!phiBy[phi]) throw bad('Phi không hợp lệ: ' + phi);
+    if (!Object.hasOwn(phiBy, phi)) throw bad('Phi không hợp lệ: ' + phi); // hasOwn: 'constructor', '__proto__' không phải phi
     sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số ' + unitWord(phiBy[phi]) + ' của ' + phi);
   }
   return Object.entries(sum).map(([phi, qty]) => {
@@ -46,7 +46,7 @@ export async function receiptCtx(env, khuIds, khoa) {
   if (coR && coR.results.length) return { day, khoa: k, daCo: coR.results, khu: {}, phiBy: {} };
   if (closedR.results.length) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   const khu = Object.fromEntries(khuR.results.map((k) => [k.id, k]));
-  for (const id of khuIds) if (!khu[id]) throw bad('Khu không hợp lệ');
+  for (const id of khuIds) if (!Object.hasOwn(khu, id)) throw bad('Khu không hợp lệ');
   return {
     day, khu, khoa: k,
     phiBy: Object.fromEntries(phiR.results.map((r) => [r.id, r])),
@@ -115,7 +115,22 @@ export async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
   const grp = ctx.khoa || rand(8);
   const ts = Date.now();
   const data = JSON.stringify(rows);
-  const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, ctx.day), [
+  /* Chốt chặn kép: ngày đã chốt, HOẶC phiếu mang khoá này đã được ghi bởi một yêu cầu đến sát trước (bấm đúp,
+     gửi lại lúc mạng chậm). Kiểm "đã có chưa" ở receiptCtx và ghi ở đây là hai lượt riêng, nên phải chặn lại
+     ngay trong batch, không thì cả hai cùng thấy chưa có và cùng ghi — phiếu nhân đôi. */
+  const chan = ctx.khoa
+    ? guardStmt(env, `${IS_CLOSED} OR EXISTS (SELECT 1 FROM receipts WHERE grp = ?)`, ctx.day, grp)
+    : guardStmt(env, IS_CLOSED, ctx.day);
+  let res;
+  try { res = await writeBatch(); } catch (e) {
+    if (!ctx.khoa || !(e instanceof HttpError) || e.code !== 'closed') throw e;
+    const co = (await env.DB.prepare('SELECT id, user_id FROM receipts WHERE grp = ? ORDER BY id').bind(grp).all()).results;
+    if (!co.length) throw e;
+    return daGhi({ ...ctx, daCo: co }, user);
+  }
+  const ids = res[3].results.map((r) => r.id);
+  return json({ ok: true, grp, ids, id: ids[0] === undefined ? null : ids[0] });
+  function writeBatch() { return batchGuarded(env, chan, [
     env.DB.prepare(
       `INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, kind, grp)
        SELECT ?1, ${J('phi')}, ${J('khu')}, ${J('qty')}, ?2, ?3, ?4, ?5, ?6 FROM json_each(?7) j`
@@ -123,9 +138,7 @@ export async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
     auditStmt(env, user, { chuyen: 'transfer', dc: 'adjust', xuat: 'issue' }[kind] || 'receipt', { ...audit, grp, note }),
     bump(env),
     env.DB.prepare('SELECT id FROM receipts WHERE grp = ?').bind(grp),
-  ], closedErr());
-  const ids = res[3].results.map((r) => r.id);
-  return json({ ok: true, grp, ids, id: ids[0] === undefined ? null : ids[0] });
+  ], closedErr()); }
 }
 
 /* Mọi phiếu RÚT THÉP KHỎI MỘT KHU (chuyển đi, điều chỉnh giảm) phải kiểm lại tồn khu nguồn
@@ -141,7 +154,7 @@ export async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
    duyệt được" vào mặt người vừa bấm lưu.
    `opt.ctx`: kết quả rutCtx đã đọc sẵn. "Duyệt tất cả" kiểm nhiều phiếu một lượt; để mỗi phiếu tự
    đọc lại thì tốn 3 truy vấn mỗi phiếu, vài phiếu chờ là chạm hạn mức truy vấn của một request. */
-export async function rutCtx(env, day, lines) {
+export async function rutCtx(env, day, lines, choRut = true) {
   const out = lines.filter((x) => x.qty < 0);
   const [phiR, khuR] = await env.DB.batch([
     env.DB.prepare('SELECT id, bo_size, unit FROM phi'),
@@ -150,7 +163,7 @@ export async function rutCtx(env, day, lines) {
   return {
     phiBy: Object.fromEntries(phiR.results.map((x) => [x.id, x])),
     nameOf: Object.fromEntries(khuR.results.map((x) => [x.id, x.name])),
-    have: await tonCells(env, day, out.map((x) => ({ khu: x.khu_id, phi: x.phi_id }))),
+    have: await tonCells(env, day, out.map((x) => ({ khu: x.khu_id, phi: x.phi_id })), choRut),
   };
 }
 export async function checkTransferStock(env, day, lines, opt) {
@@ -158,7 +171,7 @@ export async function checkTransferStock(env, day, lines, opt) {
   if (!out.length) return;
   const o = opt || {};
   const dau = o.duyet === false ? '' : 'Không duyệt được: ';
-  const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất', vay: 'phiếu vay mượn' }[o.kind] || 'phiếu chuyển';
+  const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất', vay: 'phiếu vay mượn', huy: 'huỷ phiếu này cần rút' }[o.kind] || 'phiếu chuyển';
   const byKhu = {};
   out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
   const { phiBy, nameOf, have: haveAll } = o.ctx || await rutCtx(env, day, out);
@@ -199,11 +212,14 @@ export async function duyetReceipt(env, user, id) {
   const rk = r.kind || 'nhap';
   await checkTransferStock(env, day, ['chuyen', 'dc', 'xuat', 'vay'].includes(rk) ? list : [], { kind: rk });
   const ts = Date.now();
-  await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
+  /* Còn chặn khi phiếu vừa được người khác duyệt hoặc huỷ giữa lúc đọc và lúc ghi: không thì hai người
+     duyệt cùng lúc ghi hai dòng nhật ký, và dòng vừa bị huỷ vẫn bị đóng dấu duyệt. */
+  const conCho = r.grp ? 'grp = ?' : 'id = ?';
+  await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL)`, day, r.grp || id), [
     r.grp
       ? env.DB.prepare('UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_day IS NULL')
         .bind(day, ts, user.id, user.name, r.grp)
-      : env.DB.prepare('UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE id = ?')
+      : env.DB.prepare('UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE id = ? AND voided = 0 AND duyet_day IS NULL')
         .bind(day, ts, user.id, user.name, id),
     // phiếu kho của sổ vay mượn: duyệt phiếu là duyệt luôn lần ghi sổ đi kèm (cùng grp)
     ...(rk === 'vay' && r.grp ? [env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_ts IS NULL')
@@ -211,7 +227,10 @@ export async function duyetReceipt(env, user, id) {
     auditStmt(env, user, 'receipt_duyet', { id, grp: r.grp, kind: r.kind || 'nhap', day: r.day, duyet_day: day,
       lines: list.map((x) => ({ phi: x.phi_id, khu: x.khu_id, qty: x.qty })) }),
     bump(env),
-  ], closedErr('Ngày hôm nay đã chốt, không duyệt được phiếu'));
+  ], closedErr('Ngày hôm nay đã chốt, không duyệt được phiếu')).catch(async (e) => {
+    if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
+    throw new HttpError(409, 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
+  });
   return json({ ok: true, duyet_day: day });
 }
 
@@ -390,10 +409,22 @@ export async function voidReceipt(env, user, id) {
      vào câu chặn của batch để một lần trả được duyệt chen vào giữa cũng không lọt. */
   const vay = r.kind === 'vay' && r.grp && !pending;
   if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
-  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND}`, dayOf, r.grp, 0) : guardStmt(env, IS_CLOSED, dayOf);
+  /* Huỷ phiếu ĐÃ DUYỆT là rút lại phần thép nó đã đưa vào: các dòng dương phải còn đủ thép ở khu đó, không thì
+     huỷ phiếu nhập sau khi số thép ấy đã chuyển đi / xuất đi sẽ làm khu âm. Phiếu chờ duyệt chưa vào tồn nên khỏi kiểm. */
+  if (!pending) {
+    /* So với tồn THỰC CÓ (không trừ phiếu rút đang chờ): phiếu rút chờ duyệt sẽ tự bị chặn lúc duyệt, nên huỷ phiếu nhập
+       trước đó vẫn được — chỉ chặn khi thép ấy đã THẬT SỰ đi mất (phiếu chuyển / xuất đã duyệt). */
+    const ra = rows.filter((x) => x.qty > 0).map((x) => ({ phi_id: x.phi_id, khu_id: x.khu_id, qty: -x.qty }));
+    if (ra.length) await checkTransferStock(env, vnDay(), ra, { kind: 'huy', duyet: false, ctx: await rutCtx(env, vnDay(), ra, false) });
+  }
+  // còn chặn khi phiếu vừa bị người khác huỷ / duyệt giữa lúc đọc và lúc ghi
+  const doiTT = `NOT EXISTS (SELECT 1 FROM receipts WHERE id = ? AND voided = 0 AND (duyet_day IS NULL) = ?)`;
+  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND} OR ${doiTT}`, dayOf, r.grp, 0, id, pending ? 1 : 0)
+    : guardStmt(env, `${IS_CLOSED} OR ${doiTT}`, dayOf, id, pending ? 1 : 0);
   const coAm = async (e) => {
-    if (!vay || !(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(dayOf).first()) throw e;
-    const am = await loanAmRows(env, r.grp, 0); throw am.length ? loanAmErr(am) : e;
+    if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(dayOf).first()) throw e;
+    if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
+    throw new HttpError(409, 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
   };
   await batchGuarded(env, chan, [
     r.grp

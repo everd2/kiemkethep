@@ -275,7 +275,7 @@ S.loanDetail = { chiTiet: true, doitac: [{ id: 5, name: 'Công ty Thép Hoà Bì
     qs: [{ ngay: d0, ca: 1, u: 2, tong: 20, lam: 16, nghi: { om: 2, off: 1, khac: 1 }, ghi_chu: 'đi khám' }, { ngay: d1, ca: 1, u: 2, tong: 20, lam: 20, nghi: {}, ghi_chu: null },
       { ngay: d0, ca: 2, u: 3, tong: 30, lam: 21, nghi: { phep: 5, que: 4 }, ghi_chu: null }, { ngay: t0, ca: 1, u: 2, tong: 20, lam: 19, nghi: { gd: 1 }, ghi_chu: null }, { ngay: d0, ca: 1, u: 9, tong: 5, lam: 5, nghi: {}, ghi_chu: null }],
     tl: [{ ngay: d1, ca: 2, u: 3, tong: 30, lam: 28, nghi: { om: 2 }, ghi_chu: null }, { ngay: d1, ca: 1, u: 4, tong: null, lam: null, nghi: {}, ghi_chu: null }] }; }
-const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','baocaoca','qstk'];
+const SCREENS = ['home','khu','dem','nhap','ton','duyet','nhatky','lichsu','baocao','stats','more','pin','users','settings','vaymuon','vaychitiet','satvun','giacong','gcdon','gcform','gcsetup','quanso','baocaoca','qstk','sanluong'];
 const out = [];
 function one(label) {
   render();
@@ -284,6 +284,9 @@ function one(label) {
 }
 for (const sc of SCREENS) { S.screen = sc; one(sc); }
 S.screen = 'baocaoca'; S.bcV = null; S.bcMo = 's4'; one('baocaoca+muc4-theo-dong'); S.bcvMo = true; one('baocaoca+muc4-them-viec'); S.bcvMo = false; S.bcMo = null;
+S.sl = { ngay: S.boot.today, chuan: 158, gia_lim: { min: 0.2, max: 1 }, gc_lim: { min: 0.5, max: 1 }, mac_dinh: { gia: 0.2, gc: 0.75 }, dau: { don_vi: 'Đại đội 1.1.6', ddt: '', tdtr: '', cbpt: '', du_an: 'Dự án A', khu_vuc: '' }, luu: null,
+  to: [{ id: 2, name: 'Trần B', ca: { 1: { tong: 21, lam: 18, nguon: 'bao' }, 2: null } }, { id: 4, name: 'Lê D', ca: { 1: null, 2: { tong: 19, lam: 9, nguon: 'tl' } } }] };
+S.screen = 'sanluong'; one('sanluong'); S.form.slgia = '0,1'; one('sanluong+ty-le-loi'); delete S.form.slgia; S.sl = null;
 S.screen = 'qstk'; S.tkCa = 2; one('qstk+ca-dem'); S.tkCa = 0; S.tkTo = 2; S.tkNgay = S.boot.today; one('qstk+mot-to'); S.tkTo = 4; one('qstk+to-thieu-so'); S.tkTo = null; S.tkNgMo = true; one('qstk+doi-nguong'); S.tkNgMo = false; one('qstk+chon-ngay'); S.tkNgay = null;
 { const me0 = S.me; S.me = { id: 2, name: 'Trần B', role: 'tieudoi' }; one('qstk+tieu-doi-truong'); S.me = me0; }
 // bảng quân số đang xếp thứ tự tổ, và thẻ báo của tổ trưởng đang mở phần người nghỉ + dòng ca kia
