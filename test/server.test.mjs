@@ -99,6 +99,11 @@ async function main() {
     eq('duyệt phiếu được', (await duyetP(S, phieu1)).status, 200);
     eq('duyệt rồi thì ghi ngày duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', phieu1).duyet_day, day0);
 
+    // số thiếu / sai kiểu không được ép thành 0 hay 1: null, '', true, [5] đều phải bị từ chối
+    for (const sai of [null, '', '  ', true, [5], {}]) {
+      const it = items({ D16: 1800 }); it.find((x) => x.phi === 'D16').v = sai;
+      eq('đếm với v = ' + JSON.stringify(sai) + ' bị từ chối', (await S.call('PUT', '/counts', { khu: 'A', day: day0, items: it }, 'An')).status, 400);
+    }
     r = await S.call('PUT', '/counts', { khu: 'A', day: day0, items: items({ D16: 1800 }) }, 'An');
     eq('An báo khu A', r.status, 200);
     eq('không xung đột khi chỉ 1 người báo', r.data.conflict, false);

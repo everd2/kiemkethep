@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 41;
+export const SCHEMA_VERSION = 42;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -522,6 +522,14 @@ export const MIGRATIONS = {
        entity_id INTEGER NOT NULL, r2_key TEXT NOT NULL, ten TEXT, kich_thuoc INTEGER NOT NULL,
        user_id INTEGER NOT NULL, user_name TEXT, ts INTEGER NOT NULL)`,
     'CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id)',
+  ],
+  /* INDEX THIẾU Ở DATABASE NÂNG CẤP DẦN: schema.sql có idx_receipts_day và idx_sessions_user nhưng chưa migration nào
+     tạo, cùng kiểu lỗi với bản 38 (bộ test dựng từ schema.sql nên không bắt được). idx_receipts_day: câu danh sách phiếu
+     của /bootstrap lọc (day = ? OR duyet_day IS NULL OR duyet_day = ?), thiếu nó thì nhánh "day = ?" quét cả bảng.
+     idx_sessions_user: mọi lần khoá / đổi PIN / xoá tài khoản xoá phiên theo user_id. Chỉ thêm index, dữ liệu không đổi. */
+  42: [
+    'CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

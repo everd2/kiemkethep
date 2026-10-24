@@ -38,6 +38,8 @@ export const qtyWord = (v, p) => {
   return (c ? c + ' cuộn' : '') + (c && r ? ' + ' : '') + (r || !c ? r + ' phần' : '');
 };
 export const intIn = (v, min, max, label) => {
+  // null, '', true, [5] đều ép ra số được (0 hoặc 1 hoặc 5): không nhận, kẻo thiếu số mà thành "0"
+  if ((typeof v !== 'number' && typeof v !== 'string') || (typeof v === 'string' && !v.trim())) throw bad(label + ' không hợp lệ');
   const n = Number(v);
   if (!Number.isInteger(n) || n < min || n > max) throw bad(label + ' không hợp lệ');
   return n;

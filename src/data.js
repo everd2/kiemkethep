@@ -208,7 +208,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 40 thêm hai cột người order / đại đội order của đơn gia công (tệp cũ thiếu thì để trống)
   40: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39],
   // bản 41 chỉ thêm bảng ảnh biên bản (bản sao cũ chưa có thì giữ bảng đang có, như bản 36/39)
-  41: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40] };
+  41: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+  // bản 42 chỉ thêm index, dữ liệu không đổi
+  42: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */

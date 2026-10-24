@@ -625,7 +625,7 @@ CREATE TABLE IF NOT EXISTS anh_bb (
 );
 CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 41);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 42);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
