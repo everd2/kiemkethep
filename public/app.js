@@ -4903,6 +4903,18 @@ function syncQty() {
 /* khu: chỉ dùng với screen 'dem' — mở THẲNG màn đếm của khu đó (thẻ nhắc ở Tổng quan, nút "Báo cáo
    khu X", nút Back). Không có khu thì tab Báo cáo mở MÀN CHỌN KHU: người đếm phải tự chọn khu mỗi
    lần, để không ai báo nhầm sang khu đã mở lần trước. */
+/* Chuyển màn thường: số liệu chung vừa tải xong (sau lần ghi trước, hay vòng làm mới) thì dùng luôn; cũ hơn vài giây thì
+   hỏi /rev (một câu rất nhẹ, như vòng làm mới nền) và chỉ tải lại cả /bootstrap (31 câu D1) khi rev, ngày, ca hoặc tin
+   gia công đã đổi. Trước đây mỗi lần đổi tab là một lượt /bootstrap đầy đủ dù chẳng có gì mới. */
+async function bootMoi() {
+  const b = S.boot;
+  if (!b || S.stale) return loadBoot();
+  if (Date.now() - (S.netOk || 0) < 3000 && b.today === vnDayOf(Date.now() + (b.skew || 0))) return;
+  const r = await api('GET', '/rev');
+  const sangCa = b.qs && Date.now() + (b.skew || 0) >= b.qs.den;
+  if (r.rev !== b.rev || r.today !== b.today || sangCa || (r.tn != null && r.tn !== S.tnBiet)) return loadBoot();
+  S.netOk = Date.now(); S.netBad = false;
+}
 async function go(screen, noPush, khu) {
   // chấm công nay là một mục của màn Nhật ký; lối cũ (nút THỬ LẠI, lịch sử trình duyệt) dẫn về đó
   if (screen === 'chamcong') { S.logTab = 'tk'; screen = 'nhatky'; }
@@ -4923,16 +4935,23 @@ async function go(screen, noPush, khu) {
   if (!noPush) pushNav();
   render();
   try {
-    if (screen === 'duyet') { S.review = null; S.subs = {}; render(); S.review = await api('GET', '/review'); }
+    /* Màn có danh sách tải riêng: còn bản vừa xem của CHÍNH người này thì bày luôn rồi làm mới ngầm (không xoá về
+       "Đang tải"); chỉ khi chưa có gì (hoặc đổi người đăng nhập) mới chờ trắng. Bản cũ không gây hại: mọi thao tác ghi
+       đều do server kiểm lại, và vòng tự làm mới vẫn thay bản cũ bằng bản mới như trước. */
+    if (S._dataUid !== S.me.id) { S._dataUid = S.me.id; S.review = null; S.loans = null; S.svs = null; S.loanDetail = null; }
+    if (screen === 'duyet') { if (S.review) await reloadReview(); else { S.subs = {}; render(); S.review = await api('GET', '/review'); } }
     else if (screen === 'nhatky') { if (S.logTab === 'tk') await loadChamCong(); else await loadAudit(false); }
     else if (screen === 'users') { await loadUsers(); }
     else if (screen === 'lichsu') { await loadHist(S.hist.date || ydayOf(S.boot.today)); }
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
     else if (screen === 'stats') { S.usage = null; render(); S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
     else if (screen === 'settings') { S.kuEdit = null; await loadBoot(); await loadUsers(); }
-    else if (screen === 'vaymuon') { S.loans = null; render(); S.loans = await api('GET', '/loans'); }
-    else if (screen === 'satvun') { S.svs = null; render(); S.svs = await svTai(); }
-    else if (screen === 'vaychitiet') { S.loanDetail = null; render(); S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt); }
+    else if (screen === 'vaymuon') { if (!S.loans) render(); S.loans = await api('GET', '/loans'); }
+    else if (screen === 'satvun') { if (!S.svs) render(); S.svs = await svTai(); }
+    else if (screen === 'vaychitiet') {
+      if (!S.loanDetail || S._ldDt !== S.loanDt) { S.loanDetail = null; render(); } // đối tác KHÁC thì không bày bản cũ
+      S._ldDt = S.loanDt; S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt);
+    }
     // bảng đơn giữ bản đang có trong lúc tải lại (khỏi nháy "Đang tải" mỗi lần đổi tab); đơn KHÁC thì phải xoá bản cũ
     else if (screen === 'giacong') { S.gc = await api('GET', '/giacong'); }
     else if (screen === 'gcdon') {
@@ -4948,7 +4967,7 @@ async function go(screen, noPush, khu) {
     else if (screen === 'baocaoca') { await bcTai(); }
     else if (screen === 'qstk') { S.tk = await tkTai(); }
     else if (['home', 'ton', 'khu', 'nhap', 'dem'].includes(screen)) {
-      await loadBoot();
+      await bootMoi();
       /* Nháp ở trên dựng từ boot ĐANG CÓ để màn hình lên ngay, mà boot đó có thể là của hôm qua (app
          nằm nền qua đêm): khi ấy số hôm qua bị coi là "hôm nay" và điền sẵn. Có boot mới thì dựng lại.
          Không mất gì của người đếm: mỗi lần đổi ô đều đã ghi nháp xuống máy. */
