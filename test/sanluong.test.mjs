@@ -180,12 +180,12 @@ async function main() {
   const tu = dong.slice(2);
   eq('tổ ca ngày: dòng đúng mẫu', tu.find((l) => l.includes('Khoa')), `• Tổ Phạm Văn Khoa: ca ngày 18/21 cn gia công thép ${kgv(khoa)} kg`);
   eq('Hoàng (chỉ thiết lập quân số): ca ngày 12/15', tu.find((l) => l.includes('Hoàng')), `• Tổ Nguyễn Văn Hoàng: ca ngày 12/15 cn gia công thép ${kgv(hoang)} kg`);
-  eq('Trường làm hai ca: có đêm và nghỉ = 19 - 7 - 7', tu.find((l) => l.includes('Trường')), `• Tổ Lý Đình Trường: ca ngày 7/19 cn, ca đêm 7/19 cn, nghỉ 5 cn — gia công thép ${kgv(truong)} kg`);
+  eq('Trường làm hai ca: ca ngày + ca đêm, không ghi số nghỉ', tu.find((l) => l.includes('Trường')), `• Tổ Lý Đình Trường: ca ngày 7/19 cn, ca đêm 7/19 cn gia công thép ${kgv(truong)} kg`);
   eq('Cơi chỉ làm đêm: (làm ca đêm) 9/19', tu.find((l) => l.includes('Cơi')), `• Tổ Lò Văn Cơi (làm ca đêm) 9/19 cn gia công thép ${kgv(coi)} kg`);
   eq('Sơn (chỉ thiết lập quân số) làm đêm: 17/19', tu.find((l) => l.includes('Sơn')), `• Tổ Nguyễn Đức Sơn (làm ca đêm) 17/19 cn gia công thép ${kgv(son)} kg`);
   eq('Nam chưa báo nhưng có công 5: vẫn có dòng, xếp cuối', tu[tu.length - 1], `• Tổ Lê Hải Nam: chưa báo quân số — gia công thép ${kgv(nam)} kg`);
   ok('tổ ca ngày xếp trước, tổ chỉ làm đêm sau, tổ chưa báo cuối', tu.findIndex((l) => l.includes('(làm ca đêm)')) > tu.findIndex((l) => l.includes('Trường')) && tu.findIndex((l) => l.includes('chưa báo')) === tu.length - 1, tu.join(' | '));
-  ok('không còn chữ nghỉ ngoài dòng tổ hai ca', dong.filter((l) => /nghỉ/.test(l)).length === 1 && !/ốm|lý do/i.test(chu), chu);
+  ok('không còn chữ nghỉ hay lý do nghỉ ở dòng nào', !/nghỉ|ốm|lý do/i.test(chu), chu);
   ok('kg là số nguyên trơn (không dấu chấm nghìn)', tu.every((l) => /\d+ kg$/.test(l) && !/\d\.\d{3} kg$/.test(l)), tu.join(' | '));
   // chép: lưu ảnh chụp thiết lập hiện tại (đã bấm tính lại) + các ô công đã sửa
   R(`ACTIONS.slchep()`); await cho();

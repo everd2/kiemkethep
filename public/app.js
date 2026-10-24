@@ -4277,7 +4277,7 @@ function slDau(L) {
 const slNguon = (u) => [u.ngay && `ca ngày ${u.ngay.lam}/${u.ngay.tong}`, u.dem && `ca đêm ${fmtDay(u.dem.ngay).slice(0, 5)} ${u.dem.lam}/${u.dem.tong}`].filter(Boolean).join(' + ');
 /* Bản chữ để dán vào Zalo, đúng mẫu đơn vị đang dùng: tiêu đề, phần đầu, rồi MỖI TỔ MỘT DÒNG (cn = công nhân, kg = sản lượng của tổ).
      • Tổ A: ca ngày 12/21 cn gia công thép 8532 kg
-     • Tổ B: ca ngày 7/19 cn, ca đêm 7/19 cn, nghỉ 5 cn — gia công thép 8395 kg   (tổ làm cả hai ca; nghỉ = tổng − đi làm hai ca)
+     • Tổ B: ca ngày 7/19 cn, ca đêm 7/19 cn gia công thép 8395 kg   (tổ làm cả hai ca; cùng kiểu, không ghi số nghỉ)
      • Tổ C (làm ca đêm) 16/20 cn gia công thép 10112 kg
    Tổ làm ca ngày xếp trước, tổ chỉ làm đêm sau, tổ chưa có quân số cuối. Không có dòng tổng: tổng chỉ hiện trên màn hình. */
 function slTao() {
@@ -4286,8 +4286,7 @@ function slTao() {
   const dong = T.dong.slice().sort((a, b) => nhom(a) - nhom(b)).filter((r) => nhom(r) < 2 || r.cong).map((r) => {
     const u = r.u, ten = 'Tổ ' + u.name;
     if (u.ngay && u.dem) {
-      const nghi = Math.max(0, u.tong - u.ngay.lam - u.dem.lam);
-      return `• ${ten}: ca ngày ${u.ngay.lam}/${u.ngay.tong} cn, ca đêm ${u.dem.lam}/${u.dem.tong} cn${nghi ? `, nghỉ ${nghi} cn` : ''} — gia công thép ${kg(r)} kg`;
+      return `• ${ten}: ca ngày ${u.ngay.lam}/${u.ngay.tong} cn, ca đêm ${u.dem.lam}/${u.dem.tong} cn gia công thép ${kg(r)} kg`;
     }
     if (u.ngay) return `• ${ten}: ca ngày ${u.ngay.lam}/${u.ngay.tong} cn gia công thép ${kg(r)} kg`;
     if (u.dem) return `• ${ten} (làm ca đêm) ${u.dem.lam}/${u.dem.tong} cn gia công thép ${kg(r)} kg`;
