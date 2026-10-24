@@ -2529,6 +2529,8 @@ function loanBalances(L) {
 /* Ngày tháng của sổ vay: "07/10" cho ngày cùng năm, đủ năm khi khác năm (sổ công nợ có thể kéo
    sang năm sau). Số ngày giữa hai ngày YYYY-MM-DD tính theo lịch, không theo giờ. */
 const ngayNgan = (d) => (!d ? '' : d.slice(0, 4) === (S.boot ? S.boot.today : '').slice(0, 4) ? fmtDay(d).slice(0, 5) : fmtDay(d));
+// giờ SERVER: các hạn "huỷ trong 10 phút / 7 ngày" tính theo giờ server, không theo đồng hồ máy (máy lệch giờ thì nút hiện sai)
+const svNow = () => Date.now() + ((S.boot && S.boot.skew) || 0);
 const soNgay = (a, z) => Math.round((Date.parse(z) - Date.parse(a)) / 864e5);
 const congNgay = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 // các lần vay còn nợ (server tính: lần trả trừ vào lần vay cũ nhất trước), của màn đang mở
@@ -2557,9 +2559,9 @@ function loanCard(rows) {
     : quyen && cho
       ? `<div class="row gap6"><button class="btn s ok" data-a="lduyet" data-id="${id}">Duyệt</button><button class="btn s bad" data-a="lvoid" data-id="${id}">Từ chối</button></div>`
     // cùng luật với server: admin huỷ lần ghi đã duyệt trong 7 ngày; quá hạn thì ghi một lần ngược lại
-    : !cho && quyen && Date.now() - r0.duyet_ts > 7 * 864e5
+    : !cho && quyen && svNow() - r0.duyet_ts > 7 * 864e5
       ? '<span class="sm muted" style="text-align:right;max-width:110px">quá 7 ngày, ghi lần ngược lại để sửa</span>'
-    : quyen || (mine && (cho || Date.now() - r0.duyet_ts < 10 * 60e3))
+    : quyen || (mine && (cho || svNow() - r0.duyet_ts < 10 * 60e3))
       ? `<button class="btn s bad" data-a="lvoid" data-id="${id}">${cho ? 'Rút lại' : 'Huỷ'}</button>`
       : '';
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r0.voided_uname ? ' · ' + esc(r0.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>' : `<span class="badge ok">Đã duyệt${r0.duyet_uname ? ' · ' + esc(r0.duyet_uname) : ''}</span>`;
@@ -2731,8 +2733,8 @@ function svCard(r) {
   const nut = huy ? ''
     : quyen && cho ? `<div class="row gap6"><button class="btn s ok" data-a="svduyet" data-id="${r.id}">Duyệt</button><button class="btn s bad" data-a="svvoid" data-id="${r.id}">Từ chối</button></div>`
     // đã duyệt quá 7 ngày: chỉ cấp chỉ huy còn huỷ được (kèm lý do), xem voidSv
-    : !cho && quyen && !isCH() && Date.now() - r.duyet_ts > 7 * 864e5 ? ''
-    : quyen || (mine && (cho || Date.now() - r.duyet_ts < 10 * 60e3)) ? `<button class="btn s bad" data-a="svvoid" data-id="${r.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>` : '';
+    : !cho && quyen && !isCH() && svNow() - r.duyet_ts > 7 * 864e5 ? ''
+    : quyen || (mine && (cho || svNow() - r.duyet_ts < 10 * 60e3)) ? `<button class="btn s bad" data-a="svvoid" data-id="${r.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>` : '';
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r.voided_uname ? ' · ' + esc(r.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>'
     : `<span class="badge ok">Đã duyệt${r.duyet_uname ? ' · ' + esc(r.duyet_uname) : ''}</span>`;
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
@@ -2915,7 +2917,7 @@ const GC_TN_NHANH = { lam: ['Đã rõ', 'Đang làm', 'Cần thêm thời gian',
 function gcTnDuoc(d) {
   if (!gcCuaToi(d) && !isQL()) return false;
   const dong = d.tt === 'xong' ? d.xong_ts : d.tt === 'huy' ? d.huy_ts || d.cap_ts : null;
-  return !(dong && Date.now() - dong > GC_TN_MO_MS);
+  return !(dong && svNow() - dong > GC_TN_MO_MS);
 }
 // đánh dấu đã đọc mọi tin của đơn đang mở (không chờ, lỗi mạng thì lần mở sau đánh dấu lại)
 function gcDocXong() {
@@ -2930,7 +2932,11 @@ function gcDocXong() {
 // tải lại phần trao đổi khi bộ đếm tin đổi: tin chưa đọc của mình, và đơn đang mở / bảng đơn đang xem
 async function gcTnTai() {
   S.boot.gcTn = (await api('GET', '/giacong/tnmoi')).items;
-  if (S.screen === 'gcdon' && S.gcId) { const n = (S.gcDetail && S.gcDetail.tn || []).length; S.gcDetail = await api('GET', '/giacong/' + S.gcId); if (S.gcDetail.tn.length > n) S.gcXuong = true; gcDocXong(); }
+  if (S.screen === 'gcdon' && S.gcId) {
+    const id = S.gcId, n = (S.gcDetail && S.gcDetail.tn || []).length, D = await api('GET', '/giacong/' + id);
+    // sang đơn khác trong lúc chờ thì bỏ bản này, kẻo đè đơn đang mở bằng đơn cũ
+    if (S.screen === 'gcdon' && S.gcId === id) { S.gcDetail = D; if (D.tn.length > n) S.gcXuong = true; gcDocXong(); }
+  }
   if (S.screen === 'giacong') S.gc = await api('GET', '/giacong');
 }
 const GC_KHOI_PHUC_MS = 7 * 864e5; // chép từ src/giacong.js
@@ -3242,7 +3248,7 @@ function vGcDon() {
   const ql = !isQL() ? '' : mo ? '<div class="row gap6"><button class="btn f1" data-a="gcedit">Sửa / giao lại</button><button class="btn bad f1" data-a="gchuy">Huỷ đơn</button></div>'
     : d.tt === 'xong' && d.xuat_tt !== 'duyet' ? '<button class="btn bad full" data-a="gcmolai">Mở lại đơn (chưa xong thật)</button>'
     // cùng luật với server: khôi phục đơn huỷ nhầm trong 7 ngày kể từ lúc huỷ
-    : d.tt === 'huy' ? (Date.now() - (d.huy_ts || d.cap_ts) <= GC_KHOI_PHUC_MS ? '<button class="btn full" data-a="gckhoiphuc">Khôi phục đơn (huỷ nhầm)</button>' : '<span class="sm muted" style="line-height:1.4">Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Cần làm lại thì giao đơn mới giống đơn này.</span>') : '';
+    : d.tt === 'huy' ? (svNow() - (d.huy_ts || d.cap_ts) <= GC_KHOI_PHUC_MS ? '<button class="btn full" data-a="gckhoiphuc">Khôi phục đơn (huỷ nhầm)</button>' : '<span class="sm muted" style="line-height:1.4">Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Cần làm lại thì giao đơn mới giống đơn này.</span>') : '';
   /* TRAO ĐỔI VÀ LỊCH SỬ: một dòng thời gian, cũ ở trên, mới ở dưới, để tin nhắn nằm ngay cạnh mốc làm nó phát sinh
      ("Bình báo vướng: thiếu thép" rồi "Cv: thép D16 về lúc 14h"). Mốc của đơn là dòng xám nhỏ; tin nhắn là ô. */
   const trongDon = (uid) => gcNguoi(d).includes(uid);
@@ -3253,7 +3259,7 @@ function vGcDon() {
   const tinHtml = (t) => {
     const toi = t.user_id === S.me.id, moi = !toi && t.id > (D.doc || 0);
     const nhan = trongDon(t.user_id) ? '' : ` <span class="sm muted">· ${esc(roleTen(t.role))}</span>`;
-    const thu = toi && !t.thu_hoi && Date.now() - t.ts < GC_TN_THU_HOI_MS ? ` · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="gctnthu" data-id="${t.id}">Thu hồi</button>` : '';
+    const thu = toi && !t.thu_hoi && svNow() - t.ts < GC_TN_THU_HOI_MS ? ` · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="gctnthu" data-id="${t.id}">Thu hồi</button>` : '';
     return `<div class="col" style="align-items:${toi ? 'flex-end' : 'flex-start'}"><div class="col" style="gap:3px;max-width:86%;padding:8px 12px;border-radius:14px;border:${moi ? '2px solid var(--bad)' : '1px solid var(--line)'};background:${toi ? '#DCE6F2' : '#fff'}">
       <span class="sm"><b>${toi ? 'Bạn' : esc(t.uname)}</b>${nhan} · <span class="muted">${dmy(t.ts)}</span>${t.can_tl ? ' · <b style="color:var(--warn)">Cần trả lời</b>' : ''}${thu}</span>
       ${t.thu_hoi ? '<i class="muted">Tin đã thu hồi</i>' : `<span style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(t.noi_dung)}</span>`}</div></div>`;
@@ -3911,7 +3917,7 @@ const BC_DAU = [['don_vi', 'Đơn vị', 'Trung đoàn XD 01, Tiểu đoàn 1.1,
   ['tdtr', 'Trung đội trưởng', '', 'trungdoi'], ['cbpt', 'CBPT', '', 'cvktht'], ['du_an', 'Dự án', 'Tên dự án'], ['khu_vuc', 'Khu vực thi công', 'Ví dụ: Bãi gia công trung đoàn']];
 const BC_MUC = [['s3', '3. Quân số'], ['s4', '4. Công việc trong ngày'], ['s5', '5. Máy móc thiết bị (MMTB)'], ['s6', '6. Kiểm tra, giám sát'], ['s7', '7. Vướng mắc'], ['s8', '8. Đánh giá tiến độ']];
 const bcKey = (B) => 'kt:bc:' + B.ngay + ':' + B.ca;
-const gioH = (ms) => { const m = ((ms + 7 * 3600e3) % 864e5) / 60e3; return Math.floor(m / 60) + 'h' + (m % 60 ? two(m % 60) : ''); };
+const gioH = (ms) => { const m = Math.floor(((ms + 7 * 3600e3) % 864e5) / 60e3); return Math.floor(m / 60) + 'h' + (m % 60 ? two(m % 60) : ''); };
 // "Dầm D3 tầng 5 trục X12-X17 / Y3-Y5 KDC": đủ để đọc ra cấu kiện nằm ở đâu
 const bcDon = (d) => [d.cau_kien, d.tang ? 'tầng ' + d.tang : '', d.cote ? 'cote ' + d.cote : '', d.truc ? 'trục ' + d.truc : '', d.phan_khu || '', d.hang_muc ? '(' + d.hang_muc + ')' : ''].filter(Boolean).join(' ');
 // lý do nghỉ đọc thành câu; "lý do khác" thay bằng chính ghi chú tổ đã ghi
@@ -3998,16 +4004,16 @@ function bcVGoc(B) {
   if (B.bao) return JSON.parse(JSON.stringify(B.bao.viec || bcVRong()));
   const H = B.homTruoc, V = bcVRong();
   if (!H) return { ...V, tu: JSON.parse(JSON.stringify(B.viecTruoc || [])) };
-  if (typeof H.muc.s4 === 'string') return V;
-  Object.entries(H.viec.d || {}).forEach(([k, o]) => {
+  if (typeof (H.muc || {}).s4 === 'string') return V;
+  Object.entries((H.viec || {}).d || {}).forEach(([k, o]) => {
     const don = B.don.find((x) => String(x.id) === k);
     if (!don) return;
     const app = bcDonTt(don);
     if (o.an || (o.tt === 'xong' && app !== 'xong')) V.d[k] = { an: 1 };
     else if (typeof o.tt === 'number' && typeof app === 'number' && o.tt > app) V.d[k] = { tt: o.tt, g: app };
   });
-  V.them = (H.viec.them || []).filter((id) => B.don.some((x) => x.id === id) && !(V.d[id] && V.d[id].an));
-  V.tu = (H.viec.tu || []).filter((x) => x.tt !== 'xong').map((x) => ({ ...x }));
+  V.them = ((H.viec || {}).them || []).filter((id) => B.don.some((x) => x.id === id) && !(V.d[id] && V.d[id].an));
+  V.tu = ((H.viec || {}).tu || []).filter((x) => x.tt !== 'xong').map((x) => ({ ...x }));
   return V;
 }
 // chữ các mục và nguồn quân số của bản chung: báo cáo đã lưu của ca, ca chưa ai lưu thì theo cùng ca hôm trước
@@ -4185,6 +4191,7 @@ function bcNhap() {
 async function bcTai() {
   const c = S.bcCa;
   const B = await api('GET', '/baocao' + (c ? `?ngay=${c.ngay}&ca=${c.ca}` : ''));
+  if (S.bcCa !== c) return; // đã chạm sang ca khác trong lúc chờ: bản này là của ca cũ, bỏ
   let n = null;
   try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
   // nháp kiểu cũ giữ cả bản chứ không phải phần khác: đọc thành "mọi mục theo nháp"
