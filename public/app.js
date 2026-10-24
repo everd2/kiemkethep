@@ -227,7 +227,7 @@ function sauGhi() {
 function xoaPhien() {
   forgetBoot();
   S.me = null; S.boot = null; S.stale = null; S.screen = 'login'; S.err = ''; S.form = {}; S.qsH = null;
-  Object.assign(S, { sl: null, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
+  Object.assign(S, { sl: null, slTlMo: false, slLai: false, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
     review: null, users: null, pinShown: null, loans: null, loanDetail: null, svs: null, audit: null, usage: null, cmp: null, subs: {},
     ask: null, gcXu: null, gcVg: null, sel: null });
   ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
@@ -2206,7 +2206,8 @@ function fmtAudit(a) {
       + (d.ca_kia ? ', ' + CA_TEN[d.ca === 1 ? 2 : 1] + ' ' + d.ca_kia : '')
       + (qsSoNghi(d.nghi) ? ', nghỉ ' + qsSoNghi(d.nghi) + ' (' + QS_LY_DO.filter((l) => (d.nghi || {})[l[0]]).map((l) => d.nghi[l[0]] + ' ' + l[1]).join(', ') + ')' : '')
       + (d.ghi_chu ? ' — ' + d.ghi_chu : ''), 'qs'],
-    sl_luu: ['chép báo cáo sản lượng ngày ' + fmtDay(d.ngay) + ' (tỷ lệ giá ' + String(d.gia).replace('.', ',') + ', tỷ lệ gia công ' + String(d.gc).replace('.', ',') + ')', 'qs'],
+    sl_luu: ['chép báo cáo sản lượng ngày ' + fmtDay(d.ngay) + ' (công chuẩn ' + String(d.chuan).replace('.', ',') + ', tỷ lệ giá ' + String(d.gia).replace('.', ',') + ')', 'qs'],
+    sl_thietlap: ['đặt thiết lập sản lượng' + (d.chuan !== undefined ? ': công chuẩn ' + String(d.chuan).replace('.', ',') : '') + (d.gia !== undefined ? ', tỷ lệ giá ' + String(d.gia).replace('.', ',') : '') + (d.gc ? ', tỷ lệ gia công ' + Object.keys(d.gc).length + ' tổ' : ''), 'qs'],
     bc_luu: ['chép báo cáo ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ' gửi cấp trên' + (d.kt_mau ? ' (đặt lại mẫu kiểm tra)' : ''), 'qs'],
     qs_lich: ['đặt ca cho tổ ' + (d.to || '?') + ': ' + (CA_LICH[d.ca] || '').toLowerCase() + (d.den ? ', đến ' + fmtDay(d.den) : ', đến khi đổi'), 'qs'],
     qs_nguong: ['đặt ngưỡng tô đỏ thống kê quân số: nghỉ từ ' + d.pct + '%', 'qs'],
@@ -4236,43 +4237,33 @@ async function bcTai() {
   } catch (e) { /* bỏ qua */ }
 }
 /* ===================== BÁO CÁO SẢN LƯỢNG (xem src/sanluong.js) =====================
-   Cùng khuôn với báo cáo ca: CVKTHT trở lên soạn; phần đầu dùng chung mẫu với báo cáo ca. Tính theo NGÀY (hai ca), mặc định hôm qua.
-   Sản lượng (kg) = (công gia công thép × 158 kg × tỷ lệ gia công) ÷ tỷ lệ giá. Số công mặc định = số ĐI LÀM tổ đã báo của ca đó,
-   sửa được từng tổ / từng ca. Ô nào người soạn đã gõ thì nằm trong S.form (slc_<id tổ>_<ca>, slgia, slgc) và chỉ khác mặc định mới được lưu. */
+   Cùng khuôn với báo cáo ca: CVKTHT trở lên soạn; phần đầu dùng chung mẫu với báo cáo ca. MỘT báo cáo cho cả ngày, ca ngày và ca đêm
+   gộp lại, mỗi tổ một dòng: quân số lấy ca ngày của ngày báo cáo và/hoặc ca đêm hôm trước (tổ làm đêm).
+   Sản lượng của tổ (kg) = (công gia công thép × công chuẩn × tỷ lệ gia công của tổ) ÷ tỷ lệ giá (chung). Công mặc định = số ĐI LÀM
+   của tổ, sửa được từng tổ. Công chuẩn, tỷ lệ giá, tỷ lệ gia công từng tổ là THIẾT LẬP (nút bánh răng); ngày đã lưu thì giữ thiết lập
+   lúc lưu (chup), muốn áp thiết lập hiện tại bấm "Tính lại". Ô công đã gõ nằm trong S.form (slc_<id tổ>); chỉ ô khác số đi làm được lưu. */
 const slSo = (s) => { const t = String(s == null ? '' : s).trim().replace(',', '.'); return t === '' ? NaN : Number(t); };
 const slFmt = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
 async function slTai(ngay, giu) {
   const q = ngay || (S.sl && S.sl.ngay) || '';
   S.sl = await api('GET', '/sanluong' + (q ? '?ngay=' + q : ''));
-  if (!giu) Object.keys(S.form).filter((k) => /^(slc_|slgia$|slgc$)/.test(k)).forEach((k) => delete S.form[k]);
+  if (!giu) Object.keys(S.form).filter((k) => /^(slc_|slt_)/.test(k)).forEach((k) => delete S.form[k]);
 }
-// công mặc định của một ô (tổ × ca): bản đã lưu nếu có sửa, không thì số đi làm đã báo
-const slMacDinh = (L, u, c) => {
-  const l = L.luu && L.luu.cong[u.id] && L.luu.cong[u.id][c];
-  return l !== undefined && l !== null ? l : (u.ca[c] ? u.ca[c].lam : 0);
-};
+// thiết lập đang dùng cho báo cáo của ngày này: ảnh chụp lúc lưu nếu có (trừ khi bấm "Tính lại"), không thì thiết lập hiện tại
+const slCS = () => { const L = S.sl; return L.luu && L.luu.chup && !S.slLai ? L.luu.chup : L.tl; };
+const slGcCua = (cs, id) => (cs.gc[id] !== undefined ? cs.gc[id] : S.sl.tl.gc[id]);
 function slTinh() {
-  const L = S.sl, gia = slSo(fv('slgia', slFmt(L.luu ? L.luu.gia : L.mac_dinh.gia))), gc = slSo(fv('slgc', slFmt(L.luu ? L.luu.gc : L.mac_dinh.gc)));
-  const T = { gia, gc, loi: '', sua: {}, ca: { 1: { cong: 0, lam: 0, tong: 0, kg: 0 }, 2: { cong: 0, lam: 0, tong: 0, kg: 0 } }, dong: [] };
-  if (!(gia >= L.gia_lim.min && gia <= L.gia_lim.max)) T.loi = `Tỷ lệ giá phải từ ${slFmt(L.gia_lim.min)} đến ${slFmt(L.gia_lim.max)}`;
-  else if (!(gc >= L.gc_lim.min && gc <= L.gc_lim.max)) T.loi = `Tỷ lệ gia công phải từ ${slFmt(L.gc_lim.min)} đến ${slFmt(L.gc_lim.max)}`;
+  const L = S.sl, cs = slCS();
+  const T = { cs, loi: '', sua: {}, dong: [], cong: 0, lam: 0, tong: 0, kg: 0 };
   L.to.forEach((u) => {
-    const r = { u, ca: {} };
-    [1, 2].forEach((c) => {
-      const d = u.ca[c], raw = fv(`slc_${u.id}_${c}`, String(slMacDinh(L, u, c))).trim(), n = raw === '' ? 0 : Number(raw);
-      const hop = Number.isInteger(n) && n >= 0 && n <= 500;
-      if (!hop && !T.loi) T.loi = `Số công của tổ ${u.name} không hợp lệ (số nguyên 0 – 500)`;
-      const cong = hop ? n : 0;
-      r.ca[c] = { d, cong, hop, raw };
-      if (d) { T.ca[c].lam += d.lam; T.ca[c].tong += d.tong; }
-      T.ca[c].cong += cong;
-      if (cong !== (d ? d.lam : 0)) (T.sua[u.id] = T.sua[u.id] || {})[c] = cong;
-    });
-    T.dong.push(r);
+    const mac = L.luu && L.luu.cong[u.id] !== undefined ? L.luu.cong[u.id] : u.lam;
+    const raw = fv(`slc_${u.id}`, String(mac)).trim(), n = raw === '' ? 0 : Number(raw), hop = Number.isInteger(n) && n >= 0 && n <= 500;
+    if (!hop && !T.loi) T.loi = `Số công của tổ ${u.name} không hợp lệ (số nguyên 0 – 500)`;
+    const cong = hop ? n : 0, gc = slGcCua(cs, u.id), kg = Math.round((cong * cs.chuan * gc) / cs.gia);
+    T.dong.push({ u, raw, cong, gc, kg });
+    T.cong += cong; T.lam += u.lam; T.tong += u.tong; T.kg += kg;
+    if (cong !== u.lam) T.sua[u.id] = cong;
   });
-  const ok = !T.loi;
-  [1, 2].forEach((c) => { T.ca[c].kg = ok ? Math.round((T.ca[c].cong * L.chuan * gc) / gia) : 0; });
-  T.cong = T.ca[1].cong + T.ca[2].cong; T.kg = T.ca[1].kg + T.ca[2].kg; T.lam = T.ca[1].lam + T.ca[2].lam; T.tong = T.ca[1].tong + T.ca[2].tong;
   return T;
 }
 const slTan = (kg) => fmtT(kg) + ' tấn';
@@ -4282,58 +4273,58 @@ function slDau(L) {
   return [g('don_vi'), g('ddt') && 'Đại đội trưởng: ' + g('ddt'), g('tdtr') && 'Trung Đội trưởng: ' + g('tdtr'), g('cbpt') && 'CBPT: ' + g('cbpt'),
     g('du_an') && 'Dự Án: ' + g('du_an'), g('khu_vuc') && 'Khu vực thi công: ' + g('khu_vuc'), `Tổng số tổ: ${L.to.length} tổ`].filter(Boolean);
 }
+// quân số của tổ trong báo cáo: ca ngày hôm nay và/hoặc ca đêm hôm trước
+const slNguon = (u) => [u.ngay && `ca ngày ${u.ngay.lam}/${u.ngay.tong}`, u.dem && `ca đêm ${fmtDay(u.dem.ngay).slice(0, 5)} ${u.dem.lam}/${u.dem.tong}`].filter(Boolean).join(' + ');
 // bản chữ đúng khuôn báo cáo quân số, để dán vào Zalo
 function slTao() {
-  const L = S.sl, T = slTinh();
-  const dong = T.dong.filter((r) => r.ca[1].d || r.ca[2].d || r.ca[1].cong || r.ca[2].cong).map((r) => {
-    const mot = (c) => { const x = r.ca[c], ten = c === 1 ? 'ca ngày' : 'ca đêm'; return x.d || x.cong ? `${ten}: ${x.d ? x.d.lam + '/' + x.d.tong + ' người' : 'chưa báo'}, gia công thép ${x.cong} công` : ''; };
-    return '• Tổ ' + r.u.name + ' ' + [mot(1), mot(2)].filter(Boolean).join('; ');
-  });
+  const L = S.sl, T = slTinh(), cs = T.cs;
+  const co = T.dong.filter((r) => r.u.ngay || r.u.dem || r.cong);
   return [`BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}`].concat(slDau(L).map((x) => '• ' + x), [
-    `2. Quân số đi làm trong ngày là: ${T.lam} công nhân / (tổng quân số ${T.tong})`,
-    `• Ca ngày: ${T.ca[1].lam} đi làm; ca đêm: ${T.ca[2].lam} đi làm`], dong,
-  [`• Quân số gia công thép được: ${T.cong} công (ca ngày ${T.ca[1].cong}, ca đêm ${T.ca[2].cong})`,
-    `3. Sản lượng (công chuẩn ${L.chuan} kg/công; tỷ lệ giá ${slFmt(T.gia)}; tỷ lệ gia công ${slFmt(T.gc)})`,
-    `• Ca ngày: ${T.ca[1].cong} công = ${fmtInt(T.ca[1].kg)} kg (${slTan(T.ca[1].kg)})`,
-    `• Ca đêm: ${T.ca[2].cong} công = ${fmtInt(T.ca[2].kg)} kg (${slTan(T.ca[2].kg)})`,
-    `• Tổng sản lượng: ${fmtInt(T.kg)} kg (${slTan(T.kg)})`]).map((l) => l.trimEnd()).join('\n');
+    `2. Quân số đi làm trong ngày là: ${T.lam} công nhân / (tổng quân số ${T.tong})`],
+  co.map((r) => `• Tổ ${r.u.name}: ${slNguon(r.u) || 'chưa báo'}; gia công thép ${r.cong} công`),
+  [`• Quân số gia công thép được: ${T.cong} công`,
+    `3. Sản lượng (công chuẩn ${slFmt(cs.chuan)} kg/công; tỷ lệ giá ${slFmt(cs.gia)})`],
+  co.map((r) => `• Tổ ${r.u.name}: ${r.cong} công × ${slFmt(cs.chuan)} kg × ${slFmt(r.gc)} ÷ ${slFmt(cs.gia)} = ${fmtInt(r.kg)} kg`),
+  [`• Tổng sản lượng: ${fmtInt(T.kg)} kg (${slTan(T.kg)})`]).map((l) => l.trimEnd()).join('\n');
 }
 function vSanLuong() {
   const L = S.sl, top = head('Báo cáo sản lượng', L ? fmtDay(L.ngay) : '', 'more');
   if (!L) return `${top}${panelWait('sanluong')}`;
-  const T = slTinh(), homNay = S.boot.today, truoc = congNgay(L.ngay, -1), sau = congNgay(L.ngay, 1);
-  const oSo = (id, v, ph) => `<input class="inp s" style="width:64px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="${ph}" data-model="${id}" value="${esc(v)}">`;
-  const oTy = (id, v, nhan, gioiHan, macDinh) => `<label class="col gap6 f1 sm" style="min-width:0">${nhan}<input class="inp s" style="text-align:center;font-weight:700" id="${id}" inputmode="decimal" maxlength="5" autocomplete="off" data-model="${id}" value="${esc(v)}"><span class="muted" style="font-size:12px">${gioiHan} · mặc định ${macDinh}</span></label>`;
+  const T = slTinh(), cs = T.cs, G = L.gioi_han, homNay = S.boot.today, truoc = congNgay(L.ngay, -1), sau = congNgay(L.ngay, 1);
+  const khac = L.luu && L.luu.chup && !S.slLai && (L.luu.chup.chuan !== L.tl.chuan || L.luu.chup.gia !== L.tl.gia || L.to.some((u) => slGcCua(L.luu.chup, u.id) !== L.tl.gc[u.id]));
   const luu = L.luu ? `Đã lưu lúc ${dmy(L.luu.ts)} (${esc(L.luu.by_name)})` : 'Chưa lưu lần nào';
-  const hang = T.dong.map((r) => {
-    const o = (c) => {
-      const x = r.ca[c], ten = c === 1 ? 'Ngày' : 'Đêm';
-      return `<div class="col gap6 f1" style="min-width:0;align-items:center"><span class="muted" style="font-size:12px">${ten}: ${x.d ? `${x.d.lam}/${x.d.tong}${x.d.nguon === 'tl' ? ' (thiết lập)' : ''}` : 'không báo'}</span>
-        ${oSo(`slc_${r.u.id}_${c}`, x.raw, '0')}</div>`;
-    };
-    return `<div class="card col gap6"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(r.u.name)}</b><div class="row gap8">${o(1)}${o(2)}</div></div>`;
-  }).join('');
+  const oSo = (id, v) => `<input class="inp s" style="width:64px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="0" data-model="${id}" value="${esc(v)}" aria-label="Công gia công thép">`;
+  const oTy = (id, v, nhan, ghi) => `<label class="col gap6 f1 sm" style="min-width:0">${nhan}<input class="inp s" style="text-align:center;font-weight:700" id="${id}" inputmode="decimal" maxlength="6" autocomplete="off" data-model="${id}" value="${esc(v)}"><span class="muted" style="font-size:12px">${ghi}</span></label>`;
+  const hang = T.dong.map((r) => `<div class="card col gap6"><div class="row gap8"><b class="f1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(r.u.name)}</b><span class="sm muted" style="flex:none">tỷ lệ gia công ${slFmt(r.gc)}</span></div>
+      <div class="row gap8"><span class="sm f1" style="min-width:0;line-height:1.35">${slNguon(r.u) ? 'Đi làm: ' + slNguon(r.u) + (r.u.ngay && r.u.ngay.nguon === 'tl' || r.u.dem && r.u.dem.nguon === 'tl' ? ' (số thiết lập)' : '') : '<span class="muted">Chưa báo quân số</span>'}</span>
+        <div class="col gap6" style="align-items:center;flex:none"><span class="muted" style="font-size:12px">công gia công thép</span>${oSo(`slc_${r.u.id}`, r.raw)}</div></div>
+      <div class="row gap8"><span class="sm muted f1">Sản lượng</span><b>${fmtInt(r.kg)} kg</b></div></div>`).join('');
   const mui = (ngay, chu, ten, bat) => `<button class="chip s" style="flex:none;width:44px;padding:6px 0${bat ? '' : ';opacity:.35'}" ${bat ? `data-a="slngay" data-v="${ngay}"` : 'disabled'} aria-label="${ten}">${chu}</button>`;
   const dauDong = slDau(L).map((x) => `<div class="sm" style="line-height:1.4">${esc(x)}</div>`).join('');
+  const tlMo = S.slTlMo ? `<div class="card col gap8"><b>Thiết lập sản lượng</b>
+      <div class="row gap8">${oTy('slt_chuan', fv('slt_chuan', slFmt(L.tl.chuan)), 'Công chuẩn (kg/công)', `${slFmt(G.chuan.min)} – ${slFmt(G.chuan.max)}`)}${oTy('slt_gia', fv('slt_gia', slFmt(L.tl.gia)), 'Tỷ lệ giá (chung các tổ)', `${slFmt(G.gia.min)} – ${slFmt(G.gia.max)}`)}</div>
+      <span class="sm b">Tỷ lệ gia công từng tổ (${slFmt(G.gc.min)} – ${slFmt(G.gc.max)})</span>
+      ${L.to.map((u) => `<div class="row gap8"><span class="f1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(u.name)}${L.tl.da_dat.includes(u.id) ? '' : ' <span class="muted sm">(tạm)</span>'}</span><input class="inp s" style="width:76px;flex:none;text-align:center;font-weight:700" id="slt_gc_${u.id}" inputmode="decimal" maxlength="6" autocomplete="off" data-model="slt_gc_${u.id}" value="${esc(fv('slt_gc_' + u.id, slFmt(L.tl.gc[u.id])))}" aria-label="Tỷ lệ gia công tổ ${esc(u.name)}"></div>`).join('')}
+      <span class="sm muted" style="line-height:1.4">Đổi thiết lập chỉ áp cho báo cáo chưa lưu; báo cáo đã lưu giữ số cũ cho tới khi bấm "Tính lại".</span>
+      <button class="btn pri full" data-a="sltl">LƯU THIẾT LẬP</button></div>` : '';
   return `${top}<div class="col gap6 tbar" style="padding:6px 16px"><div class="row gap6">${mui(truoc, '‹', 'Hôm trước', true)}
       <input type="date" class="inp s f1" style="min-width:0;text-align:center" value="${L.ngay}" max="${homNay}" data-change="sldate" aria-label="Chọn ngày">${mui(sau, '›', 'Hôm sau', sau <= homNay)}</div>
-    <div class="row gap6"><span class="sm muted f1">${luu}</span><button class="chip s on" style="flex:none;white-space:nowrap;padding:6px 14px" data-a="slchep" ${T.loi ? 'disabled' : ''}>Chép báo cáo</button></div></div>
+    <div class="row gap6"><span class="sm muted f1">${luu}</span><button class="iconbtn" style="flex:none" aria-label="Thiết lập sản lượng" data-a="sltlmo">${IC_BC.cai}</button><button class="chip s on" style="flex:none;white-space:nowrap;padding:6px 14px" data-a="slchep" ${T.loi ? 'disabled' : ''}>Chép báo cáo</button></div></div>
     <div class="f1 pad col gap8" id="body" style="overflow:auto">
       ${T.loi ? `<div class="card warn sm b" style="color:var(--bad)">${esc(T.loi)}</div>` : ''}
+      ${tlMo}
+      ${khac ? `<div class="card warn col gap6"><span class="sm" style="line-height:1.4">Báo cáo này đã lưu theo thiết lập lúc đó, khác thiết lập hiện tại.</span><button class="btn s" data-a="slai">Tính lại theo thiết lập hiện tại</button></div>` : ''}
       <div class="card col gap6"><b>BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}</b>${dauDong}
         <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="nav" data-s="baocaoca">Sửa phần đầu ở Báo cáo ca</button></div>
       <b>2. Quân số và công gia công thép</b>
-      <span class="sm muted" style="line-height:1.4">Số đi làm lấy nguyên từ báo cáo quân số của các tổ. Ô bên dưới là số công làm gia công thép của tổ ở ca đó, mặc định bằng số đi làm, sửa được.</span>
+      <span class="sm muted" style="line-height:1.4">Mỗi tổ một dòng: số đi làm ca ngày ${fmtDay(L.ngay).slice(0, 5)} và/hoặc ca đêm ${fmtDay(L.hom).slice(0, 5)} (tổ làm đêm), lấy từ báo cáo quân số. Công gia công thép mặc định bằng số đi làm, sửa được.</span>
       ${hang || '<div class="card muted">Chưa có tổ nào.</div>'}
-      <div class="card col gap6"><div class="row gap8"><span class="f1">Đi làm: ca ngày ${T.ca[1].lam} · ca đêm ${T.ca[2].lam}</span><b>${T.lam} / ${T.tong}</b></div>
-        <div class="row gap8"><span class="f1">Quân số gia công thép được: ca ngày ${T.ca[1].cong} · ca đêm ${T.ca[2].cong}</span><b>${T.cong} công</b></div></div>
+      <div class="card col gap6"><div class="row gap8"><span class="f1">Đi làm / tổng quân số</span><b>${T.lam} / ${T.tong}</b></div>
+        <div class="row gap8"><span class="f1">Quân số gia công thép được</span><b>${T.cong} công</b></div></div>
       <b>3. Sản lượng</b>
-      <div class="card col gap8"><div class="row gap8">${oTy('slgia', fv('slgia', slFmt(L.luu ? L.luu.gia : L.mac_dinh.gia)), 'Tỷ lệ giá', `${slFmt(L.gia_lim.min)} – ${slFmt(L.gia_lim.max)}`, slFmt(L.mac_dinh.gia))}
-        ${oTy('slgc', fv('slgc', slFmt(L.luu ? L.luu.gc : L.mac_dinh.gc)), 'Tỷ lệ gia công', `${slFmt(L.gc_lim.min)} – ${slFmt(L.gc_lim.max)}`, slFmt(L.mac_dinh.gc))}</div>
-        <span class="sm muted" style="line-height:1.4">Sản lượng = (công × ${L.chuan} kg × tỷ lệ gia công) ÷ tỷ lệ giá</span>
-        <div class="row gap8"><span class="f1">Ca ngày: ${T.ca[1].cong} công</span><b>${fmtInt(T.ca[1].kg)} kg</b></div>
-        <div class="row gap8"><span class="f1">Ca đêm: ${T.ca[2].cong} công</span><b>${fmtInt(T.ca[2].kg)} kg</b></div>
-        <div class="row gap8" style="border-top:1px solid var(--line);padding-top:8px"><b class="f1">Tổng sản lượng</b><b style="font-size:20px">${slTan(T.kg)}</b></div></div>
+      <div class="card col gap8"><span class="sm muted" style="line-height:1.4">Mỗi tổ: (công × ${slFmt(cs.chuan)} kg × tỷ lệ gia công của tổ) ÷ ${slFmt(cs.gia)} (tỷ lệ giá)</span>
+        <div class="row gap8" style="border-top:1px solid var(--line);padding-top:8px"><b class="f1">Tổng sản lượng</b><b style="font-size:20px">${slTan(T.kg)}</b></div>
+        <span class="sm muted" style="text-align:right">${fmtInt(T.kg)} kg</span></div>
     </div>`;
 }
 function vBaoCaoCa() {
@@ -6680,22 +6671,54 @@ const ACTIONS = {
   qhthoi() { qhBo(); render(); },
   qshanmo() { S.qsHanMo = !S.qsHanMo; delete S.form.qsh1; delete S.form.qsh2; render(); },
   // báo cáo ca
-  slmo() { S.sl = null; go('sanluong'); },
+  slmo() { S.sl = null; S.slTlMo = false; S.slLai = false; go('sanluong'); },
   async slngay(d) {
     const ngay = String(d.v || '');
     if (!ngay || ngay > S.boot.today) return;
-    S.sl = null; render();
+    S.sl = null; S.slLai = false; render();
     try { await slTai(ngay); } catch (e) { say(e.message, true); }
     render();
+  },
+  sltlmo() { S.slTlMo = !S.slTlMo; render(); },
+  slai() { S.slLai = true; render(); },
+  // lưu thiết lập: chỉ gửi các ô đã gõ
+  sltl() {
+    const L = S.sl; if (!L) return;
+    const G = L.gioi_han, body = {}, so = (k) => slSo(S.form[k]);
+    if (S.form.slt_chuan !== undefined) {
+      const v = so('slt_chuan');
+      if (!(v >= G.chuan.min && v <= G.chuan.max)) return say(`Công chuẩn phải từ ${slFmt(G.chuan.min)} đến ${slFmt(G.chuan.max)} kg/công.`, true), render();
+      body.chuan = v;
+    }
+    if (S.form.slt_gia !== undefined) {
+      const v = so('slt_gia');
+      if (!(v >= G.gia.min && v <= G.gia.max)) return say(`Tỷ lệ giá phải từ ${slFmt(G.gia.min)} đến ${slFmt(G.gia.max)}.`, true), render();
+      body.gia = v;
+    }
+    for (const u of L.to) {
+      const k = 'slt_gc_' + u.id;
+      if (S.form[k] === undefined) continue;
+      const v = so(k);
+      if (!(v >= G.gc.min && v <= G.gc.max)) return say(`Tỷ lệ gia công của tổ ${u.name} phải từ ${slFmt(G.gc.min)} đến ${slFmt(G.gc.max)}.`, true), render();
+      (body.gc = body.gc || {})[u.id] = v;
+    }
+    if (!Object.keys(body).length) return say('Chưa sửa thiết lập nào.', true), render();
+    act(async () => {
+      await api('PUT', '/sanluong/thietlap', body, 0, false);
+      await slTai(L.ngay, false);
+      S.slTlMo = false;
+    }, 'Đã lưu thiết lập sản lượng.');
   },
   async slchep() {
     const L = S.sl; if (!L) return;
     const T = slTinh();
     if (T.loi) return say(T.loi, true), render();
     const chu = slTao(), ok = await bcChepChu(chu);
+    const chup = { chuan: T.cs.chuan, gia: T.cs.gia, gc: Object.fromEntries(L.to.map((u) => [u.id, slGcCua(T.cs, u.id)])) };
     act(async () => {
-      try { await api('PUT', '/sanluong', { ngay: L.ngay, gia: T.gia, gc: T.gc, cong: T.sua, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
+      try { await api('PUT', '/sanluong', { ngay: L.ngay, cong: T.sua, chup, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
       catch (e) { if (e.code === 'changed') { try { await slTai(L.ngay, true); } catch (er) { /* vòng làm mới sẽ tải lại */ } } throw e; }
+      S.slLai = false;
       await slTai(L.ngay, true);
     }, ok ? 'Đã chép báo cáo sản lượng và lưu lại.' : 'Đã lưu, nhưng máy không cho chép tự động: hãy chép tay.');
   },
@@ -6846,7 +6869,7 @@ document.addEventListener('input', (e) => {
   if (m) S.form[m] = e.target.value;
   if (m === 'gcq') gcLoc();
   // báo cáo sản lượng: tổng và sản lượng chạy theo từng chữ số vừa gõ (vẽ lại giữ nguyên ô đang gõ)
-  if (m && S.screen === 'sanluong' && S.sl && /^(slc_\d+_[12]|slgia|slgc)$/.test(m)) render();
+  if (m && S.screen === 'sanluong' && S.sl && /^slc_\d+$/.test(m)) render();
   if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucCua() || 'chưa nhập'; }
   /* Quân số đầu ca: gõ tổng thì số đi làm và dòng tóm tắt chạy theo ngay, không vẽ lại màn hình giữa lúc gõ.
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */

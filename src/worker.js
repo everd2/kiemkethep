@@ -14,7 +14,7 @@ import { qsChotCa, qsHan, qsLich, qsNguong, qsPut, qsThietLap, qsThongKe, qsThuT
 import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
-import { slPut, slView } from './sanluong.js';
+import { slPut, slThietLap, slView } from './sanluong.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -211,6 +211,7 @@ async function route(req, env, url, user, method, p, r0) {
   // báo cáo sản lượng theo ngày: cùng khuôn, cùng người soạn (CVKTHT trở lên), xem src/sanluong.js
   if (r0 === 'sanluong' && !p[1] && method === 'GET') return slView(env, url);
   if (r0 === 'sanluong' && !p[1] && method === 'PUT') return slPut(req, env, user);
+  if (r0 === 'sanluong' && p[1] === 'thietlap' && method === 'PUT') return slThietLap(req, env, user);
   if (r0 === 'review' && p[1] === 'duyet' && method === 'POST') return reviewDuyet(req, env, user);
   // huỷ báo cáo đang chờ duyệt của một khu, kèm lý do. Giữ đường dẫn /recount: bản app cũ còn trong
   // cache gọi tới sẽ bị đòi lý do (400) thay vì lặng lẽ treo một lá cờ không còn ai đọc.
