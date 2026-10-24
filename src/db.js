@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 42;
+export const SCHEMA_VERSION = 44;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -177,7 +177,8 @@ export const MIGRATIONS = {
     'CREATE INDEX IF NOT EXISTS idx_khu_report_log_dk ON khu_report_log(day, khu_id)',
     `INSERT INTO khu_report_log (day, khu_id, ts, at, user_id)
      SELECT day, khu_id, ts, ts, MIN(user_id) FROM counts_log
-     WHERE day >= date('now', '+7 hours', '-1 day') GROUP BY day, khu_id, ts`,
+     WHERE day >= date('now', '+7 hours', '-1 day') AND NOT EXISTS (SELECT 1 FROM khu_report_log)
+     GROUP BY day, khu_id, ts`, // NOT EXISTS: chạy lại migration (hai isolate cùng nâng cấp) không nhân đôi dòng
   ],
   13: [
     'ALTER TABLE daily_summary ADD COLUMN dc INTEGER NOT NULL DEFAULT 0',
@@ -530,6 +531,18 @@ export const MIGRATIONS = {
   42: [
     'CREATE INDEX IF NOT EXISTS idx_receipts_day ON receipts(day)',
     'CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)',
+  ],
+  /* NHẬT KÝ CHỈ GHI THÊM Ở DATABASE NÂNG CẤP DẦN: schema.sql có bốn trigger chặn sửa / xoá audit và counts_log nhưng chưa migration
+     nào tạo, nên database sinh từ bản cũ không có (bộ test dựng từ schema.sql nên không bắt được — cùng kiểu lỗi bản 38, 42). */
+  43: [
+    "CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'Nhat ky chi duoc ghi them'); END",
+    "CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'Nhat ky chi duoc ghi them'); END",
+    "CREATE TRIGGER IF NOT EXISTS counts_log_no_update BEFORE UPDATE ON counts_log BEGIN SELECT RAISE(ABORT, 'Lich su dem chi duoc ghi them'); END",
+    "CREATE TRIGGER IF NOT EXISTS counts_log_no_delete BEFORE DELETE ON counts_log BEGIN SELECT RAISE(ABORT, 'Lich su dem chi duoc ghi them'); END",
+  ],
+  /* BÁO CÁO SẢN LƯỢNG (xem src/sanluong.js): một dòng cho mỗi ngày đã soạn. Bảng mới, không đổi bảng cũ. */
+  44: [
+    "CREATE TABLE IF NOT EXISTS san_luong (ngay TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}', ts INTEGER NOT NULL, by_id INTEGER NOT NULL)",
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

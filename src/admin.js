@@ -45,8 +45,15 @@ export async function createUser(req, env, admin) {
   if (exist) throw bad('Số điện thoại này đã có tài khoản');
   const pin = genPin();
   const salt = rand(16);
-  const r = await env.DB.prepare('INSERT INTO users (name, phone, role, pin_salt, pin_hash, must_change, created_at) VALUES (?,?,?,?,?,1,?)')
-    .bind(name, phone, role, salt, await hashPin(env, salt, pin), Date.now()).run();
+  let r;
+  try {
+    r = await env.DB.prepare('INSERT INTO users (name, phone, role, pin_salt, pin_hash, must_change, created_at) VALUES (?,?,?,?,?,1,?)')
+      .bind(name, phone, role, salt, await hashPin(env, salt, pin), Date.now()).run();
+  } catch (e) {
+    // hai admin tạo cùng một số cùng lúc: người sau gặp UNIQUE, báo như phép kiểm ở trên
+    if (/UNIQUE/i.test(String(e && e.message))) throw bad('Số điện thoại này đã có tài khoản');
+    throw e;
+  }
   await auditStmt(env, admin, 'user_create', { id: r.meta.last_row_id, name, role }).run();
   return json({ ok: true, id: r.meta.last_row_id, pin });
 }
@@ -124,7 +131,9 @@ export async function userAction(req, env, admin, id, action) {
     if (id === admin.id) throw bad('Không thể tự khoá chính mình');
     const lock = b.locked ? 1 : 0;
     await env.DB.batch([
-      env.DB.prepare('UPDATE users SET locked = ? WHERE id = ?').bind(lock, id),
+      // mở khoá thì xoá luôn số lần nhập sai / khoá tạm, không thì người vừa được mở khoá vẫn bị khoá theo giờ
+      env.DB.prepare('UPDATE users SET locked = ?, fail_count = CASE WHEN ? = 0 THEN 0 ELSE fail_count END, locked_until = CASE WHEN ? = 0 THEN 0 ELSE locked_until END, lock_level = CASE WHEN ? = 0 THEN 0 ELSE lock_level END WHERE id = ?')
+        .bind(lock, lock, lock, lock, id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(lock ? id : -1),
       auditStmt(env, admin, lock ? 'user_lock' : 'user_unlock', { id, name: u.name }),
     ]);
@@ -194,14 +203,16 @@ export async function userAction(req, env, admin, id, action) {
        rồi khôi phục thì phải quay về đúng trạng thái bị khoá, chứ không được tự mở khoá dọc đường
        mà không dòng nhật ký nào nói. fail_count/locked_until thì xoá, đó chỉ là số lần nhập sai
        PIN — giữ lại chỉ làm người được khôi phục bị chặn oan. */
+    // đơn gia công còn mở của người này: không ai ngoài họ nhận / báo tiến độ được, nói ra để admin giao lại
+    const donMo = (await env.DB.prepare("SELECT COUNT(*) n FROM don_gc d WHERE d.tt NOT IN ('xong', 'huy') AND (d.user_id = ?1 OR EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id = ?1))").bind(id).first()).n;
     await env.DB.batch([
       env.DB.prepare('UPDATE users SET deleted = 1, fail_count = 0, locked_until = 0 WHERE id = ?').bind(id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
       ...go.stmts,
-      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone, locked: u.locked, mo: go.mo }),
+      auditStmt(env, admin, 'user_delete', { id, name: u.name, role: u.role, phone: u.phone, locked: u.locked, mo: go.mo, don_mo: donMo || undefined }),
       bump(env),
     ]);
-    return json({ ok: true, mo: go.mo });
+    return json({ ok: true, mo: go.mo, don_mo: donMo });
   }
   /* Khôi phục tài khoản xoá nhầm — và cấp luôn PIN MỚI. must_change một mình là không đủ: nó chỉ
      có tác dụng SAU khi đăng nhập được, nên để nguyên PIN cũ là mở lại đúng cánh cửa vừa đóng —
@@ -266,7 +277,8 @@ export async function khuUsers(req, env, admin, id) {
     const have = await env.DB.prepare('SELECT id, role, deleted, locked FROM users WHERE id IN (SELECT value FROM json_each(?))')
       .bind(JSON.stringify(ids)).all();
     if (have.results.length !== ids.length || have.results.some((u) => u.deleted)) throw bad('Có tài khoản không tồn tại hoặc đã bị xoá');
-    if (have.results.some((u) => u.locked)) throw bad('Có tài khoản đang bị khoá. Mở khoá trước khi giao khu cho người đó');
+    const dang = new Set((await env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(id).all()).results.map((x) => x.user_id));
+    if (have.results.some((u) => u.locked && !dang.has(u.id))) throw bad('Có tài khoản đang bị khoá. Mở khoá trước khi giao khu cho người đó');
     /* Chỉ giao khu cho Tiểu đội trưởng. CVKTHT trở lên đã đếm được mọi khu, giao thêm không có tác
        dụng gì mà còn làm danh sách phụ trách (và bảng chấm công báo cáo) nói sai ai là người giữ khu. */
     if (have.results.some((u) => u.role !== GIAO_KHU)) throw bad('Chỉ giao khu cho Tiểu đội trưởng. CVKTHT trở lên đã đếm được mọi khu, không cần giao');
@@ -297,6 +309,9 @@ export async function khuUpdate(req, env, admin, id) {
     const have = await tonCells(env, day, phis.map((p) => ({ khu: id, phi: p.id })), false);
     const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
     if (st && st.n > 0) throw bad(`${k.name} còn ${st.n} cây. Hãy chuyển thép sang khu khác (Nhập → Chuyển khu) hoặc đếm về 0 trước khi ẩn`);
+    // phiếu kho còn chờ duyệt vào/ra khu này: duyệt xong thép nằm trong khu đã ẩn mà không ai đếm được
+    const cho = await env.DB.prepare('SELECT COUNT(*) n FROM receipts WHERE khu_id = ? AND voided = 0 AND duyet_day IS NULL').bind(id).first();
+    if (cho && cho.n > 0) throw bad(`${k.name} còn ${cho.n} dòng phiếu kho chờ duyệt. Duyệt hoặc huỷ các phiếu đó trước khi ẩn`);
   }
   await env.DB.batch([
     env.DB.prepare('UPDATE khu SET name = ?, active = ? WHERE id = ?').bind(name, active, id),
@@ -331,6 +346,8 @@ export async function phiUpdate(req, env, admin, id) {
     const have = await tonCells(env, day, khus.map((k) => ({ khu: k.id, phi: id })), false);
     const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
     if (st && st.n > 0) throw bad(`Phi ${id} còn ${qtyWord(st.n, p)} trong bãi. Hãy đếm về 0 hoặc dùng hết trước khi ẩn`);
+    const cho = await env.DB.prepare('SELECT COUNT(*) n FROM receipts WHERE phi_id = ? AND voided = 0 AND duyet_day IS NULL').bind(id).first();
+    if (cho && cho.n > 0) throw bad(`Phi ${id} còn ${cho.n} dòng phiếu kho chờ duyệt. Duyệt hoặc huỷ các phiếu đó trước khi ẩn`);
     /* Sổ vay mượn chỉ ghi được phi đang hiện: ẩn một phi còn công nợ (hoặc còn lần ghi chờ duyệt) là
        khoá luôn đường ghi TRẢ khoản đó, dư nợ treo mãi cho tới khi có người nhớ ra phải hiện lại phi. */
     const no = (await env.DB.prepare(
@@ -366,7 +383,7 @@ export async function phiBulk(req, env, admin) {
   if (!items.length) throw bad('Không có gì để lưu');
   const { results } = await env.DB.prepare('SELECT * FROM phi').all();
   const by = Object.fromEntries(results.map((p) => [p.id, p]));
-  const stmts = [], log = [];
+  const stmts = [], log = [], doiBo = [];
   for (const it of items.slice(0, 50)) {
     const p = by[String(it.id || '')];
     if (!p) throw bad('Phi không hợp lệ: ' + it.id);
@@ -374,15 +391,17 @@ export async function phiBulk(req, env, admin) {
     const min = intIn(it.min_stock ?? p.min_stock, 0, 99999, 'Mức tối thiểu của ' + p.id);
     const kg = Number(String(it.kg_per_cay ?? p.kg_per_cay).replace(',', '.'));
     if (!(kg > 0 && kg < 1000)) throw bad('Khối lượng mỗi cây của ' + p.id + ' không hợp lệ');
-    if (bo !== p.bo_size) {
-      // như phiUpdate: còn thép thì các số đã đếm (bó x cây + lẻ) không còn khớp, chỉ đổi khi phi hết
-      const ks = (await env.DB.prepare('SELECT id FROM khu').all()).results;
-      const co = await tonCells(env, vnDay(), ks.map((k) => ({ khu: k.id, phi: p.id })), false);
-      if (Object.values(co).some((x) => x !== 0)) throw bad(`Phi ${p.id} còn thép trong bãi nên chưa đổi được số cây mỗi bó. Đếm về 0 hoặc dùng hết trước`);
-    }
+    if (bo !== p.bo_size) doiBo.push(p.id); // kiểm tồn một lượt sau vòng lặp, không mỗi phi hai truy vấn (hạn mức mỗi lần gọi)
     if (bo === p.bo_size && min === p.min_stock && kg === p.kg_per_cay) continue;
     stmts.push(env.DB.prepare('UPDATE phi SET bo_size = ?, min_stock = ?, kg_per_cay = ? WHERE id = ?').bind(bo, min, kg, p.id));
     log.push({ id: p.id, bo, min, kg });
+  }
+  if (doiBo.length) {
+    // như phiUpdate: còn thép thì các số đã đếm (bó x cây + lẻ) không còn khớp, chỉ đổi khi phi hết
+    const ks = (await env.DB.prepare('SELECT id FROM khu').all()).results;
+    const co = await tonCells(env, vnDay(), doiBo.flatMap((id) => ks.map((k) => ({ khu: k.id, phi: id }))), false);
+    const con = doiBo.find((id) => ks.some((k) => (co[k.id + '|' + id] || 0) !== 0));
+    if (con) throw bad(`Phi ${con} còn thép trong bãi nên chưa đổi được số cây mỗi bó. Đếm về 0 hoặc dùng hết trước`);
   }
   if (!stmts.length) return json({ ok: true, n: 0 });
   stmts.push(auditStmt(env, admin, 'phi_update', { items: log }), bump(env));

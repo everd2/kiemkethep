@@ -32,6 +32,8 @@ $('go').onclick = async () => {
   if (!token || !phone || pin.length !== 4) { msg.textContent = 'Điền đầy đủ token, số điện thoại và PIN 4 số'; return; }
   if (pin !== pin2) { msg.textContent = 'Hai lần nhập PIN không giống nhau'; return; }
   msg.style.color = ''; msg.textContent = 'Đang xử lý...';
+  if ($('go').disabled) return;
+  $('go').disabled = true;
   try {
     const r = await fetch('/api/recover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, phone, newPin: pin }) });
@@ -40,7 +42,7 @@ $('go').onclick = async () => {
     msg.style.color = '#176B34';
     msg.textContent = 'Đã đặt lại PIN cho ' + d.name + '. Đang chuyển sang đăng nhập...';
     setTimeout(() => (location.href = '/'), 1500);
-  } catch (e) { msg.style.color = ''; msg.textContent = e.message; }
+  } catch (e) { msg.style.color = ''; msg.textContent = e.message; $('go').disabled = false; }
 };
 </script>
 </body>

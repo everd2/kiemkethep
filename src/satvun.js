@@ -20,6 +20,8 @@ const SV_VOID_DAYS = 7;
 export function tanToKg(v) {
   const s = String(v == null ? '' : v).trim().replace(/\s/g, '');
   if (!/^\d+([.,]\d{1,3})?$/.test(s)) return NaN;
+  // "1.250" đọc được cả là 1,25 tấn lẫn 1250 tấn (dấu chấm ngăn nghìn): ba số lẻ thì bắt dùng dấu phẩy cho khỏi nhầm
+  if (/^\d+\.\d{3}$/.test(s)) return NaN;
   return Math.round(Number(s.replace(',', '.')) * 1000);
 }
 
@@ -27,10 +29,10 @@ export async function postSv(req, env, user) {
   const b = await readJson(req);
   const today = vnDay();
   const ngay = b.ngay == null || b.ngay === '' ? today : String(b.ngay);
-  if (!DAY_RE.test(ngay) || ngay > today || vnDay(Date.parse(ngay + 'T00:00:00Z') + 7 * 3600e3) !== ngay) throw bad('Ngày xuất không hợp lệ (không được sau hôm nay)');
+  if (!DAY_RE.test(ngay) || ngay > today || !Number.isFinite(Date.parse(ngay + 'T00:00:00Z')) || vnDay(Date.parse(ngay + 'T00:00:00Z') + 7 * 3600e3) !== ngay) throw bad('Ngày xuất không hợp lệ (không được sau hôm nay)');
   if (daysBetween(ngay, today) > 366) throw bad('Ngày xuất quá xa (hơn một năm trước). Kiểm tra lại năm');
   const kg = tanToKg(b.tan);
-  if (!(kg >= 1 && kg <= SV_KG_MAX)) throw bad('Khối lượng không hợp lệ: ghi số tấn, ví dụ 2,5 — tối đa ba số lẻ (tới kg), tối đa 1.000 tấn một lần');
+  if (!(kg >= 1 && kg <= SV_KG_MAX)) throw bad('Khối lượng không hợp lệ: ghi số tấn, ví dụ 2,5 (số lẻ dùng dấu phẩy, đủ ba số lẻ như 2,500 thì bắt buộc dấu phẩy) — tối đa ba số lẻ (tới kg), tối đa 1.000 tấn một lần');
   // khu: khu xuất vụn; để trống = gom từ nhiều khu / chung cả bãi
   let khuId = null;
   if (b.khu) {

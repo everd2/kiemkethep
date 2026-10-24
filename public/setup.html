@@ -24,6 +24,8 @@
 const $ = (id) => document.getElementById(id);
 $('go').onclick = async () => {
   const msg = $('msg'); msg.style.color = ''; msg.textContent = 'Đang tạo...';
+  if ($('go').disabled) return;
+  $('go').disabled = true; // bấm đúp: lần hai trả "đã có admin" và đè mất thông báo thành công
   try {
     const r = await fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: $('token').value, name: $('name').value, phone: $('phone').value, pin: $('pin').value }) });
@@ -31,7 +33,7 @@ $('go').onclick = async () => {
     if (!r.ok) throw new Error(d.error || 'Lỗi ' + r.status);
     msg.style.color = '#176B34'; msg.textContent = 'Đã tạo admin. Đang chuyển sang đăng nhập...';
     setTimeout(() => (location.href = '/'), 1200);
-  } catch (e) { msg.style.color = ''; msg.textContent = e.message; }
+  } catch (e) { msg.style.color = ''; msg.textContent = e.message; $('go').disabled = false; }
 };
 </script>
 </body>

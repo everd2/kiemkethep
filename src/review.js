@@ -9,6 +9,7 @@ import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
 import { checkTransferStock, rutCtx } from './phieu.js';
 import { SV_CHO_SQL } from './satvun.js';
 import { anhJson, docAnh } from './anh.js';
+import { firstAdminId } from './admin.js';
 
 /* ========================= DUYỆT / CHỐT NGÀY =========================
    Một quy tắc duy nhất: chưa duyệt thì không vào tồn. Màn Duyệt vì thế không còn là màn
@@ -442,6 +443,8 @@ export async function doClose(env, user, rv, note, action, extra = []) {
    phiếu Điều chỉnh tồn (có dấu vết). Riêng mốc đặt lại số liệu là việc admin làm GIỮA NGÀY và khoá
    luôn hôm đó; đặt nhầm thì phải gỡ được trong ngày, dựng lại đúng số đếm từ ảnh chụp undo_json. */
 export async function reopenDay(req, env, user) {
+  // hoàn tác chỉ người được phép đặt lại (admin đầu tiên): không thì admin thứ hai gỡ được quyết định của chủ hệ thống
+  if (user.id !== await firstAdminId(env)) throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới hoàn tác lần đặt lại số liệu');
   const b = await readJson(req);
   const day = vnDay();
   const note = String(b.note || '').trim().slice(0, 500);
@@ -695,9 +698,13 @@ export async function hourly(env) {
   const day = r.last ? nextDay(r.last) : r.first;
   if (day && day < today) {
     try { await closeDayAuto(env, day); }
-    catch (e) { if (!(e instanceof HttpError)) throw e; /* vướng người đang ghi: giờ sau thử lại */ }
+    catch (e) { if (!(e instanceof HttpError)) { await donRac(env, today); throw e; } /* vướng người đang ghi: giờ sau thử lại */ }
   }
-  await env.DB.batch([
+  await donRac(env, today);
+}
+// dọn phiên hết hạn và bộ đếm nhập sai: chạy cả khi chốt ngày hỏng, không thì chúng chỉ dài ra
+function donRac(env, today) {
+  return env.DB.batch([
     env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Date.now()),
     env.DB.prepare('DELETE FROM login_fail WHERE day < ?').bind(today),
   ]);

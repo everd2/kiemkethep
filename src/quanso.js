@@ -199,6 +199,7 @@ export async function qsHan(req, env, user) {
 export async function qsLich(req, env, user) {
   const b = await readJson(req);
   const ql = capOf(user.role) >= 1, uid = b.user == null ? user.id : Number(b.user);
+  if (!Number.isInteger(uid)) throw bad('Cần chọn tổ');
   if (!ql && uid !== user.id) throw new HttpError(403, 'Bạn chỉ đặt được ca của tổ mình');
   const ca = Number(b.ca);
   if (![1, 2, 3].includes(ca)) throw bad('Chọn ca ngày, ca đêm hoặc cả hai ca');

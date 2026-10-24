@@ -566,6 +566,14 @@ CREATE TABLE IF NOT EXISTS bao_cao_ca (
   by_id INTEGER NOT NULL,
   PRIMARY KEY (ngay, ca)
 );
+-- BÁO CÁO SẢN LƯỢNG (xem src/sanluong.js). Một dòng cho mỗi NGÀY đã soạn: data = JSON { gia, gc, cong } — tỷ lệ giá, tỷ lệ gia công
+-- và số công gia công thép người soạn đã sửa theo từng tổ, từng ca (ô nào không sửa thì theo quân số đã báo).
+CREATE TABLE IF NOT EXISTS san_luong (
+  ngay TEXT PRIMARY KEY,
+  data TEXT NOT NULL DEFAULT '{}',
+  ts INTEGER NOT NULL,
+  by_id INTEGER NOT NULL
+);
 -- Mẫu báo cáo ca: một dòng duy nhất (id = 1). data = JSON phần đầu (đơn vị, chỉ huy, dự án...), máy móc, dòng kiểm tra.
 CREATE TABLE IF NOT EXISTS bc_mau (
   id INTEGER PRIMARY KEY,
@@ -625,7 +633,7 @@ CREATE TABLE IF NOT EXISTS anh_bb (
 );
 CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 42);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 44);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

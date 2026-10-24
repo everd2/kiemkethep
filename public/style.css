@@ -43,7 +43,7 @@ a{color:var(--pri)}
 .chip.on{background:var(--pri);border-color:var(--pri);color:#fff}
 .chip.s{min-height:44px;font-size:16px;border-radius:999px;padding:6px 14px;font-weight:600}
 /* nút biểu tượng nhỏ trong một dòng (chép, sửa, thiết lập): gọn nhưng vẫn đủ chỗ cho ngón tay */
-.ib{width:40px;height:40px;flex:none;padding:0;border-radius:10px;border:1px solid #B9B4A8;background:#fff;color:var(--pri);display:inline-flex;align-items:center;justify-content:center}
+.ib{width:44px;height:44px;flex:none;padding:0;border-radius:10px;border:1px solid #B9B4A8;background:#fff;color:var(--pri);display:inline-flex;align-items:center;justify-content:center}
 .ib.on{background:var(--pri);border-color:var(--pri);color:#fff}
 .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}

@@ -50,9 +50,22 @@ export function docViec(v) {
     if (Object.keys(m).length) d[k] = m;
   }
   const them = Array.isArray(o.them) ? [...new Set(o.them.map(Number).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 300) : [];
-  const tu = (Array.isArray(o.tu) ? o.tu : []).map((x, i) => ({ id: x && /^[A-Za-z0-9]{1,16}$/.test(x.id) ? x.id : 't' + i, ten: chu(x && x.ten, 160), tt: ttHop(x && x.tt) }))
+  const tu = (Array.isArray(o.tu) ? o.tu : []).map((x, i) => ({ id: x && typeof x.id === 'string' && /^[A-Za-z0-9]{1,16}$/.test(x.id) ? x.id : 't' + i, ten: chu(x && x.ten, 160), tt: ttHop(x && x.tt) }))
     .filter((x) => x.ten && x.tt != null).slice(0, 60);
   return { d, them, tu };
+}
+/* Ghi mẫu chung THEO TỪNG Ô ĐÃ ĐỔI (không ghi cả khối dau / mmtb / kt đã đọc từ đầu hàm): hai người sửa hai ô khác nhau của phần
+   đầu trong cùng một lúc thì ô của người trước không bị người sau đè bằng bản cũ. */
+function mauStmt(env, cu, mau, ts, uid) {
+  /* Ba khối luôn có mặt sau lần ghi đầu: khối nào người dùng không đổi thì giữ bản đang lưu, chưa lưu bao giờ thì ghi mặc định
+     (cu). Khối nào đổi thì chỉ ghi các ô đã đổi, không đè cả khối. */
+  const sets = ["'$.dau', json(COALESCE(json_extract(data, '$.dau'), json(?)))"], args = [JSON.stringify(cu.dau)];
+  for (const k of BC_DAU.filter((x) => mau.dau[x] !== cu.dau[x])) { sets.push(`'$.dau.${k}', ?`); args.push(mau.dau[k]); }
+  if (mau.mmtb !== cu.mmtb) { sets.push("'$.mmtb', ?"); args.push(mau.mmtb); }
+  else { sets.push("'$.mmtb', COALESCE(json_extract(data, '$.mmtb'), ?)"); args.push(cu.mmtb); }
+  if (JSON.stringify(mau.kt) !== JSON.stringify(cu.kt)) { sets.push("'$.kt', json(?)"); args.push(JSON.stringify(mau.kt)); }
+  else { sets.push("'$.kt', json(COALESCE(json_extract(data, '$.kt'), json(?)))"); args.push(JSON.stringify(cu.kt)); }
+  return env.DB.prepare(`UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ${sets.join(', ')}), ts = ?, by_id = ? WHERE id = 1`).bind(...args, ts, uid);
 }
 /* HÔM SAU GIỮ NHƯ HÔM TRƯỚC (chốt 2026-10-21): ca chưa ai chép thì lấy báo cáo đã lưu gần nhất CÙNG CA (ca ngày theo ca
    ngày, ca đêm theo ca đêm — các tổ làm cố định một ca nhiều ngày) trong BC_MANG_NGAY ngày trước làm bản điền sẵn, người
@@ -175,8 +188,7 @@ export async function bcPut(req, env, user) {
       .bind(c.ngay, c.ca, data, van_ban, ts, user.id),
     // ghi từng nhánh của mẫu: không đè lịch ca / số thiết lập / thứ tự tổ người khác vừa sửa
     env.DB.prepare(MAU_CO),
-    ...(mauDoi ? [env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), '$.dau', json(?), '$.mmtb', ?, '$.kt', json(?)), ts = ?, by_id = ? WHERE id = 1")
-      .bind(JSON.stringify(mau.dau), mau.mmtb, JSON.stringify(mau.kt), ts, user.id)] : []),
+    ...(mauDoi ? [mauStmt(env, cu, mau, ts, user.id)] : []),
     auditStmt(env, user, 'bc_luu', { ngay: c.ngay, ca: c.ca, kt_mau: b.kt_mau ? 1 : undefined }),
     bump(env),
   ];

@@ -3,7 +3,7 @@ import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetC
 import { CSV_HEAD, DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, LOAN_AM_COND, UNAME, auditStmt, batchGuarded, bump, closedErr, csvDec, csvQty, csvRow, csvUnit, guardStmt, intIn,
   loanAmErr, loanAmRows, qtyWord, readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
-import { checkTransferStock, receiptCtx } from './phieu.js';
+import { checkTransferStock, receiptCtx, rutCtx } from './phieu.js';
 import { anhJson, docAnh } from './anh.js';
 
 /* ========================= VAY MƯỢN NGOÀI BÃI =========================
@@ -105,11 +105,14 @@ export function parseLoanLines(b, phiBy) {
   const sum = {};
   for (const it of raw) {
     const phi = String((it && it.phi) || '');
-    if (!phiBy[phi]) throw bad('Phi không hợp lệ: ' + phi);
+    if (!Object.hasOwn(phiBy, phi)) throw bad('Phi không hợp lệ: ' + phi);
     sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số ' + unitWord(phiBy[phi]) + ' của ' + phi);
   }
   return Object.entries(sum).map(([phi, qty]) => ({ phi, qty }));
 }
+
+// 2025-02-31, 2025-13-01 qua được DAY_RE nhưng không phải ngày có thật
+const ngayCoThat = (d) => { const t = Date.parse(d + 'T00:00:00Z'); return Number.isFinite(t) && vnDay(t) === d; };
 
 export async function postLoan(req, env, user) {
   const b = await readJson(req);
@@ -170,14 +173,14 @@ export async function postLoan(req, env, user) {
      Không được sau hôm nay; quá một năm trước thì gần như chắc là gõ nhầm năm. */
   const today = vnDay();
   const ngay = b.ngay == null || b.ngay === '' ? today : String(b.ngay);
-  if (!DAY_RE.test(ngay) || ngay > today) throw bad('Ngày giao nhận không hợp lệ (không được sau hôm nay)');
+  if (!DAY_RE.test(ngay) || ngay > today || !ngayCoThat(ngay)) throw bad('Ngày giao nhận không hợp lệ (không được sau hôm nay)');
   if (daysBetween(ngay, today) > 366) throw bad('Ngày giao nhận quá xa (hơn một năm trước). Kiểm tra lại năm');
   // Hạn trả: tuỳ chọn, chỉ lần vay / cho vay (lần trả thì không có hạn), không trước ngày giao nhận
   let han = null;
   if (b.han != null && b.han !== '') {
     if (kind !== 'vay' && kind !== 'cho_vay') throw bad('Chỉ lần vay hoặc cho vay mới có hạn trả');
     han = String(b.han);
-    if (!DAY_RE.test(han) || han < ngay) throw bad('Hạn trả phải từ ngày giao nhận trở đi');
+    if (!DAY_RE.test(han) || !ngayCoThat(han) || han < ngay) throw bad('Hạn trả phải từ ngày giao nhận trở đi');
     if (daysBetween(ngay, han) > 731) throw bad('Hạn trả quá xa (hơn hai năm). Kiểm tra lại năm');
   }
   const nguoi = String(b.nguoi || '').trim().slice(0, 60);
@@ -204,7 +207,7 @@ export async function postLoan(req, env, user) {
   if (khuId) {
     if (!LAP_PHIEU.includes(user.role)) throw new HttpError(403, 'Tiểu đội trưởng không lập được phiếu kho kèm sổ vay. Bỏ chọn "Thép qua bãi" để chỉ ghi sổ.');
     const ctx = await receiptCtx(env, [khuId]); // chặn ngày đã chốt và khu không hợp lệ
-    for (const l of lines) if (!ctx.phiBy[l.phi]) throw bad('Phi không hợp lệ: ' + l.phi);
+    for (const l of lines) if (!Object.hasOwn(ctx.phiBy, l.phi)) throw bad('Phi không hợp lệ: ' + l.phi);
     day = ctx.day;
     const dau = LOAN_RA.includes(kind) ? -1 : 1;
     const rows = lines.map((l) => ({ phi: l.phi, khu: khuId, qty: dau * l.qty }));
@@ -319,6 +322,13 @@ export async function voidLoan(req, env, user, id) {
   }
   /* Ba thứ phải còn đúng lúc ghi: lần ghi vẫn ở trạng thái vừa đọc (chưa ai duyệt / huỷ chen vào), ngày của
      phiếu kho đi kèm chưa chốt, và — với lần đã duyệt — huỷ không làm dư nợ thành âm (xem LOAN_AM_COND). */
+  /* Phiếu kho đi kèm ĐÃ DUYỆT: huỷ là rút lại phần thép nó đã đưa vào khu, nên thép ấy phải còn đủ ở khu (cùng luật
+     với huỷ phiếu kho: không để khu âm vì thép đã chuyển đi / xuất đi). */
+  if (!pending && r.grp) {
+    const vao = (await env.DB.prepare("SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0 AND duyet_day IS NOT NULL AND qty > 0").bind(r.grp).all()).results
+      .map((x) => ({ phi_id: x.phi_id, khu_id: x.khu_id, qty: -x.qty }));
+    if (vao.length) await checkTransferStock(env, vnDay(), vao, { kind: 'huy', duyet: false, ctx: await rutCtx(env, vnDay(), vao, false) });
+  }
   const ngayKho = ngayDuyet || vnDay();
   const run = (stmts) => batchLoan(env, [
     ['NOT EXISTS (SELECT 1 FROM loans WHERE id = ? AND voided = 0 AND COALESCE(duyet_ts, 0) = ?)', id, r.duyet_ts || 0],

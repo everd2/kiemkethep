@@ -252,6 +252,8 @@ export async function gcUpdate(req, env, user, id) {
   await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM don_gc WHERE id = ?1 AND cap_ts = ?2)', id, d.cap_ts), [
     env.DB.prepare('UPDATE don_gc SET cau_kien = ?, hang_muc = ?, phan_khu = ?, tang = ?, cote = ?, truc = ?, noi_dung = ?, od_nguoi = ?, od_dd = ?, user_id = ?, han = ?, buoi = ?, tt = ?, cap_ts = ? WHERE id = ?')
       .bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.od_nguoi, f.od_dd, f.user_id, f.han, f.buoi, giaoLai ? 'moi' : d.tt, ts, id),
+    // giao lại cho người khác: cờ vướng là của tổ cũ, người mới nhận đơn không thừa hưởng
+    ...(giaoLai ? [env.DB.prepare('UPDATE don_gc SET vuong = NULL, vuong_loai = NULL, vuong_dung = 0, vuong_ts = NULL, vuong_xem_by = NULL, vuong_xem_ts = NULL WHERE id = ?').bind(id)] : []),
     env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id = ? AND user_id NOT IN (SELECT value FROM json_each(?))').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id) SELECT ?, value FROM json_each(?)').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT INTO don_gc_log (don_id, ts, user_id, viec, pct, note) VALUES (?,?,?,?,?,?)').bind(id, ts, user.id, 'sua', d.pct, doi.join(' · ')),
@@ -365,8 +367,11 @@ export async function gcDoc(req, env, user, id) {
   const b = await readJson(req);
   const den = Number(b.den);
   if (!Number.isInteger(id) || !Number.isInteger(den)) throw bad('Dữ liệu không hợp lệ');
+  // đơn phải có thật và mốc đọc không vượt tin mới nhất của đơn (mốc quá lớn làm mất nhắc tin chưa đọc về sau)
+  const don = await env.DB.prepare('SELECT d.id, (SELECT COALESCE(MAX(id), 0) FROM don_gc_tn WHERE don_id = d.id) m FROM don_gc d WHERE d.id = ?').bind(id).first();
+  if (!don) throw khongThay();
   await env.DB.prepare(`INSERT INTO don_gc_doc (don_id, user_id, doc_id) VALUES (?, ?, ?)
-                        ON CONFLICT(don_id, user_id) DO UPDATE SET doc_id = MAX(doc_id, excluded.doc_id)`).bind(id, user.id, den).run();
+                        ON CONFLICT(don_id, user_id) DO UPDATE SET doc_id = MAX(doc_id, excluded.doc_id)`).bind(id, user.id, Math.min(den, don.m)).run();
   return json({ ok: true });
 }
 
@@ -502,7 +507,7 @@ export async function gcViec(req, env, user, id, viec) {
     if (d.xuat_tt === 'duyet') throw sai('Đơn đã xuất (thép đã rời bãi), không mở lại được. Cần làm thêm thì giao đơn mới.');
     note = chu(b.ly_do, 200);
     if (!note) throw bad('Cần ghi lý do mở lại đơn');
-    Object.assign(set, { tt: 'lam', pct: GC_PCT_MO_LAI, xong_ts: null, mo_lai: note });
+    Object.assign(set, { tt: 'lam', pct: GC_PCT_MO_LAI, xong_ts: null, mo_lai: note, xuat_tt: null }); // đang chờ duyệt xuất thì thôi: đơn đã mở lại
     audit = 'gc_molai';
   }
   const cot = Object.keys(set);

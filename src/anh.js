@@ -20,9 +20,9 @@ export function docAnh(r) {
    không sửa được và dòng sổ có thể bị huỷ sau này, nên ghi sẵn chữ vào lúc thêm / xoá. */
 const ANH_BANG = { loan: 'loans', satvun: 'satvun', gc: 'don_gc' };
 const ANH_MO_TA = {
-  loan: "SELECT l.ngay, l.so_bb, d.name ten FROM loans l LEFT JOIN doitac d ON d.id = l.doitac_id WHERE l.id = ?",
-  satvun: 'SELECT ngay, so_phieu so_bb, noi ten FROM satvun WHERE id = ?',
-  gc: "SELECT NULL ngay, NULL so_bb, cau_kien || COALESCE(' · ' || truc, '') ten FROM don_gc WHERE id = ?",
+  loan: "SELECT l.ngay, l.so_bb, d.name ten, l.voided huy FROM loans l LEFT JOIN doitac d ON d.id = l.doitac_id WHERE l.id = ?",
+  satvun: 'SELECT ngay, so_phieu so_bb, noi ten, voided huy FROM satvun WHERE id = ?',
+  gc: "SELECT NULL ngay, NULL so_bb, cau_kien || COALESCE(' · ' || truc, '') ten, tt = 'huy' huy FROM don_gc WHERE id = ?",
 };
 const ANH_MAX_DONG = 20; // ảnh mỗi dòng sổ: một biên bản vài trang là cùng; chặn lỡ chọn cả thư viện ảnh
 // máy khách đã nén về JPEG (resizeAnh trong app.js); nhận thêm PNG/WebP cho bản app sau, ngoài ra thì không
@@ -39,7 +39,7 @@ async function dongSo(env, loai, entityId) {
     env.DB.prepare('SELECT COUNT(*) n FROM anh_bb WHERE loai = ? AND entity_id = ?').bind(loai, entityId),
   ]);
   const r = m.results[0];
-  return r ? { ngay: r.ngay || undefined, so_bb: r.so_bb || undefined, ten: r.ten || undefined, n: n.results[0].n } : null;
+  return r ? { ngay: r.ngay || undefined, so_bb: r.so_bb || undefined, ten: r.ten || undefined, huy: !!r.huy, n: n.results[0].n } : null;
 }
 
 export async function postAnh(req, env, user, loai, eid) {
@@ -47,9 +47,12 @@ export async function postAnh(req, env, user, loai, eid) {
   if (!ANH_LOAI.includes(loai) || !entityId) throw new HttpError(404, 'Không tìm thấy dòng sổ này');
   const dong = await dongSo(env, loai, entityId);
   if (!dong) throw new HttpError(404, 'Không tìm thấy dòng sổ này');
+  if (dong.huy) throw bad('Dòng sổ này đã huỷ, không thêm ảnh được');
   if (dong.n >= ANH_MAX_DONG) throw bad(`Mỗi dòng sổ tối đa ${ANH_MAX_DONG} ảnh. Xoá bớt ảnh thừa rồi thêm.`);
   const ct = (req.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
   if (!ANH_KIEU[ct]) throw bad('Chỉ nhận ảnh JPEG, PNG hoặc WebP');
+  // quá lớn thì từ chối ngay theo Content-Length, khỏi đọc cả thân yêu cầu vào bộ nhớ rồi mới báo
+  if (Number(req.headers.get('Content-Length')) > ANH_MAX_BYTES) throw bad('Ảnh quá lớn (tối đa 6MB)');
   const buf = await req.arrayBuffer();
   if (!buf.byteLength) throw bad('Ảnh trống');
   if (buf.byteLength > ANH_MAX_BYTES) throw bad('Ảnh quá lớn (tối đa 6MB)');

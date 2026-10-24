@@ -220,6 +220,16 @@ function sauGhi() {
   else if (s === 'vaychitiet' && S.loanDt) ds.push('/loans?doitac=' + S.loanDt);
   return ds;
 }
+/* Quên hết dữ liệu của người đang dùng: đăng xuất và hết phiên đều qua đây. Máy dùng chung thì người sau không được thấy
+   bảng gia công, số quân số, thẻ PIN vừa cấp... của người trước. */
+function xoaPhien() {
+  forgetBoot();
+  S.me = null; S.boot = null; S.stale = null; S.screen = 'login'; S.err = ''; S.form = {}; S.qsH = null;
+  Object.assign(S, { sl: null, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
+    review: null, users: null, pinShown: null, loans: null, loanDetail: null, svs: null, audit: null, usage: null, cmp: null, subs: {},
+    ask: null, gcXu: null, gcVg: null, sel: null });
+  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
+}
 async function api(method, path, body, choMs, kem) {
   const uid = S.me ? S.me.id : 0;
   if (method === 'GET') {
@@ -266,7 +276,8 @@ async function apiGoi(method, path, body, ctl, het, quaLau, xin) {
     er.status = r.status; er.code = d.code; er.retry = quota || r.status >= 500;
     // server nhận ra máy đang chạy bản app cũ: bật dải "có bản mới" ngay, khỏi đợi lần hỏi định kỳ
     if (d.code === 'old_app') S.newVer = true;
-    if (r.status === 401 && S.me) { S.me = null; S.boot = null; S.screen = 'login'; S.err = 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại'; forgetBoot(); render(); }
+    // "PIN hiện tại không đúng" ở màn đổi PIN cũng là 401 nhưng phiên vẫn sống: không văng người dùng ra màn đăng nhập
+    if (r.status === 401 && S.me && path !== '/change-pin') { xoaPhien(); S.err = 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại'; render(); }
     throw er;
   }
   return d;
@@ -438,7 +449,7 @@ function askHtml() {
   if (!a) return '';
   return `<div class="modal" role="dialog" aria-modal="true" aria-label="Xác nhận"><div class="box col gap8">
     <div style="font-size:18px;line-height:1.45;white-space:pre-line">${esc(a.msg)}</div>
-    ${a.input ? `<input class="inp" id="askin" data-model="askin" maxlength="300" autocomplete="off" placeholder="${esc(a.input)}" value="${esc(S.form.askin || '')}">${a.thieu ? `<span class="sm b" style="color:var(--bad)">${esc(a.can || 'Phải ghi lý do thì mới huỷ được.')}</span>` : ''}` : ''}
+    ${a.input ? `<input class="inp" id="askin" data-model="askin" data-enter="askyes" enterkeyhint="done" maxlength="300" autocomplete="off" placeholder="${esc(a.input)}" value="${esc(S.form.askin || '')}">${a.thieu ? `<span class="sm b" style="color:var(--bad)">${esc(a.can || 'Phải ghi lý do thì mới huỷ được.')}</span>` : ''}` : ''}
     <button class="btn ${a.danger ? 'bad' : 'pri'} full" data-a="askyes">${esc(a.ok)}</button>
     <button class="btn full" data-a="askno">Quay lại</button>
   </div></div>`;
@@ -763,6 +774,15 @@ function boNhapDaGui(job) {
     if (S.khu === job.khu && S.screen !== 'dem' && S.boot && S.boot.today === job.day) S.draft = { cells: {}, baseTs: 0 };
   } catch (e) { /* bỏ qua */ }
 }
+/* Ô đang mở mà đã gõ số thì ghi số đó vào nháp. Đóng ô, hoặc chạm sang ô khác, đều phải qua đây. Chỉ lưu khi có gõ:
+   mở một ô để xem thì ô đó giữ nguyên loại cũ (xem settle). */
+function luuODangGo() {
+  const p = S.sel;
+  if (p && S.typed && (S.bo !== '' || S.le !== '')) {
+    const size = S.boot.phiBy[p].bo_size, boN = parseInt(S.bo || '0', 10), leN = parseInt(S.le || '0', 10);
+    S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN }; saveDraft();
+  }
+}
 let flushing = false;
 async function flushPending() {
   if (flushing || !S.me || S.me.must_change) return;
@@ -775,6 +795,8 @@ async function flushPending() {
     for (const job of q) {
       // báo cáo của người khác: để nguyên, chờ chính người đó đăng nhập lại trên máy này
       if (job.err || !ofMe(job)) { rest.push(job); continue; }
+      // lần gửi trực tiếp (sendCounts) đã xoá job này khỏi hàng chờ trong lúc vòng này đang chạy: gửi nữa là số cũ đè số mới
+      if (!readPending().some((x) => sameJob(x, job))) continue;
       if (!job.day) { rest.push({ ...job, err: 'Báo cáo lưu từ bản cũ, không rõ ngày đếm' }); failed++; continue; }
       /* tuoi = đã trôi bao lâu từ lúc bấm gửi lần đầu, để khung giờ tính theo buổi khu ra bãi đếm chứ
          không theo lúc có mạng lại. Gửi THỜI GIAN ĐÃ TRÔI chứ không gửi giờ máy: máy để sai giờ thì
@@ -820,7 +842,9 @@ async function sendCountsInner() {
     /* Lần gửi này là số mới nhất của mình cho khu + ngày đó: bản cũ còn nằm trong hàng chờ (lần
        trước gửi lỗi) phải bỏ đi, không thì lát nữa nó tự gửi lại và ĐÈ số cũ lên số vừa gửi. */
     writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day && ofMe(x))));
-    await loadBoot();
+    /* Báo cáo ĐÃ lên server ở dòng trên. Tải lại số liệu mà rớt mạng thì không được coi là gửi lỗi (rồi xếp hàng gửi lần hai):
+       cứ báo đã gửi, vòng làm mới kế tiếp sẽ kéo số liệu về. */
+    try { await loadBoot(); } catch (er) { /* số liệu cũ tới vòng làm mới sau */ }
     S.sel = null; S.screen = 'khu'; pushNav();
     say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, cấp trên sẽ xem.' : '. Cảm ơn bạn!'));
   } catch (e) {
@@ -869,7 +893,7 @@ function vLogin() {
     <div class="col gap8"><div class="logo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
       <div style="font-size:32px;font-weight:700;line-height:1.2">Bãi Gia Công</div>
       <div class="muted" style="font-size:18px">Đăng nhập bằng số điện thoại và PIN 4 số</div></div>
-    <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric" autocomplete="username" data-model="phone" data-enter="login" value="${esc(S.form.phone || lastPhone())}"></label>
+    <label class="field">Số điện thoại<input id="phone" type="tel" inputmode="numeric" autocomplete="username" enterkeyhint="next" data-model="phone" data-enter="phonexong" value="${esc(S.form.phone || lastPhone())}"></label>
     <label class="field">PIN 4 số<input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="current-password" data-enter="login"></label>
     <div class="err" id="err">${esc(S.err)}</div>
     <button class="btn pri full" style="min-height:60px;font-size:20px" data-a="login">ĐĂNG NHẬP</button>
@@ -2175,6 +2199,7 @@ function fmtAudit(a) {
       + (d.ca_kia ? ', ' + CA_TEN[d.ca === 1 ? 2 : 1] + ' ' + d.ca_kia : '')
       + (qsSoNghi(d.nghi) ? ', nghỉ ' + qsSoNghi(d.nghi) + ' (' + QS_LY_DO.filter((l) => (d.nghi || {})[l[0]]).map((l) => d.nghi[l[0]] + ' ' + l[1]).join(', ') + ')' : '')
       + (d.ghi_chu ? ' — ' + d.ghi_chu : ''), 'qs'],
+    sl_luu: ['chép báo cáo sản lượng ngày ' + fmtDay(d.ngay) + ' (tỷ lệ giá ' + String(d.gia).replace('.', ',') + ', tỷ lệ gia công ' + String(d.gc).replace('.', ',') + ')', 'qs'],
     bc_luu: ['chép báo cáo ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ' gửi cấp trên' + (d.kt_mau ? ' (đặt lại mẫu kiểm tra)' : ''), 'qs'],
     qs_lich: ['đặt ca cho tổ ' + (d.to || '?') + ': ' + (CA_LICH[d.ca] || '').toLowerCase() + (d.den ? ', đến ' + fmtDay(d.den) : ', đến khi đổi'), 'qs'],
     qs_nguong: ['đặt ngưỡng tô đỏ thống kê quân số: nghỉ từ ' + d.pct + '%', 'qs'],
@@ -2370,6 +2395,7 @@ function vMore() {
   <div class="f1 scroll pad col gap8" id="body">
     ${nhom('Hằng ngày')}
     ${isQL() ? '<button class="menu" data-a="nav" data-s="baocaoca">Báo cáo ca và quân số các tổ</button>' : ''}
+    ${isQL() ? '<button class="menu" data-a="slmo">Báo cáo sản lượng</button>' : ''}
     <button class="menu" data-a="nav" data-s="qstk">Thống kê quân số${isQL() ? ' các tổ' : ' của tổ'}</button>
     ${nhom('Sổ theo dõi')}
     <button class="menu" data-a="nav" data-s="vaymuon">Vay mượn ngoài bãi${S.boot.loanPending ? ` (${S.boot.loanPending} chờ duyệt)` : ''}</button>
@@ -2710,7 +2736,7 @@ const svCt = (r) => [r.khu_id ? kName(r.khu_id) : 'nhiều khu', r.so_phieu ? 'p
 /* Khối lượng sắt vụn hiện BA số lẻ (tới từng kg), khác fmtT hai số lẻ của tồn bãi: sổ này để đối chiếu với
    phiếu cân, 2.675 kg mà hiện "2,68 tấn" là lệch phiếu ngay trên màn hình. */
 const svT = (kg) => (kg / 1000).toFixed(3).replace('.', ',');
-const svKg = (v) => { const t = String(v || '').trim().replace(/\s/g, ''); return /^\d+([.,]\d{1,3})?$/.test(t) ? Math.round(Number(t.replace(',', '.')) * 1000) : NaN; };
+const svKg = (v) => { const t = String(v || '').trim().replace(/\s/g, ''); return /^\d+([.,]\d{1,3})?$/.test(t) && !/^\d+\.\d{3}$/.test(t) ? Math.round(Number(t.replace(',', '.')) * 1000) : NaN; };
 function svCard(r) {
   const cho = !r.duyet_ts, huy = !!r.voided, mine = r.user_id === S.me.id;
   // cùng luật với server (voidSv): người duyệt được thì từ chối / huỷ trong 7 ngày; người ghi rút lại, hoặc huỷ trong 10 phút sau duyệt
@@ -3897,7 +3923,7 @@ const gcVgMo = (id) => { S.gcVg = { id, loai: null, dung: false }; delete S.form
 const BC_DAU = [['don_vi', 'Đơn vị', 'Trung đoàn XD 01, Tiểu đoàn 1.1, Đại đội 1.1.6, Trung đội 1.1.6.1'], ['ddt', 'Đại đội trưởng', '', 'daidoi'],
   ['tdtr', 'Trung đội trưởng', '', 'trungdoi'], ['cbpt', 'CBPT', '', 'cvktht'], ['du_an', 'Dự án', 'Tên dự án'], ['khu_vuc', 'Khu vực thi công', 'Ví dụ: Bãi gia công trung đoàn']];
 const BC_MUC = [['s3', '3. Quân số'], ['s4', '4. Công việc trong ngày'], ['s5', '5. Máy móc thiết bị (MMTB)'], ['s6', '6. Kiểm tra, giám sát'], ['s7', '7. Vướng mắc'], ['s8', '8. Đánh giá tiến độ']];
-const bcKey = (B) => 'kt:bc:' + B.ngay + ':' + B.ca;
+const bcKey = (B) => 'kt:bc:' + (S.me ? S.me.id : 0) + ':' + B.ngay + ':' + B.ca; // theo người: máy dùng chung thì nháp của người này không dính sang người kia
 const gioH = (ms) => { const m = ((ms + 7 * 3600e3) % 864e5) / 60e3; return Math.floor(m / 60) + 'h' + (m % 60 ? two(m % 60) : ''); };
 // "Dầm D3 tầng 5 trục X12-X17 / Y3-Y5 KDC": đủ để đọc ra cấu kiện nằm ở đâu
 const bcDon = (d) => [d.cau_kien, d.tang ? 'tầng ' + d.tang : '', d.cote ? 'cote ' + d.cote : '', d.truc ? 'trục ' + d.truc : '', d.phan_khu || '', d.hang_muc ? '(' + d.hang_muc + ')' : ''].filter(Boolean).join(' ');
@@ -4187,8 +4213,109 @@ async function bcTai() {
   // dọn nháp báo cáo của các ca hơn một tuần trước
   try {
     const cu = congNgay(S.boot.today, -7);
-    for (let i = localStorage.length - 1; i >= 0; i--) { const m = /^kt:bc:(\d{4}-\d{2}-\d{2}):/.exec(localStorage.key(i) || ''); if (m && m[1] < cu) localStorage.removeItem(localStorage.key(i)); }
+    for (let i = localStorage.length - 1; i >= 0; i--) { const m = /^kt:bc:(?:\d+:)?(\d{4}-\d{2}-\d{2}):/.exec(localStorage.key(i) || ''); if (m && m[1] < cu) localStorage.removeItem(localStorage.key(i)); }
   } catch (e) { /* bỏ qua */ }
+}
+/* ===================== BÁO CÁO SẢN LƯỢNG (xem src/sanluong.js) =====================
+   Cùng khuôn với báo cáo ca: CVKTHT trở lên soạn; phần đầu dùng chung mẫu với báo cáo ca. Tính theo NGÀY (hai ca), mặc định hôm qua.
+   Sản lượng (kg) = (công gia công thép × 158 kg × tỷ lệ gia công) ÷ tỷ lệ giá. Số công mặc định = số ĐI LÀM tổ đã báo của ca đó,
+   sửa được từng tổ / từng ca. Ô nào người soạn đã gõ thì nằm trong S.form (slc_<id tổ>_<ca>, slgia, slgc) và chỉ khác mặc định mới được lưu. */
+const slSo = (s) => { const t = String(s == null ? '' : s).trim().replace(',', '.'); return t === '' ? NaN : Number(t); };
+const slFmt = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
+async function slTai(ngay, giu) {
+  const q = ngay || (S.sl && S.sl.ngay) || '';
+  S.sl = await api('GET', '/sanluong' + (q ? '?ngay=' + q : ''));
+  if (!giu) Object.keys(S.form).filter((k) => /^(slc_|slgia$|slgc$)/.test(k)).forEach((k) => delete S.form[k]);
+}
+// công mặc định của một ô (tổ × ca): bản đã lưu nếu có sửa, không thì số đi làm đã báo
+const slMacDinh = (L, u, c) => {
+  const l = L.luu && L.luu.cong[u.id] && L.luu.cong[u.id][c];
+  return l !== undefined && l !== null ? l : (u.ca[c] ? u.ca[c].lam : 0);
+};
+function slTinh() {
+  const L = S.sl, gia = slSo(fv('slgia', slFmt(L.luu ? L.luu.gia : L.mac_dinh.gia))), gc = slSo(fv('slgc', slFmt(L.luu ? L.luu.gc : L.mac_dinh.gc)));
+  const T = { gia, gc, loi: '', sua: {}, ca: { 1: { cong: 0, lam: 0, tong: 0, kg: 0 }, 2: { cong: 0, lam: 0, tong: 0, kg: 0 } }, dong: [] };
+  if (!(gia >= L.gia_lim.min && gia <= L.gia_lim.max)) T.loi = `Tỷ lệ giá phải từ ${slFmt(L.gia_lim.min)} đến ${slFmt(L.gia_lim.max)}`;
+  else if (!(gc >= L.gc_lim.min && gc <= L.gc_lim.max)) T.loi = `Tỷ lệ gia công phải từ ${slFmt(L.gc_lim.min)} đến ${slFmt(L.gc_lim.max)}`;
+  L.to.forEach((u) => {
+    const r = { u, ca: {} };
+    [1, 2].forEach((c) => {
+      const d = u.ca[c], raw = fv(`slc_${u.id}_${c}`, String(slMacDinh(L, u, c))).trim(), n = raw === '' ? 0 : Number(raw);
+      const hop = Number.isInteger(n) && n >= 0 && n <= 500;
+      if (!hop && !T.loi) T.loi = `Số công của tổ ${u.name} không hợp lệ (số nguyên 0 – 500)`;
+      const cong = hop ? n : 0;
+      r.ca[c] = { d, cong, hop, raw };
+      if (d) { T.ca[c].lam += d.lam; T.ca[c].tong += d.tong; }
+      T.ca[c].cong += cong;
+      if (cong !== (d ? d.lam : 0)) (T.sua[u.id] = T.sua[u.id] || {})[c] = cong;
+    });
+    T.dong.push(r);
+  });
+  const ok = !T.loi;
+  [1, 2].forEach((c) => { T.ca[c].kg = ok ? Math.round((T.ca[c].cong * L.chuan * gc) / gia) : 0; });
+  T.cong = T.ca[1].cong + T.ca[2].cong; T.kg = T.ca[1].kg + T.ca[2].kg; T.lam = T.ca[1].lam + T.ca[2].lam; T.tong = T.ca[1].tong + T.ca[2].tong;
+  return T;
+}
+const slTan = (kg) => fmtT(kg) + ' tấn';
+// phần đầu giống báo cáo ca (bcPhan): đơn vị, chỉ huy, dự án, khu vực, số tổ
+function slDau(L) {
+  const g = (k) => (L.dau[k] || '').trim();
+  return [g('don_vi'), g('ddt') && 'Đại đội trưởng: ' + g('ddt'), g('tdtr') && 'Trung Đội trưởng: ' + g('tdtr'), g('cbpt') && 'CBPT: ' + g('cbpt'),
+    g('du_an') && 'Dự Án: ' + g('du_an'), g('khu_vuc') && 'Khu vực thi công: ' + g('khu_vuc'), `Tổng số tổ: ${L.to.length} tổ`].filter(Boolean);
+}
+// bản chữ đúng khuôn báo cáo quân số, để dán vào Zalo
+function slTao() {
+  const L = S.sl, T = slTinh();
+  const dong = T.dong.filter((r) => r.ca[1].d || r.ca[2].d || r.ca[1].cong || r.ca[2].cong).map((r) => {
+    const mot = (c) => { const x = r.ca[c], ten = c === 1 ? 'ca ngày' : 'ca đêm'; return x.d || x.cong ? `${ten}: ${x.d ? x.d.lam + '/' + x.d.tong + ' người' : 'chưa báo'}, gia công thép ${x.cong} công` : ''; };
+    return '• Tổ ' + r.u.name + ' ' + [mot(1), mot(2)].filter(Boolean).join('; ');
+  });
+  return [`BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}`].concat(slDau(L).map((x) => '• ' + x), [
+    `2. Quân số đi làm trong ngày là: ${T.lam} công nhân / (tổng quân số ${T.tong})`,
+    `• Ca ngày: ${T.ca[1].lam} đi làm; ca đêm: ${T.ca[2].lam} đi làm`], dong,
+  [`• Quân số gia công thép được: ${T.cong} công (ca ngày ${T.ca[1].cong}, ca đêm ${T.ca[2].cong})`,
+    `3. Sản lượng (công chuẩn ${L.chuan} kg/công; tỷ lệ giá ${slFmt(T.gia)}; tỷ lệ gia công ${slFmt(T.gc)})`,
+    `• Ca ngày: ${T.ca[1].cong} công = ${fmtInt(T.ca[1].kg)} kg (${slTan(T.ca[1].kg)})`,
+    `• Ca đêm: ${T.ca[2].cong} công = ${fmtInt(T.ca[2].kg)} kg (${slTan(T.ca[2].kg)})`,
+    `• Tổng sản lượng: ${fmtInt(T.kg)} kg (${slTan(T.kg)})`]).map((l) => l.trimEnd()).join('\n');
+}
+function vSanLuong() {
+  const L = S.sl, top = head('Báo cáo sản lượng', L ? fmtDay(L.ngay) : '', 'more');
+  if (!L) return `${top}${panelWait('sanluong')}`;
+  const T = slTinh(), homNay = S.boot.today, truoc = congNgay(L.ngay, -1), sau = congNgay(L.ngay, 1);
+  const oSo = (id, v, ph) => `<input class="inp s" style="width:64px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="${ph}" data-model="${id}" value="${esc(v)}">`;
+  const oTy = (id, v, nhan, gioiHan, macDinh) => `<label class="col gap6 f1 sm" style="min-width:0">${nhan}<input class="inp s" style="text-align:center;font-weight:700" id="${id}" inputmode="decimal" maxlength="5" autocomplete="off" data-model="${id}" value="${esc(v)}"><span class="muted" style="font-size:12px">${gioiHan} · mặc định ${macDinh}</span></label>`;
+  const luu = L.luu ? `Đã lưu lúc ${dmy(L.luu.ts)} (${esc(L.luu.by_name)})` : 'Chưa lưu lần nào';
+  const hang = T.dong.map((r) => {
+    const o = (c) => {
+      const x = r.ca[c], ten = c === 1 ? 'Ngày' : 'Đêm';
+      return `<div class="col gap6 f1" style="min-width:0;align-items:center"><span class="muted" style="font-size:12px">${ten}: ${x.d ? `${x.d.lam}/${x.d.tong}${x.d.nguon === 'tl' ? ' (thiết lập)' : ''}` : 'không báo'}</span>
+        ${oSo(`slc_${r.u.id}_${c}`, x.raw, '0')}</div>`;
+    };
+    return `<div class="card col gap6"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(r.u.name)}</b><div class="row gap8">${o(1)}${o(2)}</div></div>`;
+  }).join('');
+  const mui = (ngay, chu, ten, bat) => `<button class="chip s" style="flex:none;width:44px;padding:6px 0${bat ? '' : ';opacity:.35'}" ${bat ? `data-a="slngay" data-v="${ngay}"` : 'disabled'} aria-label="${ten}">${chu}</button>`;
+  const dauDong = slDau(L).map((x) => `<div class="sm" style="line-height:1.4">${esc(x)}</div>`).join('');
+  return `${top}<div class="col gap6 tbar" style="padding:6px 16px"><div class="row gap6">${mui(truoc, '‹', 'Hôm trước', true)}
+      <input type="date" class="inp s f1" style="min-width:0;text-align:center" value="${L.ngay}" max="${homNay}" data-change="sldate" aria-label="Chọn ngày">${mui(sau, '›', 'Hôm sau', sau <= homNay)}</div>
+    <div class="row gap6"><span class="sm muted f1">${luu}</span><button class="chip s on" style="flex:none;white-space:nowrap;padding:6px 14px" data-a="slchep" ${T.loi ? 'disabled' : ''}>Chép báo cáo</button></div></div>
+    <div class="f1 pad col gap8" id="body" style="overflow:auto">
+      ${T.loi ? `<div class="card warn sm b" style="color:var(--bad)">${esc(T.loi)}</div>` : ''}
+      <div class="card col gap6"><b>BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}</b>${dauDong}
+        <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="nav" data-s="baocaoca">Sửa phần đầu ở Báo cáo ca</button></div>
+      <b>2. Quân số và công gia công thép</b>
+      <span class="sm muted" style="line-height:1.4">Số đi làm lấy nguyên từ báo cáo quân số của các tổ. Ô bên dưới là số công làm gia công thép của tổ ở ca đó, mặc định bằng số đi làm, sửa được.</span>
+      ${hang || '<div class="card muted">Chưa có tổ nào.</div>'}
+      <div class="card col gap6"><div class="row gap8"><span class="f1">Đi làm: ca ngày ${T.ca[1].lam} · ca đêm ${T.ca[2].lam}</span><b>${T.lam} / ${T.tong}</b></div>
+        <div class="row gap8"><span class="f1">Quân số gia công thép được: ca ngày ${T.ca[1].cong} · ca đêm ${T.ca[2].cong}</span><b>${T.cong} công</b></div></div>
+      <b>3. Sản lượng</b>
+      <div class="card col gap8"><div class="row gap8">${oTy('slgia', fv('slgia', slFmt(L.luu ? L.luu.gia : L.mac_dinh.gia)), 'Tỷ lệ giá', `${slFmt(L.gia_lim.min)} – ${slFmt(L.gia_lim.max)}`, slFmt(L.mac_dinh.gia))}
+        ${oTy('slgc', fv('slgc', slFmt(L.luu ? L.luu.gc : L.mac_dinh.gc)), 'Tỷ lệ gia công', `${slFmt(L.gc_lim.min)} – ${slFmt(L.gc_lim.max)}`, slFmt(L.mac_dinh.gc))}</div>
+        <span class="sm muted" style="line-height:1.4">Sản lượng = (công × ${L.chuan} kg × tỷ lệ gia công) ÷ tỷ lệ giá</span>
+        <div class="row gap8"><span class="f1">Ca ngày: ${T.ca[1].cong} công</span><b>${fmtInt(T.ca[1].kg)} kg</b></div>
+        <div class="row gap8"><span class="f1">Ca đêm: ${T.ca[2].cong} công</span><b>${fmtInt(T.ca[2].kg)} kg</b></div>
+        <div class="row gap8" style="border-top:1px solid var(--line);padding-top:8px"><b class="f1">Tổng sản lượng</b><b style="font-size:20px">${slTan(T.kg)}</b></div></div>
+    </div>`;
 }
 function vBaoCaoCa() {
   const B = S.bcc;
@@ -4738,7 +4865,7 @@ function vSettings() {
   return `${head('Cài đặt', 'Khu, phi và quy tắc', 'more')}<div class="f1 scroll pad col gap12" id="body">
     <h2 class="sec">Quy tắc</h2>
     <div class="card col gap8"><div class="sm muted" style="line-height:1.4">Mọi khu luôn hiện đủ phi D6→D36. Phi khu không có thì người đếm để trống, hệ thống hiểu là 0 — không còn cài đặt tự ẩn phi khỏi khu.</div>
-    <label class="sm">Bắt buộc đếm lại khi "giữ nguyên" quá (ngày)<input class="inp s" style="width:100%" id="s-keep" inputmode="numeric" value="${b.settings.max_keep_streak}"></label>
+    <label class="sm">Bắt buộc đếm lại khi "giữ nguyên" quá (ngày)<input class="inp s" style="width:100%" id="s-keep" inputmode="numeric" data-model="skeep" value="${esc(fv('skeep', b.settings.max_keep_streak))}"></label>
     <label class="sm">Mỗi khu phải đếm mấy lần/ngày<select class="inp s" style="width:100%" id="s-slots" data-model="sslots">${slotOpts()}</select></label>
     ${slotForm().n > 1 ? `<div class="row gap6"><label class="f1 sm">Giờ làm từ<select class="inp s" style="width:100%" id="s-from" data-model="sfrom">${hourOpts(slotForm().a, 0, 23)}</select></label>
       <label class="f1 sm">đến<select class="inp s" style="width:100%" id="s-to" data-model="sto">${hourOpts(slotForm().z, 1, 24)}</select></label></div>` : ''}
@@ -4787,7 +4914,7 @@ function vReset() {
     <button class="btn s full" style="border:2px solid var(--warn)" data-a="resetzero">ĐẶT TỒN VỀ 0</button>
   </div>
   <div class="card bad col gap8"><b style="font-size:18px">Xoá sạch dữ liệu thép</b>
-    <span class="sm" style="line-height:1.45">Xoá <b>mọi</b> số đếm, phiếu, ngày đã chốt và báo cáo theo kỳ; bãi trở lại như mới. <b>KHÔNG hoàn tác được.</b> Dùng khi chạy thử xong, bắt đầu dùng thật.</span>
+    <span class="sm" style="line-height:1.45">Xoá <b>mọi</b> số đếm, phiếu, ngày đã chốt và báo cáo theo kỳ; bãi trở lại như mới. <b>Sổ vay mượn và sắt vụn được GIỮ</b> (công nợ ngoài bãi, không phải tồn kho): lần vay nào đang chờ duyệt cùng phiếu kho thì phiếu kho mất, lần ghi sổ còn lại. <b>KHÔNG hoàn tác được.</b> Dùng khi chạy thử xong, bắt đầu dùng thật.</span>
     <label class="sm">Gõ <b>XOA SACH</b> để mở nút<input class="inp s" style="width:100%" id="wipeword" placeholder="XOA SACH" data-model="wipeword" value="${esc(S.form.wipeword || '')}"></label>
     <button class="btn s full ${go ? 'bad' : 'dis'}" data-a="resetwipe">XOÁ SẠCH DỮ LIỆU THÉP</button>
   </div>`;
@@ -4827,6 +4954,7 @@ function vMain() {
     case 'gcsetup': body = vGcSetup(); break;
     case 'quanso': body = vQuanSo(); break;
     case 'baocaoca': body = vBaoCaoCa(); break;
+    case 'sanluong': body = vSanLuong(); break;
     case 'qstk': body = vThongKeQs(); break;
     case 'tracuu': body = vTraCuu(); break;
     default: body = vHome();
@@ -4839,7 +4967,10 @@ function vMain() {
 function render() {
   const body = document.getElementById('body');
   const mx = document.getElementById('mx');
-  const keep = { screen: S._last, b: body ? body.scrollTop : 0, m: mx ? mx.scrollTop : 0, x: {} };
+  const keep = { screen: S._last, b: body ? body.scrollTop : 0, m: mx ? mx.scrollTop : 0, ml: mx ? mx.scrollLeft : 0, x: {} };
+  // ô PIN không có data-model (không lưu PIN vào S.form): giữ tạm giá trị qua lần vẽ lại, không thì vẽ lại giữa lúc gõ là mất
+  keep.pw = {};
+  document.querySelectorAll('input[type=password]').forEach((e) => { if (e.id && e.value) keep.pw[e.id] = e.value; });
   // hàng nút lọc cuộn ngang (data-sx): nhớ chỗ đang cuộn, vẽ lại xong thì đặt lại
   document.querySelectorAll('[data-sx]').forEach((e) => { keep.x[e.dataset.sx] = e.scrollLeft; });
   const ae = document.activeElement;
@@ -4855,7 +4986,8 @@ function render() {
   else html = vMain();
   $app.innerHTML = html;
   const nb = document.getElementById('body'), nm = document.getElementById('mx');
-  if (keep.screen === S.screen) { if (nb) nb.scrollTop = keep.b; if (nm) nm.scrollTop = keep.m; }
+  if (keep.screen === S.screen) Object.keys(keep.pw).forEach((id) => { const e = document.getElementById(id); if (e && e.type === 'password' && !e.value) e.value = keep.pw[id]; });
+  if (keep.screen === S.screen) { if (nb) nb.scrollTop = keep.b; if (nm) { nm.scrollTop = keep.m; nm.scrollLeft = keep.ml || 0; } }
   /* Hàng nút lọc cuộn ngang: không đặt lại thì mỗi lần vẽ lại nó nhảy về đầu — bấm một nút ở cuối hàng (vd "Đã xuất /
      huỷ") xong là chính nút vừa chọn trôi khuất bên phải. Mới vào màn thì kéo nút đang chọn (data-cur) vào tầm nhìn. */
   document.querySelectorAll('[data-sx]').forEach((e) => {
@@ -4881,7 +5013,7 @@ function render() {
     }
   } else if (fc) {
     const el = document.getElementById(fc.id);
-    if (el) { el.focus(); try { if (fc.s != null && el.setSelectionRange) el.setSelectionRange(fc.s, fc.e); } catch (er) { /* ô không hỗ trợ */ } }
+    if (el) { S._khoiPhuc = true; try { el.focus(); } finally { S._khoiPhuc = false; } try { if (fc.s != null && el.setSelectionRange) el.setSelectionRange(fc.s, fc.e); } catch (er) { /* ô không hỗ trợ */ } }
   }
   S._last = S.screen;
 }
@@ -4924,7 +5056,7 @@ async function go(screen, noPush, khu) {
   S.err = ''; S.sel = null;
   delete S.loadErr[screen];
   // lựa chọn khung giờ chọn dở mà không lưu: vào lại Cài đặt phải thấy số ĐANG LƯU, không phải số chọn dở
-  if (screen === 'settings') ['sslots', 'sfrom', 'sto'].forEach((k) => delete S.form[k]);
+  if (screen === 'settings') ['skeep', 'sslots', 'sfrom', 'sto'].forEach((k) => delete S.form[k]);
   if (screen === 'dem') {
     const ok = (id) => id && S.boot.khuBy[id] && S.boot.khuBy[id].active && canCount(id);
     if (!S.boot.khuAct.length) { say('Chưa có khu nào đang dùng. Admin vào Thêm → Cài đặt để thêm khu.', true); S.screen = 'home'; return render(); }
@@ -4965,6 +5097,7 @@ async function go(screen, noPush, khu) {
     else if (screen === 'gcsetup') { S.gc = await api('GET', '/giacong'); }
     else if (screen === 'quanso') { await qsTai(); }
     else if (screen === 'baocaoca') { await bcTai(); }
+    else if (screen === 'sanluong') { await slTai(); }
     else if (screen === 'qstk') { S.tk = await tkTai(); }
     else if (['home', 'ton', 'khu', 'nhap', 'dem'].includes(screen)) {
       await bootMoi();
@@ -4987,6 +5120,7 @@ function pushNav() {
 window.addEventListener('popstate', (e) => {
   if (!S.me || S.me.must_change) return;
   if (S.ask) { const a = S.ask; S.ask = null; a.resolve(false); pushNav(); return render(); } // Back = Quay lại
+  if (S.gcXu || S.gcVg || S.anhXem) { S.gcXu = null; S.gcVg = null; S.anhXem = null; pushNav(); return render(); } // Back = đóng hộp xuất / báo vướng / xem ảnh
   if (S.sel) { ACTIONS.closesel(); pushNav(); return; } // Back = đóng bảng số
   const st = e.state, sc = st && st.s ? st.s : 'home';
   go(sc, true, sc === 'dem' ? st.k : undefined);
@@ -5083,7 +5217,7 @@ function anhChoHtml(loai) {
   return `<div class="col" style="gap:6px"><b class="sm">Ảnh biên bản <span class="muted" style="font-weight:400">(không bắt buộc, nên chụp gửi kèm)</span></b>
     <div class="row gap6" style="flex-wrap:wrap;align-items:center">
     ${ds.map((x, i) => `<div style="position:relative;width:64px;height:64px;flex:none"><img src="${x.u}" alt="Ảnh ${i + 1}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;border:2px solid var(--pri);display:block">
-      <button style="position:absolute;top:-10px;right:-10px;width:32px;height:32px;border-radius:999px;border:2px solid #fff;background:var(--bad);color:#fff;font-size:18px;font-weight:700;line-height:1;padding:0" data-a="anhchobo" data-loai="${loai}" data-i="${i}" aria-label="Bỏ ảnh ${i + 1}">×</button></div>`).join('')}
+      <button style="position:absolute;top:-14px;right:-14px;width:44px;height:44px;border-radius:999px;border:2px solid #fff;background:var(--bad);color:#fff;font-size:18px;font-weight:700;line-height:1;padding:0" data-a="anhchobo" data-loai="${loai}" data-i="${i}" aria-label="Bỏ ảnh ${i + 1}">×</button></div>`).join('')}
     <button class="chip s" style="flex:none;white-space:nowrap" data-a="anhchothem" data-loai="${loai}">${ds.length ? '+ Thêm ảnh' : '📷 Chụp / chọn ảnh biên bản'}</button></div></div>`;
 }
 // dòng nhắc trong hộp xác nhận GHI SỔ: không bắt buộc ảnh, nhưng chưa có thì nói thẳng ra trước khi ghi
@@ -5281,16 +5415,24 @@ const ACTIONS = {
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
     render();
   },
-  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } forgetBoot(); S.me = null; S.stale = null; S.boot = null; S.screen = 'login'; S.form = {}; S.qsH = null; S.err = '';
-    // ảnh đang chọn / chưa gửi là của người vừa đăng xuất: máy dùng chung thì người sau không được gửi nhầm vào lần ghi của mình
-    ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null; render(); },
+  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } xoaPhien(); render(); },
   async changepin() {
     if (S.busy) return;
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
     if (!/^\d{4}$/.test(n1)) { S.err = 'PIN mới phải là 4 chữ số'; return render(); }
     if (n1 !== n2) { S.err = 'Hai lần nhập PIN mới không giống nhau'; return render(); }
     S.busy = true; S.busyMsg = 'Đang lưu PIN...'; render();
-    try { await api('POST', '/change-pin', { pin: a, newPin: n1 }); S.err = ''; S.me.must_change = 0; await loadBoot(); S.screen = 'home'; say('Đã đổi PIN.'); }
+    try {
+      await api('POST', '/change-pin', { pin: a, newPin: n1 });
+      S.err = '';
+      try { S.me.must_change = 0; await loadBoot(); S.screen = 'home'; say('Đã đổi PIN.'); }
+      catch (er) {
+        /* PIN đã đổi trên máy chủ nhưng chưa tải được số liệu (rớt mạng): không có số liệu thì không vẽ được màn nào,
+           nên quay về đăng nhập bằng PIN mới thay vì kẹt ở màn trống. */
+        if (!S.boot) { S.me.must_change = 1; xoaPhien(); S.err = 'Đã đổi PIN. Mạng đang yếu, hãy đăng nhập lại bằng PIN mới.'; }
+        else S.screen = 'home';
+      }
+    }
     catch (e) { S.err = e.message; }
     finally { S.busy = false; S.busyMsg = ''; }
     render();
@@ -5324,6 +5466,7 @@ const ACTIONS = {
   cell(d) {
     const p = d.p;
     if (S.boot.closed) return say(ngayKhoaMsg(), true), render();
+    luuODangGo(); // đang gõ dở ô khác mà chạm sang ô này: giữ số vừa gõ, đừng bỏ
     S.sel = p; fillSel(p); S.scrollSel = p; render();
   },
   key(d) { pressKey(Number(d.d)); render(); },
@@ -5340,12 +5483,7 @@ const ACTIONS = {
     settle('zero'); render();
   },
   closesel() {
-    const p = S.sel;
-    // chỉ lưu khi có gõ: đóng một ô vừa mở xem thì ô đó giữ nguyên loại cũ (xem settle)
-    if (p && S.typed && (S.bo !== '' || S.le !== '')) {
-      const size = S.boot.phiBy[p].bo_size, boN = parseInt(S.bo || '0', 10), leN = parseInt(S.le || '0', 10);
-      S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN }; saveDraft();
-    }
+    luuODangGo();
     S.sel = null; S.bo = ''; S.le = ''; render();
   },
   /* Ghi số cho nhiều phi một lúc nên phải xác nhận. Trước đây xác nhận bằng cách bấm nút
@@ -5744,12 +5882,15 @@ const ACTIONS = {
       + `• Khôi phục lại được ở cuối màn hình này.`;
     if (!(await ask(msg, 'XOÁ TÀI KHOẢN', true))) return render();
     act(async () => {
-      try { await api('POST', `/users/${d.id}/delete`, { confirm_khu: solo.length > 0 }); }
+      let r;
+      try { r = await api('POST', `/users/${d.id}/delete`, { confirm_khu: solo.length > 0 }); }
       // số liệu trên máy đã cũ: nạp lại để lần bấm sau hộp xác nhận nói đúng khu nào sẽ mở ra
       catch (e) { if (e.code === 'khu_open') await loadBoot(); throw e; }
       await Promise.all([loadUsers(), loadBoot()]);
-    }, 'Đã xoá tài khoản ' + u.name + '.'
-      + (solo.length ? ' ' + solo.map(tenKhu).join(', ') + ' không còn ai phụ trách: mọi người đếm đều đếm được.' : ''));
+      say('Đã xoá tài khoản ' + u.name + '.'
+        + (solo.length ? ' ' + solo.map(tenKhu).join(', ') + ' không còn ai phụ trách: mọi người đếm đều đếm được.' : '')
+        + (r && r.don_mo ? ` ${u.name} còn ${r.don_mo} đơn gia công đang mở: vào Gia công giao lại hoặc huỷ.` : ''), !!(r && r.don_mo));
+    });
   },
   async urestore(d) {
     const u = (S.users || []).find((x) => x.id === Number(d.id));
@@ -6023,7 +6164,7 @@ const ACTIONS = {
     // cùng điều kiện với server, báo ngay trên máy
     const kg = svKg(tanTxt);
     if (ngay > today) return say('Ngày xuất không được sau hôm nay.', true), render();
-    if (!(kg >= 1 && kg <= 1000000)) return say('Ghi khối lượng theo tấn, ví dụ 2,5 — tối đa ba số lẻ, tối đa 1.000 tấn một lần.', true), render();
+    if (!(kg >= 1 && kg <= 1000000)) return say('Ghi khối lượng theo tấn, ví dụ 2,5 (số lẻ dùng dấu phẩy) — tối đa ba số lẻ, tối đa 1.000 tấn một lần.', true), render();
     if (!noi) return say('Ghi xuất cho ai (đơn vị mua / nơi nhận).', true), render();
     if (!soPhieu) return say('Ghi số phiếu cân / biên bản.', true), render();
     // khu phải CHỌN RÕ (kể cả "Nhiều khu / chung"): để sẵn một lựa chọn thì ai cũng bấm qua, bảng thống kê theo khu thành vô nghĩa
@@ -6211,9 +6352,9 @@ const ACTIONS = {
     if (!(X.bb && X.dem && X.anh)) return say('Tick đủ ba việc: ký giao nhận, kiểm đếm, chụp ảnh.', true), render();
     if (!cho) { say('Ghi xuất cho ai / vị trí lắp dựng.', true); render(); return gcFocus('gcxcho'); }
     const note = String(S.form.gcxnote || '').trim();
-    S.gcXu = null; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]);
-    // gửi xuất trước, được nhận rồi mới gửi ảnh vào đơn (xuất bị từ chối thì ảnh còn giữ trên máy, không lên)
+    // hộp và chữ đã gõ chỉ bỏ SAU KHI máy chủ nhận: bị từ chối hoặc rớt mạng thì người dùng không phải gõ lại và tick lại
     gcDo('xuat', { bien_ban: 1, kiem_dem: 1, anh: 1, xuat_cho: cho, note }, '', X.id, async () => {
+      S.gcXu = null; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]);
       const kem = await anhGuiKem('gc', X.id);
       say('Đã gửi xuất, chờ CVKTHT duyệt' + kem + '.', !!S.anhLoi);
     });
@@ -6297,6 +6438,7 @@ const ACTIONS = {
   },
   // phím Enter trên bàn phím điện thoại: số hiệu → trục (X từ → X đến → Y từ → Y đến) → đóng bàn phím cho lộ nút GIAO
   gcnext() { gcFocus(gcTrucO1()); },
+  phonexong() { const p = document.getElementById('pin'); if (p) p.focus(); }, // Enter ở ô số điện thoại: sang ô PIN, chưa đăng nhập
   gcdent1() { gcFocus('gct1'); }, gcdent2() { gcFocus('gct2'); },
   gcdencote() { gcFocus('gccote'); },
   gcdenodd() { gcFocus('gcodd'); },
@@ -6326,8 +6468,7 @@ const ACTIONS = {
     const note = String(S.form.gcvgnote || '').trim();
     if (!V.loai) return say('Chọn đang vướng gì.', true), render();
     if (V.loai === 'Khác' && !note) { say('Ghi rõ đang vướng gì.', true); render(); return gcFocus('gcvgnote'); }
-    S.gcVg = null; delete S.form.gcvgnote;
-    gcDo('vuong', { loai: V.loai, dung: V.dung ? 1 : 0, ly_do: note }, V.dung ? 'Đã báo vướng: tổ dừng hẳn.' : 'Đã báo vướng.', V.id);
+    gcDo('vuong', { loai: V.loai, dung: V.dung ? 1 : 0, ly_do: note }, V.dung ? 'Đã báo vướng: tổ dừng hẳn.' : 'Đã báo vướng.', V.id, () => { S.gcVg = null; delete S.form.gcvgnote; });
   },
   gcxemvuong() { gcDo('xemvuong', {}, 'Đã nhận xử lý. Tổ thấy bạn đang lo việc này.'); },
   gcqxemvuong(d) { gcDo('xemvuong', {}, 'Đã nhận xử lý. Tổ thấy bạn đang lo việc này.', Number(d.id)); },
@@ -6507,6 +6648,25 @@ const ACTIONS = {
   qhthoi() { qhBo(); render(); },
   qshanmo() { S.qsHanMo = !S.qsHanMo; delete S.form.qsh1; delete S.form.qsh2; render(); },
   // báo cáo ca
+  slmo() { S.sl = null; go('sanluong'); },
+  async slngay(d) {
+    const ngay = String(d.v || '');
+    if (!ngay || ngay > S.boot.today) return;
+    S.sl = null; render();
+    try { await slTai(ngay); } catch (e) { say(e.message, true); }
+    render();
+  },
+  async slchep() {
+    const L = S.sl; if (!L) return;
+    const T = slTinh();
+    if (T.loi) return say(T.loi, true), render();
+    const chu = slTao(), ok = await bcChepChu(chu);
+    act(async () => {
+      try { await api('PUT', '/sanluong', { ngay: L.ngay, gia: T.gia, gc: T.gc, cong: T.sua, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
+      catch (e) { if (e.code === 'changed') { try { await slTai(L.ngay, true); } catch (er) { /* vòng làm mới sẽ tải lại */ } } throw e; }
+      await slTai(L.ngay, true);
+    }, ok ? 'Đã chép báo cáo sản lượng và lưu lại.' : 'Đã lưu, nhưng máy không cho chép tự động: hãy chép tay.');
+  },
   bcca(d) { const [ngay, ca] = String(d.v).split(':'); S.bcCa = { ngay, ca: Number(ca) }; S.bcc = null; go('baocaoca', true); },
   // từ báo cáo ca sang bảng thiết lập (ca và số quân từng tổ); nút quay lại ở đó về đúng báo cáo đang soạn
   bctl() { if (!S.bcc) return; S.qs = null; S.qsVe = 'baocaoca'; go('quanso'); },
@@ -6628,7 +6788,7 @@ const ACTIONS = {
       // giờ làm chỉ có ô khi đếm từ 2 lần/ngày: không có ô thì không gửi, giữ nguyên số đang lưu
       const o = (id) => (document.getElementById(id) ? val(id) : undefined);
       await api('PUT', '/settings', { max_keep_streak: val('s-keep'), report_slots_per_day: val('s-slots'), work_from: o('s-from'), work_to: o('s-to') });
-      ['sslots', 'sfrom', 'sto'].forEach((k) => delete S.form[k]);
+      ['skeep', 'sslots', 'sfrom', 'sto'].forEach((k) => delete S.form[k]);
       await loadBoot();
     }, 'Đã lưu quy tắc.');
   },
@@ -6642,17 +6802,19 @@ document.addEventListener('click', (e) => {
 /* Ô số (bàn phím số): chạm vào là chọn sẵn cả số cũ, gõ đè luôn, khỏi xoá từng chữ số. */
 document.addEventListener('focusin', (e) => {
   const t = e.target;
-  if (t.tagName !== 'INPUT' || !/^(numeric|decimal)$/.test(t.inputMode || '') || t.type === 'password' || !t.value) return;
+  if (t.tagName !== 'INPUT' || !/^(numeric|decimal)$/.test(t.inputMode || '') || t.type === 'password' || !t.value || S._khoiPhuc) return;
   setTimeout(() => { try { if (document.activeElement === t) t.select(); } catch (er) { /* bỏ qua */ } }, 0);
 });
 document.addEventListener('input', (e) => {
   const m = e.target.dataset && e.target.dataset.model;
   /* Ô chỉ nhận số nguyên: dán "1.200", "12 cây", khoảng trắng... thì giữ lại đúng các chữ số, khỏi lưu chữ lạ rồi mới báo lỗi. */
-  if (e.target.tagName === 'INPUT' && e.target.inputMode === 'numeric' && e.target.type !== 'tel' && /\D/.test(e.target.value)) {
+  if (e.target.tagName === 'INPUT' && e.target.inputMode === 'numeric' && e.target.type !== 'tel' && !GC_O_TRUC.includes(e.target.id) && /\D/.test(e.target.value)) {
     e.target.value = e.target.value.replace(/\D/g, '');
   }
   if (m) S.form[m] = e.target.value;
   if (m === 'gcq') gcLoc();
+  // báo cáo sản lượng: tổng và sản lượng chạy theo từng chữ số vừa gõ (vẽ lại giữ nguyên ô đang gõ)
+  if (m && S.screen === 'sanluong' && S.sl && /^(slc_\d+_[12]|slgia|slgc)$/.test(m)) render();
   if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucCua() || 'chưa nhập'; }
   /* Quân số đầu ca: gõ tổng thì số đi làm và dòng tóm tắt chạy theo ngay, không vẽ lại màn hình giữa lúc gõ.
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */
@@ -6727,6 +6889,7 @@ document.addEventListener('change', async (e) => {
   if (t.dataset && t.dataset.change === 'tkngaychon') { if (t.value) { S.tkNgay = t.value > S.boot.today ? S.boot.today : t.value; S.tkChe = 'ngay'; tkDam(); } return; }
   if (t.dataset && t.dataset.change === 'gchan') { S.form.gchan = t.value || ''; render(); return; }
   if (t.dataset && t.dataset.change === 'logday') { S.auditF.ngay = t.value || ''; go('nhatky', true); return; }
+  if (t.dataset && t.dataset.change === 'sldate') { if (t.value) ACTIONS.slngay({ v: t.value > S.boot.today ? S.boot.today : t.value }); return; }
   if (t.dataset && t.dataset.change === 'hdate') { if (t.value) loadHist(t.value > S.boot.today ? S.boot.today : t.value); return; }
   if (t.dataset && t.dataset.change === 'chucdanh') {
     const id = t.dataset.id, chuc_danh = t.value || null;
@@ -6759,7 +6922,7 @@ document.addEventListener('change', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.enter) { e.preventDefault(); ACTIONS[e.target.dataset.enter](); return; }
+  if (e.key === 'Enter' && !e.isComposing && e.target.dataset && e.target.dataset.enter) { e.preventDefault(); ACTIONS[e.target.dataset.enter](); return; }
   /* Ô nhập một dòng chưa gắn việc riêng: Enter nhảy sang ô kế tiếp, hết ô thì thu bàn phím. */
   const t = e.target;
   if (e.key === 'Enter' && !e.isComposing && t.tagName === 'INPUT' && /^(text|tel|password|number|search)$/.test(t.type)) {
@@ -6810,7 +6973,8 @@ async function refresh() {
     /* Màn Duyệt cũng làm mới: admin để màn này mở cả buổi, không làm mới thì khu báo lại hay gửi sau
        chốt mà màn hình vẫn bày số cũ. Đang mở hộp xác nhận thì để yên, vòng sau hỏi lại. */
     const reviewBusy = S.screen === 'duyet' && (S.ask || S.busy);
-    if (changed && !busy && !reviewBusy && ['home', 'ton', 'khu', 'nhap', 'dem', 'stats', 'vaymuon', 'vaychitiet', 'satvun', 'duyet', 'giacong', 'gcdon', 'quanso', 'qstk'].includes(S.screen)) {
+    const manLamMoi = ['home', 'ton', 'khu', 'nhap', 'dem', 'stats', 'vaymuon', 'vaychitiet', 'satvun', 'duyet', 'giacong', 'gcdon', 'quanso', 'qstk'];
+    if (changed && !busy && !reviewBusy && manLamMoi.includes(S.screen)) {
       await loadBoot();
       if (S.screen === 'quanso') await qsTai();
       if (S.screen === 'qstk') S.tk = await tkTai();
@@ -6821,6 +6985,12 @@ async function refresh() {
       if (S.screen === 'vaychitiet') S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt);
       if (S.screen === 'duyet') await reloadReview();
       render();
+    }
+    /* Đang xem số liệu cũ (mất mạng lúc mở app) ở một màn không nằm trong danh sách làm mới: có mạng lại thì kéo số mới về,
+       không thì dải "Mất kết nối" nằm mãi và admin sửa Cài đặt trên số cũ. Đang gõ dở thì để yên, vòng sau thử lại. */
+    if (S.stale && S.boot && S.screen !== 'baocaoca' && !manLamMoi.includes(S.screen) && !S.busy && !S.ask
+      && !(document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))) {
+      await loadBoot(); render();
     }
     /* Màn báo cáo ca: tổ báo thêm (hay đơn gia công đổi) thì bước 1 và các phần chưa sửa tay phải theo số mới. Chỉ thay
        SỐ LIỆU — chữ đang sửa, phần đang mở giữ nguyên. Đang mở ô sửa thì không vẽ lại (mất con trỏ trong ô nhiều
