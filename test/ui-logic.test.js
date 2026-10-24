@@ -1637,6 +1637,42 @@ const run = async () => {
     ctx.fetch = f0;
     r(`localStorage.removeItem('kt:pending'); localStorage.removeItem(draftKey());`);
   }
+  /* ---- 1h. Rà soát đợt 4: hết phiên (401) không được làm mất / đánh hỏng hàng chờ; đăng xuất quên dữ liệu người trước;
+     đổi PIN xong mà tải dữ liệu lỗi thì không vẽ màn chính với S.boot rỗng ---- */
+  {
+    const f0 = ctx.fetch;
+    const loi = (status, error) => Promise.resolve({ ok: false, status, json: () => Promise.resolve({ error }) });
+    r(`S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.busy = false; S.ask = null; localStorage.removeItem('kt:pending');`);
+    r(`queuePending({ khu: 'A', day: S.boot.today, items: [{ phi: 'D10', v: 5, kind: 'dem', bo: 0, le: 5 }], ts: Date.now(), uid: 1, uname: 'A' });`);
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/counts') === 0 ? loi(401, 'Hết phiên') : f0(url, opt));
+    await r('flushPending()');
+    ok('flushPending gặp 401: báo cáo giữ nguyên, không bị đánh dấu hỏng', r('readPending().length') === 1 && !r('readPending()[0].err'), r('JSON.stringify(readPending())'));
+    r(`localStorage.removeItem('kt:pending'); S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);
+    r(`qsGhiHang([{ id: 'q1', uid: 1, body: { ngay: S.boot.today, ca: 1, tong: 5, lam: 5, nghi: {}, ghi_chu: '' }, at: Date.now() }]);`);
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/quanso') === 0 ? loi(401, 'Hết phiên') : f0(url, opt));
+    await r('qsFlush()');
+    ok('qsFlush gặp 401: lần báo quân số vẫn nằm trong hàng chờ', r('qsHangDoi().length') === 1, r('JSON.stringify(qsHangDoi())'));
+    r(`localStorage.removeItem('kt:qsq'); S.boot = _boot(); indexBoot(S.boot); S.me = ${JSON.stringify(boot.user)}; S.screen = 'home';`);
+
+    // đăng xuất: người sau không thấy danh sách người dùng / nhật ký / hộp xác nhận của người trước
+    ctx.fetch = f0;
+    r(`S.users = [{ id: 9, name: 'X', phone: '0900000009' }]; S.audit = [{ id: 1 }]; S.review = { khus: [] }; S.gc = { items: [] }; S.nhap.lines = [{ phi: 'D10', qty: 5 }]; S.pinShown = { name: 'X', pin: '1111' };`);
+    r(`S.ask = { msg: 'x', ok: 'y', resolve: (v) => { globalThis._askTra = v; } };`);
+    await r('ACTIONS.logout()');
+    ok('đăng xuất: bỏ danh sách người dùng, nhật ký, màn duyệt, phiếu dở và PIN đang hiện', r('S.users') === null && r('S.audit') === null && r('S.review') === null && r('S.gc') === null && r('S.nhap.lines.length') === 0 && r('S.pinShown') === null);
+    ok('đăng xuất: hộp xác nhận đang mở bị huỷ (trả lời false)', r('S.ask') === null && ctx._askTra === false, String(ctx._askTra));
+
+    // đổi PIN xong, tải dữ liệu lỗi: về màn đăng nhập, không crash khi vẽ
+    r(`S.me = { id: 2, name: 'B', role: 'tieudoi', must_change: 1 }; S.boot = null; S.screen = 'home'; S.err = '';`);
+    EL.pin0 = mkEl('pin0'); EL.pin0.value = '1234'; EL.pin1 = mkEl('pin1'); EL.pin1.value = '2469'; EL.pin2 = mkEl('pin2'); EL.pin2.value = '2469';
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/bootstrap') === 0 ? loi(500, 'lỗi máy chủ') : f0(url, opt));
+    let loiRender = '';
+    try { await r('ACTIONS.changepin()'); } catch (e) { loiRender = e.message; }
+    ok('đổi PIN xong mà tải dữ liệu lỗi: về màn đăng nhập kèm lời nhắc dùng PIN mới, không crash', !loiRender && r('S.screen') === 'login' && r('S.me') === null && /PIN mới/.test(r('S.err')), loiRender + ' | ' + r('S.screen') + ' | ' + r('S.err'));
+    ctx.fetch = f0;
+    delete EL.pin0; delete EL.pin1; delete EL.pin2;
+    r(`S.me = ${JSON.stringify(boot.user)}; S.screen = 'home'; S.err = ''; S.boot = _boot(); indexBoot(S.boot);`);
+  }
   // chuỗi "giữ nguyên": sáng đã giữ (chuỗi chạm trần) thì chiều vẫn giữ tiếp được, như server
   r(`S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.boot.kp['A|D10'].keep_streak = 3;
      S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 300, kind: 'giu', ts: Date.now() }];`);
@@ -1644,6 +1680,81 @@ const run = async () => {
   r(`S.boot.counts = [{ khu_id: 'A', phi_id: 'D10', v: 300, kind: 'giu', ts: Date.now() - 864e5 }];`);
   ok('lần giữ nguyên là của hôm qua (chuyển sang): vẫn chặn khi chạm trần', /quá nhiều ngày/.test(r("keepBlock('A','D10')")), r("keepBlock('A','D10')"));
   r(`S.form = {}; S.screen = 'home'; S.boot = _boot(); indexBoot(S.boot);`);
+
+  /* ---- Rà soát app.js dòng 1-2400 ---- */
+  {
+    // giờ hiển thị theo múi Việt Nam, không theo múi của máy: 17:30 UTC = 00:30 hôm sau ở VN
+    const ts = Date.UTC(2026, 9, 24, 17, 30);
+    ok('hhmm theo giờ VN (UTC+7)', r(`hhmm(${ts})`) === '00:30', r(`hhmm(${ts})`));
+    ok('dmy theo giờ VN, sang ngày mới', r(`dmy(${ts})`) === '25/10 00:30', r(`dmy(${ts})`));
+    // thân trả lời "null" của lỗi HTTP không được làm api() nổ TypeError
+    const f0 = ctx.fetch;
+    ctx.fetch = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve(null) });
+    let er = null;
+    try { await r(`api('POST', '/x', {})`); } catch (e) { er = e; }
+    ok('thân "null" + lỗi 500: ra Error có status/retry, không phải TypeError', er && er.status === 500 && er.retry === true && !(er instanceof TypeError), er && er.message);
+    // gửi báo cáo thành công nhưng tải lại số liệu hỏng mạng: KHÔNG xếp hàng gửi lại lần nữa
+    r(`S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); S.boot.today = vnDayOf(Date.now()); indexBoot(S.boot); S.khu = 'A'; S.screen = 'dem'; localStorage.removeItem('kt:pending'); loadDraft(true); S.toast = '';
+       S.draft.cells = { D10: { v: 100, kind: 'dem', bo: 10, le: 0 } };`);
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/bootstrap') === 0
+      ? Promise.reject(new Error('mạng')) : f0(url, opt));
+    await r('sendCounts()');
+    ok('PUT xong rồi loadBoot hỏng: không xếp hàng lại báo cáo đã gửi', r('readPending().length') === 0 && r('S.screen') === 'khu', r('JSON.stringify(readPending())') + ' | ' + r('S.toast'));
+    // gửi bù gặp 401: giữ báo cáo, không gắn lỗi vĩnh viễn
+    ctx.fetch = (url, opt) => (String(url).indexOf('/api/counts') === 0
+      ? Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'hết phiên' }) }) : f0(url, opt));
+    r(`S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); indexBoot(S.boot); S.screen = 'home';
+       writePending([{ khu: 'A', day: S.boot.today, ts: Date.now(), uid: 1, uname: 'A', items: [{ phi: 'D10', v: 5, kind: 'dem' }] }]);`);
+    await r('flushPending()');
+    ok('gửi bù gặp 401: báo cáo còn nguyên, không bị gắn err', r('readPending().length') === 1 && !r('readPending()[0].err'), r('JSON.stringify(readPending())'));
+    ctx.fetch = f0;
+    r(`localStorage.removeItem('kt:pending'); S.me = ${JSON.stringify(boot.user)}; S.boot = _boot(); indexBoot(S.boot); S.screen = 'home'; S.toast = '';`);
+    // nhật ký: trả lời cũ (đổi bộ lọc giữa chừng) không được đè kết quả mới
+    const mkRes = (o) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(o) });
+    let rel1;
+    ctx.fetch = (url, opt) => {
+      if (String(url).indexOf('/api/audit') === 0) {
+        if (/q=cu/.test(url)) return new Promise((res) => { rel1 = () => res({ ok: true, status: 200, json: () => Promise.resolve({ items: [{ id: 1, action: 'login', ts: 1 }], more: false }) }); });
+        return mkRes({ items: [{ id: 2, action: 'login', ts: 2 }], more: false });
+      }
+      return f0(url, opt);
+    };
+    r(`S.auditF = { ngay: '', q: 'cu' };`);
+    const p1 = r('loadAudit(false)');
+    r(`S.auditF = { ngay: '', q: '' };`);
+    await r('loadAudit(false)');
+    rel1(); await p1;
+    ok('loadAudit: trả lời chậm của bộ lọc cũ không đè kết quả mới', r('S.audit.length') === 1 && r('S.audit[0].id') === 2, r('JSON.stringify(S.audit)'));
+    ctx.fetch = f0;
+  }
+  // ---- 1d2. rà soát app.js 2400-4800: giờ VN, giờ server, chạy đua khi tải ----
+  // giờ hiển thị luôn là giờ Việt Nam (UTC+7), không theo múi giờ của máy
+  ok('hhmm: 17:30 UTC là 00:30 giờ VN', r('hhmm(Date.UTC(2026, 0, 1, 17, 30))') === '00:30', r('hhmm(Date.UTC(2026, 0, 1, 17, 30))'));
+  ok('dmy: 17:30 UTC ngày 1/1 là 02/01 00:30 giờ VN', r('dmy(Date.UTC(2026, 0, 1, 17, 30))') === '02/01 00:30', r('dmy(Date.UTC(2026, 0, 1, 17, 30))'));
+  // mốc ca có lẻ giây / mili giây không được ra "14h30.25"
+  ok('gioH: mốc có giây lẻ vẫn ra 14h30', r('gioH(Date.UTC(2026, 0, 1, 7, 30, 15, 500))') === '14h30', r('gioH(Date.UTC(2026, 0, 1, 7, 30, 15, 500))'));
+  // hạn 7 ngày tính theo giờ server: máy lệch giờ thì không được mở / khoá nhầm
+  r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
+  r(`S.boot.skew = 0; globalThis._dg = { tt: 'xong', user_id: 1, xong_ts: Date.now() - 6.5 * 864e5 };`);
+  ok('đơn xong 6,5 ngày trước: còn nhắn được', r('gcTnDuoc(_dg)') === true);
+  r('S.boot.skew = 1.5 * 864e5');
+  ok('đồng hồ máy chậm 1,5 ngày so với server: đơn đã quá 7 ngày thì khoá nhắn', r('gcTnDuoc(_dg)') === false);
+  r('S.boot.skew = 0');
+  // đổi nhanh sang ca khác trong lúc bản báo cáo ca trước còn đang tải: bản về chậm không được đè
+  {
+    const f0 = ctx.fetch, giu = {};
+    ctx.fetch = (url) => new Promise((res) => {
+      const m = /ca=(\d)/.exec(String(url));
+      giu[m ? m[1] : '0'] = () => res({ ok: true, status: 200, json: () => Promise.resolve({ ngay: '2026-01-05', ca: Number(m[1]), mau: { dau: { don_vi: 'ca' + m[1] } }, don: [], tdt: [], qs: [], truoc: [] }) });
+    });
+    r(`S.bcCa = { ngay: '2026-01-05', ca: 1 }; S.bcc = null; globalThis._p1 = bcTai();`);
+    r(`S.bcCa = { ngay: '2026-01-05', ca: 2 }; globalThis._p2 = bcTai();`);
+    giu['2'](); await r('_p2');
+    giu['1'](); await r('_p1');
+    ok('báo cáo ca: bản của ca 1 về chậm không đè bản ca 2 đang xem', r('S.bcc && S.bcc.ca') === 2, r('S.bcc && S.bcc.ca'));
+    ctx.fetch = f0;
+    r(`S.bcCa = null; S.bcc = null;`);
+  }
 
   // ---- 1e. không còn lỗi chính tả "cuọn" ----
   ok('không còn chữ "cuọn" sai chính tả', !/cuọn/.test(code));

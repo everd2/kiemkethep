@@ -132,8 +132,10 @@ const fmtQe = (v, p) => {
 const two = (n) => String(n).padStart(2, '0');
 // cắt tên dài cho nhãn nút khỏi tràn
 const cut = (s, n) => { const t = String(s == null ? '' : s); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-const hhmm = (ts) => { const d = new Date(ts); return two(d.getHours()) + ':' + two(d.getMinutes()); };
-const dmy = (ts) => { const d = new Date(ts); return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + hhmm(ts); };
+/* Giờ Việt Nam (UTC+7, không có giờ mùa hè), không theo múi giờ của máy: cùng một mốc ts phải ra cùng một giờ
+   trên mọi máy, và khớp với vnDayOf / vnHourNow bên dưới. */
+const hhmm = (ts) => { const d = new Date(ts + 7 * 3600e3); return two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()); };
+const dmy = (ts) => { const d = new Date(ts + 7 * 3600e3); return two(d.getUTCDate()) + '/' + two(d.getUTCMonth() + 1) + ' ' + hhmm(ts); };
 /* Vai trò theo cấp bậc. CAP là cấp DUYỆT, chép
    từ src/core.js: 0 chỉ báo; 1 = CVKTHT, duyệt báo cáo đếm và sổ vay của cấp 0; 2 = Trung đội trưởng,
    Đại đội trưởng, admin, duyệt được hết. PHIẾU KHO chỉ cấp 2 duyệt. Phần hệ thống (tài khoản, khu, phi, quy tắc) chỉ vai trò admin.
@@ -269,6 +271,7 @@ async function apiGoi(method, path, body, ctl, het, quaLau, xin) {
   let d = {};
   // quá hạn giữa lúc đọc thân trả lời: không được coi {} là trả lời thành công
   try { d = await r.json(); } catch (e) { if (het()) throw quaLau(); /* không phải JSON */ }
+  if (d === null || typeof d !== 'object') d = {}; // thân "null" / số / chuỗi: d.error bên dưới không được nổ
   if (!r.ok) {
     // 429 không có JSON là Cloudflare chặn (thường do hết hạn mức miễn phí trong ngày, tự phục hồi 7:00 sáng)
     const quota = r.status === 429 && !d.error;
@@ -802,7 +805,8 @@ async function flushPending() {
          không theo lúc có mạng lại. Gửi THỜI GIAN ĐÃ TRÔI chứ không gửi giờ máy: máy để sai giờ thì
          hiệu hai mốc vẫn đúng, server tự lấy giờ của nó trừ đi. */
       try { await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items, tuoi: Math.max(0, Date.now() - job.ts) }); sent++; boNhapDaGui(job); }
-      catch (e) { if (e.retry) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
+      /* 401 = hết phiên, không phải báo cáo sai: giữ nguyên để gửi lại sau khi đăng nhập, đừng gắn lỗi vĩnh viễn */
+      catch (e) { if (e.retry || e.status === 401) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
     }
   } finally {
     // giữ các báo cáo mới được thêm trong lúc đang gửi
@@ -842,9 +846,9 @@ async function sendCountsInner() {
     /* Lần gửi này là số mới nhất của mình cho khu + ngày đó: bản cũ còn nằm trong hàng chờ (lần
        trước gửi lỗi) phải bỏ đi, không thì lát nữa nó tự gửi lại và ĐÈ số cũ lên số vừa gửi. */
     writePending(readPending().filter((x) => !(x.khu === job.khu && x.day === job.day && ofMe(x))));
-    /* Báo cáo ĐÃ lên server ở dòng trên. Tải lại số liệu mà rớt mạng thì không được coi là gửi lỗi (rồi xếp hàng gửi lần hai):
-       cứ báo đã gửi, vòng làm mới kế tiếp sẽ kéo số liệu về. */
-    try { await loadBoot(); } catch (er) { /* số liệu cũ tới vòng làm mới sau */ }
+    /* Server ĐÃ nhận. Tải lại số liệu hỏng (mạng) không được rơi xuống catch bên dưới: ở đó báo cáo bị xếp hàng
+       gửi lại lần nữa và người dùng đọc "chưa gửi được" dù số đã lưu. */
+    try { await loadBoot(); } catch (er) { /* bỏ qua: vòng làm mới sau sẽ tải lại */ }
     S.sel = null; S.screen = 'khu'; pushNav();
     say('Đã gửi báo cáo ' + khuName + (r.conflict ? '. Số khác với người báo trước, cấp trên sẽ xem.' : '. Cảm ơn bạn!'));
   } catch (e) {
@@ -2031,7 +2035,7 @@ function treoTxt(json) {
 async function loadHist(date) {
   S.hist = { date, data: null }; delete S.loadErr.lichsu; render();
   try { const d = await api('GET', '/day?date=' + date); if (S.hist.date === date) S.hist.data = d; }
-  catch (e) { S.loadErr.lichsu = e.message; say(e.message, true); }
+  catch (e) { if (S.hist.date !== date) return; /* đã sang ngày khác: lỗi của lần cũ không phải của màn đang xem */ S.loadErr.lichsu = e.message; say(e.message, true); }
   render();
 }
 
@@ -2103,7 +2107,10 @@ function repRange(kind) {
 async function loadRep() {
   const R = S.bc;
   R.data = null; delete S.loadErr.baocao; render();
-  try { R.data = await api('GET', `/report?from=${R.from}&to=${R.to}`); } catch (e) { S.loadErr.baocao = e.message; say(e.message, true); }
+  const from = R.from, to = R.to;
+  // bấm XEM hai lần với hai khoảng khác nhau: chỉ lần sau cùng được ghi, trả lời chậm của lần trước không đè lên
+  const cungKy = () => S.bc === R && R.from === from && R.to === to;
+  try { const d = await api('GET', `/report?from=${from}&to=${to}`); if (cungKy()) R.data = d; } catch (e) { if (!cungKy()) return; S.loadErr.baocao = e.message; say(e.message, true); }
   render();
 }
 
@@ -2264,15 +2271,18 @@ async function reloadLoanScreen() {
 /* Nạp nhật ký theo bộ lọc ngày/chữ. more = nối thêm trang cũ hơn (before = id nhỏ nhất đang có).
    Chip loại (Báo đếm, Vay mượn...) vẫn lọc trên máy, trên những dòng đã tải. */
 async function loadAudit(more) {
+  const seq = ++loadAudit.seq;
   const AF = S.auditF, qs = ['limit=300'];
   if (AF.ngay) qs.push('ngay=' + AF.ngay);
   if (AF.q) qs.push('q=' + encodeURIComponent(AF.q));
   if (more && S.audit && S.audit.length) qs.push('before=' + S.audit[S.audit.length - 1].id);
   if (!more) { S.audit = null; render(); }
   const r = await api('GET', '/audit?' + qs.join('&'));
+  if (seq !== loadAudit.seq) return; // có lần nạp mới hơn (đổi bộ lọc): bỏ trả lời cũ
   S.audit = more ? (S.audit || []).concat(r.items) : r.items;
   S.auditMore = !!r.more;
 }
+loadAudit.seq = 0;
 
 /* --- Thống kê --- */
 /* --- Chấm công báo cáo (admin) ---
@@ -2285,7 +2295,8 @@ async function loadChamCong() {
   const to = ydayOf(S.boot.today);
   let from = to;
   for (let i = 1; i < C.days; i++) from = ydayOf(from);
-  try { C.data = await api('GET', `/cham-cong?from=${from}&to=${to}`); } catch (e) { S.loadErr.chamcong = e.message; say(e.message, true); }
+  const ngay = C.days;
+  try { const d = await api('GET', `/cham-cong?from=${from}&to=${to}`); if (C.days === ngay) C.data = d; } catch (e) { if (C.days !== ngay) return; S.loadErr.chamcong = e.message; say(e.message, true); }
   render();
 }
 /* Thân mục "Thống kê báo cáo" của màn Nhật ký. MỘT kiểu dòng cho cả người lẫn khu: tên + một dòng
@@ -2543,6 +2554,8 @@ function loanBalances(L) {
 /* Ngày tháng của sổ vay: "07/10" cho ngày cùng năm, đủ năm khi khác năm (sổ công nợ có thể kéo
    sang năm sau). Số ngày giữa hai ngày YYYY-MM-DD tính theo lịch, không theo giờ. */
 const ngayNgan = (d) => (!d ? '' : d.slice(0, 4) === (S.boot ? S.boot.today : '').slice(0, 4) ? fmtDay(d).slice(0, 5) : fmtDay(d));
+// giờ SERVER: các hạn "huỷ trong 10 phút / 7 ngày" tính theo giờ server, không theo đồng hồ máy (máy lệch giờ thì nút hiện sai)
+const svNow = () => Date.now() + ((S.boot && S.boot.skew) || 0);
 const soNgay = (a, z) => Math.round((Date.parse(z) - Date.parse(a)) / 864e5);
 const congNgay = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 // các lần vay còn nợ (server tính: lần trả trừ vào lần vay cũ nhất trước), của màn đang mở
@@ -2571,9 +2584,9 @@ function loanCard(rows) {
     : quyen && cho
       ? `<div class="row gap6"><button class="btn s ok" data-a="lduyet" data-id="${id}">Duyệt</button><button class="btn s bad" data-a="lvoid" data-id="${id}">Từ chối</button></div>`
     // cùng luật với server: admin huỷ lần ghi đã duyệt trong 7 ngày; quá hạn thì ghi một lần ngược lại
-    : !cho && quyen && Date.now() - r0.duyet_ts > 7 * 864e5
+    : !cho && quyen && svNow() - r0.duyet_ts > 7 * 864e5
       ? '<span class="sm muted" style="text-align:right;max-width:110px">quá 7 ngày, ghi lần ngược lại để sửa</span>'
-    : quyen || (mine && (cho || Date.now() - r0.duyet_ts < 10 * 60e3))
+    : quyen || (mine && (cho || svNow() - r0.duyet_ts < 10 * 60e3))
       ? `<button class="btn s bad" data-a="lvoid" data-id="${id}">${cho ? 'Rút lại' : 'Huỷ'}</button>`
       : '';
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r0.voided_uname ? ' · ' + esc(r0.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>' : `<span class="badge ok">Đã duyệt${r0.duyet_uname ? ' · ' + esc(r0.duyet_uname) : ''}</span>`;
@@ -2745,8 +2758,8 @@ function svCard(r) {
   const nut = huy ? ''
     : quyen && cho ? `<div class="row gap6"><button class="btn s ok" data-a="svduyet" data-id="${r.id}">Duyệt</button><button class="btn s bad" data-a="svvoid" data-id="${r.id}">Từ chối</button></div>`
     // đã duyệt quá 7 ngày: chỉ cấp chỉ huy còn huỷ được (kèm lý do), xem voidSv
-    : !cho && quyen && !isCH() && Date.now() - r.duyet_ts > 7 * 864e5 ? ''
-    : quyen || (mine && (cho || Date.now() - r.duyet_ts < 10 * 60e3)) ? `<button class="btn s bad" data-a="svvoid" data-id="${r.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>` : '';
+    : !cho && quyen && !isCH() && svNow() - r.duyet_ts > 7 * 864e5 ? ''
+    : quyen || (mine && (cho || svNow() - r.duyet_ts < 10 * 60e3)) ? `<button class="btn s bad" data-a="svvoid" data-id="${r.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>` : '';
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r.voided_uname ? ' · ' + esc(r.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>'
     : `<span class="badge ok">Đã duyệt${r.duyet_uname ? ' · ' + esc(r.duyet_uname) : ''}</span>`;
   return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
@@ -2929,7 +2942,7 @@ const GC_TN_NHANH = { lam: ['Đã rõ', 'Đang làm', 'Cần thêm thời gian',
 function gcTnDuoc(d) {
   if (!gcCuaToi(d) && !isQL()) return false;
   const dong = d.tt === 'xong' ? d.xong_ts : d.tt === 'huy' ? d.huy_ts || d.cap_ts : null;
-  return !(dong && Date.now() - dong > GC_TN_MO_MS);
+  return !(dong && svNow() - dong > GC_TN_MO_MS);
 }
 // đánh dấu đã đọc mọi tin của đơn đang mở (không chờ, lỗi mạng thì lần mở sau đánh dấu lại)
 function gcDocXong() {
@@ -2944,7 +2957,11 @@ function gcDocXong() {
 // tải lại phần trao đổi khi bộ đếm tin đổi: tin chưa đọc của mình, và đơn đang mở / bảng đơn đang xem
 async function gcTnTai() {
   S.boot.gcTn = (await api('GET', '/giacong/tnmoi')).items;
-  if (S.screen === 'gcdon' && S.gcId) { const n = (S.gcDetail && S.gcDetail.tn || []).length; S.gcDetail = await api('GET', '/giacong/' + S.gcId); if (S.gcDetail.tn.length > n) S.gcXuong = true; gcDocXong(); }
+  if (S.screen === 'gcdon' && S.gcId) {
+    const id = S.gcId, n = (S.gcDetail && S.gcDetail.tn || []).length, D = await api('GET', '/giacong/' + id);
+    // sang đơn khác trong lúc chờ thì bỏ bản này, kẻo đè đơn đang mở bằng đơn cũ
+    if (S.screen === 'gcdon' && S.gcId === id) { S.gcDetail = D; if (D.tn.length > n) S.gcXuong = true; gcDocXong(); }
+  }
   if (S.screen === 'giacong') S.gc = await api('GET', '/giacong');
 }
 const GC_KHOI_PHUC_MS = 7 * 864e5; // chép từ src/giacong.js
@@ -3256,7 +3273,7 @@ function vGcDon() {
   const ql = !isQL() ? '' : mo ? '<div class="row gap6"><button class="btn f1" data-a="gcedit">Sửa / giao lại</button><button class="btn bad f1" data-a="gchuy">Huỷ đơn</button></div>'
     : d.tt === 'xong' && d.xuat_tt !== 'duyet' ? '<button class="btn bad full" data-a="gcmolai">Mở lại đơn (chưa xong thật)</button>'
     // cùng luật với server: khôi phục đơn huỷ nhầm trong 7 ngày kể từ lúc huỷ
-    : d.tt === 'huy' ? (Date.now() - (d.huy_ts || d.cap_ts) <= GC_KHOI_PHUC_MS ? '<button class="btn full" data-a="gckhoiphuc">Khôi phục đơn (huỷ nhầm)</button>' : '<span class="sm muted" style="line-height:1.4">Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Cần làm lại thì giao đơn mới giống đơn này.</span>') : '';
+    : d.tt === 'huy' ? (svNow() - (d.huy_ts || d.cap_ts) <= GC_KHOI_PHUC_MS ? '<button class="btn full" data-a="gckhoiphuc">Khôi phục đơn (huỷ nhầm)</button>' : '<span class="sm muted" style="line-height:1.4">Đơn huỷ đã quá 7 ngày, không khôi phục được nữa. Cần làm lại thì giao đơn mới giống đơn này.</span>') : '';
   /* TRAO ĐỔI VÀ LỊCH SỬ: một dòng thời gian, cũ ở trên, mới ở dưới, để tin nhắn nằm ngay cạnh mốc làm nó phát sinh
      ("Bình báo vướng: thiếu thép" rồi "Cv: thép D16 về lúc 14h"). Mốc của đơn là dòng xám nhỏ; tin nhắn là ô. */
   const trongDon = (uid) => gcNguoi(d).includes(uid);
@@ -3267,7 +3284,7 @@ function vGcDon() {
   const tinHtml = (t) => {
     const toi = t.user_id === S.me.id, moi = !toi && t.id > (D.doc || 0);
     const nhan = trongDon(t.user_id) ? '' : ` <span class="sm muted">· ${esc(roleTen(t.role))}</span>`;
-    const thu = toi && !t.thu_hoi && Date.now() - t.ts < GC_TN_THU_HOI_MS ? ` · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="gctnthu" data-id="${t.id}">Thu hồi</button>` : '';
+    const thu = toi && !t.thu_hoi && svNow() - t.ts < GC_TN_THU_HOI_MS ? ` · <button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0" data-a="gctnthu" data-id="${t.id}">Thu hồi</button>` : '';
     return `<div class="col" style="align-items:${toi ? 'flex-end' : 'flex-start'}"><div class="col" style="gap:3px;max-width:86%;padding:8px 12px;border-radius:14px;border:${moi ? '2px solid var(--bad)' : '1px solid var(--line)'};background:${toi ? '#DCE6F2' : '#fff'}">
       <span class="sm"><b>${toi ? 'Bạn' : esc(t.uname)}</b>${nhan} · <span class="muted">${dmy(t.ts)}</span>${t.can_tl ? ' · <b style="color:var(--warn)">Cần trả lời</b>' : ''}${thu}</span>
       ${t.thu_hoi ? '<i class="muted">Tin đã thu hồi</i>' : `<span style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(t.noi_dung)}</span>`}</div></div>`;
@@ -3588,7 +3605,8 @@ async function qsFlush() {
   try {
     for (const j of toi) {
       try { await api('PUT', '/quanso', j.body); doi = true; }
-      catch (e) { if (e.net || e.retry) break; say('Lần báo quân số lúc mất sóng không gửi được: ' + e.message, true); doi = true; }
+      // 401 (hết phiên) cũng dừng và GIỮ hàng chờ: không xoá lần báo chỉ vì phải đăng nhập lại
+      catch (e) { if (e.net || e.retry || e.status === 401) break; say('Lần báo quân số lúc mất sóng không gửi được: ' + e.message, true); doi = true; }
       qsGhiHang(qsHangDoi().filter((x) => x.id !== j.id));
     }
   } finally { qsDangGui = false; }
@@ -3925,7 +3943,7 @@ const BC_DAU = [['don_vi', 'Đơn vị', 'Trung đoàn XD 01, Tiểu đoàn 1.1,
   ['tdtr', 'Trung đội trưởng', '', 'trungdoi'], ['cbpt', 'CBPT', '', 'cvktht'], ['du_an', 'Dự án', 'Tên dự án'], ['khu_vuc', 'Khu vực thi công', 'Ví dụ: Bãi gia công trung đoàn']];
 const BC_MUC = [['s3', '3. Quân số'], ['s4', '4. Công việc trong ngày'], ['s5', '5. Máy móc thiết bị (MMTB)'], ['s6', '6. Kiểm tra, giám sát'], ['s7', '7. Vướng mắc'], ['s8', '8. Đánh giá tiến độ']];
 const bcKey = (B) => 'kt:bc:' + (S.me ? S.me.id : 0) + ':' + B.ngay + ':' + B.ca; // theo người: máy dùng chung thì nháp của người này không dính sang người kia
-const gioH = (ms) => { const m = ((ms + 7 * 3600e3) % 864e5) / 60e3; return Math.floor(m / 60) + 'h' + (m % 60 ? two(m % 60) : ''); };
+const gioH = (ms) => { const m = Math.floor(((ms + 7 * 3600e3) % 864e5) / 60e3); return Math.floor(m / 60) + 'h' + (m % 60 ? two(m % 60) : ''); };
 // "Dầm D3 tầng 5 trục X12-X17 / Y3-Y5 KDC": đủ để đọc ra cấu kiện nằm ở đâu
 const bcDon = (d) => [d.cau_kien, d.tang ? 'tầng ' + d.tang : '', d.cote ? 'cote ' + d.cote : '', d.truc ? 'trục ' + d.truc : '', d.phan_khu || '', d.hang_muc ? '(' + d.hang_muc + ')' : ''].filter(Boolean).join(' ');
 // lý do nghỉ đọc thành câu; "lý do khác" thay bằng chính ghi chú tổ đã ghi
@@ -4012,16 +4030,16 @@ function bcVGoc(B) {
   if (B.bao) return JSON.parse(JSON.stringify(B.bao.viec || bcVRong()));
   const H = B.homTruoc, V = bcVRong();
   if (!H) return { ...V, tu: JSON.parse(JSON.stringify(B.viecTruoc || [])) };
-  if (typeof H.muc.s4 === 'string') return V;
-  Object.entries(H.viec.d || {}).forEach(([k, o]) => {
+  if (typeof (H.muc || {}).s4 === 'string') return V;
+  Object.entries((H.viec || {}).d || {}).forEach(([k, o]) => {
     const don = B.don.find((x) => String(x.id) === k);
     if (!don) return;
     const app = bcDonTt(don);
     if (o.an || (o.tt === 'xong' && app !== 'xong')) V.d[k] = { an: 1 };
     else if (typeof o.tt === 'number' && typeof app === 'number' && o.tt > app) V.d[k] = { tt: o.tt, g: app };
   });
-  V.them = (H.viec.them || []).filter((id) => B.don.some((x) => x.id === id) && !(V.d[id] && V.d[id].an));
-  V.tu = (H.viec.tu || []).filter((x) => x.tt !== 'xong').map((x) => ({ ...x }));
+  V.them = ((H.viec || {}).them || []).filter((id) => B.don.some((x) => x.id === id) && !(V.d[id] && V.d[id].an));
+  V.tu = ((H.viec || {}).tu || []).filter((x) => x.tt !== 'xong').map((x) => ({ ...x }));
   return V;
 }
 // chữ các mục và nguồn quân số của bản chung: báo cáo đã lưu của ca, ca chưa ai lưu thì theo cùng ca hôm trước
@@ -4199,6 +4217,7 @@ function bcNhap() {
 async function bcTai() {
   const c = S.bcCa;
   const B = await api('GET', '/baocao' + (c ? `?ngay=${c.ngay}&ca=${c.ca}` : ''));
+  if (S.bcCa !== c) return; // đã chạm sang ca khác trong lúc chờ: bản này là của ca cũ, bỏ
   let n = null;
   try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
   // nháp kiểu cũ giữ cả bản chứ không phải phần khác: đọc thành "mọi mục theo nháp"
@@ -5389,16 +5408,33 @@ function settle(kind) {
   S.sel = nx; fillSel(nx); S.scrollSel = nx;
 }
 
+/* Quên dữ liệu của người đăng nhập trước: máy dùng chung, người sau không được thấy danh sách người dùng, nhật ký, sổ vay,
+   đơn gia công... người trước còn để lại trong bộ nhớ, cũng không được thừa hưởng phiếu / sổ đang gõ dở. */
+function quenNguoiTruoc() {
+  Object.assign(S, {
+    review: null, audit: null, auditMore: false, users: null, pinShown: null, usage: null, loans: null, loanDetail: null, svs: null,
+    gc: null, gcDetail: null, gcForm: null, gcId: null, gcXu: null, gcVg: null, qs: null, qsH: null, bcc: null, bcM: {}, bcDau: null, bcMo: null,
+    tk: null, cmp: null, subs: {}, kuEdit: null, kuPick: [], bkFile: null, uRename: null, sel: null, ask: null, loadErr: {},
+    hist: { date: '', data: null }, bc: { from: '', to: '', data: null }, cc: { days: 7, data: null, mo: {} }, _dataUid: null,
+  });
+  Object.assign(S.nhap, { lines: [], qty: 0, done: null, khoa: null, reason: null });
+  Object.assign(S.loan, { lines: [], bb: false, zl: false, done: null });
+  S.sv.done = null;
+  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
+}
+
 const ACTIONS = {
   async login() {
     if (S.busy) return; // bấm nhiều lần khi mạng chậm sẽ tính thành nhiều lần sai PIN
-    const phone = val('phone'), pin = val('pin');
+    const phone = val('phone').trim(), pin = val('pin');
     S.form.phone = phone;
     if (!phone || pin.length !== 4) { S.err = 'Nhập số điện thoại và PIN 4 số'; return render(); }
     S.busy = true; S.busyMsg = 'Đang đăng nhập...'; S.err = ''; render();
     try {
       const r = await api('POST', '/login', { phone, pin });
       try { localStorage.setItem('kt:phone', phone); } catch (e) { /* bỏ qua */ }
+      // đăng nhập người KHÁC với người dùng máy trước đó (phiên hết hạn, không bấm Đăng xuất): bỏ dữ liệu người trước
+      if (S._dataUid && S._dataUid !== r.user.id) quenNguoiTruoc();
       S.me = r.user; S.err = ''; S.screen = 'home';
       if (!r.user.must_change) { await loadBoot(); flushPending(); }
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
@@ -5406,7 +5442,7 @@ const ACTIONS = {
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
     render();
   },
-  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } xoaPhien(); render(); },
+  async logout() { try { await api('POST', '/logout', {}); } catch (e) { /* bỏ qua */ } const a = S.ask; xoaPhien(); quenNguoiTruoc(); if (a) a.resolve(false); /* hộp xác nhận của người trước không sống sang màn đăng nhập */ render(); },
   async changepin() {
     if (S.busy) return;
     const a = val('pin0'), n1 = val('pin1'), n2 = val('pin2');
@@ -5416,13 +5452,9 @@ const ACTIONS = {
     try {
       await api('POST', '/change-pin', { pin: a, newPin: n1 });
       S.err = '';
-      try { S.me.must_change = 0; await loadBoot(); S.screen = 'home'; say('Đã đổi PIN.'); }
-      catch (er) {
-        /* PIN đã đổi trên máy chủ nhưng chưa tải được số liệu (rớt mạng): không có số liệu thì không vẽ được màn nào,
-           nên quay về đăng nhập bằng PIN mới thay vì kẹt ở màn trống. */
-        if (!S.boot) { S.me.must_change = 1; xoaPhien(); S.err = 'Đã đổi PIN. Mạng đang yếu, hãy đăng nhập lại bằng PIN mới.'; }
-        else S.screen = 'home';
-      }
+      // PIN đã đổi bên server: tải dữ liệu lỗi thì không được để màn chính vẽ với S.boot rỗng, cũng không bắt nhập lại PIN cũ
+      try { await loadBoot(); S.me.must_change = 0; S.screen = 'home'; say('Đã đổi PIN.'); }
+      catch (e2) { S.me = null; S.boot = null; S.screen = 'login'; S.err = 'Đã đổi PIN nhưng chưa tải được dữ liệu (' + e2.message + '). Hãy đăng nhập lại bằng PIN mới.'; }
     }
     catch (e) { S.err = e.message; }
     finally { S.busy = false; S.busyMsg = ''; }
@@ -5723,7 +5755,7 @@ const ACTIONS = {
     act(async () => { await api('POST', '/reopen', { note }); S.form.reopenNote = ''; await Promise.all([reloadReview(), loadBoot()]); }, 'Đã hoàn tác lần đặt lại số liệu.');
   },
   hprev() { loadHist(ydayOf(S.hist.date)); },
-  hnext() { const n = new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
+  hnext() { if (!S.hist.date) return; const n =new Date(Date.parse(S.hist.date) + 864e5).toISOString().slice(0, 10); if (n <= S.boot.today) loadHist(n); },
   rquick(d) { [S.bc.from, S.bc.to] = repRange(d.v); S.form.rfrom = S.bc.from; S.form.rto = S.bc.to; loadRep(); },
   rload() { const a = val('rfrom'), z = val('rto'); if (!a || !z || a > z) return say('Chọn khoảng ngày hợp lệ.', true), render(); S.bc.from = a; S.bc.to = z; loadRep(); },
   rcsv() { const a = val('rfrom') || S.bc.from, z = val('rto') || S.bc.to; download(`/report?format=csv&from=${a}&to=${z}`, `bao-cao_${a}_${z}.csv`); },
@@ -6398,7 +6430,7 @@ const ACTIONS = {
       if (X) {
         await anhTai(X.loai, X.eid);
         const ds = anhListCuaDong(X.loai, X.eid);
-        if (!ds.length) S.anhXem = null; else S.anhXem.i = Math.min(X.i, ds.length - 1);
+        if (!ds.length) S.anhXem = null; else if (S.anhXem) S.anhXem.i = Math.min(X.i, ds.length - 1); // người dùng có thể đã đóng hộp xem
       }
     }, 'Đã xoá ảnh.');
   },
@@ -6972,13 +7004,19 @@ function pollEvery() {
   if (h < 6 || h >= 20) return 15 * 60e3;
   return Date.now() - lastAct > 5 * 60e3 ? 5 * 60e3 : 60e3;
 }
+let refreshing = false;
 async function refresh() {
-  if (!S.me || document.hidden || S.me.must_change) return;
+  if (!S.me || document.hidden || S.me.must_change || refreshing) return; // refreshing: online + visibilitychange + tick không chạy chồng nhau
   if (Date.now() - lastScroll < 2000) return; // đang cuộn: để yên, vòng sau hỏi lại
   lastPoll = Date.now();
+  refreshing = true;
+  try { await refreshInner(); } finally { refreshing = false; }
+}
+async function refreshInner() {
   try {
     // chỉ hỏi số phiên bản (rất nhẹ), có thay đổi hoặc sang ngày mới mới tải lại toàn bộ
     const r = await api('GET', '/rev');
+    if (!S.me) return; // trong lúc chờ đã đăng xuất / hết phiên: không tải dữ liệu cho phiên không còn
     const healed = S.netBad; S.netBad = false; S.netOk = Date.now();
     checkVer();
     if (readPending().some((j) => !j.err && ofMe(j))) flushPending();
