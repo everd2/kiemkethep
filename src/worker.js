@@ -206,7 +206,7 @@ async function route(req, env, url, user, method, p, r0) {
   needCap(1);
   if (r0 === 'review' && method === 'GET') return json(await computeReview(env, vnDay()));
   // báo cáo ca gửi cấp trên: CVKTHT trở lên soạn (gom quân số đầu ca + gia công theo mẫu), xem src/baocao.js
-  if (r0 === 'baocao' && !p[1] && method === 'GET') return bcView(env, url);
+  if (r0 === 'baocao' && !p[1] && method === 'GET') return bcView(env, url, user);
   if (r0 === 'baocao' && !p[1] && method === 'PUT') return bcPut(req, env, user);
   // báo cáo sản lượng theo ngày: cùng khuôn, cùng người soạn (CVKTHT trở lên), xem src/sanluong.js
   if (r0 === 'sanluong' && !p[1] && method === 'GET') return slView(env, url);

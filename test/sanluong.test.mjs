@@ -248,8 +248,20 @@ async function main() {
   // dòng tự gõ của báo cáo ca: bỏ dấu đầu dòng, nhưng giữ dấu của số (+84..., -5 độ)
   eq('bcDong bỏ gạch đầu dòng, giữ dấu của số', R(`bcDong('- Việc A\\n-Việc B\\n+84 912 345\\n-5 độ C\\n• Việc D\\n* Việc E')`), ['Việc A', 'Việc B', '+84 912 345', '-5 độ C', 'Việc D', 'Việc E']);
 
+  // mở lại màn: hiện NGAY bản đã tải gần đây (không chờ mạng), bản mới tải ở nền rồi thay vào
+  R(`S.screen = 'more'`);
+  R(`ACTIONS.slngay({ v: '${D}' })`); await cho();
+  eq('mở lại báo cáo sản lượng: có số ngay khi bấm, chưa cần chờ mạng', R(`S.sl = null; ACTIONS.slmo(); !!(S.sl && S.sl.to && S.sl.to.length)`), true);
+  await cho();
+  eq('sau khi bản mới về: vẫn đúng ngày, đúng số (nguồn đã lưu: Chỉ số thiết lập -> Khoa 10)', [R('S.sl.ngay'), R('S.slNguon'), R(`S.sl.to.find((x) => x.id === ${khoa.id}).lam`)], [D, 'tl', 10]);
+  R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca')`); await cho();
+  eq('mở lại báo cáo ca cùng ca: có số ngay khi bấm', R(`S.screen = 'more'; S.bcc = null; go('baocaoca'); !!S.bcc`), true);
+  await cho();
+  eq('báo cáo ca sau khi bản mới về vẫn đúng ca', [R('S.bcc.ngay'), R('S.bcc.ca')], [D, 1]);
+
   // tự dùng bản mới nhất: có bản mới mà không làm dở việc gì thì tải lại; đang làm dở thì chờ
-  R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = [];`);
+  R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = []; S.screen = 'sanluong';`);
+  eq('ô sửa của màn báo cáo ca còn mở nhưng đã rời màn đó: không coi là việc dở', R(`S.bcMo = 'dau'; coViecDo()`), false);
   eq('có bản mới, không việc dở: tự tải lại', [R('tuCapNhat()'), R('globalThis.__tai')], [true, 1]);
   R(`S.slTlMo = true`);
   eq('đang mở bảng thiết lập (việc dở): chưa tải lại', [R('tuCapNhat()'), R('globalThis.__tai')], [false, 1]);

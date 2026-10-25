@@ -94,8 +94,18 @@ function docCa(q, st) {
 /* Số liệu cho một ca: quân số hai ca của ngày đó (tổ chia ca thì dòng ca kia cũng vào báo cáo), lần báo gần nhất
    của từng tổ (tổ chưa báo vẫn vào tổng quân số), đơn gia công đang làm và đơn xong trong giờ ca, các đơn đang
    vướng / trễ, người có thể chọn nhanh làm chỉ huy, mẫu, và báo cáo đã soạn (nếu có). */
-export async function bcView(env, url) {
+/* Cài đặt (giờ ca, hạn báo) hiếm khi đổi mà màn báo cáo ca phải có nó TRƯỚC khi biết đọc ca nào — một lượt gọi D1 nối tiếp mỗi lần
+   mở. Giữ tạm trong isolate theo đúng `rev` của lần đọc: mọi lần ghi (kể cả đổi cài đặt) đều tăng rev, nên số giữ tạm không bao giờ
+   cũ hơn dữ liệu; rev đổi thì đọc lại. rev lấy sẵn trong lượt kiểm phiên đăng nhập (auth), không tốn thêm lượt nào. */
+let stNho = null;
+async function caiDatNhanh(env, rev) {
+  if (rev != null && stNho && stNho.db === env.DB && stNho.rev === rev) return stNho.st;
   const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results);
+  if (rev != null) stNho = { db: env.DB, rev, st };
+  return st;
+}
+export async function bcView(env, url, user) {
+  const st = await caiDatNhanh(env, user && user.rev);
   const c = docCa(url.searchParams, st), gio = caGio(st, c), hien = caLuc(st);
   const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),

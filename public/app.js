@@ -226,6 +226,7 @@ function sauGhi() {
    bảng gia công, số quân số, thẻ PIN vừa cấp... của người trước. */
 function xoaPhien() {
   forgetBoot();
+  Object.keys(NHO).forEach((k) => delete NHO[k]);
   S.me = null; S.boot = null; S.stale = null; S.screen = 'login'; S.err = ''; S.form = {}; S.qsH = null;
   Object.assign(S, { sl: null, slNguon: null, slTlMo: false, slLai: false, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
     review: null, users: null, pinShown: null, loans: null, loanDetail: null, svs: null, audit: null, usage: null, cmp: null, subs: {},
@@ -304,7 +305,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v57';
+const BAN = 'kho-thep-v58';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -328,7 +329,11 @@ async function checkVer(cachMs) {
    Nháp đếm, nháp báo cáo ca, hàng chờ gửi bù đều nằm trong bộ nhớ máy nên tải lại không mất. */
 function coViecDo() {
   const ae = typeof document !== 'undefined' ? document.activeElement : null;
-  return !!(S.busy || S.ask || S.sel || S.bcMo || S.gcForm || S.gcXu || S.gcVg || S.slTlMo || (S.nhap && S.nhap.lines && S.nhap.lines.length)
+  /* cờ của một màn chỉ tính khi ĐANG ĐỨNG ở màn đó: rời màn báo cáo ca mà ô sửa còn ghi "mở" thì không phải việc dở (nháp đã ghi
+     xuống máy theo từng chữ) — không thì app không bao giờ tự cập nhật. Phiếu nhập đang lập (nhiều dòng) thì giữ ở mọi màn. */
+  const o = S.screen;
+  return !!(S.busy || S.ask || S.gcXu || S.gcVg || (o === 'dem' && S.sel) || (o === 'baocaoca' && S.bcMo) || (o === 'gcform' && S.gcForm)
+    || (o === 'sanluong' && S.slTlMo) || (S.nhap && S.nhap.lines && S.nhap.lines.length)
     || (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || '') && ae.value));
 }
 function tuCapNhat() {
@@ -4246,10 +4251,32 @@ function bcNhap() {
     else localStorage.removeItem(bcKey(S.bcc));
   } catch (e) { /* đầy bộ nhớ */ }
 }
+/* MỞ NGAY, CẬP NHẬT SAU (báo cáo ca, báo cáo sản lượng): mỗi lần mở là một vòng gọi máy chủ + cơ sở dữ liệu, trên 4G ngoài bãi có lúc
+   tới vài giây. Bản tải gần đây (của CHÍNH người này, trong NHO_MS) được bày ra ngay, lần tải mới chạy ở nền rồi thay vào — phần đang
+   sửa vẫn giữ (nháp ghi xuống máy theo từng chữ, ghép lại như vòng tự làm mới). Thêm nữa: tải sẵn ở nền báo cáo ca ngay sau đăng nhập
+   và báo cáo sản lượng khi mở menu Thêm (taiSan), nên lần bấm đầu cũng nhanh. Mọi thao tác ghi vẫn do máy chủ kiểm lại. */
+const NHO = {}, NHO_MS = 15 * 60e3;
+const layNho = (k) => { const x = NHO[k]; return x && S.me && x.uid === S.me.id && Date.now() - x.at < NHO_MS ? x.d : null; };
+const datNho = (k, d) => { if (S.me) NHO[k] = { at: Date.now(), d, uid: S.me.id }; };
+function taiSan(cai) {
+  if (!S.me || !S.boot || !isQL()) return;
+  if (cai === 'bc' && !layNho('bc:hien')) api('GET', '/baocao').then((B) => { datNho('bc:hien', B); datNho('bc:' + B.ngay + ':' + B.ca, B); }).catch(() => {});
+  if (cai === 'sl') { const q = S.boot.today; if (!layNho('sl:' + q)) slLay(q).then((L) => datNho('sl:' + q, L)).catch(() => {}); }
+}
 async function bcTai() {
-  const c = S.bcCa;
+  const c = S.bcCa, k = c ? 'bc:' + c.ngay + ':' + c.ca : 'bc:hien';
+  const cu = layNho(k);
+  if (cu) { bcDung(cu); render(); }
   const B = await api('GET', '/baocao' + (c ? `?ngay=${c.ngay}&ca=${c.ca}` : ''));
+  datNho(k, B); datNho('bc:' + B.ngay + ':' + B.ca, B);
   if (S.bcCa !== c) return; // đã chạm sang ca khác trong lúc chờ: bản này là của ca cũ, bỏ
+  if (!cu || cu.ngay !== B.ngay || cu.ca !== B.ca) { bcDung(B); return; }
+  // đã bày bản cũ của đúng ca này: thay số mới vào, giữ phần đang sửa và ô đang mở (như vòng tự làm mới)
+  if (S.screen !== 'baocaoca' || !S.bcc) return;
+  const K = bcKhac(); bcGhep(B, K); bcNhap();
+}
+// dựng màn báo cáo ca từ một bản số liệu B: ghép nháp trên máy, mở sẵn phần đầu nếu còn trống, dọn nháp cũ
+function bcDung(B) {
   let n = null;
   try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
   // nháp kiểu cũ giữ cả bản chứ không phải phần khác: đọc thành "mọi mục theo nháp"
@@ -4276,18 +4303,31 @@ async function bcTai() {
    lúc lưu (chup), muốn áp thiết lập hiện tại bấm "Tính lại". Ô công đã gõ nằm trong S.form (slc_<id tổ>); chỉ ô khác số đi làm được lưu. */
 const slSo = (s) => { const t = String(s == null ? '' : s).trim().replace(',', '.'); return t === '' ? NaN : Number(t); };
 const slFmt = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
-async function slTai(ngay, giu) {
-  const q = ngay || (S.sl && S.sl.ngay) || S.boot.today;
+async function slLay(q) {
   /* QUÂN SỐ lấy từ chính BÁO CÁO CA: ca ngày của ngày báo cáo và ca đêm ngày hôm trước (xem slGan). Không tính riêng ở đây.
      Ba lời gọi đi CÙNG LÚC (một vòng mạng thay vì hai): ngày hôm trước tính ngay ở máy. */
   const [L, b1, b2] = await Promise.all([api('GET', '/sanluong?ngay=' + q), api('GET', `/baocao?ngay=${q}&ca=1`), api('GET', `/baocao?ngay=${congNgay(q, -1)}&ca=2`)]);
   L.bc = [b1, b2];
+  return L;
+}
+function slDung(L, giu) {
   S.sl = L;
   if (!giu) {
     Object.keys(S.form).filter((k) => /^(slc_|slt_)/.test(k)).forEach((k) => delete S.form[k]);
     S.slNguon = (L.luu && L.luu.nguon) || null; // null = theo nguồn đã chọn trong báo cáo ca của từng ca
   }
   slGan();
+}
+async function slTai(ngay, giu) {
+  const q = ngay || (S.sl && S.sl.ngay) || S.boot.today;
+  // giu = tải lại sau khi lưu: không bày bản cũ, chờ đúng số mới
+  const cu = giu ? null : layNho('sl:' + q);
+  if (cu) { slDung(cu, false); render(); }
+  const L = await slLay(q);
+  datNho('sl:' + q, L);
+  // đã bày bản cũ mà người dùng đã đi chỗ khác / sang ngày khác: chỉ cất bản mới, không chen vào
+  if (cu && (S.screen !== 'sanluong' || !S.sl || S.sl.ngay !== q)) return;
+  slDung(L, giu || !!cu);
 }
 /* Quân số của từng tổ trong báo cáo sản lượng = quân số của báo cáo ca, tính bằng đúng bcQuanSo: u.ngay là số ca ngày của ngày
    báo cáo, u.dem là số ca đêm hôm trước (tổ làm đêm). Nguồn "Theo tổ báo" / "Chỉ số thiết lập" cùng nghĩa với báo cáo ca: mặc định
@@ -5147,6 +5187,7 @@ async function go(screen, noPush, khu) {
   } else S.screen = screen;
   if (!noPush) pushNav();
   render();
+  if (screen === 'more') taiSan('sl');
   try {
     /* Màn có danh sách tải riêng: còn bản vừa xem của CHÍNH người này thì bày luôn rồi làm mới ngầm (không xoá về
        "Đang tải"); chỉ khi chưa có gì (hoặc đổi người đăng nhập) mới chờ trắng. Bản cũ không gây hại: mọi thao tác ghi
@@ -5507,7 +5548,7 @@ const ACTIONS = {
       // đăng nhập người KHÁC với người dùng máy trước đó (phiên hết hạn, không bấm Đăng xuất): bỏ dữ liệu người trước
       if (S._dataUid && S._dataUid !== r.user.id) quenNguoiTruoc();
       S.me = r.user; S.err = ''; S.screen = 'home';
-      if (!r.user.must_change) { await loadBoot(); flushPending(); qsFlush(); }
+      if (!r.user.must_change) { await loadBoot(); flushPending(); qsFlush(); taiSan('bc'); }
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
     finally { S.busy = false; S.busyMsg = ''; }
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
@@ -6800,6 +6841,7 @@ const ACTIONS = {
     if (!Object.keys(body).length) return say('Chưa sửa thiết lập nào.', true), render();
     act(async () => {
       await api('PUT', '/sanluong/thietlap', body, 0, false);
+      delete NHO['sl:' + L.ngay];
       await slTai(L.ngay, false);
       S.slTlMo = false;
     }, 'Đã lưu thiết lập sản lượng.');
@@ -7196,7 +7238,7 @@ async function start() {
   try {
     const r = await api('GET', '/me');
     S.me = r.user;
-    if (!r.user.must_change) { await loadBoot(); cleanDrafts(S.boot.today); flushPending(); qsFlush(); }
+    if (!r.user.must_change) { await loadBoot(); cleanDrafts(S.boot.today); flushPending(); qsFlush(); taiSan('bc'); }
     S.screen = 'home';
   } catch (e) {
     if (e.retry && useCachedBoot()) S.screen = 'home';
