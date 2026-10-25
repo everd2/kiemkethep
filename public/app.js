@@ -305,7 +305,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v58';
+const BAN = 'kho-thep-v59';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -2065,7 +2065,9 @@ function treoTxt(json) {
   return uniq.length ? `<span class="sm" style="line-height:1.4">Lúc chốt còn: ${esc(uniq.join(' · '))}</span>` : '';
 }
 async function loadHist(date) {
-  S.hist = { date, data: null }; delete S.loadErr.lichsu; render();
+  /* giữ số đang có khi mở lại CÙNG điều kiện (bày ngay, số mới thay vào khi về) — chỉ xoá về "Đang tải" khi đổi điều kiện xem */
+  if (!(S.hist && S.hist.date === date && S.hist.data)) S.hist = { date, data: null };
+  delete S.loadErr.lichsu; render();
   try { const d = await api('GET', '/day?date=' + date); if (S.hist.date === date) S.hist.data = d; }
   catch (e) { if (S.hist.date !== date) return; /* đã sang ngày khác: lỗi của lần cũ không phải của màn đang xem */ S.loadErr.lichsu = e.message; say(e.message, true); }
   render();
@@ -2138,7 +2140,10 @@ function repRange(kind) {
 }
 async function loadRep() {
   const R = S.bc;
-  R.data = null; delete S.loadErr.baocao; render();
+  /* giữ số đang có khi mở lại CÙNG điều kiện (bày ngay, số mới thay vào khi về) — chỉ xoá về "Đang tải" khi đổi điều kiện xem */
+  if (R._khoa !== R.from + '|' + R.to) R.data = null;
+  R._khoa = R.from + '|' + R.to;
+  delete S.loadErr.baocao; render();
   const from = R.from, to = R.to;
   // bấm XEM hai lần với hai khoảng khác nhau: chỉ lần sau cùng được ghi, trả lời chậm của lần trước không đè lên
   const cungKy = () => S.bc === R && R.from === from && R.to === to;
@@ -2308,7 +2313,10 @@ async function loadAudit(more) {
   if (AF.ngay) qs.push('ngay=' + AF.ngay);
   if (AF.q) qs.push('q=' + encodeURIComponent(AF.q));
   if (more && S.audit && S.audit.length) qs.push('before=' + S.audit[S.audit.length - 1].id);
-  if (!more) { S.audit = null; render(); }
+  /* giữ số đang có khi mở lại CÙNG điều kiện (bày ngay, số mới thay vào khi về) — chỉ xoá về "Đang tải" khi đổi điều kiện xem */
+  const khoa = JSON.stringify(AF);
+  if (!more && S._auditKhoa !== khoa) { S.audit = null; render(); }
+  if (!more) S._auditKhoa = khoa;
   const r = await api('GET', '/audit?' + qs.join('&'));
   if (seq !== loadAudit.seq) return; // có lần nạp mới hơn (đổi bộ lọc): bỏ trả lời cũ
   S.audit = more ? (S.audit || []).concat(r.items) : r.items;
@@ -4259,7 +4267,17 @@ const NHO = {}, NHO_MS = 15 * 60e3;
 const layNho = (k) => { const x = NHO[k]; return x && S.me && x.uid === S.me.id && Date.now() - x.at < NHO_MS ? x.d : null; };
 const datNho = (k, d) => { if (S.me) NHO[k] = { at: Date.now(), d, uid: S.me.id }; };
 function taiSan(cai) {
-  if (!S.me || !S.boot || !isQL()) return;
+  if (!S.me || !S.boot) return;
+  /* 'dau': ngay sau đăng nhập / mở app — tải sẵn màn hay dùng nhất để lần bấm đầu không phải chờ: Gia công (mọi người), Duyệt và
+     Báo cáo ca (CVKTHT trở lên). Chỉ đặt vào khi màn đó chưa có số; go() vẫn tải lại số mới như thường khi vào màn. */
+  if (cai === 'dau') {
+    S._dataUid = S.me.id; // số tải sẵn là của chính người này (go() không xoá như số của người trước)
+    if (!S.gc) api('GET', '/giacong').then((g) => { if (!S.gc && S.me && S._dataUid === S.me.id) S.gc = g; }).catch(() => {});
+    if (isQL() && !S.review) api('GET', '/review').then((r) => { if (!S.review && S.me && S._dataUid === S.me.id) S.review = r; }).catch(() => {});
+    if (isQL()) taiSan('bc');
+    return;
+  }
+  if (!isQL()) return;
   if (cai === 'bc' && !layNho('bc:hien')) api('GET', '/baocao').then((B) => { datNho('bc:hien', B); datNho('bc:' + B.ngay + ':' + B.ca, B); }).catch(() => {});
   if (cai === 'sl') { const q = S.boot.today; if (!layNho('sl:' + q)) slLay(q).then((L) => datNho('sl:' + q, L)).catch(() => {}); }
 }
@@ -5198,7 +5216,7 @@ async function go(screen, noPush, khu) {
     else if (screen === 'users') { await loadUsers(); }
     else if (screen === 'lichsu') { await loadHist(S.hist.date || ydayOf(S.boot.today)); }
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
-    else if (screen === 'stats') { S.usage = null; render(); S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
+    else if (screen === 'stats') { if (S._usageDays !== S.usageDays) { S.usage = null; render(); } S._usageDays = S.usageDays; S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
     else if (screen === 'settings') { S.kuEdit = null; await loadBoot(); await loadUsers(); }
     else if (screen === 'vaymuon') { if (!S.loans) render(); S.loans = await api('GET', '/loans'); }
     else if (screen === 'satvun') { if (!S.svs) render(); S.svs = await svTai(); }
@@ -5220,7 +5238,11 @@ async function go(screen, noPush, khu) {
     else if (screen === 'quanso') { await qsTai(); }
     else if (screen === 'baocaoca') { await bcTai(); }
     else if (screen === 'sanluong') { await slTai(); }
-    else if (screen === 'qstk') { S.tk = await tkTai(); }
+    else if (screen === 'qstk') {
+      const k = 'tk:' + JSON.stringify(tkCan());
+      if (!S.tk) { const cu = layNho(k); if (cu) { S.tk = cu; render(); } }
+      S.tk = await tkTai(); datNho(k, S.tk);
+    }
     else if (['home', 'ton', 'khu', 'nhap', 'dem'].includes(screen)) {
       await bootMoi();
       /* Nháp ở trên dựng từ boot ĐANG CÓ để màn hình lên ngay, mà boot đó có thể là của hôm qua (app
@@ -5548,7 +5570,7 @@ const ACTIONS = {
       // đăng nhập người KHÁC với người dùng máy trước đó (phiên hết hạn, không bấm Đăng xuất): bỏ dữ liệu người trước
       if (S._dataUid && S._dataUid !== r.user.id) quenNguoiTruoc();
       S.me = r.user; S.err = ''; S.screen = 'home';
-      if (!r.user.must_change) { await loadBoot(); flushPending(); qsFlush(); taiSan('bc'); }
+      if (!r.user.must_change) { await loadBoot(); flushPending(); qsFlush(); taiSan('dau'); }
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
     finally { S.busy = false; S.busyMsg = ''; }
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
@@ -5590,7 +5612,8 @@ const ACTIONS = {
     if (d.f) { S.gcF = d.f; S.gcHien = null; delete S.form.gcq; }
     if (d.gid) { S.gcId = Number(d.gid); S.gcPct = null; }
     // vào Quân số từ màn Thêm: tải lại số liệu, nút quay lại về màn Thêm
-    if (d.s === 'quanso') { S.qs = null; S.qsVe = null; }
+    // vào Quân số: bày số đang có ngay, qsTai tải số mới thay vào (trước đây xoá trắng rồi mới chờ)
+    if (d.s === 'quanso') { S.qsVe = null; }
     if (d.s === 'qstk') { S.tk = null; S.tkTo = null; S.tkNgay = null; S.tkThang = null; S.tkNgMo = false; }
     // báo cáo ca: vào từ thẻ nhắc hay từ Thêm là ca đang diễn ra; quay về từ bảng quân số mở từ báo cáo thì giữ ca đang soạn
     if (d.s === 'baocaoca') { if (!(S.qsVe === 'baocaoca' && S.screen === 'quanso')) S.bcCa = null; S.bcc = null; S.qsVe = null; S.bcKhac = null; }
@@ -7238,7 +7261,7 @@ async function start() {
   try {
     const r = await api('GET', '/me');
     S.me = r.user;
-    if (!r.user.must_change) { await loadBoot(); cleanDrafts(S.boot.today); flushPending(); qsFlush(); taiSan('bc'); }
+    if (!r.user.must_change) { await loadBoot(); cleanDrafts(S.boot.today); flushPending(); qsFlush(); taiSan('dau'); }
     S.screen = 'home';
   } catch (e) {
     if (e.retry && useCachedBoot()) S.screen = 'home';
