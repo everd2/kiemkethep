@@ -191,3 +191,18 @@ a{color:var(--pri)}
 .btn:active,.chip:active,.ib:active,.key:active,.tab:active,.menu:active,button.alertbtn:active,.tonrow:active,.iconbtn:active,.boxn:active,.own:active{filter:brightness(.9)}
 .btn.dis:active,button:disabled:active{filter:none}
 :focus-visible{outline:3px solid #6FA0DB;outline-offset:2px}
+/* bảng số liệu (sổ thép về): cuộn ngang trên điện thoại, cột đầu đứng yên, số căn phải, dòng tổng đậm */
+.bangw{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:12px;-webkit-overflow-scrolling:touch}
+table.bang{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+table.bang th,table.bang td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;vertical-align:top}
+table.bang th{background:#F7F5F0;font-size:12px;font-weight:700;color:var(--mut);position:sticky;top:0}
+table.bang .so{text-align:right}
+table.bang .c1{position:sticky;left:0;background:#fff;z-index:1}
+table.bang th.c1{background:#F7F5F0;z-index:2}
+table.bang tr.tong td{font-weight:800;background:#F7F5F0;border-top:2px solid var(--line)}
+table.bang tr.nhom td{border-top:2px solid var(--line)}
+table.bang td.lech{color:var(--bad);font-weight:700}
+table.bang td.du{color:var(--ok);font-weight:700}
+table.bang td.thieu{color:var(--warn);font-weight:700}
+table.bang button.x{min-width:44px;min-height:36px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--bad);font:inherit;font-size:13px}
+table.bang button.v{min-height:36px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit;font-size:13px;padding:0 8px;margin:2px 0}
