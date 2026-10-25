@@ -1,5 +1,5 @@
 // Đăng nhập, đổi PIN, thiết lập admin đầu tiên.
-import { HttpError, IP_FAIL_MAX, LOCK_AFTER, LOCK_STEPS, bad, hashPin, json, rand, safeEq, sha256,
+import { HttpError, IP_FAIL_MAX, LOCK_AFTER, LOCK_STEPS, bad, gioVN, hashPin, json, rand, safeEq, sha256,
   vnDay } from './core.js';
 import { auditStmt, checkPin, createSession, normPhone, readJson, sessionCookie } from './helpers.js';
 
@@ -48,12 +48,12 @@ export async function login(req, env, url) {
   const pin = String(b.pin || '');
   const fail = () => new HttpError(401, 'Sai số điện thoại hoặc PIN');
   const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
-  const today = vnDay();
+  const today = gioVN(); // đếm theo giờ (xem IP_FAIL_MAX)
   const [uR, ipR] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM users WHERE phone = ?').bind(phone),
     env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today),
   ]);
-  if (ipR.results[0] && ipR.results[0].n >= IP_FAIL_MAX) throw new HttpError(429, 'Thiết bị này nhập sai quá nhiều lần hôm nay, hãy thử lại vào ngày mai hoặc báo admin');
+  if (ipR.results[0] && ipR.results[0].n >= IP_FAIL_MAX) throw new HttpError(429, 'Mạng này vừa nhập sai PIN quá nhiều lần, hãy thử lại sau ít phút (tối đa một giờ) hoặc báo admin');
   // chỉ ghi khi nhập sai, đăng nhập đúng không tốn lượt ghi
   const ipFail = env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today);
   const u = uR.results[0];

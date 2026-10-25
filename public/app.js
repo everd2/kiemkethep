@@ -304,7 +304,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v56';
+const BAN = 'kho-thep-v57';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -322,6 +322,19 @@ async function checkVer(cachMs) {
     if (!appTag) appTag = t;
     else if (t !== appTag && !S.newVer) { S.newVer = true; render(); }
   } catch (e) { /* mất mạng: lần sau hỏi lại */ }
+}
+/* TỰ DÙNG BẢN MỚI NHẤT: có bản mới (S.newVer) thì không đợi người dùng bấm dải thông báo — tải lại ngay ở lúc AN TOÀN: chuyển màn,
+   hoặc mở lại app từ nền. Đang làm dở thì chưa tải (mất chữ đang gõ / phiếu đang lập), dải vẫn hiện để bấm khi xong.
+   Nháp đếm, nháp báo cáo ca, hàng chờ gửi bù đều nằm trong bộ nhớ máy nên tải lại không mất. */
+function coViecDo() {
+  const ae = typeof document !== 'undefined' ? document.activeElement : null;
+  return !!(S.busy || S.ask || S.sel || S.bcMo || S.gcForm || S.gcXu || S.gcVg || S.slTlMo || (S.nhap && S.nhap.lines && S.nhap.lines.length)
+    || (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || '') && ae.value));
+}
+function tuCapNhat() {
+  if (!S.newVer || coViecDo()) return false;
+  try { if (typeof location !== 'undefined' && typeof location.reload === 'function') { location.reload(); return true; } } catch (e) { /* môi trường không có trang */ }
+  return false;
 }
 const verBar = () => (S.newVer
   ? `<button class="toast" data-a="reloadapp" style="margin-top:calc(8px + env(safe-area-inset-top));display:block;width:calc(100% - 24px);text-align:left;border:0;font:inherit;font-weight:700">Có bản mới của app. Bấm vào đây để cập nhật.</button>`
@@ -5114,6 +5127,8 @@ async function go(screen, noPush, khu) {
   /* Phiên vừa hết (401 trong lúc một thao tác đang chạy dở, xoaPhien đã xoá S.boot) mà thao tác đó gọi tiếp go(): không có số liệu
      thì không vẽ được màn nào — ở lại màn đăng nhập, đừng sập vì S.boot rỗng. */
   if (!S.me || !S.boot) { render(); return; }
+  // chuyển màn là lúc tự cập nhật an toàn nhất: màn cũ đã xong việc, màn mới chưa bắt đầu
+  if (tuCapNhat()) return;
   // chấm công nay là một mục của màn Nhật ký; lối cũ (nút THỬ LẠI, lịch sử trình duyệt) dẫn về đó
   if (screen === 'chamcong') { S.logTab = 'tk'; screen = 'nhatky'; }
   // màn soạn đơn chỉ vào được khi đang soạn (nút Back về lại sau khi đã lưu thì ra bảng đơn)
@@ -7194,7 +7209,8 @@ async function start() {
   setTimeout(tick, 15000);
   /* Mở app lên lại từ nền là lúc hay có bản mới nhất (app nằm ngầm qua đêm, qua lần deploy), nên
      hỏi luôn lúc đó, không đợi đủ 5 phút. */
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkVer(60e3); if (Date.now() - lastPoll > 30e3) refresh(); } });
+  // mở lại app từ nền: đã biết có bản mới mà không làm dở việc gì thì tải bản mới luôn (xem tuCapNhat)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (tuCapNhat()) return; checkVer(60e3); if (Date.now() - lastPoll > 30e3) refresh(); } });
   window.addEventListener('online', () => { render(); refresh(); flushPending(); qsFlush(); });
   window.addEventListener('offline', () => render());
   try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }

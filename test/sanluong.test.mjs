@@ -248,6 +248,17 @@ async function main() {
   // dòng tự gõ của báo cáo ca: bỏ dấu đầu dòng, nhưng giữ dấu của số (+84..., -5 độ)
   eq('bcDong bỏ gạch đầu dòng, giữ dấu của số', R(`bcDong('- Việc A\\n-Việc B\\n+84 912 345\\n-5 độ C\\n• Việc D\\n* Việc E')`), ['Việc A', 'Việc B', '+84 912 345', '-5 độ C', 'Việc D', 'Việc E']);
 
+  // tự dùng bản mới nhất: có bản mới mà không làm dở việc gì thì tải lại; đang làm dở thì chờ
+  R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = [];`);
+  eq('có bản mới, không việc dở: tự tải lại', [R('tuCapNhat()'), R('globalThis.__tai')], [true, 1]);
+  R(`S.slTlMo = true`);
+  eq('đang mở bảng thiết lập (việc dở): chưa tải lại', [R('tuCapNhat()'), R('globalThis.__tai')], [false, 1]);
+  R(`S.slTlMo = false; S.nhap.lines = [{ phi: 'D10', qty: 5 }]`);
+  eq('đang lập phiếu nhập dở: chưa tải lại', R('tuCapNhat()'), false);
+  R(`S.nhap.lines = []; S.newVer = false`);
+  eq('không có bản mới: không tải lại', R('tuCapNhat()'), false);
+  R(`delete globalThis.location`);
+
   /* ===== 6. Sao lưu có bảng mới ===== */
   const bk = (await S.call('GET', '/backup', undefined, 'Admin')).data;
   ok('bản sao lưu có báo cáo sản lượng', Array.isArray(bk.bang.san_luong) && bk.bang.san_luong.length === 1, bk.bang.san_luong && bk.bang.san_luong.length);

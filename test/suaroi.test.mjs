@@ -1,7 +1,7 @@
 /* Hồi quy đợt sửa lỗi sau rà soát toàn diện: đăng nhập song song, cookie đổi PIN, huỷ phiếu gây âm tồn, phiếu gửi trùng,
    tên phi/khu trùng thuộc tính Object, ngày vay mượn không có thật, mở khoá, khu có người bị khoá, ẩn khu còn phiếu chờ.
    node suaroi.test.mjs <đường-dẫn-repo> */
-import { boot, vnDay } from './harness.mjs';
+import { advance, boot, vnDay } from './harness.mjs';
 
 const ROOT = process.argv[2] || '.';
 const T = [];
@@ -170,6 +170,29 @@ async function main() {
   const path = (await import('node:path')).default;
   const ban = /const BAN = '([^']+)'/.exec(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8')), cache = /const CACHE = '([^']+)'/.exec(readFileSync(path.join(ROOT, 'public/sw.js'), 'utf8'));
   eq('BAN trong app.js trùng CACHE trong sw.js', ban && ban[1], cache && cache[1]);
+
+  // 20. Duyệt khu thiếu dấu số liệu (bản app cũ): báo cập nhật app, không duyệt
+  const dkMiss = await S.call('POST', '/review/duyet', { all: true, marks: null });
+  eq('duyệt thiếu dấu số liệu: 409 old_app (máy khách bật dải có bản mới)', [dkMiss.status, dkMiss.data && dkMiss.data.code], [409, 'old_app']);
+
+  // 21. giới hạn sai PIN theo mạng tính THEO GIỜ: chặn khi vượt, sang giờ sau là mở lại (không chặn cả bãi tới hết ngày)
+  let bi = 0, lan = 0;
+  for (; lan < 80; lan++) { const r = await S.call('POST', '/login', { phone: '0999999' + String(lan).padStart(3, '0'), pin: '1111' }, 'do-ip'); if (r.status === 429) { bi = lan + 1; break; } }
+  ok('nhập sai liên tục từ một mạng: bị chặn trước lần thứ 61', bi > 0 && bi <= 61, 'chặn ở lần ' + bi);
+  eq('đang bị chặn thì người đúng PIN cùng mạng cũng phải đợi', (await S.call('POST', '/login', { phone: '0900000001', pin: '2468' }, 'cungmang')).status, 429);
+  advance(3600e3);
+  eq('sang giờ sau: đăng nhập lại được', (await S.call('POST', '/login', { phone: '0900000001', pin: '2468' }, 'cungmang')).status, 200);
+
+  // 22. số thiết lập sửa NGAY SAU giờ hết ca (trước lượt chép tự động hằng giờ) vẫn được chép cho ca đó, không thành "thiếu số"
+  const datGio = (h, m = 0) => { const cur = ((Date.now() + 7 * 3600e3) % 864e5) / 60e3; let dd = h * 60 + m - cur; if (dd <= 0) dd += 1440; advance(dd * 60e3); };
+  const toMoi = await mk('Tổ Muộn', '0900000066', 'tieudoi');
+  datGio(18, 45); // ca ngày (6h30 - 18h30) vừa hết 15 phút
+  const ngayCa = vnDay();
+  eq('CVKTHT (admin) đặt thiết lập lúc 18:45', (await S.call('PUT', '/quanso/thietlap', { user: toMoi.id, tong: 10, s1: 8, s2: 0, ts: 0 })).status, 200);
+  datGio(19, 5);
+  await S.cron();
+  const chep = S.one('SELECT lam, tong FROM quan_so_tl WHERE ngay = ? AND ca = 1 AND user_id = ?', ngayCa, toMoi.id);
+  eq('lượt chép 19:05 vẫn ghi số cho ca ngày vừa hết (8/10)', chep && [chep.lam, chep.tong], [8, 10]);
 
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));

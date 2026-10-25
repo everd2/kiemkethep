@@ -78,9 +78,12 @@ export const CHUC_DANH = ['daidoi', 'trungdoi', 'cvktht'];
 export const SESSION_MS = 30 * 24 * 3600e3;
 export const LOCK_AFTER = 5;
 export const LOCK_STEPS = [15 * 60e3, 60 * 60e3, 24 * 3600e3]; // sai nhiều đợt liên tiếp thì khoá lâu dần
-// số lần sai PIN tối đa mỗi ngày từ một địa chỉ IP; cả bãi dùng chung Wi-Fi/4G (chung IP) nên để cao,
-// việc chặn dò PIN từng tài khoản đã do LOCK_AFTER/LOCK_STEPS đảm nhận
-export const IP_FAIL_MAX = 300;
+/* số lần sai PIN tối đa MỖI GIỜ từ một địa chỉ IP (chặn dò PIN rải trên nhiều tài khoản). Tính theo giờ chứ không theo ngày: cả bãi
+   dùng chung Wi-Fi/4G (chung IP), một người cố ý nhập sai thì bản cũ chặn cả bãi tới hết ngày, nay chỉ tới hết giờ đó. Việc chặn dò
+   PIN TỪNG tài khoản đã do LOCK_AFTER/LOCK_STEPS đảm nhận. */
+export const IP_FAIL_MAX = 60;
+// khoá giờ của bảng login_fail: "YYYY-MM-DDTHH" theo giờ Việt Nam (so chuỗi vẫn < ngày hôm sau nên dọn theo ngày vẫn đúng)
+export const gioVN = (ms = Date.now()) => new Date(ms + 7 * 3600e3).toISOString().slice(0, 13);
 export const SYSTEM = { id: 0, name: 'Hệ thống' };
 /* Ngưỡng cảnh báo tính theo KHỐI LƯỢNG, không theo số "cây": 10 cây D10 là 72 kg còn 10 phần D6 là 200 kg,
    nên một mốc đếm chung sẽ nhạy khác nhau cả chục lần giữa các phi. */

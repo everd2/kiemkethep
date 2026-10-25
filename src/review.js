@@ -526,8 +526,12 @@ export async function reviewDuyet(req, env, user) {
   if (!list.length) {
     throw new HttpError(403, (all ? 'Các khu đang chờ' : cho[0].name) + ` có số do CVKTHT (hoặc cấp trên, hoặc chính bạn) báo, hoặc còn phiếu kho chờ: cần ${CAP_TREN} duyệt.`, 'cap');
   }
-  const marks = b.marks && typeof b.marks === 'object' ? b.marks : null;
-  const moi = marks ? list.filter((k) => marks[k.khu] !== k.mark) : [];
+  /* Dấu số liệu (marks) của màn Duyệt người duyệt đang nhìn là BẮT BUỘC: thiếu nó thì server không biết người duyệt có thấy số
+     mới nhất chưa, có thể duyệt một con số chưa ai xem. Giao diện hiện tại luôn gửi; thiếu là bản app cũ còn trong máy -> báo
+     cập nhật (máy khách bật dải "có bản mới" khi gặp mã old_app). */
+  const marks = b.marks && typeof b.marks === 'object' && !Array.isArray(b.marks) ? b.marks : null;
+  if (!marks) throw new HttpError(409, 'Bản app trên máy đã cũ, hãy tải lại trang (bấm dải "Có bản mới") rồi duyệt lại.', 'old_app');
+  const moi = list.filter((k) => marks[k.khu] !== k.mark);
   if (moi.length) {
     throw new HttpError(409, moi.map((k) => k.name).join(', ') + ' vừa có số hoặc phiếu mới. Màn Duyệt đã tải lại, hãy xem rồi duyệt.', 'changed');
   }

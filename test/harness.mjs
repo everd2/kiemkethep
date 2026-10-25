@@ -116,6 +116,12 @@ export async function boot(root, reuse) {
   const jars = {};
   // body là Uint8Array / ArrayBuffer thì gửi nguyên bytes (ảnh), kèm type làm Content-Type
   const call = async (method, p, body, who = 'admin', type) => {
+    /* Duyệt khu bắt buộc kèm dấu số liệu của màn Duyệt (marks), như giao diện thật luôn gửi. Test không ghi marks thì tự lấy từ
+       /review của chính người đó ngay trước khi duyệt; muốn thử trường hợp THIẾU dấu thì gửi rõ marks: null. */
+    if (method === 'POST' && p === '/review/duyet' && body && typeof body === 'object' && !('marks' in body)) {
+      const rv = await call('GET', '/review', undefined, who);
+      body = { ...body, marks: Object.fromEntries(((rv.data && rv.data.khus) || []).map((k) => [k.khu, k.mark])) };
+    }
     const headers = { Origin: 'https://test.local' };
     if (jars[who]) headers.Cookie = jars[who];
     const nhiPhan = body instanceof Uint8Array || body instanceof ArrayBuffer;

@@ -23,6 +23,7 @@ export const CA_TEN = { 1: 'ca ngày', 2: 'ca đêm' };
 // trần cho một tổ: cao hơn hẳn thực tế (tổ vài chục người), chỉ để chặn gõ thừa số
 export const QS_TONG_MAX = 500;
 const QS_SUA_NGAY = 7;
+const TL_DEM_MS = 65 * 60e3; // đệm sau giờ hết ca cho số thiết lập (xem soTlCa)
 const PHUT = 60e3, NGAY = 864e5;
 
 const congNgay = (d, n) => new Date(Date.parse(d) + n * NGAY).toISOString().slice(0, 10);
@@ -409,7 +410,9 @@ function soTlCa(cfg, id, c, het) {
   const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, nghi = (tl && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0), co = s + so > 0;
   const L = caLich(cfg, id, c.ngay);
   if (L ? L !== 3 && L !== c.ca : !co) return null;
-  if ((L ? cfg.lich[id].ts : tl.ts) > het) return null;
+  /* Đặt SAU lúc hết ca thì không biết lúc đó tổ có làm ca này không (không chép ngược). Nhưng cho một khoảng đệm bằng chu kỳ chép tự
+     động (lịch chạy mỗi giờ): CVKTHT sửa số ngay sau giờ hết ca, trước lượt chép, thì ca đó vẫn có số thay vì thành "thiếu số". */
+  if ((L ? cfg.lich[id].ts : tl.ts) > het + TL_DEM_MS) return null;
   return { tong: co ? tl.tong : null, lam: co ? s : null, nghi: co ? nghi : {}, ghi_chu: (co && nghi.khac && tl['gc' + c.ca]) || null };
 }
 export async function qsChotCa(env, now = Date.now()) {
