@@ -23,6 +23,7 @@ const SUITES = [
   ['Vá bảo mật: CSV công thức, đổi PIN, ảnh gửi dồn', 'baomat.test.mjs'],
   ['Rà soát: LIMIT âm, ngày không có thật', 'roasoat.test.mjs'],
   ['Báo cáo sản lượng: quyền, quân số lấy từ báo cáo ca, (công x 158 x tỷ lệ gia công) / tỷ lệ giá, bản chữ', 'sanluong.test.mjs'],
+  ['Bấm loạn: mọi nút trên mọi màn, hai lượt (Quay lại / Đồng ý), không lỗi JavaScript, không bị khoá ngoài', 'bam.test.mjs'],
   ['Sửa lỗi sau rà soát: đăng nhập song song, huỷ phiếu âm tồn, gửi trùng, ngày vay mượn', 'suaroi.test.mjs'],
 ];
 

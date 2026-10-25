@@ -2500,7 +2500,7 @@ function vUsers() {
       ${renameBox}
       <div class="row gap6">${first && !own ? '' : `<button class="btn s f1" data-a="ureset" data-id="${u.id}">Đặt lại PIN</button>`}
         ${me || first ? '' : `<button class="btn s f1 ${u.locked ? '' : 'bad'}" data-a="ulock" data-id="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khoá' : 'Khoá'}</button>`}
-        <button class="btn s f1" data-a="ulogout" data-id="${u.id}">Đăng xuất máy</button></div>
+        ${me ? '' : `<button class="btn s f1" data-a="ulogout" data-id="${u.id}">Đăng xuất máy</button>`}</div>
       ${own && !renameBox ? `<div class="row gap6"><button class="btn s f1" data-a="urename" data-id="${u.id}">Sửa tên</button>
         ${me || first ? '' : `<button class="btn s bad f1" data-a="udelete" data-id="${u.id}">Xoá tài khoản</button>`}</div>` : ''}
       ${first ? '<span class="sm muted" style="line-height:1.4">Tài khoản thiết lập hệ thống: không ai khoá, hạ quyền, xoá hay đặt lại PIN được, kể cả admin khác.</span>' : ''}</div>`;
@@ -4249,10 +4249,11 @@ async function bcTai() {
 const slSo = (s) => { const t = String(s == null ? '' : s).trim().replace(',', '.'); return t === '' ? NaN : Number(t); };
 const slFmt = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
 async function slTai(ngay, giu) {
-  const q = ngay || (S.sl && S.sl.ngay) || '';
-  const L = await api('GET', '/sanluong' + (q ? '?ngay=' + q : ''));
-  /* QUÂN SỐ lấy từ chính BÁO CÁO CA: ca ngày của ngày báo cáo và ca đêm ngày hôm trước (xem slGan). Không tính riêng ở đây. */
-  L.bc = await Promise.all([api('GET', `/baocao?ngay=${L.ngay}&ca=1`), api('GET', `/baocao?ngay=${L.hom}&ca=2`)]);
+  const q = ngay || (S.sl && S.sl.ngay) || S.boot.today;
+  /* QUÂN SỐ lấy từ chính BÁO CÁO CA: ca ngày của ngày báo cáo và ca đêm ngày hôm trước (xem slGan). Không tính riêng ở đây.
+     Ba lời gọi đi CÙNG LÚC (một vòng mạng thay vì hai): ngày hôm trước tính ngay ở máy. */
+  const [L, b1, b2] = await Promise.all([api('GET', '/sanluong?ngay=' + q), api('GET', `/baocao?ngay=${q}&ca=1`), api('GET', `/baocao?ngay=${congNgay(q, -1)}&ca=2`)]);
+  L.bc = [b1, b2];
   S.sl = L;
   if (!giu) {
     Object.keys(S.form).filter((k) => /^(slc_|slt_)/.test(k)).forEach((k) => delete S.form[k]);
@@ -5094,6 +5095,9 @@ async function bootMoi() {
   S.netOk = Date.now(); S.netBad = false;
 }
 async function go(screen, noPush, khu) {
+  /* Phiên vừa hết (401 trong lúc một thao tác đang chạy dở, xoaPhien đã xoá S.boot) mà thao tác đó gọi tiếp go(): không có số liệu
+     thì không vẽ được màn nào — ở lại màn đăng nhập, đừng sập vì S.boot rỗng. */
+  if (!S.me || !S.boot) { render(); return; }
   // chấm công nay là một mục của màn Nhật ký; lối cũ (nút THỬ LẠI, lịch sử trình duyệt) dẫn về đó
   if (screen === 'chamcong') { S.logTab = 'tk'; screen = 'nhatky'; }
   // màn soạn đơn chỉ vào được khi đang soạn (nút Back về lại sau khi đã lưu thì ra bảng đơn)
@@ -5907,9 +5911,31 @@ const ACTIONS = {
     });
   },
   pinok() { S.pinShown = null; render(); },
-  async ureset(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); if (!u) return; if (!(await ask('Đặt lại PIN cho ' + u.name + '?\nHọ sẽ bị đăng xuất khỏi mọi máy và phải đổi PIN khi đăng nhập lại.', 'ĐẶT LẠI PIN'))) return; act(async () => { const r = await api('POST', `/users/${d.id}/reset-pin`, {}); S.pinShown = { name: u.name, pin: r.pin }; await loadUsers(); }); },
-  ulock(d) { act(async () => { await api('POST', `/users/${d.id}/lock`, { locked: d.v === '1' }); await loadUsers(); }); },
-  ulogout(d) { act(async () => { await api('POST', `/users/${d.id}/logout`, {}); }, 'Đã đăng xuất người dùng khỏi mọi máy.'); },
+  async ureset(d) {
+    const u = (S.users || []).find((x) => x.id === Number(d.id)); if (!u) return;
+    /* Đặt lại PIN của CHÍNH MÌNH: máy chủ đăng xuất mọi máy, kể cả máy đang dùng. Bản cũ tải lại danh sách người dùng ngay sau đó,
+       gặp 401, xoá phiên — PIN mới không kịp hiện ra và người dùng bị khoá ngoài. Giờ nói trước, rồi đưa về màn đăng nhập kèm PIN mới. */
+    const minh = S.me && u.id === S.me.id;
+    const hoi = minh ? 'Đặt lại PIN của CHÍNH BẠN?\nMáy này và mọi máy khác sẽ bị đăng xuất. PIN mới hiện ở màn đăng nhập, hãy ghi lại rồi đăng nhập và đổi PIN.\n(Chỉ muốn đổi PIN thì dùng Thêm → Đổi PIN.)'
+      : 'Đặt lại PIN cho ' + u.name + '?\nHọ sẽ bị đăng xuất khỏi mọi máy và phải đổi PIN khi đăng nhập lại.';
+    if (!(await ask(hoi, 'ĐẶT LẠI PIN', minh))) return render();
+    act(async () => {
+      const r = await api('POST', `/users/${d.id}/reset-pin`, {});
+      if (minh) { const pin = r.pin; xoaPhien(); S.err = `PIN mới của bạn: ${pin}. Ghi lại, đăng nhập bằng PIN này rồi đổi sang PIN của bạn.`; return; }
+      S.pinShown = { name: u.name, pin: r.pin }; await loadUsers();
+    });
+  },
+  async ulock(d) {
+    const u = (S.users || []).find((x) => x.id === Number(d.id)), khoa = d.v === '1';
+    // khoá là chặn đăng nhập ngay và đăng xuất mọi máy: hỏi lại; mở khoá thì làm luôn
+    if (khoa && !(await ask(`Khoá tài khoản ${u ? u.name : ''}?\nNgười này bị đăng xuất khỏi mọi máy và không đăng nhập được cho tới khi mở khoá.`, 'KHOÁ', true))) return render();
+    act(async () => { await api('POST', `/users/${d.id}/lock`, { locked: khoa }); await loadUsers(); }, khoa ? 'Đã khoá tài khoản.' : 'Đã mở khoá tài khoản.');
+  },
+  async ulogout(d) {
+    const u = (S.users || []).find((x) => x.id === Number(d.id));
+    if (!(await ask(`Đăng xuất ${u ? u.name : 'người này'} khỏi mọi máy?\nHọ phải đăng nhập lại bằng PIN.`, 'ĐĂNG XUẤT'))) return render();
+    act(async () => { await api('POST', `/users/${d.id}/logout`, {}); }, 'Đã đăng xuất người dùng khỏi mọi máy.');
+  },
   // mở ô sửa tên, mồi sẵn tên hiện tại để chỉ phải sửa phần cần sửa
   urename(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); S.uRename = Number(d.id); S.form.urn = u ? u.name : ''; render(); },
   urenamecancel() { S.uRename = null; S.form.urn = ''; render(); },
