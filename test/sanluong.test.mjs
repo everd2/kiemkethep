@@ -245,6 +245,9 @@ async function main() {
   R(`ACTIONS.slngay({ v: '${vnDay(Date.now() + 864e5)}' })`); await cho();
   eq('không sang được ngày mai', R('S.sl.ngay'), hom);
 
+  // dòng tự gõ của báo cáo ca: bỏ dấu đầu dòng, nhưng giữ dấu của số (+84..., -5 độ)
+  eq('bcDong bỏ gạch đầu dòng, giữ dấu của số', R(`bcDong('- Việc A\\n-Việc B\\n+84 912 345\\n-5 độ C\\n• Việc D\\n* Việc E')`), ['Việc A', 'Việc B', '+84 912 345', '-5 độ C', 'Việc D', 'Việc E']);
+
   /* ===== 6. Sao lưu có bảng mới ===== */
   const bk = (await S.call('GET', '/backup', undefined, 'Admin')).data;
   ok('bản sao lưu có báo cáo sản lượng', Array.isArray(bk.bang.san_luong) && bk.bang.san_luong.length === 1, bk.bang.san_luong && bk.bang.san_luong.length);

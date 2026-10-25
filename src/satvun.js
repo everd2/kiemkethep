@@ -69,7 +69,12 @@ export async function postSv(req, env, user) {
   const nguoi = String(b.nguoi || '').trim().slice(0, 60);
   const note = String(b.note || '').trim().slice(0, 200);
   const ts = Date.now();
-  const res = await env.DB.batch([
+  /* Kiểm trùng ở trên và lần ghi là hai lượt riêng: hai lần gửi cùng số phiếu đến cùng lúc (bấm đúp, gửi lại lúc mạng chậm) đều
+     thấy "chưa có" và cùng ghi. Chặn lại ngay trong batch theo đúng chữ số phiếu (trường hợp hay gặp: cùng một máy gửi hai lần). */
+  const ghiSv = (stmts) => (b.trung === true ? env.DB.batch(stmts)
+    : batchGuarded(env, guardStmt(env, 'EXISTS (SELECT 1 FROM satvun WHERE voided = 0 AND so_phieu = ?)', soPhieu), stmts,
+      new HttpError(409, `Phiếu cân số ${soPhieu} vừa được ghi (có lần gửi đến cùng lúc). Xem lại sổ trước khi ghi thêm.`, 'trung_sv')));
+  const res = await ghiSv([
     env.DB.prepare(`INSERT INTO satvun (ngay, khu_id, kg, noi, so_phieu, bien_so, nguoi, note, user_id, ts, cap)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
       .bind(ngay, khuId, kg, noi, soPhieu, bienSo || null, nguoi || null, note || null, user.id, ts, capOf(user.role)),

@@ -139,6 +139,38 @@ async function main() {
   const anh = await S.call('POST', '/anh/satvun/' + dongSo.id, new Uint8Array([255, 216, 255, 217]), 'admin');
   eq('ảnh vào dòng sổ đã huỷ: 400', anh.status, 400);
 
+  // 18. gửi trùng số biên bản / số phiếu cân CÙNG LÚC (bấm đúp, gửi lại lúc mạng chậm): chỉ một dòng được ghi
+  const dt2 = (await S.call('POST', '/doitac', { name: 'Cty Song Song' })).data.id;
+  const vay2 = () => S.call('POST', '/loans', { kind: 'vay', doitac: dt2, bienban: true, zalo: true, so_bb: 'BB-SS-01', lines: [{ phi: 'D10', qty: 3 }], ngay: t });
+  const hai2 = await Promise.all([vay2(), vay2(), vay2()]);
+  eq('vay mượn gửi 3 lần cùng lúc: đúng 1 lần được ghi', hai2.filter((r) => r.status === 200).length, 1);
+  ok('các lần sau báo trùng biên bản (để hỏi lại người dùng)', hai2.filter((r) => r.status === 409).every((r) => r.data.code === 'trung_bb'), hai2.map((r) => r.status + ':' + (r.data && r.data.code)).join(','));
+  eq('trong sổ chỉ có 1 dòng biên bản đó', S.sql("SELECT 1 FROM loans WHERE so_bb = 'BB-SS-01' AND voided = 0").length, 1);
+  eq('xác nhận ghi thêm (trung: true) vẫn được', (await S.call('POST', '/loans', { kind: 'vay', doitac: dt2, bienban: true, zalo: true, so_bb: 'BB-SS-01', trung: true, lines: [{ phi: 'D10', qty: 3 }], ngay: t })).status, 200);
+  /* Giả lập đúng khe hở: một người khác ghi CHEN VÀO giữa lúc kiểm "đã có chưa" và lúc ghi. Bọc DB.batch: lần ghi sổ đầu tiên
+     thì chèn trước một dòng trùng rồi mới chạy batch. Không có chốt chặn trong batch thì sổ thành hai dòng. */
+  const chen = (bang, sql) => {
+    const goc = S.DB.batch.bind(S.DB);
+    S.DB.batch = async (st) => {
+      if (st.some((x) => x.sql && x.sql.includes('INSERT INTO ' + bang + ' '))) { S.DB.batch = goc; S.raw.exec(sql); }
+      return goc(st);
+    };
+  };
+  chen('satvun', "INSERT INTO satvun (ngay, khu_id, kg, noi, so_phieu, user_id, ts, cap) VALUES ('" + t + "', NULL, 1500, 'Cty Song Song', 'PC-SS-09', 1, 1, 2)");
+  const sv3 = await S.call('POST', '/satvun', { ngay: t, tan: '1,5', noi: 'Cty Song Song', so_phieu: 'PC-SS-09' });
+  eq('sắt vụn: người khác ghi chen vào giữa lúc kiểm và lúc ghi -> báo trùng', [sv3.status, sv3.data && sv3.data.code], [409, 'trung_sv']);
+  eq('trong sổ chỉ có 1 dòng phiếu cân đó', S.sql("SELECT 1 FROM satvun WHERE so_phieu = 'PC-SS-09' AND voided = 0").length, 1);
+  chen('loans', "INSERT INTO loans (doitac_id, phi_id, kind, qty, grp, user_id, ts, ngay, so_bb, cap) VALUES (" + dt2 + ", 'D12', 'vay', 2, 'chen01', 1, 1, '" + t + "', 'BB-SS-02', 2)");
+  const vay3 = await S.call('POST', '/loans', { kind: 'vay', doitac: dt2, bienban: true, zalo: true, so_bb: 'BB-SS-02', lines: [{ phi: 'D12', qty: 2 }], ngay: t });
+  eq('vay mượn: người khác ghi chen vào -> báo trùng biên bản', [vay3.status, vay3.data && vay3.data.code], [409, 'trung_bb']);
+  eq('trong sổ chỉ có 1 dòng biên bản đó', S.sql("SELECT 1 FROM loans WHERE so_bb = 'BB-SS-02' AND voided = 0").length, 1);
+
+  // 19. số phiên bản trong app.js phải trùng CACHE của sw.js (dải "có bản mới" so hai số này)
+  const { readFileSync } = await import('node:fs');
+  const path = (await import('node:path')).default;
+  const ban = /const BAN = '([^']+)'/.exec(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8')), cache = /const CACHE = '([^']+)'/.exec(readFileSync(path.join(ROOT, 'public/sw.js'), 'utf8'));
+  eq('BAN trong app.js trùng CACHE trong sw.js', ban && ban[1], cache && cache[1]);
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

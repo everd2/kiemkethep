@@ -223,8 +223,18 @@ export async function postLoan(req, env, user) {
     bump(env),
     env.DB.prepare('SELECT id FROM loans WHERE grp = ?').bind(grp),
   );
-  const res = day
-    ? await batchGuarded(env, guardStmt(env, IS_CLOSED, day), stmts, closedErr())
+  /* Kiểm trùng biên bản ở trên và lần ghi là hai lượt riêng: hai lần gửi cùng lúc đều thấy "chưa có". Chặn lại ngay trong batch
+     theo đúng chữ số biên bản (bấm đúp / gửi lại lúc mạng chậm là cùng một chữ), kèm chốt ngày đã chốt khi có phiếu kho. */
+  const conds = [], args = [];
+  if (day) { conds.push(IS_CLOSED); args.push(day); }
+  if (b.trung !== true) {
+    conds.push(`EXISTS (SELECT 1 FROM loans WHERE doitac_id = ? AND kind = ? AND voided = 0 AND so_bb = ? AND phi_id IN (SELECT ${J('phi')} FROM json_each(?) j))`);
+    args.push(doitacId, kind, soBB, data);
+  }
+  const CHAN = new HttpError(409, `Biên bản số ${soBB} vừa được ghi (có lần gửi đến cùng lúc). Xem lại sổ trước khi ghi thêm.`, 'trung_bb');
+  const res = conds.length
+    ? await batchGuarded(env, guardStmt(env, conds.join(' OR '), ...args), stmts, CHAN)
+      .catch(async (e) => { if (e === CHAN && day && await daChot(env, day)) throw closedErr(); throw e; })
     : await env.DB.batch(stmts);
   const ids = res[res.length - 1].results.map((r) => r.id);
   return json({ ok: true, grp, ids });

@@ -345,7 +345,8 @@ export async function computeReview(env, day, opt = {}) {
       exceptions.push({ type: 'slot_missing', khu: k.khu, name: k.name, missing: k.slots.missing.map((i) => defs[i].label) });
     }
   }
-  phieu.forEach((v) => exceptions.push({ type: 'receipt_pending', key: v.key, id: v.id, kind: v.kind, day: v.day }));
+  // chốt bù một ngày D cũ: phiếu lập SAU D không thuộc ngày đó (màn Duyệt hôm nay thì mọi phiếu chờ đều có day <= hôm nay)
+  phieu.filter((v) => !v.day || v.day <= day).forEach((v) => exceptions.push({ type: 'receipt_pending', key: v.key, id: v.id, kind: v.kind, day: v.day }));
   rows.forEach((r) => {
     if (r.neg) exceptions.push({ type: 'phi', phi: r.phi, reason: 'neg' });
     else if (r.high) exceptions.push({ type: 'phi', phi: r.phi, reason: 'high' });

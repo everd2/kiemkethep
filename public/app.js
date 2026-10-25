@@ -303,9 +303,18 @@ function netBar() {
    file tĩnh không chạy Worker nên không tốn hạn mức. Không tự tải lại (đang gõ dở thì mất), chỉ
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
+// số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
+const BAN = 'kho-thep-v56';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
+  /* Lần hỏi ĐẦU: dấu ETag bên dưới lấy của bản đang nằm trên máy chủ, không phải bản đang chạy — mở app lúc sóng yếu (service
+     worker đưa bản đã lưu ra sau 4 giây chờ) thì máy chạy bản cũ mà dấu ghi lại đã là của bản mới, dải "có bản mới" không bao giờ
+     hiện. Nên lần đầu so thêm số phiên bản của chính tệp này (BAN) với CACHE trong sw.js của máy chủ (?b= để không lấy bản lưu). */
+  if (!appTag) {
+    fetch('/sw.js?b=' + Date.now(), { cache: 'no-store' }).then((r) => (r && r.ok && r.text ? r.text() : ''))
+      .then((t) => { const m = /CACHE = '([^']+)'/.exec(t || ''); if (m && m[1] !== BAN && !S.newVer) { S.newVer = true; render(); } }).catch(() => {});
+  }
   try {
     const r = await fetch('/app.js', { method: 'HEAD', cache: 'no-store' });
     const t = r && r.ok && r.headers ? r.headers.get('ETag') || r.headers.get('Last-Modified') : null;
@@ -373,8 +382,13 @@ function indexBoot(b) {
   // ai là chủ hệ thống: bootstrap gửi sẵn nên mọi màn đều biết, không phải chờ nạp màn Người dùng
   if (b.uFirst !== undefined) S.uFirst = b.uFirst;
 }
+let bootSo = 0;
 async function loadBoot() {
+  /* Hai lần tải chồng nhau (vòng làm mới ngầm bắt đầu trước một lần lưu, về SAU lần lưu): lần về sau mà là lần gửi trước thì mang
+     số cũ, không được đè lên số mới vừa nạp. Đánh số từng lần, chỉ lần mới nhất được ghi. */
+  const so = ++bootSo;
   const b = await api('GET', '/bootstrap');
+  if (so !== bootSo) return;
   try { localStorage.setItem('kt:boot', JSON.stringify({ at: Date.now(), b })); } catch (e) { /* đầy bộ nhớ */ }
   indexBoot(b);
   S.boot = b; S.me = b.user; S.stale = null;
@@ -4161,7 +4175,8 @@ function bcAuto(B, k) {
 }
 const bcGet = (k) => (typeof S.bcM[k] === 'string' ? S.bcM[k] : bcAuto(S.bcc, k));
 // dòng của một mục, bỏ dấu đầu dòng người soạn tự gõ (app tự thêm "• ")
-const bcDong = (t) => String(t || '').split('\n').map((l) => l.replace(/^\s*[•\-*+]\s*/, '').trim()).filter(Boolean);
+// bỏ dấu đầu dòng (•, *, -, +); nhưng - / + đứng sát CHỮ SỐ là dấu của số ("+84...", "-5 độ"), giữ nguyên
+const bcDong = (t) => String(t || '').split('\n').map((l) => l.replace(/^\s*(?:[•*]|[-+](?!\d))\s*/, '').trim()).filter(Boolean);
 /* Các dòng đúng mẫu của TỪNG PHẦN (phần đầu, mục 3 → 8): màn soạn bày từng phần kèm nút chép riêng, bản gửi đi là
    các phần nối lại (bcTao). */
 function bcPhan() {
@@ -4644,7 +4659,7 @@ function tkNhiet(T, K, ca, ng) {
   const o = (x, c, dam) => {
     const co = x && x.lam + x.nghi > 0, [nen, chu] = tkNen(x ? x.pct : null, x && x.thieu, co, ng), on = c.k === K.k;
     const v = !x || (x.pct == null && !x.thieu) ? '' : x.pct == null ? '?' : String(Math.round(x.pct * 100));
-    return `<button style="height:${dam ? 32 : 30}px;min-width:0;border-radius:6px;border:${on ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.06)'};background:${nen};color:${chu};font:inherit;font-size:13px;font-weight:${dam || (x && x.pct >= ng) ? 800 : 600};padding:0" ${c.k > het ? 'disabled' : `data-a="tkden" data-v="${c.k}"`} aria-label="${esc(c.nhan)}: ${v ? 'nghỉ ' + v + '%' : 'không có số'}">${v}</button>`;
+    return `<button style="height:${dam ? 38 : 36}px;min-width:0;border-radius:6px;border:${on ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.06)'};background:${nen};color:${chu};font:inherit;font-size:13px;font-weight:${dam || (x && x.pct >= ng) ? 800 : 600};padding:0" ${c.k > het ? 'disabled' : `data-a="tkden" data-v="${c.k}"`} aria-label="${esc(c.nhan)}: ${v ? 'nghỉ ' + v + '%' : 'không có số'}">${v}</button>`;
   };
   const hang = tos.map((u) => `<button style="border:0;background:transparent;padding:0;text-align:left;font:inherit;color:inherit;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-a="tkto" data-v="${u.id}">${esc(u.name)}</button>${cols.map((c, i) => o(cua(X[i], u.id), c)).join('')}`).join('');
   const mau = (p, t) => { const [nen] = tkNen(p, 0, 1, ng); return `<span class="row" style="gap:4px"><span style="width:14px;height:14px;border-radius:4px;background:${nen};border:1px solid rgba(0,0,0,.08);flex:none"></span>${t}</span>`; };
@@ -5028,7 +5043,8 @@ function render() {
     try { fc.s = ae.selectionStart; fc.e = ae.selectionEnd; } catch (er) { /* type=date không cho đọc */ }
   }
   let html;
-  if (!S.me || S.screen === 'login') html = busyHtml() + vLogin() + askHtml();
+  if (S.dangMo && !S.me) html = '<div class="f1 pad muted" style="text-align:center;padding-top:40vh">Đang mở…</div>';
+  else if (!S.me || S.screen === 'login') html = busyHtml() + vLogin() + askHtml();
   else if (S.me.must_change) html = busyHtml() + vForcePin() + askHtml();
   else html = vMain();
   $app.innerHTML = html;
@@ -5476,7 +5492,7 @@ const ACTIONS = {
       // đăng nhập người KHÁC với người dùng máy trước đó (phiên hết hạn, không bấm Đăng xuất): bỏ dữ liệu người trước
       if (S._dataUid && S._dataUid !== r.user.id) quenNguoiTruoc();
       S.me = r.user; S.err = ''; S.screen = 'home';
-      if (!r.user.must_change) { await loadBoot(); flushPending(); }
+      if (!r.user.must_change) { await loadBoot(); flushPending(); qsFlush(); }
     } catch (e) { S.err = e.message; S.me = null; S.screen = 'login'; }
     finally { S.busy = false; S.busyMsg = ''; }
     try { history.replaceState({ s: S.screen, k: null }, ''); } catch (e) { /* bỏ qua */ }
@@ -5940,7 +5956,7 @@ const ACTIONS = {
   urename(d) { const u = (S.users || []).find((x) => x.id === Number(d.id)); S.uRename = Number(d.id); S.form.urn = u ? u.name : ''; render(); },
   urenamecancel() { S.uRename = null; S.form.urn = ''; render(); },
   urenamesave(d) {
-    const name = val('urn');
+    const name = val('urn').trim();
     if (!name) return say('Cần nhập tên.', true), render();
     act(async () => {
       await api('POST', `/users/${d.id}/rename`, { name });
@@ -7140,7 +7156,10 @@ async function refreshInner() {
     }
     else if (healed) render();
   } catch (e) {
-    // mất mạng khi làm mới ngầm: chỉ hiện dải thông báo, không làm gián đoạn việc đang làm
+    /* mất mạng khi làm mới ngầm: chỉ hiện dải thông báo, không làm gián đoạn việc đang làm. Lỗi KHÔNG phải mạng (lỗi trong chính
+       code vẽ / ghép số liệu) thì không được đội lốt "mất kết nối" — ghi ra để còn biết mà sửa. */
+    const mang = e && (e.retry || e.net || e.cham); // apiGoi đánh dấu lỗi mạng / quá hạn / máy chủ 5xx bằng các cờ này
+    if (!mang) { console.error('refresh:', e); return; }
     if (!S.netBad) { S.netBad = true; render(); }
   }
 }
@@ -7158,7 +7177,7 @@ function cleanDrafts(today) {
   } catch (e) { /* bỏ qua */ }
 }
 async function start() {
-  render();
+  S.dangMo = true; render();
   try {
     const r = await api('GET', '/me');
     S.me = r.user;
@@ -7168,6 +7187,7 @@ async function start() {
     if (e.retry && useCachedBoot()) S.screen = 'home';
     else { S.me = null; S.screen = 'login'; S.err = e.retry ? e.message : ''; }
   }
+  S.dangMo = false;
   render();
   lastPoll = Date.now();
   checkVer(0); // ghi dấu của bản đang chạy
