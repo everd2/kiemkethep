@@ -24,7 +24,7 @@ export const firstAdminId = async (env) => {
 export async function listUsers(env) {
   // trả cả tài khoản đã xoá: admin đầu tiên cần thấy để khôi phục khi xoá nhầm
   const [uR, fid] = await Promise.all([
-    env.DB.prepare('SELECT id, name, phone, role, chuc_danh, locked, deleted, must_change, locked_until FROM users ORDER BY id').all(),
+    env.DB.prepare('SELECT id, name, phone, role, chuc_danh, thep_ve, locked, deleted, must_change, locked_until FROM users ORDER BY id').all(),
     firstAdminId(env),
   ]);
   return json({ users: uR.results, first: fid });

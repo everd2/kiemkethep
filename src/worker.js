@@ -15,6 +15,7 @@ import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
 import { slPut, slThietLap, slView } from './sanluong.js';
+import { tvCsv, tvDon, tvDonViec, tvGhi, tvGiaoQuyen, tvHuy, tvNhap, tvView } from './thepve.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -200,6 +201,17 @@ async function route(req, env, url, user, method, p, r0) {
     if (method === 'PUT' && p.length === 2 && p[1] === 'nguong') { needCap(1); return qsNguong(req, env, user); }
   }
 
+  /* --- SỔ THÉP VỀ: quyền xét bên trong (người được admin đầu tiên giao quyền ghi; CVKTHT trở lên xem), xem src/thepve.js --- */
+  if (r0 === 'thepve') {
+    if (method === 'GET' && p.length === 1) return tvView(env, url, user);
+    if (method === 'GET' && p[1] === 'csv') return tvCsv(env, url, user);
+    if (method === 'POST' && p.length === 1) return tvGhi(req, env, user);
+    if (method === 'POST' && p[1] === 'nhap') return tvNhap(req, env, user);
+    if (method === 'POST' && p[1] === 'don' && p.length === 2) return tvDon(req, env, user);
+    if (method === 'POST' && p[1] === 'don' && p.length === 4) return tvDonViec(req, env, user, Number(p[2]), p[3]);
+    if (method === 'POST' && p.length === 3 && p[2] === 'huy') return tvHuy(req, env, user, Number(p[1]));
+  }
+
   /* --- DUYỆT và GIÁM SÁT: từ CVKTHT trở lên ---
      Vào được màn Duyệt chưa có nghĩa là duyệt được mọi thứ trên đó: reviewDuyet và huyBaoCao kiểm
      tiếp theo người báo (CVKTHT chỉ duyệt/huỷ báo cáo của cấp dưới). */
@@ -238,6 +250,7 @@ async function route(req, env, url, user, method, p, r0) {
   if (r0 === 'users') {
     if (method === 'GET' && p.length === 1) return listUsers(env);
     if (method === 'POST' && p.length === 1) return createUser(req, env, user);
+    if (method === 'POST' && p.length === 3 && p[2] === 'thep-ve') return tvGiaoQuyen(req, env, user, Number(p[1]));
     if (method === 'POST' && p.length === 3) return userAction(req, env, user, Number(p[1]), p[2]);
   }
   if (r0 === 'khu') {

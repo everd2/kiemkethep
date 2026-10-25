@@ -117,7 +117,7 @@ export async function bootstrap(env, user) {
     closed: closed.results.length > 0,
     // hôm nay là mốc đặt lại số liệu (cách duy nhất để ngày hôm nay bị khoá, xem putCounts)
     closedReset: !!(closed.results[0] && closed.results[0].kind === 'reset'),
-    user: { id: user.id, name: user.name, role: user.role, chuc_danh: user.chuc_danh || null },
+    user: { id: user.id, name: user.name, role: user.role, chuc_danh: user.chuc_danh || null, thep_ve: user.thep_ve ? 1 : 0 },
     uFirst: (uFirst.results[0] || {}).id || 0,
     phi: phi.results,
     khu: khu.results,

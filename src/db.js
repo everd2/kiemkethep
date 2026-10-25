@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 45;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -543,6 +543,19 @@ export const MIGRATIONS = {
   /* BÁO CÁO SẢN LƯỢNG (xem src/sanluong.js): một dòng cho mỗi ngày đã soạn. Bảng mới, không đổi bảng cũ. */
   44: [
     "CREATE TABLE IF NOT EXISTS san_luong (ngay TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}', ts INTEGER NOT NULL, by_id INTEGER NOT NULL)",
+  ],
+  /* SỔ THÉP VỀ CÔNG TRÌNH (xem src/thepve.js): nhà cung cấp, đơn hàng, chuyến về — sổ thống kê, không đụng tồn bãi. Thêm bảng, và một
+     cột quyền cho người dùng (users.thep_ve: được admin đầu tiên giao quyền ghi sổ). */
+  45: [
+    "CREATE TABLE IF NOT EXISTS thep_ncc (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, active INTEGER NOT NULL DEFAULT 1, ts INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS thep_don (id INTEGER PRIMARY KEY AUTOINCREMENT, ncc_id INTEGER NOT NULL, so_don TEXT NOT NULL, ngay_dat TEXT NOT NULL, han TEXT, ghi_chu TEXT, tt TEXT NOT NULL DEFAULT 'mo', user_id INTEGER NOT NULL, ts INTEGER NOT NULL, khoa TEXT UNIQUE, dong_ts INTEGER, dong_by INTEGER, dong_note TEXT)",
+    "CREATE TABLE IF NOT EXISTS thep_don_dong (don_id INTEGER NOT NULL, phi_id TEXT NOT NULL, bo INTEGER, cay INTEGER, kg INTEGER, PRIMARY KEY (don_id, phi_id))",
+    "CREATE TABLE IF NOT EXISTS thep_ve (id INTEGER PRIMARY KEY AUTOINCREMENT, ngay TEXT NOT NULL, ncc_id INTEGER NOT NULL, don_id INTEGER, so_don TEXT, so_phieu TEXT, bien_so TEXT, ghi_chu TEXT, nguon TEXT NOT NULL DEFAULT 'app', user_id INTEGER NOT NULL, ts INTEGER NOT NULL, khoa TEXT UNIQUE, voided INTEGER NOT NULL DEFAULT 0, voided_ts INTEGER, voided_by INTEGER, voided_note TEXT)",
+    "CREATE TABLE IF NOT EXISTS thep_ve_dong (id INTEGER PRIMARY KEY AUTOINCREMENT, ve_id INTEGER NOT NULL, phi_id TEXT NOT NULL, bo INTEGER, cay INTEGER, kg INTEGER, kg_tinh INTEGER)",
+    "CREATE INDEX IF NOT EXISTS idx_thep_ve_ngay ON thep_ve(ngay)",
+    "CREATE INDEX IF NOT EXISTS idx_thep_ve_don ON thep_ve(don_id)",
+    "CREATE INDEX IF NOT EXISTS idx_thep_ve_dong_ve ON thep_ve_dong(ve_id)",
+    'ALTER TABLE users ADD COLUMN thep_ve INTEGER NOT NULL DEFAULT 0',
   ],
 };
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

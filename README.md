@@ -253,6 +253,14 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào là mở màn báo cáo ca, bước 1, để nhắc. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa. App **không còn màn ghi thay** cho CVKTHT: tổ không báo thì báo cáo ca dùng số thiết lập, hoặc người soạn sửa tay mục 3. Mọi lần báo nằm trong **nhật ký**, có chip lọc *Quân số*.
 
+### Sổ thép về công trình (Thêm → *Thép về công trình*)
+Sổ **thống kê** mọi chuyến thép về công trình từ đầu năm — theo dõi đơn hàng, nhà cung cấp, ngày về, loại, số lượng. **Không đụng tồn bãi** (số ra / vào bãi trước đây không có nên tổng thép về không cần khớp tồn bãi; thép về từ nay mà vào bãi thì vẫn lập phiếu Nhập kho như thường). Mã nguồn: `src/thepve.js`, bảng `thep_ncc`, `thep_don`, `thep_don_dong`, `thep_ve`, `thep_ve_dong` (cấu trúc bản 45).
+- **Quyền:** ghi / lập đơn / nhập Excel / huỷ — admin đầu tiên và người được **admin đầu tiên giao quyền** (màn Người dùng → *Giao quyền*, cột `users.thep_ve`); xem — thêm CVKTHT trở lên.
+- **Mỗi dòng một phi:** số bó, số cây, **kg theo phiếu** (gõ tay, nhận cả "12.500") và **kg app tự tính** = (bó × cây/bó + cây) × kg/cây (chụp lại lúc ghi), kèm chênh lệch. Thống kê dùng kg theo phiếu, thiếu thì kg tự tính.
+- **Đơn hàng:** nhà cung cấp, số đơn, ngày đặt, hạn, các phi + khối lượng đặt; chuyến về gắn vào đơn, thẻ đơn hiện đặt / đã về / còn thiếu theo phi, trễ hạn tô đỏ. Đóng đơn, huỷ (chỉ khi chưa có chuyến), mở lại.
+- **Nhập Excel (số liệu cũ):** chọn cả bảng trong Excel (kể cả dòng tiêu đề) → chép → dán. Cột bắt buộc *Ngày*, *Nhà cung cấp*, *Phi* và ít nhất một trong *Số bó* / *Số cây* / *Kg* / *Tấn*; cột thêm *Số đơn*, *Số phiếu*, *Biển số*, *Ghi chú*. Dòng cùng ngày + nhà cung cấp + số phiếu gộp một chuyến; số đơn trùng đơn đã lập thì gắn vào đơn. Bấm *Kiểm tra* trước (báo lỗi từng dòng, không ghi), sạch rồi mới *Nhập*; cả lần nhập là một giao dịch.
+- **Thống kê:** tổng kỳ, theo tháng, theo nhà cung cấp, theo phi; xuất CSV mở bằng Excel. Chống ghi trùng (bấm đúp; số phiếu trùng thì hỏi lại).
+
 ### Báo cáo sản lượng (Thêm → *Báo cáo sản lượng*, CVKTHT trở lên)
 Cùng khuôn với báo cáo ca nhưng là **một báo cáo gộp ca ngày và ca đêm** cho cả ngày, mặc định hôm nay. Mã nguồn: `src/sanluong.js`, bảng `san_luong` (cấu trúc bản 44); thiết lập nằm trong mẫu `bc_mau` (khoá `sl`).
 - **Phần đầu** dùng chung mẫu với báo cáo ca (đơn vị, chỉ huy, dự án, khu vực); sửa ở màn Báo cáo ca.

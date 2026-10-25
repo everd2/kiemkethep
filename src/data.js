@@ -155,7 +155,7 @@ export async function resetData(req, env, user) {
 
 // Bảng dựng nên TRẠNG THÁI của bãi: nạp lại là thay sạch những bảng này.
 export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts', 'khu_report', 'khu_report_log',
-  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau', 'don_gc_nguoi', 'don_gc_tn', 'don_gc_doc', 'satvun', 'quan_so_tl', 'anh_bb', 'san_luong'];
+  'receipts', 'day_close', 'daily_summary', 'phi_rate', 'baseline', 'settings', 'doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau', 'don_gc_nguoi', 'don_gc_tn', 'don_gc_doc', 'satvun', 'quan_so_tl', 'anh_bb', 'san_luong', 'thep_ncc', 'thep_don', 'thep_don_dong', 'thep_ve', 'thep_ve_dong'];
 /* Bản sao của cấu trúc cũ vẫn nạp được khi cấu trúc mới CHỈ THÊM BẢNG: nạp lại đã chỉ lấy cột
    bảng hiện tại có, và bảng tệp không có thì để trống. Chỉ lùi ĐÚNG MỘT bản (ngay trước), không
    lùi xa hơn: mỗi bản chỉ được kiểm "chỉ thêm bảng" so với bản liền trước nó lúc viết, lùi hai
@@ -167,7 +167,7 @@ export const BK_STATE = ['phi', 'khu', 'khu_phi', 'khu_user', 'users', 'counts',
 // don_gc, don_gc_log (đơn gia công, bản 27): việc đang giao cho các tiểu đội, bản sao cũ chưa có thì giữ đơn đang có
 // quan_so (quân số đầu ca, bản 28): không phải số liệu thép, bản sao cũ chưa có thì giữ quân số đang có
 // bao_cao_ca, bc_mau (báo cáo ca gửi cấp trên, bản 31): bản sao cũ chưa có thì giữ báo cáo và mẫu đang có
-export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau', 'don_gc_nguoi', 'don_gc_tn', 'don_gc_doc', 'satvun', 'quan_so_tl', 'anh_bb', 'san_luong'];
+export const BK_GIU_NEU_THIEU = ['doitac', 'loans', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc', 'don_gc_log', 'quan_so', 'gc_muc', 'bao_cao_ca', 'bc_mau', 'don_gc_nguoi', 'don_gc_tn', 'don_gc_doc', 'satvun', 'quan_so_tl', 'anh_bb', 'san_luong', 'thep_ncc', 'thep_don', 'thep_don_dong', 'thep_ve', 'thep_ve_dong'];
 // bản 18 chỉ thêm một bảng tạm không nằm trong bản sao; bản 19 thêm cột daily_summary.bt có mặc định 0
 // (tệp cũ thiếu cột thì nạp ra 0 = ngày bình thường, đúng như cách các ngày đó đã được tính)
 export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 19: [15, 16, 17, 18], 20: [15, 16, 17, 18, 19], 21: [15, 16, 17, 18, 19, 20], 22: [15, 16, 17, 18, 19, 20, 21],
@@ -214,7 +214,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 43 chỉ thêm bốn trigger giữ nhật ký chỉ-ghi-thêm, dữ liệu không đổi
   43: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42],
   // bản 44 chỉ thêm bảng báo cáo sản lượng (bản sao cũ chưa có thì giữ báo cáo đang có)
-  44: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43] };
+  44: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+  // bản 45 thêm các bảng sổ thép về và cột users.thep_ve (bản sao cũ thiếu thì để 0 = chưa giao quyền)
+  45: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */

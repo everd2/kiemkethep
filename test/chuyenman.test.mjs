@@ -96,7 +96,7 @@ const doMan = async (lenh) => {
   return [Math.round(thay), soGoi];
 };
 R("S.review = null; S.gc = null; taiSan('dau')"); await yen();
-const MAN = ['home', 'ton', 'khu', 'nhap', 'duyet', 'giacong', 'quanso', 'qstk', 'baocaoca', 'vaymuon', 'satvun', 'nhatky', 'users', 'settings', 'lichsu', 'baocao', 'stats', 'sanluong'];
+const MAN = ['home', 'ton', 'khu', 'nhap', 'duyet', 'giacong', 'quanso', 'qstk', 'baocaoca', 'vaymuon', 'satvun', 'nhatky', 'users', 'settings', 'lichsu', 'baocao', 'stats', 'sanluong', 'thepve'];
 const lenh = (s) => (s === 'sanluong' ? 'ACTIONS.slmo()' : `ACTIONS.nav({ s: '${s}' })`);
 const kq = {};
 for (const lan of [1, 2]) for (const s of MAN) (kq[s] = kq[s] || []).push(await doMan(lenh(s)));

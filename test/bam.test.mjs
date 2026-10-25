@@ -100,7 +100,7 @@ const nut = (html) => {
   return out;
 };
 const BO = new Set(['logout', 'install', 'reload', 'dl', 'download', 'csv', 'xuatcsv', 'backup']); // rời phiên / tải tệp: bỏ
-const MAN_BAM = ['home', 'ton', 'khu', 'nhap', 'duyet', 'giacong', 'quanso', 'baocaoca', 'sanluong', 'qstk', 'vaymuon', 'satvun', 'nhatky', 'settings', 'users', 'more', 'lichsu', 'stats', 'baocao'];
+const MAN_BAM = ['home', 'ton', 'khu', 'nhap', 'duyet', 'giacong', 'quanso', 'baocaoca', 'sanluong', 'thepve', 'qstk', 'vaymuon', 'satvun', 'nhatky', 'settings', 'users', 'more', 'lichsu', 'stats', 'baocao'];
 for (const m of MAN_BAM) {
   const moMan = async () => { dongAsk(); R('S.sel = null; S.gcXu = null; S.gcVg = null; S.anhXem = null; S.form = {}'); if (m === 'sanluong') R('S.sl = null; ACTIONS.slmo()'); else R(`go('${m}')`); await cho(); dongAsk(); };
   try { await moMan(); } catch (e) { loi.push([m, 'mở màn: ' + e.message]); continue; }

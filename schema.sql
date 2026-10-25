@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS users (
   lock_level INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0,
-  chuc_danh TEXT
+  chuc_danh TEXT,
+  thep_ve INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -574,6 +575,16 @@ CREATE TABLE IF NOT EXISTS san_luong (
   ts INTEGER NOT NULL,
   by_id INTEGER NOT NULL
 );
+-- SỔ THÉP VỀ CÔNG TRÌNH (xem src/thepve.js): nhà cung cấp, đơn hàng (+ dòng phi), chuyến về (+ dòng phi). Sổ thống kê, KHÔNG đụng tồn bãi.
+-- kg = kg theo phiếu / đơn (gõ tay), kg_tinh = (bó × cây mỗi bó + cây) × kg mỗi cây lúc ghi. khoa: chống ghi trùng + nối dòng vào chuyến.
+CREATE TABLE IF NOT EXISTS thep_ncc (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, active INTEGER NOT NULL DEFAULT 1, ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS thep_don (id INTEGER PRIMARY KEY AUTOINCREMENT, ncc_id INTEGER NOT NULL, so_don TEXT NOT NULL, ngay_dat TEXT NOT NULL, han TEXT, ghi_chu TEXT, tt TEXT NOT NULL DEFAULT 'mo', user_id INTEGER NOT NULL, ts INTEGER NOT NULL, khoa TEXT UNIQUE, dong_ts INTEGER, dong_by INTEGER, dong_note TEXT);
+CREATE TABLE IF NOT EXISTS thep_don_dong (don_id INTEGER NOT NULL, phi_id TEXT NOT NULL, bo INTEGER, cay INTEGER, kg INTEGER, PRIMARY KEY (don_id, phi_id));
+CREATE TABLE IF NOT EXISTS thep_ve (id INTEGER PRIMARY KEY AUTOINCREMENT, ngay TEXT NOT NULL, ncc_id INTEGER NOT NULL, don_id INTEGER, so_don TEXT, so_phieu TEXT, bien_so TEXT, ghi_chu TEXT, nguon TEXT NOT NULL DEFAULT 'app', user_id INTEGER NOT NULL, ts INTEGER NOT NULL, khoa TEXT UNIQUE, voided INTEGER NOT NULL DEFAULT 0, voided_ts INTEGER, voided_by INTEGER, voided_note TEXT);
+CREATE TABLE IF NOT EXISTS thep_ve_dong (id INTEGER PRIMARY KEY AUTOINCREMENT, ve_id INTEGER NOT NULL, phi_id TEXT NOT NULL, bo INTEGER, cay INTEGER, kg INTEGER, kg_tinh INTEGER);
+CREATE INDEX IF NOT EXISTS idx_thep_ve_ngay ON thep_ve(ngay);
+CREATE INDEX IF NOT EXISTS idx_thep_ve_don ON thep_ve(don_id);
+CREATE INDEX IF NOT EXISTS idx_thep_ve_dong_ve ON thep_ve_dong(ve_id);
 -- Mẫu báo cáo ca: một dòng duy nhất (id = 1). data = JSON phần đầu (đơn vị, chỉ huy, dự án...), máy móc, dòng kiểm tra.
 CREATE TABLE IF NOT EXISTS bc_mau (
   id INTEGER PRIMARY KEY,
@@ -633,7 +644,7 @@ CREATE TABLE IF NOT EXISTS anh_bb (
 );
 CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 44);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 45);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát
