@@ -1,15 +1,15 @@
 // Báo cáo sản lượng gửi cấp trên: quân số đã báo của các tổ + số công gia công thép + thiết lập => sản lượng.
 import { HttpError, bad, json, vnDay } from './core.js';
 import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js';
-import { MAU_CO, QS_TONG_MAX, TO_SX, caLich, docCfg } from './quanso.js';
+import { MAU_CO, QS_TONG_MAX, TO_SX } from './quanso.js';
 
 /* ========================= BÁO CÁO SẢN LƯỢNG =========================
    Cùng khuôn với báo cáo ca (src/baocao.js): CVKTHT trở lên soạn, phần đầu (đơn vị, chỉ huy, dự án, khu vực) dùng CHUNG
    mẫu bc_mau với báo cáo ca. Khác ở chỗ: MỘT báo cáo gộp ca ngày và ca đêm, mỗi tổ một dòng.
-   - QUÂN SỐ CỦA MỘT TỔ trong báo cáo ngày D: số tổ đã báo của CA NGÀY ngày D, và/hoặc của CA ĐÊM NGÀY HÔM TRƯỚC (ca đêm D-1 kết thúc
-     sáng D) nếu tổ làm đêm. Tổ chia hai ca thì cộng cả hai. Không có phần nghỉ / lý do nghỉ. Tổ không báo thì lấy số thiết lập đã
-     chép lúc hết ca (quan_so_tl), chưa chép thì lấy THIẾT LẬP QUÂN SỐ đang đặt (bc_mau.data.tl, đúng nguồn báo cáo ca dùng khi tổ
-     chưa báo) — nên tổ đã có số thiết lập là có mặt trong báo cáo, không phải đợi hết ca.
+   - QUÂN SỐ KHÔNG TÍNH Ở ĐÂY. Quân số của báo cáo sản lượng là CHÍNH quân số của báo cáo ca (hàm bcQuanSo ở app.js, kèm lựa chọn
+     nguồn "Theo tổ báo" / "Chỉ số thiết lập", lịch ca, tổng quân số): máy khách lấy báo cáo ca của CA NGÀY ngày D và CA ĐÊM ngày
+     hôm trước (/baocao), tính bằng đúng hàm đó rồi cộng lại theo tổ. Chỉ MỘT nơi tính quân số, nên hai báo cáo không bao giờ ra hai
+     con số khác nhau. Server chỉ trả danh sách tổ, thiết lập sản lượng và phần đã lưu.
    - CÔNG GIA CÔNG THÉP của tổ: mặc định = số ĐI LÀM ở trên; CVKTHT trở lên sửa được từng tổ (data.cong, chỉ lưu ô đã sửa).
    - THIẾT LẬP (lưu ở bc_mau.data.sl, dùng cho mọi ngày, CVKTHT trở lên sửa):
        chuan  công chuẩn, kg/công (mặc định 158)
@@ -69,36 +69,16 @@ const docChup = (c, ids) => {
   return { chuan: Number(o.chuan), gia: Number(o.gia), gc };
 };
 
-/* Số liệu cho một ngày: mỗi tổ một dòng (quân số ca ngày + ca đêm hôm trước), thiết lập, phần đã lưu, phần đầu của mẫu dùng chung. */
+/* Số liệu cho một ngày: danh sách tổ, thiết lập, phần đã lưu, phần đầu của mẫu dùng chung. Quân số của tổ do máy khách lấy từ báo cáo ca. */
 export async function slView(env, url) {
   const ngay = docNgay(url.searchParams.get('ngay')), hom = congNgay(ngay, -1);
-  const [tdt, qs, tl, mau, bc] = await env.DB.batch([
+  const [tdt, mau, bc] = await env.DB.batch([
+    // tổ đang dùng app, cộng tổ đã xoá mà còn số báo trong hai ca của báo cáo này
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND (u.deleted = 0 OR EXISTS (SELECT 1 FROM quan_so q WHERE q.user_id = u.id AND ((q.ngay = ?1 AND q.ca = 1) OR (q.ngay = ?2 AND q.ca = 2)))) ORDER BY ${TO_SX}`).bind(ngay, hom),
-    env.DB.prepare('SELECT ngay, ca, user_id, tong, lam FROM quan_so WHERE (ngay = ?1 AND ca = 1) OR (ngay = ?2 AND ca = 2)').bind(ngay, hom),
-    env.DB.prepare('SELECT ngay, ca, user_id, tong, lam FROM quan_so_tl WHERE (ngay = ?1 AND ca = 1) OR (ngay = ?2 AND ca = 2)').bind(ngay, hom),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare("SELECT s.data, s.ts, s.by_id, COALESCE(u.name, '(đã xoá)') by_name FROM san_luong s LEFT JOIN users u ON u.id = s.by_id WHERE s.ngay = ?").bind(ngay),
   ]);
-  const bao = new Map(qs.results.map((r) => [r.user_id + ':' + r.ca, r])), chep = new Map(tl.results.map((r) => [r.user_id + ':' + r.ca, r]));
-  const cfg = docCfg(mau.results[0]);
-  // thiết lập quân số đang đặt cho tổ ở ca `ca` (số ĐI LÀM s1 / s2); lịch ca nói tổ không làm ca này thì không có dòng
-  const dongTl = (uid, ca, n) => {
-    const t = cfg.tl[uid];
-    if (!t) return null;
-    const L = caLich(cfg, uid, n);
-    if (L && L !== 3 && L !== ca) return null;
-    const s = Number(t['s' + ca]) || 0, nghi = Object.values(t['n' + ca] || {}).reduce((a, v) => a + (Number(v) || 0), 0);
-    return s + nghi > 0 ? { ngay: n, tong: t.tong, lam: s, nguon: 'tl' } : null;
-  };
-  const dong = (uid, ca, n) => {
-    const b = bao.get(uid + ':' + ca), t = chep.get(uid + ':' + ca);
-    // thứ tự: tổ báo > số thiết lập đã chép lúc hết ca > thiết lập quân số đang đặt; tổ không làm ca đó thì không có dòng nào (null)
-    return b ? { ngay: n, tong: b.tong, lam: b.lam, nguon: 'bao' } : t && t.lam != null ? { ngay: n, tong: t.tong, lam: t.lam, nguon: 'tl' } : dongTl(uid, ca, n);
-  };
-  const to = tdt.results.map((u) => {
-    const ngayCa = dong(u.id, 1, ngay), dem = dong(u.id, 2, hom), cs = [ngayCa, dem].filter(Boolean);
-    return { id: u.id, name: u.name, ngay: ngayCa, dem, lam: cs.reduce((a, x) => a + x.lam, 0), tong: cs.reduce((a, x) => Math.max(a, x.tong || 0), 0) };
-  });
+  const to = tdt.results.map((u) => ({ id: u.id, name: u.name }));
   const ids = to.map((t) => t.id), sl = docSl(mau.results[0]);
   const r = bc.results[0], d = r ? docJ(r.data) : {};
   return json({
@@ -106,7 +86,7 @@ export async function slView(env, url) {
     gioi_han: { chuan: SL_CHUAN, gia: SL_GIA, gc: SL_GC },
     tl: { ...slDayDu(sl, ids), da_dat: Object.keys(sl.gc).map(Number) },
     dau: Object.fromEntries(['don_vi', 'ddt', 'tdtr', 'cbpt', 'du_an', 'khu_vuc'].map((k) => [k, String(sl.dau[k] || '')])),
-    luu: r ? { cong: docCong(d.cong), chup: docChup(d.chup, ids), ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
+    luu: r ? { cong: docCong(d.cong), chup: docChup(d.chup, ids), nguon: d.nguon === 'tl' || d.nguon === 'to' ? d.nguon : null, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
   });
 }
 
@@ -129,7 +109,8 @@ export async function slPut(req, env, user) {
   const biet = b.ts == null ? null : Number(b.ts) || 0;
   if (biet != null && cu && cu.ts !== biet) throw new HttpError(409, 'Có người vừa lưu báo cáo sản lượng này. Màn hình đã tải lại, hãy xem rồi lưu lại.', 'changed');
   const ts = Math.max(Date.now(), cu ? cu.ts + 1 : 0);
-  const data = JSON.stringify({ cong, chup: { chuan: lam2(c.chuan), gia: lam2(c.gia), gc } });
+  const nguon = b.nguon === 'tl' || b.nguon === 'to' ? b.nguon : undefined; // nguồn quân số đã chọn (xem bcQuanSo); không gửi = theo báo cáo ca
+  const data = JSON.stringify({ cong, nguon, chup: { chuan: lam2(c.chuan), gia: lam2(c.gia), gc } });
   const ghi = [
     env.DB.prepare(`INSERT INTO san_luong (ngay, data, ts, by_id) VALUES (?,?,?,?)
                     ON CONFLICT(ngay) DO UPDATE SET data = excluded.data, ts = excluded.ts, by_id = excluded.by_id`).bind(ngay, data, ts, user.id),

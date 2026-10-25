@@ -285,7 +285,7 @@ function one(label) {
 for (const sc of SCREENS) { S.screen = sc; one(sc); }
 S.screen = 'baocaoca'; S.bcV = null; S.bcMo = 's4'; one('baocaoca+muc4-theo-dong'); S.bcvMo = true; one('baocaoca+muc4-them-viec'); S.bcvMo = false; S.bcMo = null;
 S.sl = { ngay: S.boot.today, hom: '2026-01-01', gioi_han: { chuan: { min: 1, max: 1000 }, gia: { min: 0.2, max: 1 }, gc: { min: 0.5, max: 1 } }, tl: { chuan: 158, gia: 0.2, gc: { 2: 0.75, 4: 0.7 }, da_dat: [2] },
-  dau: { don_vi: 'Đại đội 1.1.6', ddt: '', tdtr: '', cbpt: '', du_an: 'Dự án A', khu_vuc: '' }, luu: null,
+  dau: { don_vi: 'Đại đội 1.1.6', ddt: '', tdtr: '', cbpt: '', du_an: 'Dự án A', khu_vuc: '' }, luu: null, bc: [{}, {}],
   to: [{ id: 2, name: 'Trần B', ngay: { ngay: S.boot.today, tong: 21, lam: 18, nguon: 'bao' }, dem: null, lam: 18, tong: 21 }, { id: 4, name: 'Lê D', ngay: null, dem: { ngay: '2026-01-01', tong: 19, lam: 9, nguon: 'tl' }, lam: 9, tong: 19 }] };
 S.screen = 'sanluong'; one('sanluong'); S.slTlMo = true; one('sanluong+thiet-lap'); S.slTlMo = false; S.form['slc_2'] = '2x'; one('sanluong+cong-loi'); delete S.form['slc_2']; S.sl = null;
 S.screen = 'qstk'; S.tkCa = 2; one('qstk+ca-dem'); S.tkCa = 0; S.tkTo = 2; S.tkNgay = S.boot.today; one('qstk+mot-to'); S.tkTo = 4; one('qstk+to-thieu-so'); S.tkTo = null; S.tkNgMo = true; one('qstk+doi-nguong'); S.tkNgMo = false; one('qstk+chon-ngay'); S.tkNgay = null;

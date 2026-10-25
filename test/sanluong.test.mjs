@@ -52,13 +52,8 @@ async function main() {
   const V = (await S.call('GET', '/sanluong', undefined, CV)).data;
   eq('mặc định là hôm nay', [V.ngay, V.hom], [D, hom]);
   const khoa = V.to.find((t) => t.name === 'Phạm Văn Khoa'), coi = V.to.find((t) => t.name === 'Lò Văn Cơi'), nam = V.to.find((t) => t.name === 'Lê Hải Nam');
-  eq('Khoa (ca ngày): 18/21, không có phần nghỉ', [khoa.lam, khoa.tong, khoa.ngay.nghi, khoa.dem], [18, 21, undefined, null]);
-  eq('Cơi (ca đêm hôm trước): 9/19', [coi.lam, coi.tong, coi.dem.ngay, coi.ngay], [9, 19, hom, null]);
-  eq('Nam báo ca đêm HÔM NAY: chưa vào báo cáo hôm nay', [nam.lam, nam.tong, nam.ngay, nam.dem], [0, 0, null, null]);
+  eq('server chỉ trả danh sách tổ (quân số lấy từ báo cáo ca, không tính ở server)', Object.keys(khoa).sort(), ['id', 'name']);
   const hoang = V.to.find((t) => t.name === 'Nguyễn Văn Hoàng'), son = V.to.find((t) => t.name === 'Nguyễn Đức Sơn'), truong = V.to.find((t) => t.name === 'Lý Đình Trường');
-  eq('Hoàng chỉ có thiết lập quân số: vẫn vào báo cáo, ca ngày 12/15 (nguồn thiết lập)', [hoang.lam, hoang.tong, hoang.ngay.nguon, hoang.dem], [12, 15, 'tl', null]);
-  eq('Sơn chỉ có thiết lập quân số ca đêm: ca đêm hôm trước 17/19', [son.lam, son.tong, son.dem.nguon, son.dem.ngay, son.ngay], [17, 19, 'tl', hom, null]);
-  eq('Trường làm cả hai ca: 7 + 7, tổng 19', [truong.ngay.lam, truong.dem.lam, truong.lam, truong.tong], [7, 7, 14, 19]);
   eq('ngày mai chưa tới', (await S.call('GET', '/sanluong?ngay=' + vnDay(Date.now() + 864e5 * 3), undefined, CV)).status, 400);
   eq('ngày không có thật bị từ chối', (await S.call('GET', '/sanluong?ngay=2026-13-45', undefined, CV)).status, 400);
   const Vm = (await S.call('GET', '/sanluong?ngay=' + vnDay(Date.now() + 864e5), undefined, CV));
@@ -153,6 +148,31 @@ async function main() {
   eq('mở màn báo cáo sản lượng', R('S.screen'), 'sanluong');
   eq('màn lấy đúng ngày hôm nay', R('S.sl.ngay'), D);
   ok('menu Thêm của CVKTHT có mục Báo cáo sản lượng', R('vMore()').includes('data-a="slmo"'));
+  /* ===== QUÂN SỐ LÀ CỦA BÁO CÁO CA: một nơi tính duy nhất (bcQuanSo) ===== */
+  const Bngay = R('S.sl.bc[0]'), Bdem = R('S.sl.bc[1]');
+  eq('lấy báo cáo ca của CA NGÀY hôm nay và CA ĐÊM hôm trước', [Bngay.ngay, Bngay.ca, Bdem.ngay, Bdem.ca], [D, 1, hom, 2]);
+  const hangBc = (idx, ng) => R(`bcQuanSo(S.sl.bc[${idx}], ${ng ? "'" + ng + "'" : `bcNGoc(S.sl.bc[${idx}])`}).rows.map((r) => [r.u.id, r.trang, r.lam, r.tong])`);
+  const khop = (nhan, idx, truong, ng) => {
+    for (const [uid, trang, lam, tong] of hangBc(idx, ng)) {
+      const u = R(`S.sl.to.find((x) => x.id === ${uid})`);
+      if (!u) continue;
+      const mong = trang === 'da' || trang === 'tl' || trang === 'tlda' ? [lam, tong] : null;
+      const co = u[truong] ? [u[truong].lam, u[truong].tong] : null;
+      if (JSON.stringify(co) !== JSON.stringify(mong)) { ok(`${nhan}: tổ ${u.name} khớp báo cáo ca`, false, `báo cáo ca ${JSON.stringify(mong)} <> sản lượng ${JSON.stringify(co)}`); return; }
+    }
+    ok(`${nhan}: mọi tổ khớp đúng số của báo cáo ca`, true);
+  };
+  khop('ca ngày', 0, 'ngay');
+  khop('ca đêm hôm trước', 1, 'dem');
+  const dongBc = R(`bcQuanSo(S.sl.bc[0], bcNGoc(S.sl.bc[0])).dong.join('|')`) + '|' + R(`bcQuanSo(S.sl.bc[1], bcNGoc(S.sl.bc[1])).dong.join('|')`);
+  ok('chữ của báo cáo ca có đúng các số mà sản lượng dùng (Khoa 18/21, Hoàng 12/15, Trường 7/19, Cơi 9/19, Sơn 17/19)', ['Phạm Văn Khoa: ca ngày 18/21 cn', 'Nguyễn Văn Hoàng: ca ngày 12/15 cn', 'Lý Đình Trường: ca ngày 7/19 cn', 'Lò Văn Cơi: ca đêm 9/19 cn', 'Nguyễn Đức Sơn: ca đêm 17/19 cn'].every((x) => dongBc.includes(x)), dongBc);
+  const uOf = (u) => R(`S.sl.to.find((x) => x.id === ${u.id})`);
+  eq('Khoa: ca ngày 18/21, nguồn tổ báo', [uOf(khoa).lam, uOf(khoa).tong, uOf(khoa).ngay.nguon, uOf(khoa).dem], [18, 21, 'bao', null]);
+  eq('Cơi: ca đêm hôm trước 9/19', [uOf(coi).lam, uOf(coi).tong, uOf(coi).dem.ngay, uOf(coi).ngay], [9, 19, hom, null]);
+  eq('Nam báo ca đêm HÔM NAY: chưa vào báo cáo hôm nay', [uOf(nam).lam, uOf(nam).ngay, uOf(nam).dem], [0, null, null]);
+  eq('Hoàng chỉ có thiết lập quân số: 12/15 (nguồn thiết lập)', [uOf(hoang).lam, uOf(hoang).tong, uOf(hoang).ngay.nguon], [12, 15, 'tl']);
+  eq('Sơn chỉ có thiết lập quân số ca đêm: 17/19 ở ca đêm hôm trước', [uOf(son).lam, uOf(son).tong, uOf(son).dem.nguon, uOf(son).ngay], [17, 19, 'tl', null]);
+  eq('Trường làm cả hai ca: 7 + 7, tổng 19', [uOf(truong).ngay.lam, uOf(truong).dem.lam, uOf(truong).lam, uOf(truong).tong], [7, 7, 14, 19]);
   const kg = (cong, chuan, gc, gia) => Math.round((cong * chuan * gc) / gia);
   const cua = (T, u) => T.dong.find((r) => r.u.id === u.id);
   // báo cáo đã lưu: dùng ảnh chụp (tỷ lệ giá 0,25), không theo thiết lập hiện tại (0,5)
@@ -202,6 +222,23 @@ async function main() {
   eq('lưu thiết lập từ màn hình: tỷ lệ giá 0,4, Nam 0,9', [R('S.sl.tl.gia'), R('S.sl.tl.gc[' + nam.id + ']')], [0.4, 0.9]);
   eq('Khoa không bị đổi', R('S.sl.tl.gc[' + khoa.id + ']'), 0.8);
   eq('bảng thiết lập đóng sau khi lưu', R('S.slTlMo'), false);
+  // nguồn quân số "Chỉ số thiết lập" (cùng nút với báo cáo ca): Khoa đã báo 18/21 nhưng thiết lập là 10/21
+  eq('đặt thiết lập quân số cho Khoa: đi làm ca ngày 10', (await S.call('PUT', '/quanso/thietlap', { user: khoa.id, tong: 21, s1: 10, s2: 0, ts: 0 }, CV)).status, 200);
+  await R('slTai(undefined, true)'); await cho();
+  eq('mặc định theo báo cáo ca (Theo tổ báo): Khoa vẫn 18', [uOf(khoa).lam, uOf(khoa).ngay.nguon], [18, 'bao']);
+  ok('có hai nút nguồn như báo cáo ca', R('vSanLuong()').includes('data-a="slnguon" data-v="tl"') && R('vSanLuong()').includes('data-a="slnguon" data-v="to"'));
+  R(`ACTIONS.slnguon({ v: 'tl' })`);
+  eq('đổi sang Chỉ số thiết lập: Khoa 10/21 (nguồn thiết lập)', [uOf(khoa).lam, uOf(khoa).tong, uOf(khoa).ngay.nguon], [10, 21, 'tl']);
+  khop('ca ngày (sau khi đổi nguồn)', 0, 'ngay', 'tl');
+  eq('Hoàng, Sơn vẫn đúng số thiết lập', [uOf(hoang).lam, uOf(son).lam], [12, 17]);
+  const congKhoa = cua(R('slTinh()'), khoa);
+  eq('công gia công thép của Khoa theo số mới (10), công đã sửa tay 15 thì giữ 15', congKhoa.cong, 15);
+  R(`ACTIONS.slchep()`); await cho();
+  eq('lưu kèm nguồn quân số đã chọn', JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).nguon, 'tl');
+  await R('slTai()'); await cho();
+  eq('mở lại: nhớ nguồn đã chọn', [R('S.slNguon'), uOf(khoa).lam], ['tl', 10]);
+  R(`ACTIONS.slnguon({ v: 'to' })`);
+  eq('đổi lại Theo tổ báo: Khoa 18', uOf(khoa).lam, 18);
   // đổi ngày
   R(`ACTIONS.slngay({ v: '${hom}' })`); await cho();
   eq('đổi sang hôm qua', R('S.sl.ngay'), hom);

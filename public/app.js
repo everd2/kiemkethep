@@ -227,7 +227,7 @@ function sauGhi() {
 function xoaPhien() {
   forgetBoot();
   S.me = null; S.boot = null; S.stale = null; S.screen = 'login'; S.err = ''; S.form = {}; S.qsH = null;
-  Object.assign(S, { sl: null, slTlMo: false, slLai: false, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
+  Object.assign(S, { sl: null, slNguon: null, slTlMo: false, slLai: false, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
     review: null, users: null, pinShown: null, loans: null, loanDetail: null, svs: null, audit: null, usage: null, cmp: null, subs: {},
     ask: null, gcXu: null, gcVg: null, sel: null });
   ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
@@ -3962,8 +3962,8 @@ function bcLyDo(r, lyDo) {
    NGUỒN SỐ (S.bcNguon): 'to' = số tổ báo, tổ chưa báo thì lấy SỐ THIẾT LẬP; 'tl' = chỉ số thiết lập. Dòng dùng số
    thiết lập viết y như dòng thường (không ghi chú gì thêm): đó là số CVKTHT chịu trách nhiệm.
    Tổng quân số tính mọi tổ, kể cả tổ làm ca kia và tổ chưa báo. */
-function bcQuanSo(B) {
-  const ca = B.ca, kia = ca === 1 ? 2 : 1, caNay = CA_TEN[ca], caKia = CA_TEN[kia], chiTl = S.bcNguon === 'tl';
+function bcQuanSo(B, nguon = S.bcNguon) {
+  const ca = B.ca, kia = ca === 1 ? 2 : 1, caNay = CA_TEN[ca], caKia = CA_TEN[kia], chiTl = nguon === 'tl';
   const ds = B.tdt.concat(B.qs.filter((x) => !B.tdt.some((u) => u.id === x.user_id)).map((x) => ({ id: x.user_id, name: x.uname })))
     .filter((u, i, a) => a.findIndex((v) => v.id === u.id) === i);
   // ca liền trước của ca đang báo cáo
@@ -3972,6 +3972,9 @@ function bcQuanSo(B) {
   /* hang: từng dòng của mục 3 kèm trạng thái tổ — 'da' tổ tự báo, 'tl' đang lấy số thiết lập, 'chua' chưa có số, 'kia' làm
      ca kia. Màn soạn hiện nhãn ngay trên dòng đó, nên không cần một danh sách tổ riêng ở bước 1. */
   const chua = [], dung = [], truocNhom = [], sauNhom = [], truocHang = [], sauHang = [], kiaTen = [];
+  /* rows: số của từng tổ cho ca này, DÙNG CHUNG với báo cáo sản lượng (slGan) để hai báo cáo không bao giờ ra hai con số khác nhau.
+     trang: 'da' tổ tự báo, 'tl' / 'tlda' số thiết lập, 'chua' tổ làm ca này mà chưa có số, 'kia' tổ làm ca kia (không có số ca này). */
+  const rows = [];
   ds.forEach((u) => {
     const r0 = B.qs.find((x) => x.user_id === u.id && x.ca === ca), p0 = truocDs.find((x) => x.user_id === u.id);
     const tr = B.truoc.find((x) => x.user_id === u.id), tl = (B.tl || {})[u.id];
@@ -3986,12 +3989,13 @@ function bcQuanSo(B) {
        báo CA NÀY, rồi số thiết lập (CVKTHT vừa sửa thì tổng đổi theo), rồi lần báo ca liền trước, rồi số tổ tự khai */
     const tongTo = ((chiTl && tl) || r0 || tl || p0 || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
     tong += tongTo;
-    if (L === kia) { sauNhom.push(`Tổ ${u.name} (làm ${caKia})`); sauHang.push('kia'); kiaTen.push(u.name); kiaSo += tongTo; return; }
+    if (L === kia) { sauNhom.push(`Tổ ${u.name} (làm ${caKia})`); sauHang.push('kia'); kiaTen.push(u.name); kiaSo += tongTo; rows.push({ u, trang: 'kia', lam: null, tong: tongTo }); return; }
     if (!r0) chua.push(u.name);
     const r = chon(r0, ca);
-    if (!r) { truocNhom.push(`Tổ ${u.name}: chưa báo quân số ${caNay}`); truocHang.push('chua'); chuaSo += tongTo; return; }
+    if (!r) { truocNhom.push(`Tổ ${u.name}: chưa báo quân số ${caNay}`); truocHang.push('chua'); chuaSo += tongTo; rows.push({ u, trang: 'chua', lam: null, tong: tongTo }); return; }
     if (r.tl) dung.push(u.name);
     truocHang.push(r.tl ? (r0 ? 'tlda' : 'tl') : 'da');
+    rows.push({ u, trang: r.tl ? (r0 ? 'tlda' : 'tl') : 'da', lam: r.lam, tong: r.tong });
     lam += r.lam;
     const p = [`${caNay} ${r.lam}/${r.tong} cn`], n1 = qsSoNghi(r.nghi), ly1 = bcLyDo(r, B.lyDo);
     nghi += n1; kiaSo += Math.max(0, tongTo - r.lam - n1);
@@ -4009,7 +4013,7 @@ function bcQuanSo(B) {
   /* nghi: số nghỉ của ca đang báo cáo; phai: số tổ làm ca này (tổ làm ca kia không tính là phải báo). kiaSo: người
      không thuộc ca này (tổ làm ca kia, phần ca kia của tổ 2 ca); chuaSo: người của tổ chưa có số nào cho ca này.
      Bốn số cộng lại đúng bằng tổng: tong = lam + nghi + kiaSo + chuaSo. */
-  return { dong: truocNhom.concat(sauNhom), hang: truocHang.concat(sauHang), kiaTen, chua, dung, lam, tong, nghi, kiaSo, chuaSo, phai: truocNhom.length, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
+  return { rows, dong: truocNhom.concat(sauNhom), hang: truocHang.concat(sauHang), kiaTen, chua, dung, lam, tong, nghi, kiaSo, chuaSo, phai: truocNhom.length, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
 }
 const bcTre = (B, d) => gcMo(d) && (d.han < B.ngay || (d.han === B.ngay && B.ca === 2));
 // chữ app tự ghép cho một mục
@@ -4246,8 +4250,31 @@ const slSo = (s) => { const t = String(s == null ? '' : s).trim().replace(',', '
 const slFmt = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
 async function slTai(ngay, giu) {
   const q = ngay || (S.sl && S.sl.ngay) || '';
-  S.sl = await api('GET', '/sanluong' + (q ? '?ngay=' + q : ''));
-  if (!giu) Object.keys(S.form).filter((k) => /^(slc_|slt_)/.test(k)).forEach((k) => delete S.form[k]);
+  const L = await api('GET', '/sanluong' + (q ? '?ngay=' + q : ''));
+  /* QUÂN SỐ lấy từ chính BÁO CÁO CA: ca ngày của ngày báo cáo và ca đêm ngày hôm trước (xem slGan). Không tính riêng ở đây. */
+  L.bc = await Promise.all([api('GET', `/baocao?ngay=${L.ngay}&ca=1`), api('GET', `/baocao?ngay=${L.hom}&ca=2`)]);
+  S.sl = L;
+  if (!giu) {
+    Object.keys(S.form).filter((k) => /^(slc_|slt_)/.test(k)).forEach((k) => delete S.form[k]);
+    S.slNguon = (L.luu && L.luu.nguon) || null; // null = theo nguồn đã chọn trong báo cáo ca của từng ca
+  }
+  slGan();
+}
+/* Quân số của từng tổ trong báo cáo sản lượng = quân số của báo cáo ca, tính bằng đúng bcQuanSo: u.ngay là số ca ngày của ngày
+   báo cáo, u.dem là số ca đêm hôm trước (tổ làm đêm). Nguồn "Theo tổ báo" / "Chỉ số thiết lập" cùng nghĩa với báo cáo ca: mặc định
+   theo nguồn đã chọn trong báo cáo ca của từng ca, đổi ngay trên màn này thì áp cho cả hai ca. */
+function slGan() {
+  const L = S.sl, nguon = (B) => S.slNguon || bcNGoc(B);
+  const r1 = bcQuanSo(L.bc[0], nguon(L.bc[0])).rows, r2 = bcQuanSo(L.bc[1], nguon(L.bc[1])).rows;
+  L.to.forEach((u) => {
+    const mot = (rows, ngay) => {
+      const r = rows.find((x) => x.u.id === u.id);
+      return r && (r.trang === 'da' || r.trang === 'tl' || r.trang === 'tlda') ? { ngay, tong: r.tong, lam: r.lam, nguon: r.trang === 'da' ? 'bao' : 'tl' } : null;
+    };
+    u.ngay = mot(r1, L.ngay); u.dem = mot(r2, L.hom);
+    const cs = [u.ngay, u.dem].filter(Boolean);
+    u.lam = cs.reduce((a, x) => a + x.lam, 0); u.tong = cs.reduce((a, x) => Math.max(a, x.tong || 0), 0);
+  });
 }
 // thiết lập đang dùng cho báo cáo của ngày này: ảnh chụp lúc lưu nếu có (trừ khi bấm "Tính lại"), không thì thiết lập hiện tại
 const slCS = () => { const L = S.sl; return L.luu && L.luu.chup && !S.slLai ? L.luu.chup : L.tl; };
@@ -4297,6 +4324,7 @@ function slTao() {
 function vSanLuong() {
   const L = S.sl, top = head('Báo cáo sản lượng', L ? fmtDay(L.ngay) : '', 'more');
   if (!L) return `${top}${panelWait('sanluong')}`;
+  const nguonHien = S.slNguon || bcNGoc(L.bc[0]);
   const T = slTinh(), cs = T.cs, G = L.gioi_han, homNay = S.boot.today, truoc = congNgay(L.ngay, -1), sau = congNgay(L.ngay, 1);
   const khac = L.luu && L.luu.chup && !S.slLai && (L.luu.chup.chuan !== L.tl.chuan || L.luu.chup.gia !== L.tl.gia || L.to.some((u) => slGcCua(L.luu.chup, u.id) !== L.tl.gc[u.id]));
   const luu = L.luu ? `Đã lưu lúc ${dmy(L.luu.ts)} (${esc(L.luu.by_name)})` : 'Chưa lưu lần nào';
@@ -4324,7 +4352,8 @@ function vSanLuong() {
       <div class="card col gap6"><b>BÁO CÁO SẢN LƯỢNG ngày ${fmtDay(L.ngay)}</b>${dauDong}
         <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="nav" data-s="baocaoca">Sửa phần đầu ở Báo cáo ca</button></div>
       <b>2. Quân số và công gia công thép</b>
-      <span class="sm muted" style="line-height:1.4">Mỗi tổ một dòng: số đi làm ca ngày ${fmtDay(L.ngay).slice(0, 5)} và/hoặc ca đêm ${fmtDay(L.hom).slice(0, 5)} (tổ làm đêm), lấy từ báo cáo quân số. Công gia công thép mặc định bằng số đi làm, sửa được.</span>
+      <span class="sm muted" style="line-height:1.4">Quân số lấy từ chính <b>Báo cáo ca</b> (cùng một cách tính): ca ngày ${fmtDay(L.ngay).slice(0, 5)} và ca đêm ${fmtDay(L.hom).slice(0, 5)} (tổ làm đêm). Công gia công thép mặc định bằng số đi làm, sửa được.</span>
+      <div class="row gap6">${[['to', 'Theo tổ báo'], ['tl', 'Chỉ số thiết lập']].map(([v, n]) => `<button class="chip s f1 ${nguonHien === v ? 'on' : ''}" style="min-width:0;white-space:nowrap" data-a="slnguon" data-v="${v}">${n}</button>`).join('')}</div>
       ${hang || '<div class="card muted">Chưa có tổ nào.</div>'}
       <div class="card col gap6"><div class="row gap8"><span class="f1">Đi làm / tổng quân số</span><b>${T.lam} / ${T.tong}</b></div>
         <div class="row gap8"><span class="f1">Quân số gia công thép được</span><b>${T.cong} công</b></div></div>
@@ -6687,6 +6716,8 @@ const ACTIONS = {
     render();
   },
   sltlmo() { S.slTlMo = !S.slTlMo; render(); },
+  // đổi nguồn quân số (như nút cùng tên ở báo cáo ca): số công đã sửa tay giữ nguyên, ô chưa sửa theo số quân số mới
+  slnguon(d) { if (!S.sl) return; S.slNguon = d.v === 'tl' ? 'tl' : 'to'; slGan(); render(); },
   slai() { S.slLai = true; render(); },
   // lưu thiết lập: chỉ gửi các ô đã gõ
   sltl() {
@@ -6723,7 +6754,7 @@ const ACTIONS = {
     const chu = slTao(), ok = await bcChepChu(chu);
     const chup = { chuan: T.cs.chuan, gia: T.cs.gia, gc: Object.fromEntries(L.to.map((u) => [u.id, slGcCua(T.cs, u.id)])) };
     act(async () => {
-      try { await api('PUT', '/sanluong', { ngay: L.ngay, cong: T.sua, chup, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
+      try { await api('PUT', '/sanluong', { ngay: L.ngay, cong: T.sua, chup, nguon: S.slNguon || undefined, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
       catch (e) { if (e.code === 'changed') { try { await slTai(L.ngay, true); } catch (er) { /* vòng làm mới sẽ tải lại */ } } throw e; }
       S.slLai = false;
       await slTai(L.ngay, true);
