@@ -22,7 +22,7 @@ const SUITES = [
   ['Ảnh biên bản: tải lên, xem, xoá, quyền, R2 lỗi', 'anh.test.mjs'],
   ['Vá bảo mật: CSV công thức, đổi PIN, ảnh gửi dồn', 'baomat.test.mjs'],
   ['Rà soát: LIMIT âm, ngày không có thật', 'roasoat.test.mjs'],
-  ['Báo cáo sản lượng: quyền, công x 158 kg / (tỷ lệ giá x tỷ lệ gia công), khoảng tỷ lệ, bản chữ', 'sanluong.test.mjs'],
+  ['Báo cáo sản lượng: quyền, quân số lấy từ báo cáo ca, (công x 158 x tỷ lệ gia công) / tỷ lệ giá, bản chữ', 'sanluong.test.mjs'],
   ['Sửa lỗi sau rà soát: đăng nhập song song, huỷ phiếu âm tồn, gửi trùng, ngày vay mượn', 'suaroi.test.mjs'],
 ];
 
