@@ -67,8 +67,9 @@ ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(code, ctx, { filename: 'app.js' });
 
-const today = new Date().toISOString().slice(0, 10);
-const yday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+// ngày theo GIỜ VIỆT NAM như app (vnDay): lấy theo UTC thì từ 0h đến 7h sáng lệch app một ngày và các thẻ nhắc theo khung giờ đỏ oan
+const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+const yday = new Date(Date.now() + 7 * 3600e3 - 864e5).toISOString().slice(0, 10);
 const boot = {
   rev: 7, today, lastClosed: yday, closed: false,
   user: { id: 1, name: 'A', role: 'admin' },

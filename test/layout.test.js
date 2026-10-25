@@ -32,8 +32,8 @@ ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(code, ctx);
 
-const today = new Date().toISOString().slice(0, 10);
-const yday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10); // giờ Việt Nam như app (UTC thì 0h–7h lệch một ngày)
+const yday = new Date(Date.now() + 7 * 3600e3 - 864e5).toISOString().slice(0, 10);
 const ts = Date.now() - 36e5;
 const phi = [
   { id: 'D6', kg_per_cay: 20, bo_size: 100, min_stock: 200, unit: 'cuon', active: 1 },

@@ -105,6 +105,15 @@ async function main() {
   /* ===== 5. Thống kê, CSV, huỷ, sao lưu ===== */
   const V2 = (await S.call('GET', `/thepve?tu=${nam}-01-01&den=${D}`, undefined, CV)).data;
   ok('xem cả năm có đủ chuyến nhập từ Excel', V2.ve.filter((v) => v.nguon === 'excel').length === 3, V2.ve.length);
+  // tối ưu: danh sách theo trang, thống kê cộng sẵn trên máy chủ (không phụ thuộc trang)
+  const tongSql = S.one(`SELECT COUNT(DISTINCT v.id) n, SUM(COALESCE(d.kg, d.kg_tinh, 0)) kg FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.ngay >= ? AND v.ngay <= ?`, nam + '-01-01', D);
+  const p1 = (await S.call('GET', `/thepve?tu=${nam}-01-01&den=${D}&so=2`, undefined, CV)).data;
+  eq('trang 1: 2 chuyến mới nhất, biết tổng số chuyến của kỳ', [p1.ve.length, p1.trang.tong], [2, tongSql.n]);
+  eq('thống kê của kỳ = cộng mọi dòng (không chỉ trang đang tải)', [p1.tk.tong.chuyen, p1.tk.tong.kg], [tongSql.n, tongSql.kg]);
+  eq('thống kê theo tháng / NCC / phi / bảng chéo cộng lại bằng tổng', [p1.tk.thang, p1.tk.ncc, p1.tk.phi, p1.tk.cheo].map((ds) => ds.reduce((a, r) => a + r.kg, 0)), [tongSql.kg, tongSql.kg, tongSql.kg, tongSql.kg]);
+  const p2 = (await S.call('GET', `/thepve?tu=${nam}-01-01&den=${D}&so=2&bo_qua=2`, undefined, CV)).data;
+  eq('trang 2 tiếp nối, không trùng chuyến của trang 1', p2.ve.some((v) => p1.ve.some((x) => x.id === v.id)), false);
+  ok('mỗi chuyến trong trang có đủ dòng phi của nó', p1.ve.every((v) => v.dong.length === S.one('SELECT COUNT(*) n FROM thep_ve_dong WHERE ve_id = ?', v.id).n));
   const csv = (await S.call('GET', `/thepve/csv?tu=${nam}-01-01&den=${D}`, undefined, CV)).data;
   ok('CSV có tiêu đề và dòng HP-100', /Kg tự tính/.test(csv) && /HP-100/.test(csv), String(csv).slice(0, 120));
   eq('huỷ chuyến có lý do', (await S.call('POST', `/thepve/${c1.data.id}/huy`, { ly_do: 'ghi nhầm' }, LAN)).status, 200);

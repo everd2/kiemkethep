@@ -131,7 +131,32 @@ if (ok('anh_bb')) {
   loi('Ảnh biên bản trỏ tới dòng sổ không có thật', q(`SELECT id, loai, entity_id FROM anh_bb a WHERE NOT (
       (loai = 'loan' AND entity_id IN (SELECT id FROM loans)) OR (loai = 'satvun' AND entity_id IN (SELECT id FROM satvun)) OR (loai = 'gc' AND entity_id IN (SELECT id FROM don_gc)))`));
 }
-if (ok('san_luong')) TQ.push(['Báo cáo sản lượng đã lưu', mot('SELECT COUNT(*) n FROM san_luong').n + ' ngày']);
+if (ok('thep_ve')) {
+  const tv = mot('SELECT COUNT(*) n, MIN(ngay) tu, MAX(ngay) den FROM thep_ve WHERE voided = 0');
+  TQ.push(['Sổ thép về (chuyến còn hiệu lực)', tv.n ? `${tv.n} chuyến, ${tv.tu} → ${tv.den}, ${(mot('SELECT SUM(COALESCE(d.kg, d.kg_tinh, 0)) s FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0').s / 1000).toFixed(2)} tấn` : 'chưa có']);
+  loi('Chuyến thép về không có dòng phi nào', q('SELECT v.id, v.ngay FROM thep_ve v WHERE v.voided = 0 AND NOT EXISTS (SELECT 1 FROM thep_ve_dong d WHERE d.ve_id = v.id)'));
+  loi('Dòng thép về mồ côi (không thuộc chuyến nào)', q('SELECT id, ve_id FROM thep_ve_dong WHERE ve_id IS NULL OR ve_id NOT IN (SELECT id FROM thep_ve)'));
+  loi('Chuyến thép về trỏ tới nhà cung cấp không có thật', q('SELECT id, ncc_id FROM thep_ve WHERE ncc_id IS NULL OR ncc_id NOT IN (SELECT id FROM thep_ncc)'));
+  loi('Chuyến thép về gắn đơn không có thật', q('SELECT id, don_id FROM thep_ve WHERE don_id IS NOT NULL AND don_id NOT IN (SELECT id FROM thep_don)'));
+  loi('Dòng thép về phi không có thật', q('SELECT DISTINCT phi_id FROM thep_ve_dong WHERE phi_id NOT IN (SELECT id FROM phi)'));
+  loi('Dòng thép về không có số nào (bó, cây, kg đều trống)', q('SELECT id, ve_id FROM thep_ve_dong WHERE COALESCE(bo, 0) = 0 AND COALESCE(cay, 0) = 0 AND COALESCE(kg, 0) = 0'));
+  loi('Ngày về sau hôm nay', q('SELECT id, ngay FROM thep_ve WHERE ngay > ?', today));
+  cb('Kg phiếu lệch kg tự tính quá 5%', q('SELECT ve_id, phi_id, kg, kg_tinh FROM thep_ve_dong WHERE kg IS NOT NULL AND kg_tinh IS NOT NULL AND kg_tinh > 0 AND ABS(kg - kg_tinh) > kg_tinh * 0.05'));
+  cb('Số phiếu ghi trùng (cùng nhà cung cấp)', q("SELECT ncc_id, so_phieu, COUNT(*) n FROM thep_ve WHERE voided = 0 AND so_phieu IS NOT NULL GROUP BY ncc_id, lower(replace(replace(replace(so_phieu,' ',''),'-',''),'.','')) HAVING n > 1"));
+  if (ok('thep_don')) {
+    loi('Đơn hàng không có dòng phi nào', q("SELECT d.id, d.so_don FROM thep_don d WHERE d.tt <> 'huy' AND NOT EXISTS (SELECT 1 FROM thep_don_dong x WHERE x.don_id = d.id)"));
+    loi('Đơn hàng trạng thái lạ', q("SELECT id, tt FROM thep_don WHERE tt NOT IN ('mo','xong','huy')"));
+    cb('Đơn đang giao đã quá hạn mà chưa về đủ', q(`SELECT d.id, d.so_don, d.han FROM thep_don d WHERE d.tt = 'mo' AND d.han IS NOT NULL AND d.han < ? AND
+      (SELECT COALESCE(SUM(kg), 0) FROM thep_don_dong WHERE don_id = d.id) > (SELECT COALESCE(SUM(COALESCE(x.kg, x.kg_tinh, 0)), 0) FROM thep_ve v JOIN thep_ve_dong x ON x.ve_id = v.id WHERE v.don_id = d.id AND v.voided = 0)`, today));
+  }
+}
+/* ---------- 9. Tối ưu: bảng phình to, truy vấn quét cả bảng ---------- */
+const lon = BANG.filter(ok).map((b) => ({ bang: b, dong: mot(`SELECT COUNT(*) n FROM ${b}`).n })).sort((a, z) => z.dong - a.dong);
+TQ.push(['Bảng nhiều dòng nhất', lon.slice(0, 5).map((x) => `${x.bang} ${x.dong}`).join(', ')]);
+if (ok('sessions')) cb('Phiên đăng nhập đã hết hạn chưa dọn (lịch dọn mỗi giờ có thể hỏng)', q('SELECT COUNT(*) n FROM sessions WHERE expires_at < ? HAVING n > 50', Date.now() - 2 * 3600e3));
+if (ok('login_fail')) cb('Bộ đếm nhập sai PIN cũ chưa dọn', q('SELECT COUNT(*) n FROM login_fail WHERE day < ? HAVING n > 0', today));
+if (san_luong_ok()) TQ.push(['Báo cáo sản lượng đã lưu', mot('SELECT COUNT(*) n FROM san_luong').n + ' ngày']);
+function san_luong_ok() { return ok('san_luong'); }
 if (ok('bao_cao_ca')) TQ.push(['Báo cáo ca đã lưu', mot('SELECT COUNT(*) n FROM bao_cao_ca').n + ' ca']);
 if (ok('audit')) TQ.push(['Dòng nhật ký', String(mot('SELECT COUNT(*) n FROM audit').n)]);
 

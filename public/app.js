@@ -305,7 +305,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v61';
+const BAN = 'kho-thep-v62';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4530,19 +4530,13 @@ function tvFormDon() {
     <input class="inp s" id="tdf_gc" maxlength="200" autocomplete="off" placeholder="Ghi chú (không bắt buộc)" data-model="tdf_gc" value="${esc(S.form.tdf_gc || '')}">
     <div class="row gap8"><span class="f1"></span><button class="btn s" data-a="tvdong">Đóng</button><button class="btn s pri" data-a="tvluudon">LƯU ĐƠN</button></div></div>`;
 }
-// thống kê của kỳ đang xem: theo tháng, theo nhà cung cấp, theo phi
+// thống kê của kỳ đang xem — cộng sẵn trên máy chủ (S.tv.tk), không cộng từ danh sách chuyến (danh sách chỉ là một trang)
 function tvThongKe() {
-  const T = S.tv, thang = {}, ncc = {}, phi = {};
-  let tong = 0;
-  for (const v of T.ve) {
-    const m = v.ngay.slice(0, 7), n = (T.ncc.find((x) => x.id === v.ncc_id) || {}).name || '?';
-    let kgV = 0;
-    for (const l of v.dong) { const kg = tvKg(l); kgV += kg; phi[l.phi] = (phi[l.phi] || 0) + kg; }
-    tong += kgV;
-    (thang[m] = thang[m] || { kg: 0, n: 0 }); thang[m].kg += kgV; thang[m].n++;
-    (ncc[n] = ncc[n] || { kg: 0, n: 0 }); ncc[n].kg += kgV; ncc[n].n++;
-  }
-  return { tong, chuyen: T.ve.length, thang, ncc, phi };
+  const K = S.tv.tk, thang = {}, ncc = {}, phi = {};
+  for (const r of K.thang) thang[r.thang] = { kg: r.kg, n: r.n };
+  for (const r of K.ncc) ncc[tvNcc(r.ncc_id)] = { kg: r.kg, n: r.n };
+  for (const r of K.phi) phi[r.phi] = r.kg;
+  return { tong: K.tong.kg, chuyen: K.tong.chuyen, thang, ncc, phi };
 }
 // đọc bảng dán từ Excel: dòng đầu là tiêu đề cột; trả { rows, cot, loi }
 const tvCotTen = { ngay: ['ngay', 'ngay ve', 'ngay nhap', 'date'], ncc: ['ncc', 'nha cung cap', 'nha cc', 'don vi cung cap', 'nha cung ung', 'nha san xuat'], so_don: ['so don', 'don hang', 'so don hang', 'ma don', 'po'],
@@ -4598,7 +4592,7 @@ function tvBangVe(ds) {
   }).join('');
   return `<div class="bangw"><table class="bang"><thead><tr><th class="c1">Ngày</th><th>Nhà cung cấp</th><th>Số phiếu / xe</th><th>Đơn</th><th>Phi</th><th class="so">Bó</th><th class="so">Cây</th>
     <th class="so">Kg phiếu</th><th class="so">Kg tính</th><th class="so">Chênh kg</th><th class="so">Tấn chuyến</th>${ghi ? '<th></th>' : ''}</tr></thead><tbody>${hang}
-    <tr class="tong"><td class="c1">TỔNG</td><td colspan="3">${ds.length} chuyến</td><td></td><td class="so">${fmtInt(tBo)}</td><td class="so">${fmtInt(tCay)}</td><td class="so">${fmtInt(tKgP)}</td><td class="so">${fmtInt(tKgT)}</td><td></td><td class="so">${tvT(tKg)}</td>${ghi ? '<td></td>' : ''}</tr>
+    <tr class="tong"><td class="c1">TỔNG</td><td colspan="3">${ds.length} chuyến đang hiện${S.tv.trang && S.tv.trang.tong > ds.length ? ' / ' + S.tv.trang.tong : ''}</td><td></td><td class="so">${fmtInt(tBo)}</td><td class="so">${fmtInt(tCay)}</td><td class="so">${fmtInt(tKgP)}</td><td class="so">${fmtInt(tKgT)}</td><td></td><td class="so">${tvT(tKg)}</td>${ghi ? '<td></td>' : ''}</tr>
     </tbody></table></div>`;
 }
 // Bảng đơn hàng: mỗi hàng một phi của một đơn; cột của đơn gộp ô dọc. Tấn đặt / đã về / còn thiếu / %, trạng thái và việc của đơn.
@@ -4634,8 +4628,8 @@ function tvBangTk(tieuDe, cot1, rows, tong, coChuyen) {
 function tvBangCheo() {
   const T = S.tv, o = {}, phiSet = new Set(), nccT = {}, phiT = {};
   let tong = 0;
-  for (const v of T.ve) { const n = tvNcc(v.ncc_id); for (const l of v.dong) { const kg = tvKg(l); (o[n] = o[n] || {})[l.phi] = (o[n][l.phi] || 0) + kg; phiSet.add(l.phi); nccT[n] = (nccT[n] || 0) + kg; phiT[l.phi] = (phiT[l.phi] || 0) + kg; tong += kg; } }
-  const thuTu = (T.phi || []).map((p) => p.id), phis = [...phiSet].sort((a, b) => thuTu.indexOf(a) - thuTu.indexOf(b)), ncc = Object.keys(o).sort((a, b) => nccT[b] - nccT[a]);
+  for (const r of T.tk.cheo) { const n = tvNcc(r.ncc_id); (o[n] = o[n] || {})[r.phi] = r.kg; phiSet.add(r.phi); nccT[n] = (nccT[n] || 0) + r.kg; phiT[r.phi] = (phiT[r.phi] || 0) + r.kg; tong += r.kg; }
+  const thuTu = (T.phi || []).map((p) => p.id), phis = [...phiSet].sort((x, y) => thuTu.indexOf(x) - thuTu.indexOf(y)), ncc = Object.keys(o).sort((x, y) => nccT[y] - nccT[x]);
   if (!ncc.length) return '';
   return `<b>Nhà cung cấp × phi (tấn)</b><div class="bangw"><table class="bang"><thead><tr><th class="c1">Nhà cung cấp</th>${phis.map((p) => `<th class="so">${esc(p)}</th>`).join('')}<th class="so">Tổng</th></tr></thead><tbody>
     ${ncc.map((n) => `<tr><td class="c1">${esc(n)}</td>${phis.map((p) => `<td class="so">${o[n][p] ? tvT(o[n][p]) : ''}</td>`).join('')}<td class="so"><b>${tvT(nccT[n])}</b></td></tr>`).join('')}
@@ -4654,7 +4648,7 @@ function vThepVe() {
   if (tab === 've') {
     than = (S.tvMo === 've' ? tvFormVe() : ghi ? '<button class="btn pri full" data-a="tvmo" data-v="ve">+ GHI CHUYẾN THÉP VỀ</button>' : '')
       + `<span class="sm muted">${TK.chuyen} chuyến · ${tvTan(TK.tong)} trong kỳ</span>`
-      + (T.ve.length ? tvBangVe(T.ve.slice(0, S.tvSoHien || 100)) + (T.ve.length > (S.tvSoHien || 100) ? `<button class="btn s full" data-a="tvthem">Xem thêm (còn ${T.ve.length - (S.tvSoHien || 100)} chuyến)</button>` : '') : '<div class="card muted">Chưa có chuyến nào trong kỳ này.</div>');
+      + (T.ve.length ? tvBangVe(T.ve) + (T.trang.tong > T.ve.length ? `<button class="btn s full" data-a="tvthem">Xem thêm (còn ${T.trang.tong - T.ve.length} chuyến)</button>` : '') : '<div class="card muted">Chưa có chuyến nào trong kỳ này.</div>');
   } else if (tab === 'don') {
     const ds = T.don.filter((d) => S.tvDonHien === 'tat' || d.tt === 'mo');
     than = (S.tvMo === 'don' ? tvFormDon() : ghi ? '<button class="btn pri full" data-a="tvmo" data-v="don">+ LẬP ĐƠN HÀNG</button>' : '')
@@ -7065,7 +7059,17 @@ const ACTIONS = {
   // ---- Sổ thép về ----
   tvtab(d) { S.tvTab = d.v; S.tvMo = null; render(); },
   async tvky(d) { S.tvKy = { tu: d.tu, den: d.den }; S.tvSoHien = 60; const k = 'tv:' + d.tu + ':' + d.den; S.tv = layNho(k) || S.tv; render(); try { await tvTai(); } catch (e) { say(e.message, true); } render(); },
-  tvthem() { S.tvSoHien = (S.tvSoHien || 100) + 200; render(); },
+  async tvthem() {
+    const T = S.tv, k = tvKy();
+    if (!T || S.busy) return;
+    S.busy = true; S.busyMsg = 'Đang tải thêm...'; render();
+    try {
+      const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}&bo_qua=${T.ve.length}&so=200`);
+      if (S.tv === T) { T.ve = T.ve.concat(d.ve.filter((v) => !T.ve.some((x) => x.id === v.id))); T.trang = d.trang; }
+    } catch (e) { say(e.message, true); }
+    finally { S.busy = false; S.busyMsg = ''; }
+    render();
+  },
   tvdonloc(d) { S.tvDonHien = d.v; render(); },
   tvmo(d) { S.tvMo = d.v; S.tvSoDong = 1; Object.keys(S.form).filter((k) => /^(t[vd][pbck]_|tvf_|tdf_)/.test(k)).forEach((k) => delete S.form[k]); render(); },
   tvdong() { S.tvMo = null; render(); },

@@ -78,25 +78,40 @@ export async function tvView(env, url, user) {
   const today = vnDay();
   let tu = String(url.searchParams.get('tu') || today.slice(0, 4) + '-01-01'), den = String(url.searchParams.get('den') || today);
   if (!ngayThat(tu) || !ngayThat(den) || tu > den) throw bad('Khoảng ngày không hợp lệ');
-  const [nccR, donR, donDongR, veR, dongR, daVeR, phiR] = await env.DB.batch([
+  /* TỐI ƯU: cả năm có thể gần nghìn chuyến / vài nghìn dòng phi (~350 KB) — không gửi hết xuống điện thoại.
+     - Thống kê của kỳ (tổng, theo tháng, theo nhà cung cấp, theo phi, bảng chéo NCC × phi) cộng sẵn bằng SQL, chỉ gửi kết quả.
+     - Danh sách chuyến theo TRANG: mới nhất trước, mỗi trang `so` chuyến (mặc định 100), bỏ qua `bo_qua` chuyến đầu ("Xem thêm"). */
+  const so = Math.min(300, Math.max(1, Number(url.searchParams.get('so')) || 100)), boQua = Math.max(0, Number(url.searchParams.get('bo_qua')) || 0);
+  const KG = 'COALESCE(d.kg, d.kg_tinh, 0)', TU = 'FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2';
+  const [nccR, donR, donDongR, veR, dongR, daVeR, phiR, tongR, thangR, nccTkR, phiTkR, cheoR] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, active FROM thep_ncc ORDER BY name'),
     env.DB.prepare("SELECT d.*, COALESCE(u.name, '(đã xoá)') uname FROM thep_don d LEFT JOIN users u ON u.id = d.user_id ORDER BY (d.tt = 'mo') DESC, d.ngay_dat DESC, d.id DESC LIMIT 500"),
     env.DB.prepare('SELECT don_id, phi_id phi, bo, cay, kg FROM thep_don_dong'),
-    env.DB.prepare("SELECT v.id, v.ngay, v.ncc_id, v.don_id, v.so_don, v.so_phieu, v.bien_so, v.ghi_chu, v.nguon, v.ts, COALESCE(u.name, '(đã xoá)') uname FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 ORDER BY v.ngay DESC, v.id DESC").bind(tu, den),
-    env.DB.prepare('SELECT d.ve_id, d.phi_id phi, d.bo, d.cay, d.kg, d.kg_tinh FROM thep_ve_dong d JOIN thep_ve v ON v.id = d.ve_id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 ORDER BY d.id').bind(tu, den),
+    env.DB.prepare("SELECT v.id, v.ngay, v.ncc_id, v.don_id, v.so_don, v.so_phieu, v.bien_so, v.ghi_chu, v.nguon, v.ts, COALESCE(u.name, '(đã xoá)') uname FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4").bind(tu, den, so, boQua),
+    // chỉ dòng phi của các chuyến trong TRANG này
+    env.DB.prepare(`SELECT d.ve_id, d.phi_id phi, d.bo, d.cay, d.kg, d.kg_tinh FROM thep_ve_dong d WHERE d.ve_id IN (
+                      SELECT v.id FROM thep_ve v WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4) ORDER BY d.id`).bind(tu, den, so, boQua),
     // đã về theo đơn × phi (MỌI ngày, không chỉ trong khoảng đang xem): tiến độ đơn hàng
     env.DB.prepare('SELECT v.don_id, d.phi_id phi, SUM(COALESCE(d.kg, d.kg_tinh, 0)) kg, COUNT(DISTINCT v.id) chuyen FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.don_id IS NOT NULL GROUP BY v.don_id, d.phi_id'),
     env.DB.prepare('SELECT id, bo_size, kg_per_cay, unit, active FROM phi ORDER BY sort, id'),
+    env.DB.prepare(`SELECT COUNT(DISTINCT v.id) chuyen, COALESCE(SUM(${KG}), 0) kg, COUNT(DISTINCT v.ncc_id) ncc ${TU}`).bind(tu, den),
+    env.DB.prepare(`SELECT substr(v.ngay, 1, 7) thang, COUNT(DISTINCT v.id) n, SUM(${KG}) kg ${TU} GROUP BY thang ORDER BY thang DESC`).bind(tu, den),
+    env.DB.prepare(`SELECT v.ncc_id, COUNT(DISTINCT v.id) n, SUM(${KG}) kg ${TU} GROUP BY v.ncc_id ORDER BY kg DESC`).bind(tu, den),
+    env.DB.prepare(`SELECT d.phi_id phi, SUM(${KG}) kg ${TU} GROUP BY d.phi_id`).bind(tu, den),
+    env.DB.prepare(`SELECT v.ncc_id, d.phi_id phi, SUM(${KG}) kg ${TU} GROUP BY v.ncc_id, d.phi_id`).bind(tu, den),
   ]);
   const dongBy = {};
   for (const d of dongR.results) (dongBy[d.ve_id] = dongBy[d.ve_id] || []).push(d);
   const ddBy = {}, veDon = {};
   for (const d of donDongR.results) (ddBy[d.don_id] = ddBy[d.don_id] || []).push(d);
   for (const d of daVeR.results) { const o = (veDon[d.don_id] = veDon[d.don_id] || {}); o[d.phi] = d.kg; }
+  const tong = tongR.results[0] || { chuyen: 0, kg: 0, ncc: 0 };
   return json({
     tu, den, quyen: { ghi: q.ghi }, ncc: nccR.results, phi: phiR.results,
     don: donR.results.map((d) => ({ ...d, dong: ddBy[d.id] || [], da_ve: veDon[d.id] || {} })),
     ve: veR.results.map((v) => ({ ...v, dong: dongBy[v.id] || [] })),
+    trang: { so, bo_qua: boQua, tong: tong.chuyen },
+    tk: { tong, thang: thangR.results, ncc: nccTkR.results, phi: phiTkR.results, cheo: cheoR.results },
   });
 }
 
