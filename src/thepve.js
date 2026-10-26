@@ -24,7 +24,9 @@ const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().s
 const ngayThat = (d) => { const t = Date.parse(d + 'T00:00:00Z'); return DAY_RE.test(d) && Number.isFinite(t) && vnDay(t) === d; };
 const intOr = (v, max, label) => {
   if (v === undefined || v === null || v === '') return null;
-  const n = Number(String(v).replace(/[.\s]/g, '').replace(',', '.'));
+  let t = String(v).trim().replace(/\s/g, '');
+  if (/^\d{1,3}(,\d{3})+$/.test(t)) t = t.replace(/,/g, ''); // "1,250" của Excel kiểu Mỹ = 1250
+  const n = Number(t.replace(/\./g, '').replace(',', '.'));
   if (!Number.isInteger(n) || n < 0 || n > max) throw bad(label + ' không hợp lệ');
   return n;
 };
@@ -32,7 +34,9 @@ const intOr = (v, max, label) => {
 const kgOr = (v, label) => {
   if (v === undefined || v === null || v === '') return null;
   let t = String(v).trim().replace(/\s/g, '');
-  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(',', '.');
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, ''); // Excel kiểu Mỹ: "25,340" = 25340 kg
+  else t = t.replace(',', '.');
   const n = Number(t);
   if (!Number.isFinite(n) || n < 0 || n > TV_MAX_KG) throw bad(label + ' không hợp lệ (kg, tối đa ' + TV_MAX_KG / 1000 + ' tấn một dòng)');
   return Math.round(n);
@@ -275,7 +279,13 @@ export async function tvNhap(req, env, user) {
   const ds = [...chuyen.values()];
   ds.forEach((c) => { c.don_id = c.so_don ? donBy[c.ncc.toLowerCase() + '|' + bbKhoa(c.so_don)] || null : null; });
   const tongKg = ds.reduce((a, c) => a + c.dong.reduce((s, l) => s + (l.kg ?? l.kg_tinh ?? 0), 0), 0);
-  const tomTat = { dong: rows.length, chuyen: ds.length, kg: tongKg, ncc: [...new Set(ds.map((c) => c.ncc))].length, gan_don: ds.filter((c) => c.don_id).length };
+  const ngays = ds.map((c) => c.ngay).sort();
+  /* CẢNH BÁO (không chặn): dòng chỉ có kg mà kg rất nhỏ — gần như chắc cột "Khối lượng" đang ghi TẤN (25,34) chứ không phải kg.
+     Hiện ra ở bước Kiểm tra để người nhập soát trước khi ghi; vẫn cho nhập (có thể là số lẻ thật). */
+  const canh = [];
+  ds.forEach((c) => c.dong.forEach((l) => { if (l.kg != null && l.kg < 100 && !l.bo && !l.cay) canh.push({ ngay: c.ngay, ncc: c.ncc, phi: l.phi, kg: l.kg }); }));
+  const tomTat = { dong: rows.length, chuyen: ds.length, kg: tongKg, ncc: [...new Set(ds.map((c) => c.ncc))].length, gan_don: ds.filter((c) => c.don_id).length,
+    tu: ngays[0] || null, den: ngays[ngays.length - 1] || null, canh: canh.slice(0, 50), so_canh: canh.length };
   if (b.thu === true || loi.length) return json({ ok: !loi.length, thu: true, loi: loi.slice(0, 200), so_loi: loi.length, ...tomTat });
   const ts = Date.now(), lo = 'n' + ts.toString(36); // khoá tạm cho lần nhập này: nối dòng vào đúng chuyến vừa chèn
   ds.forEach((c, i) => { c.khoa = lo + '-' + i; });

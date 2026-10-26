@@ -101,6 +101,14 @@ async function main() {
   eq('hai dòng cùng phiếu gộp một chuyến', S.sql('SELECT phi_id FROM thep_ve_dong WHERE ve_id = ? ORDER BY id', hp.id).map((x) => x.phi_id), ['D16', 'D20']);
   eq('chuyến có số đơn gắn đúng đơn đã lập', S.one("SELECT don_id FROM thep_ve WHERE so_phieu = 'VU-7'").don_id, d1.data.id);
   eq('nhập lại cùng file: báo phiếu đã có', (await S.call('POST', '/thepve/nhap', { rows, thu: true }, LAN)).data.so_loi, 3);
+  // số kiểu Excel tiếng Anh (dấu phẩy ngăn nghìn) và cảnh báo nghi ghi tấn vào cột kg
+  const my = await S.call('POST', '/thepve/nhap', { thu: true, rows: [
+    { ngay: nam + '-01-07', ncc: 'Tung Ho', so_phieu: 'TH-1', phi: 'D16', kg: '25,340' },
+    { ngay: nam + '-01-07', ncc: 'Tung Ho', so_phieu: 'TH-1', phi: 'D20', cay: '1,250' },
+    { ngay: nam + '-01-08', ncc: 'Tung Ho', so_phieu: 'TH-2', phi: 'D25', kg: '25,34' }] }, LAN);
+  eq('"25,340" kg = 25340; "1,250" cây = 1250; "25,34" (nghi là tấn) = 25 kg kèm cảnh báo', [my.data.ok, my.data.so_canh, my.data.canh[0].kg, my.data.tu, my.data.den],
+    [true, 1, 25, nam + '-01-07', nam + '-01-08']);
+  eq('tổng kg của bản thử đúng (25340 + 1250 cây D20 + 25)', my.data.kg, 25340 + Math.round(1250 * S.one("SELECT kg_per_cay FROM phi WHERE id = 'D20'").kg_per_cay) + 25);
 
   /* ===== 5. Thống kê, CSV, huỷ, sao lưu ===== */
   const V2 = (await S.call('GET', `/thepve?tu=${nam}-01-01&den=${D}`, undefined, CV)).data;
@@ -196,6 +204,14 @@ async function main() {
   const dan = ['Ngày\tNhà cung cấp\tSố phiếu\tPhi\tSố bó\tTấn', `03/04/${nam}\tHòa Phát\tHP-300\tphi 18\t2\t`, `03/04/${nam}\tHòa Phát\tHP-300\tØ22\t\t12,5`].join('\n');
   const doc = R(`tvDocDan(${JSON.stringify(dan)})`);
   eq('đọc bảng dán: ngày dd/mm/yyyy, phi "phi 18" / "Ø22", tấn 12,5 -> 12500 kg', doc.rows.map((r) => [r.ngay, r.phi, r.bo, r.kg]), [[nam + '-04-03', 'D18', '2', ''], [nam + '-04-03', 'D22', '', '12500']]);
+  // ngày kiểu Excel tiếng Anh (tháng/ngày): có ô 1/25 thì đọc cả cột theo tháng/ngày
+  const danMy = ['Date\tSupplier NCC\tPhi\tKg', `1/25/${nam}\tTung Ho\tD16\t25,340`, `2/3/${nam}\tTung Ho\tD20\t8,000`].join('\n').replace('Supplier NCC', 'NCC');
+  const dm = R(`tvDocDan(${JSON.stringify(danMy)})`);
+  eq('Excel kiểu Mỹ: 1/25 là 25 tháng 1, 2/3 là 3 tháng 2', [dm.kieuMy, dm.rows.map((r) => r.ngay)], [true, [nam + '-01-25', nam + '-02-03']]);
+  const dv = R(`tvDocDan(${JSON.stringify(['Ngày\tNCC\tPhi\tKg', `25/01/${nam}\tA\tD16\t1`, `03/02/${nam}\tA\tD16\t1`].join('\n'))})`);
+  eq('Excel tiếng Việt: 03/02 là 3 tháng 2', [dv.kieuMy, dv.rows.map((r) => r.ngay)], [false, [nam + '-01-25', nam + '-02-03']]);
+  eq('tên cột "Số lượng (kg)" / "SL cây" được nhận', R(`(() => { const x = tvDocDan('Ngày\\tNhà cung cấp\\tPhi\\tSL cây\\tSố lượng (kg)\\n01/01/${nam}\\tA\\tD16\\t10\\t500'); return [x.loi, x.rows[0].cay, x.rows[0].kg]; })()`), ['', '10', '500']);
+  eq('ô Kg phiếu hiểu "25,340" và "25.340" như máy chủ', [R("tvKgPhieu('25,340')"), R("tvKgPhieu('25.340')"), R("tvKgPhieu('12,5')")], [25340, 25340, 13]);
   R(`S.form.tvdan = ${JSON.stringify(dan)}`);
   R(`ACTIONS.tvnhap({ v: 'thu' })`); await cho();
   eq('kiểm tra: 1 chuyến, không lỗi, chưa ghi', [R('S.tvNhapKq.chuyen'), R('S.tvNhapKq.so_loi'), S.sql("SELECT 1 FROM thep_ve WHERE so_phieu = 'HP-300'").length], [1, 0, 0]);
