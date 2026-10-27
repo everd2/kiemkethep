@@ -197,8 +197,9 @@ async function main() {
   ok('thống kê dạng bảng: có bảng theo tháng / NCC / phi, bảng chéo NCC × phi, dòng TỔNG', ['<table class="bang"', 'Nhà cung cấp × phi', '% tổng', 'TỔNG'].every((x) => R('vThepVe()').includes(x)));
   R(`ACTIONS.tvtab({ v: 've' })`);
   const bv = R('vThepVe()');
-  ok('chuyến về dạng bảng: cột Ngày, NCC, Phi, Bó, Cây, Kg phiếu, Kg tính, Chênh, dòng TỔNG', ['<table class="bang"', '<th>Phi</th>', 'Kg phiếu', 'Kg tính', 'Chênh kg', 'TỔNG'].every((x) => bv.includes(x)));
-  eq('bảng chuyến về: mỗi phi một hàng (số hàng = số dòng phi còn hiệu lực trong kỳ + tổng)', (bv.match(/<tr/g) || []).length, 1 + S.one('SELECT COUNT(*) n FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.ngay >= ? AND v.ngay <= ?', nam + '-01-01', D).n + 1);
+  ok('chuyến về: mỗi chuyến một thẻ, bảng nhỏ vừa điện thoại Phi | Bó | Cây | Kg phiếu | Kg tính, dòng TỔNG', ['<table class="bang nho"', '<th>Phi</th>', 'Kg phiếu', 'Kg tính', 'TỔNG'].every((x) => bv.includes(x)) && !bv.includes('Chênh kg'));
+  const kyN = S.one('SELECT COUNT(DISTINCT v.id) c, COUNT(*) n FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.ngay >= ? AND v.ngay <= ?', nam + '-01-01', D);
+  eq('thẻ chuyến về: mỗi phi một hàng (số hàng = số chuyến (tiêu đề) + số dòng phi trong kỳ)', (bv.match(/<tr/g) || []).length, kyN.c + kyN.n);
   // nhập Excel bằng dán bảng
   R(`ACTIONS.tvtab({ v: 'nhap' })`);
   const dan = ['Ngày\tNhà cung cấp\tSố phiếu\tPhi\tSố bó\tTấn', `03/04/${nam}\tHòa Phát\tHP-300\tphi 18\t2\t`, `03/04/${nam}\tHòa Phát\tHP-300\tØ22\t\t12,5`].join('\n');
@@ -221,7 +222,15 @@ async function main() {
   eq('bảng dán thiếu cột bắt buộc: báo lỗi, không gửi', R(`tvDocDan('Ngày\\tPhi\\n01/01/2026\\tD16').loi.length > 0`), true);
   // đơn hàng
   R(`ACTIONS.tvtab({ v: 'don' })`);
-  ok('đơn hàng dạng bảng: Đặt / Đã về / Còn thiếu / %', ['<table class="bang"', 'Đặt (tấn)', 'Đã về', 'Còn thiếu', 'thiếu'].every((x) => R('vThepVe()').includes(x)));
+  ok('đơn hàng: mỗi đơn một thẻ, bảng nhỏ Đặt / Đã về / Còn thiếu, nút ghi chuyến theo đơn', ['<table class="bang nho"', 'Đặt (tấn)', 'Đã về', 'Còn thiếu', 'thiếu', 'data-a="tvghidon"'].every((x) => R('vThepVe()').includes(x)));
+  // ghi chuyến theo đơn: mở form, điền sẵn đơn, nhà cung cấp và các phi của đơn
+  const dn = JSON.parse(R(`JSON.stringify(S.tv.don.find((d) => d.tt === 'mo'))`));
+  R(`ACTIONS.tvghidon({ id: '${dn.id}' })`);
+  eq('ghi theo đơn: form mở ở tab chuyến, đơn + NCC + phi điền sẵn', R(`JSON.stringify([S.tvTab, S.tvMo, S.form.tvf_don, S.form.tvf_ncc, tvDong('v').map((l) => l.phi)])`), JSON.stringify(['ve', 've', String(dn.id), R(`tvNcc(${dn.ncc_id})`), dn.dong.map((l) => l.phi)]));
+  ok('form theo đơn: mỗi phi hiện "đơn còn thiếu"', R('vThepVe()').includes('đơn còn thiếu'));
+  R(`S.form.tvb_0 = '3'; tvApDon('')`);
+  eq('bỏ chọn đơn: giữ nguyên số đã gõ', R(`S.form.tvb_0 + '|' + S.form.tvp_0`), '3|' + dn.dong[0].phi);
+  R(`ACTIONS.tvdong(); for (const k of Object.keys(S.form)) if (/^tv[fpbck]/.test(k)) delete S.form[k]; S.tvSoDong = 1; ACTIONS.tvtab({ v: 'don' })`);
   // CVKTHT chỉ xem: không có nút ghi
   who = CV;
   R(`S.me = ${JSON.stringify({ id: U[CV], name: CV, role: 'cvktht' })}; S.tv = null; S.tvTab = 've'; delete NHO['tv:' + tvKy().tu + ':' + tvKy().den]`);
