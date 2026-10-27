@@ -24,6 +24,7 @@ const ANH_MO_TA = {
   satvun: 'SELECT ngay, so_phieu so_bb, noi ten, voided huy FROM satvun WHERE id = ?',
   gc: "SELECT NULL ngay, NULL so_bb, cau_kien || COALESCE(' · ' || truc, '') ten, tt = 'huy' huy FROM don_gc WHERE id = ?",
 };
+const ANH_HUY = { loan: 'SELECT 1 FROM loans WHERE id = ? AND voided = 1', satvun: 'SELECT 1 FROM satvun WHERE id = ? AND voided = 1', gc: "SELECT 1 FROM don_gc WHERE id = ? AND tt = 'huy'" };
 const ANH_MAX_DONG = 20; // ảnh mỗi dòng sổ: một biên bản vài trang là cùng; chặn lỡ chọn cả thư viện ảnh
 // máy khách đã nén về JPEG (resizeAnh trong app.js); nhận thêm PNG/WebP cho bản app sau, ngoài ra thì không
 const ANH_KIEU = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
@@ -31,22 +32,34 @@ const ANH_MAX_BYTES = 6 * 1024 * 1024; // ảnh đã nén ở máy khách, đây
 const ANH_XOA_MS = 10 * 60e3; // người tải lên rút lại được trong 10 phút, giống cửa sổ rút lại của loans/satvun
 const khongThay = () => new HttpError(404, 'Không tìm thấy ảnh');
 const soId = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : 0; };
+/* Key của ảnh luôn là {loai}/{id dòng sổ}/...: kiểm lại trước khi đọc / xoá trên R2, để một dòng anh_bb lạ (nạp từ tệp bản sao bị
+   sửa tay) không trỏ được sang thứ khác trong cùng kho — nhất là các bản sao lưu tự động ở saoluu/ (có cả bảng người dùng). */
+const keyHopLe = (r) => ANH_LOAI.includes(r.loai) && typeof r.r2_key === 'string' && r.r2_key.startsWith(`${r.loai}/${r.entity_id}/`) && !r.r2_key.includes('..');
+/* Ai được THÊM ảnh vào một dòng sổ: người ghi dòng đó (gia công: người làm đơn), hoặc CVKTHT trở lên — đúng như nút "+ Thêm ảnh"
+   trên máy chỉ hiện cho họ. Người khác (kể cả người duyệt cấp thấp) chỉ xem. */
+const ANH_CHU = {
+  loan: 'SELECT user_id = ?1 m FROM loans WHERE id = ?2',
+  satvun: 'SELECT user_id = ?1 m FROM satvun WHERE id = ?2',
+  gc: 'SELECT (user_id = ?1 OR EXISTS (SELECT 1 FROM don_gc_nguoi WHERE don_id = ?2 AND user_id = ?1)) m FROM don_gc WHERE id = ?2',
+};
 
 // mô tả dòng sổ cho nhật ký, kèm số ảnh đang có; null = dòng không còn
-async function dongSo(env, loai, entityId) {
-  const [m, n] = await env.DB.batch([
+async function dongSo(env, loai, entityId, userId = 0) {
+  const [m, n, c] = await env.DB.batch([
     env.DB.prepare(ANH_MO_TA[loai]).bind(entityId),
     env.DB.prepare('SELECT COUNT(*) n FROM anh_bb WHERE loai = ? AND entity_id = ?').bind(loai, entityId),
+    env.DB.prepare(ANH_CHU[loai]).bind(userId, entityId),
   ]);
   const r = m.results[0];
-  return r ? { ngay: r.ngay || undefined, so_bb: r.so_bb || undefined, ten: r.ten || undefined, huy: !!r.huy, n: n.results[0].n } : null;
+  return r ? { ngay: r.ngay || undefined, so_bb: r.so_bb || undefined, ten: r.ten || undefined, huy: !!r.huy, n: n.results[0].n, chu: !!(c.results[0] && c.results[0].m) } : null;
 }
 
 export async function postAnh(req, env, user, loai, eid) {
   const entityId = soId(eid);
   if (!ANH_LOAI.includes(loai) || !entityId) throw new HttpError(404, 'Không tìm thấy dòng sổ này');
-  const dong = await dongSo(env, loai, entityId);
+  const dong = await dongSo(env, loai, entityId, user.id);
   if (!dong) throw new HttpError(404, 'Không tìm thấy dòng sổ này');
+  if (!dong.chu && capOf(user.role) < 1) throw new HttpError(403, loai === 'gc' ? 'Chỉ tổ làm đơn này (hoặc CVKTHT trở lên) mới thêm ảnh được' : 'Chỉ người ghi dòng sổ này (hoặc CVKTHT trở lên) mới thêm ảnh được');
   if (dong.huy) throw bad('Dòng sổ này đã huỷ, không thêm ảnh được');
   if (dong.n >= ANH_MAX_DONG) throw bad(`Mỗi dòng sổ tối đa ${ANH_MAX_DONG} ảnh. Xoá bớt ảnh thừa rồi thêm.`);
   const ct = (req.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
@@ -66,7 +79,8 @@ export async function postAnh(req, env, user, loai, eid) {
     /* Kiểm tra `dong.n` ở trên chỉ để báo lỗi sớm: hai ảnh gửi cùng lúc đều thấy 19 rồi cùng chèn. Chặn thật nằm TRONG
        lượt ghi: bảo vệ đếm lại ngay lúc ghi, đủ ANH_MAX_DONG thì cả lượt (ảnh + nhật ký) bị huỷ. */
     res = await batchGuarded(env,
-      guardStmt(env, '(SELECT COUNT(*) FROM anh_bb WHERE loai = ? AND entity_id = ?) >= ?', loai, entityId, ANH_MAX_DONG),
+      // dòng sổ bị huỷ chen giữa lúc kiểm ở trên và lúc ghi: cũng chặn ngay trong lượt ghi
+      guardStmt(env, `(SELECT COUNT(*) FROM anh_bb WHERE loai = ? AND entity_id = ?) >= ? OR EXISTS (${ANH_HUY[loai]})`, loai, entityId, ANH_MAX_DONG, entityId),
       [
         env.DB.prepare('INSERT INTO anh_bb (loai, entity_id, r2_key, kich_thuoc, user_id, user_name, ts) VALUES (?,?,?,?,?,?,?)')
           .bind(loai, entityId, key, buf.byteLength, user.id, user.name, ts),
@@ -94,7 +108,7 @@ export async function getAnh(env, aid, url) {
   const id = soId(aid);
   if (!id) throw khongThay();
   const r = await env.DB.prepare('SELECT * FROM anh_bb WHERE id = ?').bind(id).first();
-  if (!r) throw khongThay();
+  if (!r || !keyHopLe(r)) throw khongThay();
   const obj = await env.ANH.get(r.r2_key);
   // dòng còn mà object mất: nạp lại bản sao có dòng ảnh, hoặc ai đó xoá thẳng trên R2
   if (!obj) throw khongThay();
@@ -123,7 +137,8 @@ export async function deleteAnh(env, user, aid) {
     auditStmt(env, user, 'anh_bb_xoa', { loai: r.loai, entity_id: r.entity_id, id, ngay: dong && dong.ngay, so_bb: dong && dong.so_bb, ten: dong && dong.ten, cua: r.user_name }),
     bump(env),
   ]);
-  // xoá dòng trước rồi mới xoá object: lỗi giữa đường thì chỉ còn object mồ côi, không còn dòng trỏ vào ảnh mất
-  await env.ANH.delete(r.r2_key).catch(() => {});
+  // xoá dòng trước rồi mới xoá object: lỗi giữa đường thì chỉ còn object mồ côi, không còn dòng trỏ vào ảnh mất.
+  // key lạ (không đúng dạng ảnh) thì chỉ bỏ dòng, không đụng tới object trên kho
+  if (keyHopLe(r)) await env.ANH.delete(r.r2_key).catch(() => {});
   return json({ ok: true });
 }

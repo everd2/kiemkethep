@@ -2466,7 +2466,9 @@ async function main() {
     eq('dòng huỷ không còn trong dư nợ', q('vay', 'D20'), 0);
 
     // đối tác đã ẩn: không ghi thêm, nhưng dư nợ vẫn giữ
-    await S.call('PATCH', '/doitac/' + dtA, { active: 0 });
+    const an = await S.call('PATCH', '/doitac/' + dtA, { active: 0 });
+    eq('đối tác còn nợ: không ẩn được (ẩn là khoá đường ghi trả)', [an.status, /chưa tất toán/.test(an.data.error || JSON.stringify(an.data))], [400, true]);
+    S.raw.prepare('UPDATE doitac SET active = 0 WHERE id = ?').run(dtA); // đối tác ẩn từ bản cũ
     eq('đối tác đã ẩn: không ghi thêm được', (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dtA, kind: 'vay', lines: [{ phi: 'D16', qty: 1 }] })).status, 400);
     eq('nhưng dư nợ vẫn còn', (await S.call('GET', '/loans')).data.agg.length > 0, true);
     await S.call('PATCH', '/doitac/' + dtA, { active: 1 });

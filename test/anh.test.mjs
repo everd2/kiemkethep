@@ -188,9 +188,11 @@ async function main() {
   R("S.screen = 'duyet'; S.review = { loans: [{ id: 7, anh: [{ id: 3 }] }], satvun: [], phieu: [] }; ACTIONS.anhxem({ loai: 'loan', eid: '7', i: '0' })");
   ok('màn Duyệt: hộp xem lớn chỉ xem / tải xuống, không có Xoá', R('anhXemHtml()').includes('anhtaixuong') && !R('anhXemHtml()').includes('anhxoa'));
   R('ACTIONS.anhdong()');
-  R("S.anhLoi = { loai: 'satvun', eid: 4, files: [{}, {}] }");
+  R("S.anhLoi = []; anhLoiGiu('satvun', 4, [{}, {}])");
   ok('ảnh chưa gửi được: thẻ báo + nút gửi lại, chỉ ở đúng sổ', R("anhLoiHtml('satvun')").includes('2 ảnh biên bản chưa gửi được') && R("anhLoiHtml('satvun')").includes('anhguilai') && R("anhLoiHtml('loan')") === '');
-  R("S.anhLoi = null; S.anhCho = { gc: [{ f: {}, u: 'x' }] }; S.anhChoGc = 5; gcXuatMo(5)");
+  R("anhLoiGiu('loan', 9, [{}]); anhLoiGiu('satvun', 4, [{}])");
+  eq('lần ghi sau cũng rớt mạng: ảnh lần trước vẫn giữ, cùng lần ghi thì gộp', R("JSON.stringify([anhLoiHtml('satvun').includes('3 ảnh'), anhLoiHtml('loan').includes('1 ảnh'), S.anhLoi.length])"), '[true,true,2]');
+  R("S.anhLoi = []; S.anhCho = { gc: [{ f: {}, u: 'x' }] }; S.anhChoGc = 5; gcXuatMo(5)");
   eq('mở lại hộp XUẤT cùng đơn: giữ ảnh đã chọn', R("anhCho('gc').length"), 1);
   R('gcXuatMo(6)');
   eq('mở hộp XUẤT đơn khác: bỏ ảnh của đơn trước', R("anhCho('gc').length"), 0);
@@ -198,6 +200,14 @@ async function main() {
   eq('nhật ký: thêm ảnh nói rõ biên bản nào, chip Vay mượn', R(`(() => { const f = fmtAudit({ action: 'anh_bb_add', detail: JSON.stringify({ loai: 'loan', ngay: '2026-10-21', so_bb: 'BB-01', ten: 'Cty Hoà Bình' }) }); return [f.text, f.type]; })()`),
     ['thêm ảnh biên bản sổ vay 21/10/2026 · BB BB-01 · Cty Hoà Bình', 'vay']);
   eq('nhật ký: xoá ảnh vào "Cần chú ý"', R(`fmtAudit({ action: 'anh_bb_xoa', detail: JSON.stringify({ loai: 'gc', ten: 'Dầm D1 · X1-X2', cua: 'An' }) }).flag`), true);
+
+  /* ===== Rà soát: quyền thêm ảnh, key lạ không trỏ ra ngoài thư mục ảnh ===== */
+  eq('người khác (Tiểu đội trưởng) không thêm ảnh vào lần ghi của An', (await len('loan', lid, anh(), 'Binh')).status, 403);
+  eq('CVKTHT thêm được ảnh vào lần ghi của người khác', await (async () => { const r = await len('loan', lid, anh(7), 'Kho'); await S.call('DELETE', '/anh/' + r.data.id, undefined, 'Kho'); return r.status; })(), 200);
+  await S.env.ANH.put('saoluu/2026-01-01_1.json', '{"bang":{"users":[]}}');
+  S.raw.prepare("INSERT INTO anh_bb (id, loai, entity_id, r2_key, kich_thuoc, user_id, user_name, ts) VALUES (9999, 'loan', ?, 'saoluu/2026-01-01_1.json', 10, ?, 'An', ?)").run(lid, U.An, Date.now());
+  eq('dòng ảnh trỏ vào bản sao lưu (tệp nạp bị sửa): không đọc được', (await S.call('GET', '/anh/9999', undefined, 'Binh')).status, 404);
+  eq('xoá dòng ảnh lạ đó: bản sao lưu trên kho vẫn còn', [(await S.call('DELETE', '/anh/9999', undefined, 'An')).status, S.env.ANH.obj.has('saoluu/2026-01-01_1.json')], [200, true]);
 
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] ? '  [' + x[2] + ']' : '')).join('\n'));

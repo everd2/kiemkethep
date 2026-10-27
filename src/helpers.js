@@ -46,7 +46,11 @@ export const intIn = (v, min, max, label) => {
 };
 
 export async function readJson(req) {
-  try { return await req.json(); } catch (e) { throw bad('Dữ liệu gửi lên không hợp lệ'); }
+  let b;
+  try { b = await req.json(); } catch (e) { throw bad('Dữ liệu gửi lên không hợp lệ'); }
+  // thân là null / số / mảng: báo lỗi rõ thay vì vỡ ở b.xxx thành "Lỗi máy chủ"
+  if (!b || typeof b !== 'object' || Array.isArray(b)) throw bad('Dữ liệu gửi lên không hợp lệ');
+  return b;
 }
 
 export const bump = (env) => env.DB.prepare("UPDATE meta SET value = value + 1 WHERE key = 'rev'");
@@ -154,10 +158,11 @@ export async function createSession(env, url, req, userId) {
 /* HUỶ MỘT LẦN VAY ĐÃ CÓ LẦN TRẢ GHI VÀO thì dư nợ thành ÂM ("trả dư"): sổ nói đối tác đang nợ ngược mình
    trong khi sự thật là một lần vay vừa bị xoá khỏi sổ. Chặn ở cả hai đường huỷ (sổ vay, và phiếu kho đi
    kèm): các dòng VAY / CHO VAY đã duyệt của lần ghi (grp, hoặc id với dòng cũ không có grp) mà dư nợ hiện
-   tại của đúng đối tác × phi × chiều đó NHỎ HƠN số của dòng — tức bỏ dòng đi là âm.
+   tại của đúng đối tác × phi × chiều đó NHỎ HƠN số của dòng — tức bỏ dòng đi là âm. Lần TRẢ còn chờ duyệt cũng
+   tính vào: không thì huỷ được lần vay, rồi duyệt lần trả là sổ thành "trả dư" mà không ai được báo.
    Hai tham số, theo thứ tự: grp, id. Dùng dấu ? trần để ghép được vào guardStmt cùng các điều kiện khác. */
 const LOAN_DU = `(SELECT SUM(CASE WHEN x.kind IN ('vay', 'cho_vay') THEN x.qty ELSE -x.qty END) FROM loans x
-  WHERE x.doitac_id = v.doitac_id AND x.phi_id = v.phi_id AND x.voided = 0 AND x.duyet_ts IS NOT NULL
+  WHERE x.doitac_id = v.doitac_id AND x.phi_id = v.phi_id AND x.voided = 0 AND (x.duyet_ts IS NOT NULL OR x.kind IN ('tra_vay', 'tra_no'))
     AND (x.kind IN ('vay', 'tra_vay')) = (v.kind = 'vay'))`;
 const LOAN_AM_FROM = `FROM loans v WHERE (v.grp = ? OR v.id = ?) AND v.voided = 0 AND v.duyet_ts IS NOT NULL
   AND v.kind IN ('vay', 'cho_vay') AND ${LOAN_DU} < v.qty`;

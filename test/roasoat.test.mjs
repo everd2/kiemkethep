@@ -72,6 +72,41 @@ async function main() {
   eq('các lần nạp hỏng không đổi gì', S.sql('SELECT 1 FROM khu').length, nKhu);
   eq('nạp bản sao đúng vẫn được', (await nap(bk)).status, 200);
 
+  /* 5. Rà soát vay mượn / sắt vụn / gia công (đợt 10/2026) */
+  const nd = async (name, phone, role) => { const r = await S.call('POST', '/users', { name, phone, role }, 'Admin'); await S.login(name, phone, r.data.pin); await S.call('POST', '/change-pin', { pin: r.data.pin, newPin: '1357' }, name); return r.data.id; };
+  const uTd = await nd('To Truong', '0900000011', 'tieudoi');
+  const dt = (await S.call('POST', '/doitac', { name: 'Cty Rà Soát' }, 'Admin')).data.id;
+  const ghi = (kind, lines, who = 'Admin', so = 'RS-' + Math.random()) => S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: so, doitac: dt, kind, lines }, who);
+  // 5a. huỷ lần vay khi lần trả còn chờ duyệt: chặn (không thì duyệt trả xong sổ thành "trả dư")
+  const v1 = (await ghi('vay', [{ phi: 'D18', qty: 100 }], 'To Truong')).data.ids[0];
+  await S.call('POST', `/loans/${v1}/duyet`, {}, 'Admin');
+  const t1 = (await ghi('tra_vay', [{ phi: 'D18', qty: 100 }], 'To Truong')).data.ids[0];
+  const h1 = await S.call('DELETE', '/loans/' + v1, { ly_do: 'thử' }, 'Admin');
+  eq('huỷ lần vay khi lần trả còn chờ duyệt: chặn 409 tra_du', [h1.status, h1.data.code], [409, 'tra_du']);
+  await S.call('DELETE', '/loans/' + t1, undefined, 'To Truong');
+  // 5b. nhiều dòng cùng phi: tổng không quá 99999
+  const q1 = await ghi('vay', [{ phi: 'D16', qty: 60000 }, { phi: 'D16', qty: 60000 }]);
+  eq('hai dòng D16 60000: tổng quá 99999 bị từ chối', [q1.status, /Tổng/.test(q1.data.error || '')], [400, true]);
+  // 5c. người ghi được lên chức: không tự huỷ lần ghi đã duyệt của mình ngoài 10 phút
+  const v2 = (await ghi('vay', [{ phi: 'D20', qty: 5 }], 'To Truong')).data.ids[0];
+  await S.call('POST', `/loans/${v2}/duyet`, {}, 'Admin');
+  S.raw.prepare("UPDATE users SET role = 'cvktht' WHERE id = ?").run(uTd);
+  S.raw.prepare('UPDATE loans SET duyet_ts = duyet_ts - 3600000 WHERE id = ?').run(v2);
+  eq('lên chức rồi: vẫn không tự huỷ lần ghi đã duyệt quá 10 phút', (await S.call('DELETE', '/loans/' + v2, { ly_do: 'x' }, 'To Truong')).status, 403);
+  // 5d. đối tác còn nợ: không ẩn được
+  eq('đối tác còn nợ: không ẩn được', (await S.call('PATCH', '/doitac/' + dt, { active: false }, 'Admin')).status, 400);
+  // 5e. danh sách sổ vay: lấy trọn lần ghi nhiều phi dù mốc 300 dòng rơi giữa lần ghi
+  const g3 = (await ghi('cho_vay', [{ phi: 'D10', qty: 1 }, { phi: 'D12', qty: 1 }, { phi: 'D14', qty: 1 }])).data.ids;
+  await S.call('POST', `/loans/${g3[0]}/duyet`, {}, 'To Truong');
+  const ins = S.raw.prepare("INSERT INTO loans (doitac_id, phi_id, kind, qty, user_id, ts, duyet_ts, ngay) VALUES (?, 'D16', 'vay', 1, 1, ?, ?, ?)");
+  const truoc = S.one('SELECT COUNT(*) n FROM loans WHERE voided = 0 AND id > ?', Math.min(...g3)).n;
+  for (let i = 0; i < 300 - truoc + 1; i++) ins.run(dt, Date.now(), Date.now(), vnDay());
+  const items = (await S.call('GET', '/loans', undefined, 'Admin')).data.items;
+  eq('mốc 300 rơi giữa lần ghi 3 phi: vẫn đủ 3 phi', items.filter((x) => g3.includes(x.id)).length, 3);
+  // 5f. thân yêu cầu là null: 400, không phải lỗi máy chủ
+  eq('sắt vụn: thân null là 400', (await S.call('POST', '/satvun', null, 'Admin')).status, 400);
+  eq('vay mượn: thân null là 400', (await S.call('POST', '/loans', null, 'Admin')).status, 400);
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

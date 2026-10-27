@@ -231,7 +231,7 @@ function xoaPhien() {
   Object.assign(S, { tv: null, tvMo: null, tvNhapKq: null, sl: null, slNguon: null, slTlMo: false, slLai: false, qs: null, bcc: null, bcM: {}, bcDau: null, bcMo: null, gc: null, gcDetail: null, gcForm: null, gcId: null,
     review: null, users: null, pinShown: null, loans: null, loanDetail: null, svs: null, audit: null, usage: null, cmp: null, subs: {},
     ask: null, gcXu: null, gcVg: null, sel: null });
-  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
+  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = []; S.anhXem = null;
 }
 async function api(method, path, body, choMs, kem) {
   const uid = S.me ? S.me.id : 0;
@@ -305,7 +305,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v65';
+const BAN = 'kho-thep-v66';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -3354,6 +3354,7 @@ function vGcDon() {
   const xuat = d.tt !== 'xong' ? '' : !d.xuat_tt ? `<div class="card ${gcXuatTre(d) ? 'bad' : 'warn'} col gap6" style="padding:10px 12px"><b>Đã xong, chưa xuất</b>
       <span class="sm">Xong ${d.xong_ts ? dmy(d.xong_ts) + ' (' + gcLau(d.xong_ts) + ' trước)' : ''}. Trước khi xuất: ký biên bản giao nhận, kiểm đếm, chụp ảnh gửi nhóm Zalo.</span>
       ${d.xuat_tu_choi ? `<span class="sm"><b>Lần trước không được duyệt:</b> ${esc(d.xuat_tu_choi)}</span>` : ''}
+      ${(d.anh || []).length ? `<span class="sm">Ảnh đã gửi lần trước (bấm ảnh để xem / xoá ảnh sai trước khi gửi lại):</span>${anhStrip('gc', d.id, d.anh, false)}` : ''}
       ${cuaToi || gcCuaToi(d) ? '<button class="btn pri full" style="min-height:56px;font-size:19px" data-a="gcxuat">XUẤT</button>' : '<span class="sm muted">Chờ tổ làm đơn bấm Xuất.</span>'}</div>`
     : d.xuat_tt === 'cho' ? `<div class="card warn col gap6" style="padding:10px 12px"><b>Chờ duyệt xuất</b>
       <span class="sm">${esc(d.xuat_name || '')} gửi lúc ${d.xuat_ts ? dmy(d.xuat_ts) : ''}</span>
@@ -5651,16 +5652,21 @@ async function anhGuiKem(loai, eid) {
   S.busyMsg = `Đang gửi ${ds.length} ảnh biên bản...`; render();
   const { ok, loi } = await anhTaiLen(loai, eid, ds.map((x) => x.f));
   anhChoBo(loai);
-  if (loi.length) S.anhLoi = { loai, eid, files: loi };
+  if (loi.length) anhLoiGiu(loai, eid, loi);
   return loi.length ? ` · ${ok}/${ds.length} ảnh đã gửi, ${loi.length} ảnh chưa gửi được` : ` · kèm ${ok} ảnh`;
+}
+/* Ảnh chưa gửi được: GIỮ THEO TỪNG LẦN GHI (loai + id). Trước đây chỉ giữ một lần ghi, lần ghi sau cũng rớt mạng là ảnh của lần
+   trước mất lặng lẽ. Cùng một lần ghi thì gộp. */
+const anhLoiDs = () => (Array.isArray(S.anhLoi) ? S.anhLoi : (S.anhLoi = []));
+function anhLoiGiu(loai, eid, files) {
+  const L = anhLoiDs().find((x) => x.loai === loai && x.eid === eid);
+  if (L) L.files = L.files.concat(files); else anhLoiDs().push({ loai, eid, files });
 }
 // thẻ báo ảnh chưa gửi được của lần ghi vừa rồi, đặt ngay trên form ghi sổ
 function anhLoiHtml(loai) {
-  const L = S.anhLoi;
-  if (!L || L.loai !== loai) return '';
-  return `<div class="card warn col gap8"><b>${L.files.length} ảnh biên bản chưa gửi được</b>
+  return anhLoiDs().filter((L) => L.loai === loai).map((L) => `<div class="card warn col gap8"><b>${L.files.length} ảnh biên bản chưa gửi được</b>
     <span class="sm" style="line-height:1.4">Lần ghi đã lưu, chỉ còn ảnh chưa lên (mạng yếu). Ảnh vẫn giữ trên máy: bấm gửi lại khi sóng khá hơn.</span>
-    <div class="row gap6"><button class="btn s pri f1" data-a="anhguilai">GỬI LẠI ẢNH</button><button class="btn s" data-a="anhloibo">Bỏ</button></div></div>`;
+    <div class="row gap6"><button class="btn s pri f1" data-a="anhguilai" data-loai="${L.loai}" data-eid="${L.eid}">GỬI LẠI ẢNH</button><button class="btn s" data-a="anhloibo" data-loai="${L.loai}" data-eid="${L.eid}">Bỏ</button></div></div>`).join('');
 }
 // Nạp lại đúng màn đang giữ dòng sổ đó, giống reloadLoanScreen/svReload/gcDo — ảnh mới (hay vừa
 // xoá) hiện ra nhờ anh_json đi kèm sẵn trong /loans, /satvun, /giacong (xem docAnh ở src/anh.js).
@@ -5831,7 +5837,7 @@ function quenNguoiTruoc() {
   Object.assign(S.nhap, { lines: [], qty: 0, done: null, khoa: null, reason: null });
   Object.assign(S.loan, { lines: [], bb: false, zl: false, done: null });
   S.sv.done = null;
-  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = null; S.anhXem = null;
+  ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = []; S.anhXem = null;
 }
 
 const ACTIONS = {
@@ -6501,6 +6507,7 @@ const ACTIONS = {
     if (!(q > 0)) return say('Nhập số ' + unitLbl(S.boot.phiBy[S.loan.phi]) + ' trước khi thêm phi khác.', true), render();
     const L = S.loan.lines || (S.loan.lines = []), qty = q * uStepOf(S.loan.phi);
     const l = L.find((x) => x.phi === S.loan.phi);
+    if ((l ? l.qty : 0) + qty > 99999) return say(`Tổng ${S.loan.phi} trong một lần ghi tối đa 99999 ${unitLbl(S.boot.phiBy[S.loan.phi])}.`, true), render();
     if (l) l.qty += qty; else L.push({ phi: S.loan.phi, qty });
     S.form.lqty = ''; render();
   },
@@ -6815,7 +6822,7 @@ const ACTIONS = {
     gcDo('xuat', { bien_ban: 1, kiem_dem: 1, anh: 1, xuat_cho: cho, note }, '', X.id, async () => {
       S.gcXu = null; ['gcxcho', 'gcxnote'].forEach((k) => delete S.form[k]);
       const kem = await anhGuiKem('gc', X.id);
-      say('Đã gửi xuất, chờ CVKTHT duyệt' + kem + '.', !!S.anhLoi);
+      say('Đã gửi xuất, chờ CVKTHT duyệt' + kem + '.', kem.includes('chưa gửi được'));
     });
   },
   async gcduyetxuat() {
@@ -6840,18 +6847,18 @@ const ACTIONS = {
     });
   },
   anhchobo(d) { const ds = anhCho(d.loai), x = ds[Number(d.i)]; if (x) { try { URL.revokeObjectURL(x.u); } catch (e) { /* bỏ qua */ } ds.splice(Number(d.i), 1); } render(); },
-  anhguilai() {
-    const L = S.anhLoi; if (!L) return;
+  anhguilai(d) {
+    const L = anhLoiDs().find((x) => x.loai === d.loai && String(x.eid) === String(d.eid)); if (!L) return;
     act(async () => {
       const { ok, loi } = await anhTaiLen(L.loai, L.eid, L.files);
-      S.anhLoi = loi.length ? { ...L, files: loi } : null;
+      if (loi.length) L.files = loi; else S.anhLoi = anhLoiDs().filter((x) => x !== L);
       if (ok) await anhTai(L.loai, L.eid);
       if (!loi.length) say(`Đã gửi ${ok} ảnh.`);
     }, '', 'Đang gửi lại ảnh...');
   },
-  async anhloibo() {
+  async anhloibo(d) {
     if (!(await ask('Bỏ các ảnh chưa gửi được?\nLần ghi vẫn giữ nguyên, chỉ không có các ảnh này. Muốn gửi sau thì mở lần ghi trong danh sách, bấm "+ Thêm ảnh".', 'BỎ ẢNH', true))) return;
-    S.anhLoi = null; render();
+    S.anhLoi = anhLoiDs().filter((x) => !(x.loai === d.loai && String(x.eid) === String(d.eid))); render();
   },
   anhxem(d) { S.anhXem = { loai: d.loai, eid: Number(d.eid), i: Number(d.i) || 0 }; render(); },
   anhnav(d) { if (S.anhXem) { S.anhXem.i += Number(d.d); S.anhXem.to = false; } render(); },

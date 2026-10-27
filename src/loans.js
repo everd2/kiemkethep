@@ -86,6 +86,16 @@ export async function doitacUpdate(req, env, user, id) {
   const name = b.name !== undefined ? tenChuan(b.name).slice(0, 60) || d.name : d.name;
   if (name !== d.name && await doitacTrung(env, name, d.id)) throw bad('Tên này đã dùng cho một đối tác khác');
   const active = b.active !== undefined ? (b.active ? 1 : 0) : d.active;
+  /* Như ẩn phi (src/admin.js): ẩn đối tác còn công nợ / còn lần ghi chờ duyệt là khoá luôn đường ghi TRẢ, dư nợ treo mãi. */
+  if (d.active && !active) {
+    const no = (await env.DB.prepare(
+      `SELECT l.phi_id FROM loans l WHERE l.doitac_id = ? AND l.voided = 0
+       GROUP BY l.phi_id, (l.kind IN ('vay', 'tra_vay'))
+       HAVING SUM(l.duyet_ts IS NULL) > 0
+           OR SUM(CASE WHEN l.duyet_ts IS NULL THEN 0 WHEN l.kind IN ('vay', 'cho_vay') THEN l.qty ELSE -l.qty END) <> 0`
+    ).bind(d.id).all()).results;
+    if (no.length) throw bad(`${d.name} còn khoản vay mượn chưa tất toán (${[...new Set(no.map((x) => x.phi_id))].join(', ')}). Tất toán (hoặc huỷ lần ghi đang chờ) trước khi ẩn`);
+  }
   await env.DB.batch([
     env.DB.prepare('UPDATE doitac SET name = ?, active = ? WHERE id = ?').bind(name, active, d.id),
     auditStmt(env, user, 'doitac_update', { id: d.id, name, active }),
@@ -107,12 +117,16 @@ export function parseLoanLines(b, phiBy) {
     const phi = String((it && it.phi) || '');
     if (!Object.hasOwn(phiBy, phi)) throw bad('Phi không hợp lệ: ' + phi);
     sum[phi] = (sum[phi] || 0) + intIn(it.qty, 1, 99999, 'Số ' + unitWord(phiBy[phi]) + ' của ' + phi);
+    // nhiều dòng cùng phi được cộng lại: tổng cũng không quá giới hạn của một dòng
+    if (sum[phi] > 99999) throw bad(`Tổng số ${unitWord(phiBy[phi])} của ${phi} trong một lần ghi tối đa 99999`);
   }
   return Object.entries(sum).map(([phi, qty]) => ({ phi, qty }));
 }
 
 // 2025-02-31, 2025-13-01 qua được DAY_RE nhưng không phải ngày có thật
 const ngayCoThat = (d) => { const t = Date.parse(d + 'T00:00:00Z'); return Number.isFinite(t) && vnDay(t) === d; };
+
+const MOC_300 = 'COALESCE((SELECT MIN(id) FROM (SELECT id FROM loans WHERE voided = 0 ORDER BY id DESC LIMIT 300)), 0)';
 
 export async function postLoan(req, env, user) {
   const b = await readJson(req);
@@ -312,7 +326,8 @@ export async function voidLoan(req, env, user, id) {
   const pending = !r.duyet_ts;
   // ai DUYỆT được lần ghi này thì cũng từ chối / huỷ được nó; kèm phiếu kho thì theo luật phiếu kho
   const coKho = !!(r.grp && await env.DB.prepare("SELECT 1 x FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0").bind(r.grp).first());
-  const quyen = coKho ? duyetPhieuDuoc(user.role) : duyetCap(user.role, r.cap);
+  // như duyetLoan: người ghi được lên chức sau đó vẫn không tự huỷ lần ghi của mình ngoài cửa sổ 10 phút
+  const quyen = coKho ? duyetPhieuDuoc(user.role) : duyetCuaNguoi(user, r.cap, [r.user_id]);
   if (!quyen) {
     if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc cấp duyệt được lần ghi này mới huỷ được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) {
@@ -401,7 +416,9 @@ export async function loansView(env, url) {
        WHERE l.voided = 0
          /* 300 dòng gần nhất, CỘNG mọi dòng còn chờ duyệt dù cũ tới đâu: số "chờ duyệt" ở Tổng quan
             đếm trên toàn bộ, nên lần ghi chờ duyệt nào cũng phải tìm thấy được để duyệt. */
-         AND (l.duyet_ts IS NULL OR l.id >= COALESCE((SELECT MIN(id) FROM (SELECT id FROM loans WHERE voided = 0 ORDER BY id DESC LIMIT 300)), 0))
+         /* lấy TRỌN lần ghi: dòng mốc 300 rơi giữa một lần ghi nhiều phi thì vẫn kèm các phi còn lại, thẻ không bị thiếu dòng */
+         AND (l.duyet_ts IS NULL OR l.grp IN (SELECT grp FROM loans WHERE voided = 0 AND grp IS NOT NULL AND id >= ${MOC_300})
+              OR l.id >= ${MOC_300})
        ORDER BY l.id DESC`
     ),
     env.DB.prepare('SELECT doitac_id, phi_id, kind, SUM(qty) q FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL GROUP BY doitac_id, phi_id, kind'),
