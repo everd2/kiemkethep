@@ -15,6 +15,7 @@ import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
 import { slPut, slThietLap, slView } from './sanluong.js';
+import { saoLuuDs, saoLuuNgay, saoLuuTai, saoLuuTuDong } from './saoluu.js';
 import { tvCsv, tvDon, tvDonViec, tvGhi, tvGiaoQuyen, tvHuy, tvNhap, tvView } from './thepve.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
@@ -247,6 +248,10 @@ async function route(req, env, url, user, method, p, r0) {
   // sao lưu / nạp lại: chốt chặn thật nằm trong backupData / restoreData
   if (r0 === 'backup' && method === 'GET') return backupData(env, user);
   if (r0 === 'restore' && method === 'POST') return restoreData(req, env, user);
+  // bản sao tự động hằng tuần trên kho R2: danh sách, tải về, sao lưu ngay (chỉ admin đầu tiên, xem src/saoluu.js)
+  if (r0 === 'saoluu' && method === 'GET' && p.length === 1) return saoLuuDs(env, user);
+  if (r0 === 'saoluu' && method === 'GET' && p.length === 2) return saoLuuTai(env, user, decodeURIComponent(p[1]));
+  if (r0 === 'saoluu' && method === 'POST' && p.length === 1) return saoLuuNgay(env, user);
   if (r0 === 'users') {
     if (method === 'GET' && p.length === 1) return listUsers(env);
     if (method === 'POST' && p.length === 1) return createUser(req, env, user);
@@ -295,9 +300,9 @@ export default {
   },
   async scheduled(event, env, ctx) {
     const log = (e) => console.error(e && e.stack ? e.stack : e);
-    /* Hai việc chạy độc lập, việc này lỗi không chặn việc kia: tự chốt sổ thép (hourly) và chép số của ca tổ không báo
-       quân số cho thống kê (qsChotCa). Trả lại promise để bộ test đợi được. */
-    const p = ensureSchema(env).then(() => Promise.all([hourly(env).catch(log), qsChotCa(env).catch(log)])).catch(log);
+    /* Ba việc chạy độc lập, việc này lỗi không chặn việc kia: tự chốt sổ thép (hourly), chép số của ca tổ không báo
+       quân số cho thống kê (qsChotCa), và sao lưu tự động hằng tuần lên R2 (saoLuuTuDong, chỉ chạy 2h sáng). Trả lại promise để bộ test đợi được. */
+    const p = ensureSchema(env).then(() => Promise.all([hourly(env).catch(log), qsChotCa(env).catch(log), saoLuuTuDong(env).catch(log)])).catch(log);
     ctx.waitUntil(p);
     return p;
   },

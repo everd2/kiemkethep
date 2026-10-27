@@ -253,6 +253,9 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào là mở màn báo cáo ca, bước 1, để nhắc. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa. App **không còn màn ghi thay** cho CVKTHT: tổ không báo thì báo cáo ca dùng số thiết lập, hoặc người soạn sửa tay mục 3. Mọi lần báo nằm trong **nhật ký**, có chip lọc *Quân số*.
 
+### Sao lưu tự động hằng tuần
+Mỗi tuần app tự lưu một bản sao toàn bộ lên kho R2 (`ANH`, thư mục `saoluu/`) lúc 2 giờ sáng giờ Việt Nam, giữ 8 bản gần nhất (bản cũ hơn tự xoá). Admin đầu tiên vào **Cài đặt → Sao lưu toàn bộ** để xem danh sách, **Tải về**, hoặc **Sao lưu ngay lên kho**. Tệp tải về y hệt "Tải bản sao toàn bộ", nạp lại bằng ô *Nạp lại từ bản sao*. Mã nguồn: `src/saoluu.js`; đọc mọi bảng trong một lượt gọi D1 để vừa hạn mức của lịch chạy mỗi giờ.
+
 ### Sổ thép về công trình (Thêm → *Thép về công trình*)
 Sổ **thống kê** mọi chuyến thép về công trình từ đầu năm — theo dõi đơn hàng, nhà cung cấp, ngày về, loại, số lượng. **Không đụng tồn bãi** (số ra / vào bãi trước đây không có nên tổng thép về không cần khớp tồn bãi; thép về từ nay mà vào bãi thì vẫn lập phiếu Nhập kho như thường). Mã nguồn: `src/thepve.js`, bảng `thep_ncc`, `thep_don`, `thep_don_dong`, `thep_ve`, `thep_ve_dong` (cấu trúc bản 45).
 - **Quyền:** ghi / lập đơn / nhập Excel / huỷ — admin đầu tiên và người được **admin đầu tiên giao quyền** (màn Người dùng → *Giao quyền*, cột `users.thep_ve`); xem — thêm CVKTHT trở lên.

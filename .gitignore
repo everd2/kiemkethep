@@ -3,3 +3,5 @@ node_modules/
 .dev.vars
 *.log
 backup*.sql
+# thư mục làm việc của Claude Code (worktree, cấu hình máy) — không thuộc mã nguồn
+.claude/

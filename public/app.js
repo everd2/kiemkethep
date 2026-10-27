@@ -305,7 +305,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v63';
+const BAN = 'kho-thep-v64';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -2250,6 +2250,7 @@ function fmtAudit(a) {
     tv_don_huy: ['huỷ đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || '') + (d.ly_do ? ' · lý do: ' + d.ly_do : ''), 'receipt'],
     tv_don_molai: ['mở lại đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || ''), 'receipt'],
     tv_nhap: ['nhập sổ thép về từ Excel: ' + (d.chuyen || 0) + ' chuyến, ' + fmtInt(Math.round((d.kg || 0) / 1000)) + ' tấn', 'receipt'],
+    backup_kho: ['sao lưu toàn bộ lên kho' + (d.ten ? ' (' + d.ten.slice(0, 10).split('-').reverse().join('/') + ')' : ''), 'admin'],
     user_thep_ve: [(d.co ? 'giao' : 'bỏ') + ' quyền ghi sổ thép về cho ' + (d.name || ''), 'admin'],
     sl_luu: ['chép báo cáo sản lượng ngày ' + fmtDay(d.ngay) + ' (công chuẩn ' + String(d.chuan).replace('.', ',') + ', tỷ lệ giá ' + String(d.gia).replace('.', ',') + ')', 'qs'],
     sl_thietlap: ['đặt thiết lập sản lượng' + (d.chuan !== undefined ? ': công chuẩn ' + String(d.chuan).replace('.', ',') : '') + (d.gia !== undefined ? ', tỷ lệ giá ' + String(d.gia).replace('.', ',') : '') + (d.gc ? ', tỷ lệ gia công ' + Object.keys(d.gc).length + ' tổ' : ''), 'qs'],
@@ -4684,6 +4685,21 @@ function vThepVe() {
   return `${top}<div class="col gap6 tbar" style="padding:6px 16px"><div class="row gap6" data-sx="tvtab" style="overflow-x:auto">${tabs.map(([v, ten]) => `<button class="chip s ${tab === v ? 'on' : ''}" style="flex:none" data-a="tvtab" data-v="${v}">${ten}</button>`).join('')}</div>${tab !== 'nhap' ? ky : ''}</div>
     <div class="f1 pad col gap8" id="body" style="overflow:auto">${than}</div>`;
 }
+/* Bản sao tự động hằng tuần trên kho R2 (xem src/saoluu.js): chỉ admin đầu tiên. Tải về là tệp y như "Tải bản sao toàn bộ",
+   nạp lại bằng đúng ô "Nạp lại từ bản sao" bên dưới. */
+async function slKhoTai() { try { S.saoLuu = await api('GET', '/saoluu'); } catch (e) { S.saoLuu = { loi: e.message, ds: [] }; } render(); }
+function slKhoHtml() {
+  const L = S.saoLuu;
+  const dong = !L ? '<span class="sm muted">Đang tải danh sách…</span>'
+    : L.loi ? `<span class="sm" style="color:var(--bad)">${esc(L.loi)}</span>`
+    : !L.ds.length ? '<span class="sm muted">Chưa có bản nào. Bản đầu tiên tự lưu lúc 2 giờ sáng gần nhất, hoặc bấm "Sao lưu ngay".</span>'
+    : `<div class="bangw"><table class="bang"><thead><tr><th class="c1">Ngày lưu</th><th class="so">Cỡ</th><th></th></tr></thead><tbody>${L.ds.map((x) =>
+      `<tr><td class="c1">${fmtDay(x.ten.slice(0, 10))}${x.luc ? ' <span class="muted">' + hhmm(x.luc) + '</span>' : ''}</td><td class="so">${x.co >= 1048576 ? fmtDec(Math.round(x.co / 10485.76) / 100) + ' MB' : Math.max(1, Math.round(x.co / 1024)) + ' KB'}</td>
+        <td><button class="v" data-a="slkhotai" data-v="${esc(x.ten)}">Tải về</button></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div style="border-top:1px solid var(--line);padding-top:8px" class="col gap6"><b class="sm">Bản sao tự động trên kho (mỗi tuần)</b>
+    <span class="sm" style="line-height:1.45">App tự lưu một bản mỗi tuần (2 giờ sáng), giữ ${(L && L.giu) || 8} bản gần nhất. Tải về là nạp lại được bằng ô bên dưới.</span>
+    ${dong}<button class="btn s full" data-a="slkhongay">SAO LƯU NGAY LÊN KHO</button></div>`;
+}
 function vBaoCaoCa() {
   const B = S.bcc;
   const top = head('Báo cáo ca', B ? esc(hoa(caGoi(B))) + ' · ' + gioH(B.gio.tu) + '–' + gioH(B.gio.den) : '', 'more');
@@ -5267,6 +5283,7 @@ function vReset() {
   <div class="card col gap8"><b style="font-size:18px">Sao lưu toàn bộ</b>
     <span class="sm" style="line-height:1.45">Một tệp chứa <b>tất cả</b> số liệu, tài khoản và nhật ký. Chỉ tệp này <b>nạp lại được</b> (hai tệp CSV ở trên thì không). Nên tải định kỳ và cất ra ngoài máy.</span>
     <button class="btn s pri full" data-a="dlbackup">TẢI BẢN SAO TOÀN BỘ</button>
+    ${isOwner() ? slKhoHtml() : ''}
     <div style="border-top:1px solid var(--line);padding-top:8px" class="col gap6">
       <b class="sm">Nạp lại từ bản sao</b>
       <span class="sm" style="line-height:1.45">Thay <b>sạch</b> số liệu hiện tại bằng số liệu trong tệp, không trộn. Nhật ký giữ nguyên và ghi thêm một dòng.</span>
@@ -5452,7 +5469,7 @@ async function go(screen, noPush, khu) {
     else if (screen === 'lichsu') { await loadHist(S.hist.date || ydayOf(S.boot.today)); }
     else if (screen === 'baocao') { if (!S.bc.from) [S.bc.from, S.bc.to] = repRange('month'); await loadRep(); }
     else if (screen === 'stats') { if (S._usageDays !== S.usageDays) { S.usage = null; render(); } S._usageDays = S.usageDays; S.usage = (await api('GET', '/usage?days=' + S.usageDays)).items; }
-    else if (screen === 'settings') { S.kuEdit = null; await loadBoot(); await loadUsers(); }
+    else if (screen === 'settings') { S.kuEdit = null; if (isOwner()) slKhoTai(); await loadBoot(); await loadUsers(); }
     else if (screen === 'vaymuon') { if (!S.loans) render(); S.loans = await api('GET', '/loans'); }
     else if (screen === 'satvun') { if (!S.svs) render(); S.svs = await svTai(); }
     else if (screen === 'vaychitiet') {
@@ -6137,6 +6154,8 @@ const ACTIONS = {
   dlall() { const z = S.boot.today; download(`/report?format=csv&from=dau&to=${z}`, `bao-cao_tu-dau_${z}.csv`); },
   // tải bản sao: dùng chung đường download như các tệp CSV khác
   dlbackup() { download('/backup', `kho-thep_sao-luu_${S.boot.today}.json`); },
+  slkhotai(d) { download('/saoluu/' + encodeURIComponent(d.v), 'kho-thep_sao-luu_' + d.v); },
+  slkhongay() { act(async () => { await api('POST', '/saoluu', {}, 60e3); await slKhoTai(); }, 'Đã sao lưu lên kho.'); },
   /* Chọn tệp thì ĐỌC NGAY và kiểm sơ bộ, chứ không đợi tới lúc bấm nạp: chọn nhầm tệp mà mãi
      sau mới biết là đã gõ xong câu xác nhận, tay đã quen, dễ bấm tiếp cho xong. */
   pickbackup(f) {

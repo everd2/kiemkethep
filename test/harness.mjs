@@ -85,13 +85,15 @@ class R2 {
   async put(key, val, o = {}) {
     if (this.hong) throw new Error('R2 lỗi giả');
     const buf = new Uint8Array(val instanceof ArrayBuffer ? val : await new Response(val).arrayBuffer());
-    this.obj.set(key, { buf, httpMetadata: { ...(o.httpMetadata || {}) } });
+    this.obj.set(key, { buf, httpMetadata: { ...(o.httpMetadata || {}) }, at: Date.now() });
   }
   async get(key) {
     const o = this.obj.get(key);
     return o ? { body: new Response(o.buf).body, httpMetadata: o.httpMetadata } : null;
   }
   async delete(key) { this.obj.delete(key); }
+  // như R2 thật: liệt kê theo tiền tố, kèm cỡ và lúc tải lên
+  async list(o = {}) { const pre = o.prefix || ''; return { objects: [...this.obj.entries()].filter(([k]) => k.startsWith(pre)).map(([key, v]) => ({ key, size: v.buf.length, uploaded: new Date(v.at || Date.now()) })) }; }
 }
 
 /* ---------- dựng môi trường ----------

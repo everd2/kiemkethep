@@ -5,6 +5,7 @@ import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js
 import { J, KHU_X_PHI } from './counts.js';
 import { computeReview } from './review.js';
 import { firstAdminId } from './admin.js';
+import { taoBanSao } from './saoluu.js';
 
 /* ========================= ĐẶT LẠI SỐ LIỆU THÉP =========================
    Hai việc khác nhau, cố ý tách làm hai đường vì hậu quả khác nhau một trời một vực.
@@ -236,28 +237,9 @@ export async function backupData(env, user) {
   if (user.id !== first) {
     throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới tải được bản sao');
   }
-  const out = {};
-  const cut = {};
-  for (const t of BK_STATE) {
-    out[t] = (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results;
-  }
-  for (const t of BK_LOG) {
-    const n = await env.DB.prepare(`SELECT COUNT(*) n FROM ${t}`).first();
-    const r = await env.DB.prepare(`SELECT * FROM ${t} ORDER BY id DESC LIMIT ${BK_LOG_MAX}`).all();
-    out[t] = r.results.reverse();
-    if (n.n > BK_LOG_MAX) cut[t] = n.n; // nói rõ đã cắt, đừng để người dùng tưởng là đủ
-  }
-  const sc = await env.DB.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
-  const body = {
-    app: 'kho-thep',
-    ban: 1,
-    schema: sc ? sc.value : 0,
-    luc: Date.now(),
-    ngay: vnDay(),
-    boi: user.name,
-    cat: cut,
-    bang: out,
-  };
+  // đọc mọi bảng trong MỘT lượt gọi D1 (xem taoBanSao ở src/saoluu.js — cùng nội dung với bản sao tự động hằng tuần)
+  const body = await taoBanSao(env, user.name);
+  const out = body.bang;
   await auditStmt(env, user, 'backup', {
     ngay: body.ngay,
     dong: Object.fromEntries(Object.keys(out).map((t) => [t, out[t].length])),
