@@ -86,7 +86,8 @@ async function main() {
   vm.createContext(ctx);
   vm.runInContext(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8'), ctx, { filename: 'app.js' });
   const R = (src) => vm.runInContext(src, ctx);
-  const cho = async () => { for (let k = 0; k < 400; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && k > 40) return; } };
+  // act() (Cài đặt) bật S.busy: chờ tới khi tắt; trần đủ rộng cho máy bận (400 vòng setImmediate chỉ vài chục ms)
+  const cho = async () => { for (let k = 0; k < 20000; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && k > 40) return; } };
   const vao = async (name, role) => {
     who = name;
     const bt = (await S.call('GET', '/bootstrap', undefined, name)).data;
@@ -107,7 +108,8 @@ async function main() {
   const tkLam = (u) => { const r = TK.tl.find((x) => x.u === u && x.ca === 1); return r ? r.lam : undefined; };
   eq('Thống kê cùng số: An 17, Binh thiếu số, Xoa 6, Cuong không có', [tkLam(U.An), tkLam(U.Binh), tkLam(U.Xoa), tkLam(U.Cuong)], [17, null, 6, undefined]);
   // sản lượng của ngày D2: lấy ca ngày D2 + ca đêm hôm trước, tính bằng bcQuanSo
-  R(`slLay('${D2}').then((L) => { S.sl = L; S.slNguon = null; slGan(); })`); await cho();
+  // chờ đúng promise của slLay (không đếm vòng: máy bận thì ba lời gọi chưa xong)
+  await R(`slLay('${D2}').then((L) => { S.sl = L; S.slNguon = null; slGan(); })`);
   const slU = (n) => R(`(S.sl.to.find((x) => x.name === '${n}') || {}).lam`);
   eq('sản lượng ngày đã qua: An 17, Binh 0, Xoa 6 (tổ đã thôi vẫn có dòng)', [slU('An'), slU('Binh'), slU('Xoa')], [17, 0, 6]);
 
@@ -139,21 +141,23 @@ async function main() {
   delete dom['kgc-D6'];
 
   /* ===== 2. Hàng chờ quân số: server từ chối thì GIỮ lần báo, hiện thẻ đỏ, tổ tự bỏ ===== */
+  /* CHỜ ĐÚNG lượt gửi của qsFlush (nó trả promise), không đếm vòng: qsFlush không bật S.busy, nên cho() chỉ đợi đủ 40 vòng rồi
+     đi tiếp — máy đang bận (chạy nhiều bộ test cùng lúc) thì lời gọi PUT /quanso chưa xong, lần báo chưa kịp gắn lỗi. */
   await vao('An', 'tieudoi');
   const hom = cong(vnDay(), -1);
   const job = { id: 'j1', uid: U.An, body: { ngay: hom, ca: 1, tong: 20, lam: 18, nghi: { om: 2 }, ghi_chu: '' }, at: Date.now() - 864e5 };
   store['kt:qsq'] = JSON.stringify([job]);
-  R('qsFlush()'); await cho();
+  await R('qsFlush()'); await cho();
   const q1 = JSON.parse(store['kt:qsq'] || '[]');
   eq('ca đã qua (409 qua): lần báo KHÔNG bị xoá, gắn lỗi', [q1.length, q1[0] && q1[0].ma, !!(q1[0] && q1[0].err)], [1, 'qua', true]);
   eq('server không ghi gì', S.one('SELECT COUNT(*) n FROM quan_so WHERE ngay = ? AND user_id = ?', hom, U.An).n, 0);
   const the = R('qsTheHome()');
   ok('Tổng quan có thẻ đỏ cho ca đã qua: số đã gõ, nhờ CVKTHT, nút Bỏ, không có nút Gửi lại', the.includes('chưa gửi được') && the.includes('Đi làm 18/20') && the.includes('Nhờ CVKTHT') && the.includes('data-a="qsloibo"') && !the.includes('data-a="qsloigui"'), the.slice(0, 600));
-  R('qsFlush()'); await cho();
+  await R('qsFlush()'); await cho();
   eq('lần báo có lỗi không tự gửi lại mỗi vòng', JSON.parse(store['kt:qsq']).length, 1);
   // lỗi khác (không phải ca đã qua): có nút Gửi lại
   store['kt:qsq'] = JSON.stringify([job, { id: 'j2', uid: U.An, body: { ngay: vnDay(), ca: 1, tong: 5, lam: 9, nghi: {}, ghi_chu: '' }, at: Date.now() }]);
-  R('qsFlush()'); await cho();
+  await R('qsFlush()'); await cho();
   const q2 = JSON.parse(store['kt:qsq']);
   ok('lỗi số liệu: giữ lại, thẻ có nút Gửi lại', q2.length === 2 && q2[1].err && R("typeof qsLoiHtml === 'function' ? qsLoiHtml() : ''").includes('data-a="qsloigui" data-v="j2"'), JSON.stringify(q2));
   ok('lần báo bị từ chối không còn là "chờ gửi": thẻ báo ca mở lại cho ca đang diễn ra', !R('qhCas()').some((x) => x.cho), JSON.stringify(R('qhCas()').map((x) => !!x.cho)));
@@ -164,7 +168,7 @@ async function main() {
   store['kt:qsq'] = JSON.stringify([{ ...job, id: 'j3', body: { ...job.body, ngay: vnDay() } }]);
   const f0 = ctx.fetch;
   ctx.fetch = async () => { throw new TypeError('Failed to fetch'); };
-  R('qsFlush()'); await cho();
+  await R('qsFlush()'); await cho();
   ctx.fetch = f0;
   const q3 = JSON.parse(store['kt:qsq']);
   eq('mất sóng: giữ nguyên, không gắn lỗi', [q3.length, !!q3[0].err], [1, false]);
