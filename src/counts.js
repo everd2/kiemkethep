@@ -47,6 +47,12 @@ export const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_
    chủ lúc nhận; báo cáo gửi dồn sau khi mất mạng mang mốc lúc tới máy chủ, như lâu nay). Trùng đúng mili-giây thì coi
    là nằm trong số đếm, như luật cũ. */
 export const SAU_DEM = (r, e) => `(${r}.duyet_ts > ${e}.ts OR ${r}.ts > ${e}.cts)`;
+/* Mốc DƯỚI theo ngày duyệt cho nhánh "phiếu lập sau lúc đếm" (cts = mili-giây lúc đếm). Không có mốc này thì câu đi index
+   (phi, khu, duyet_day) từ đầu lịch sử: mỗi lần tải / duyệt / kiểm tồn đọc MỌI phiếu từng có của ô (đo 50 nghìn phiếu: 0,1 ms
+   thành 13 ms, ~50 nghìn dòng D1 mỗi lượt — vượt hạn mức gói miễn phí khi dữ liệu lớn). Phiếu lập sau lúc đếm thì duyệt sau
+   lúc đó, nên ngày duyệt (ngày sổ ĐANG MỞ lúc duyệt) không sớm hơn ngày sổ mở lúc đếm; ngày đó có thể chậm hơn ngày thật vài
+   ngày khi lịch chốt bị lỡ, nên lùi hẳn 7 ngày cho chắc — vẫn chỉ đọc chừng một tuần phiếu của ô. */
+export const TU_DEM = (cts) => `date(${cts} / 1000 + 25200, 'unixepoch', '-7 days')`;
 /* Phần CỘNG LÊN số đếm / tồn chuẩn của ô, theo đúng SAU_DEM. Hai nhánh:
    - phiếu duyệt TRONG KỲ (sau ngày mốc A): ô chưa có số đếm đã duyệt thì mọi phiếu (cộng lên tồn chuẩn), có thì phiếu SAU_DEM;
    - phiếu duyệt ở các ngày ĐÃ CHỐT (<= A) mà lập sau lúc đếm: chỉ có khi số đếm chưa duyệt được chuyển qua 0h (carryStmts)
@@ -62,7 +68,7 @@ const MV_SAU = (A, B, eff) => `SELECT khu_id, phi_id, SUM(q) q FROM (
     UNION ALL
     SELECT r.khu_id, r.phi_id, r.qty FROM (${eff}) e
     JOIN receipts r ON r.phi_id = e.phi_id AND r.khu_id = e.khu_id
-    WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day <= ${A} AND r.ts > e.cts)
+    WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day <= ${A} AND r.duyet_day >= ${TU_DEM('e.cts')} AND r.ts > e.cts)
   GROUP BY khu_id, phi_id HAVING SUM(q) <> 0`;
 /* Thép ĐÃ DUYỆT về SAU lần đếm, tính đến ngày ?1 — tức phần chưa nằm trong số đếm.
    Tồn mà app hiện = số đếm + phần này (xem tonOf ở app.js). Chỗ nào đọc tồn mà bỏ phần này thì

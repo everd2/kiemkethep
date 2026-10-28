@@ -78,8 +78,13 @@ export async function bootstrap(env, user) {
     /* Lần gần nhất một phiếu kho của khu được duyệt hoặc (đã duyệt rồi) bị huỷ — đúng câu mvTsR của màn
        Duyệt. Tổng quan dùng nó để biết khu nào đếm TRƯỚC lúc có phiếu kho mới (phieuSau), tức CVKTHT
        không duyệt được, mà không phải đoán. */
-    env.DB.prepare(`SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b FROM receipts
-                    WHERE duyet_day IS NOT NULL AND duyet_day > ${LAST} AND duyet_day <= ?1 GROUP BY khu_id`).bind(day),
+    // gồm cả phiếu duyệt ở ngày đã chốt sau lần báo cũ nhất còn trong kỳ (báo cáo chuyển qua 0h) — y câu mvTsR, xem đó
+    env.DB.prepare(`WITH l AS (SELECT ${LAST} d), m AS (SELECT MIN(ts) t FROM counts, l WHERE day > l.d AND day <= ?1)
+                    SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b FROM receipts, l, m
+                    WHERE duyet_day IS NOT NULL AND duyet_day <= ?1
+                      AND duyet_day >= MIN(l.d, COALESCE(date(m.t / 1000 + 25200, 'unixepoch'), l.d))
+                      AND (duyet_day > l.d OR duyet_ts > m.t)
+                    GROUP BY khu_id`).bind(day),
     env.DB.prepare(`SELECT ${LAST} d`).bind(day),
     /* Đơn gia công CÒN MỞ, chỉ mấy cột đủ để Tổng quan nhắc (đơn mới chưa nhận, trễ hạn, đang vướng, bị mở lại).
        Bảng đơn đầy đủ nạp riêng khi vào tab Gia công, như sổ vay mượn. */

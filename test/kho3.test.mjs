@@ -168,6 +168,35 @@ async function main() {
     ok('phi có ngày dùng vẫn có mức dùng', S.one("SELECT COUNT(*) n FROM phi_rate WHERE phi_id = 'D16'").n === 1);
   }
 
+  /* ===== 5. Thẻ màn Duyệt nói đúng điều bấm Duyệt sẽ làm (rà soát sau đợt 3) ===== */
+  const the = async (S) => { const k = (await rv(S)).khus.find((x) => x.khu === "A"); const i = k.items.find((x) => x.phi === "D16"); return [i.dem, i.cnt, i.d, i.sau, i.cho]; };
+  {
+    // đếm 100 lúc 8h, 9h về thêm 50 (lập + duyệt): số đếm không gồm 50 đó — thẻ không được báo "hụt 50"
+    veGio(7); const S = await moi(); await nen(S);
+    veGio(8); await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 100 }) }, 'An');
+    advance(3600e3); await nhap(S, 'A', 50); advance(3600e3);
+    eq('phiếu đã duyệt lập sau lúc đếm: dự kiến 100, khu báo 100, lệch 0, sau +50', await the(S), [100, 100, 0, 50, 0]);
+    await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin');
+    eq('duyệt xong tồn 150 như thẻ nói', await ton(S, 'A'), 150);
+  }
+  {
+    // phiếu ghi muộn: thép về 7h30, khu đếm 150 lúc 8h, 9h mới lập phiếu +50 (chờ duyệt): thẻ phải nói duyệt xong là 200
+    veGio(7); const S = await moi(); await nen(S);
+    veGio(8); await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 150 }) }, 'An');
+    advance(3600e3); await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 50 }] }, 'Cv'); advance(3600e3);
+    eq('phiếu chờ lập sau lúc đếm: lệch +50 và cho +50 (người duyệt thấy sẽ thành 200)', await the(S), [100, 150, 50, 0, 50]);
+  }
+  {
+    // số đếm chuyển qua 0h + phiếu duyệt chiều hôm trước sau lúc đếm: Tổng quan (bootstrap) cũng biết CVKTHT không duyệt được
+    veGio(7); const S = await moi(); await nen(S);
+    veGio(9); await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 100 }) }, 'An');
+    veGio(14); await nhap(S, 'A', 50);
+    veGio(1); await S.cron(); veGio(8);
+    const bs = (await S.call('GET', '/bootstrap', undefined, 'Cv')).data;
+    const subTs = bs.counts.filter((c) => c.khu_id === 'A').reduce((m, c) => Math.max(m, c.ts || 0), 0);
+    ok('bootstrap phieuTs gồm phiếu ngày đã chốt sau lúc đếm (khớp phieuSau của màn Duyệt)', ((bs.phieuTs || {}).A || 0) > subTs, JSON.stringify([(bs.phieuTs || {}).A, subTs]));
+  }
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

@@ -2,7 +2,7 @@
 import { CAP_TREN, HttpError, bad, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
 import { IS_CLOSED, LOAN_AM_COND, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, loanAmErr, loanAmRows, qtyWord, readJson,
   unitWord } from './helpers.js';
-import { EFF_SELECT, J } from './counts.js';
+import { EFF_SELECT, J, TU_DEM } from './counts.js';
 
 /* ========================= NHẬP KHO ========================= */
 
@@ -91,6 +91,7 @@ export async function tonCells(env, day, cells, choRut = true) {
             kể cả phiếu của ngày đã chốt khi số đếm là số chưa duyệt được chuyển qua 0h. Cùng luật với MV_NEW. */
          THEN e.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
                                AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL AND rr.duyet_day <= ?1
+                               AND rr.duyet_day >= MIN(${LAST}, ${TU_DEM('e.cts')}) -- mốc dưới cho index, xem TU_DEM
                                AND (rr.ts > e.cts OR (rr.duyet_day > ${LAST} AND rr.duyet_ts > e.ts))), 0)
          ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
                                AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL

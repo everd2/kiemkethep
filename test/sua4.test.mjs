@@ -126,14 +126,20 @@ async function main() {
   const B1b = (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'Cv')).data;
   eq('báo cáo ca hôm qua vẫn 15/20 sau khi sửa số thiết lập', cua(hang(B1b), 'An'), ['An', 'tl', 15, 20]);
   eq('ca đang diễn ra dùng số mới 12', cua(hang((await S.call('GET', '/baocao', undefined, 'Cv')).data), 'An'), ['An', 'tl', 12, 20]);
+  /* Lịch ca chỉ có bản HIỆN TẠI: An đổi sang ca đêm thì báo cáo ca ngày hôm qua không được coi An "làm ca kia" và bỏ mất bản chép
+     (bản chép ca ngày chỉ có khi lúc hết ca An làm ca ngày) — Thống kê vẫn tính bản chép đó. */
+  eq('An đổi lịch sang ca đêm', (await S.call('PUT', '/quanso/lich', { ca: 2 }, 'An')).status, 200);
+  eq('báo cáo ca ngày hôm qua vẫn có bản chép 15/20 của An', cua(hang((await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'Cv')).data), 'An'), ['An', 'tl', 15, 20]);
 
   /* ===== 3. Cài đặt: ô số kiểu Việt ===== */
-  eq('numIn: "1.500" là 1500, "1.500,5" là 1500,5', [R('numIn("1.500")'), R('numIn("1.500,5")'), R('numIn("12.345.678")')], [1500, 1500.5, 12345678]);
+  eq('numIn ô kg / cuộn: "1.500" là 1500, "1.500,5" là 1500,5, "0.500" vẫn là 0,5', [R('numIn("1.500", true)'), R('numIn("1.500,5", true)'), R('numIn("12.345.678", true)'), R('numIn("0.500", true)')], [1500, 1500.5, 12345678, 0.5]);
+  // ô khác (kg / cây...): bàn phím số điện thoại gõ dấu chấm thập phân — "7.219" là 7,219, không phải 7219 (máy chủ chặn kg >= 1000)
+  eq('numIn ô khác: "7.219" là 7,219, "0.617" là 0,617, "1.500" là 1,5', [R('numIn("7.219")'), R('numIn("0.617")'), R('numIn("1.500")')], [7.219, 0.617, 1.5]);
   eq('numIn: "," là dấu thập phân; "1.5", "0.5" vẫn là số lẻ', [R('numIn("1,5")'), R('numIn("1.5")'), R('numIn("0.5")'), R('numIn("7,22")'), R('numIn(" 2000 ")')], [1.5, 1.5, 0.5, 7.22, 2000]);
   eq('numIn: ô trống / chữ lạ là số sai', [R('Number.isNaN(numIn(""))'), R('Number.isNaN(numIn("12abc"))'), R('Number.isNaN(numIn("1.2.3"))')], [true, true, true]);
   await vao('Admin', 'admin');
   const d6 = S.one("SELECT bo_size, kg_per_cay FROM phi WHERE id = 'D6'");
-  eq('ô hiện số đang lưu đọc lại đúng (khứ hồi)', R(`(() => { const p = S.boot.phiBy.D6, q = S.boot.phiBy.D10, f = phiForm(p), g = phiForm(q); return [numIn(f.kgc), numIn(g.kg), numIn(g.mn)]; })()`), [Math.round(d6.kg_per_cay * d6.bo_size), 7.22, 1]);
+  eq('ô hiện số đang lưu đọc lại đúng (khứ hồi)', R(`(() => { const p = S.boot.phiBy.D6, q = S.boot.phiBy.D10, f = phiForm(p), g = phiForm(q); return [numIn(f.kgc, true), numIn(g.kg), numIn(g.mn)]; })()`), [Math.round(d6.kg_per_cay * d6.bo_size), 7.22, 1]);
   dom['kgc-D6'] = { value: '1.500' };
   R('ACTIONS.psaveall()'); await cho();
   const d6b = S.one("SELECT bo_size, kg_per_cay FROM phi WHERE id = 'D6'");

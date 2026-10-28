@@ -132,6 +132,28 @@ async function main() {
   eq('lâu dài: 8 bản tự động + 5 bản tay', [kho().length - tay().length, tay().length], [8, 5]);
   ok('bản cũ không đuôi đã ra theo hàng tự động', !kho().includes('saoluu/2020-01-01_1577836800000.json'));
 
+  /* ===== Nạp vào bản cài mới: trùng id nhưng KHÁC người (khác số điện thoại) — trạng thái bảo mật không được dán sang người khác ===== */
+  {
+    const O = await boot(ROOT);
+    await O.call('POST', '/setup', { token: 'setup-tok', name: 'Admin', phone: '0900000001', pin: '2468' });
+    await O.login('admin', '0900000001', '2468');
+    const pinA = (await O.call('POST', '/users', { name: 'A', phone: '0911111111', role: 'tieudoi' })).data.pin;
+    const tep = (await O.call('GET', '/backup')).data;
+    const N = await boot(ROOT);
+    await N.call('POST', '/setup', { token: 'setup-tok', name: 'Admin', phone: '0900000001', pin: '2468' });
+    await N.login('admin', '0900000001', '2468');
+    const pinB = (await N.call('POST', '/users', { name: 'B', phone: '0922222222', role: 'tieudoi' })).data.pin;
+    eq('nạp bản cũ (id 2 là A) vào bản cài mới (id 2 là B)', (await N.call('POST', '/restore', { confirm: 'NAP LAI', file: tep })).status, 200);
+    const vao = async (phone, pin, ip) => (await N.worker.fetch(new Request('https://test.local/api/login', { method: 'POST', headers: { Origin: 'https://test.local', 'Content-Type': 'application/json', 'CF-Connecting-IP': ip }, body: JSON.stringify({ phone, pin }) }), N.env)).status;
+    eq('A vào bằng PIN của chính A', await vao('0911111111', pinA, '10.0.0.1'), 200);
+    eq('PIN của B không mở được tài khoản A', await vao('0911111111', pinB, '10.0.0.2'), 401);
+    eq('admin vẫn vào được', await vao('0900000001', '2468', '10.0.0.3'), 200);
+    // tệp có số điện thoại của admin đang nạp dưới id khác: từ chối, chưa ghi gì
+    const t2 = (await N.call('GET', '/backup')).data;
+    t2.bang.users = t2.bang.users.map((u) => (u.phone === '0900000001' ? { ...u, id: 77 } : u));
+    const r2 = await N.call('POST', '/restore', { confirm: 'NAP LAI', file: t2 });
+    ok('số điện thoại của mình dưới id khác: 400, báo rõ', r2.status === 400 && /người khác/.test(r2.data.error), JSON.stringify(r2.data));
+  }
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

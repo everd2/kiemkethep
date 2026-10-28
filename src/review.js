@@ -5,7 +5,7 @@ import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { rateStmts } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
   guardStmt, parseSettings, readJson } from './helpers.js';
-import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
+import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW, TU_DEM } from './counts.js';
 import { checkTransferStock, rutCtx } from './phieu.js';
 import { SV_CHO_SQL } from './satvun.js';
 import { anhJson, docAnh } from './anh.js';
@@ -33,7 +33,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, mvnR, svR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, mvnR, svR, sauR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -109,6 +109,14 @@ export async function computeReview(env, day, opt = {}) {
     db.prepare(MV_NEW).bind(last, day),
     // sổ xuất sắt vụn chờ duyệt: duyệt ngay ở màn Duyệt, như sổ vay
     db.prepare(SV_CHO_SQL),
+    /* Phiếu ĐÃ DUYỆT lập sau lần báo cũ nhất trong kỳ (kể cả phiếu của ngày đã chốt khi báo cáo chuyển qua 0h): số đếm không thể
+       gồm phiếu lập sau lúc đếm (SAU_DEM ở counts.js), nên thẻ phải so số đếm với dự kiến TRỪ các phiếu đó, rồi nói riêng phần
+       sẽ cộng thêm. Không vậy thì khu đếm 100 lúc 8h, 9h về thêm 50 và duyệt ngay: thẻ báo "hụt 50" trong khi duyệt xong tồn
+       vẫn đúng 150. Mốc dưới theo ngày để đi index (TU_DEM). */
+    db.prepare(`WITH m AS (SELECT MIN(ts) t FROM counts WHERE day > ?1 AND day <= ?2)
+                SELECT r.khu_id, r.phi_id, r.qty, r.ts FROM receipts r, m
+                WHERE m.t IS NOT NULL AND r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day <= ?2
+                  AND r.duyet_day >= MIN(?1, ${TU_DEM('m.t')}) AND r.ts > m.t`).bind(last, day),
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -233,6 +241,8 @@ export async function computeReview(env, day, opt = {}) {
     pendBy[g].lines.push({ phi: r.phi_id, khu: r.khu_id, qty: r.qty });
   });
   const phieu = pendOrder.map((g) => pendBy[g]);
+  const sauBy = {}; // phiếu đã duyệt lập sau lần báo cũ nhất, theo ô (xem câu sauR)
+  sauR.results.forEach((r) => (sauBy[r.khu_id + '|' + r.phi_id] = sauBy[r.khu_id + '|' + r.phi_id] || []).push(r));
   /* Phiếu kho của sổ vay mượn: lần ghi sổ đi kèm KHÔNG nằm ở mục sổ vay chờ duyệt (duyệt phiếu là duyệt luôn sổ), nên
      ảnh biên bản của nó phải theo thẻ phiếu, kẻo người duyệt không thấy. Ảnh nằm ở dòng loans có id nhỏ nhất của nhóm
      (như thẻ ở màn Vay mượn). Chỉ hỏi khi có phiếu vay chờ duyệt: hàm này còn chạy cho việc tự chốt mỗi giờ. */
@@ -283,18 +293,25 @@ export async function computeReview(env, day, opt = {}) {
       if (sr.user_id != null) nguoiBao.add(sr.user_id);
       subTs = Math.max(subTs, sr.ts || 0);
       if (sr.duyet_at) lastDuyet = Math.max(lastDuyet, sr.duyet_at);
-      const d = sr.v - exp;
+      /* Phiếu LẬP SAU lúc đếm (sr.ts): số đếm không gồm, duyệt khu thì cộng lên trên (SAU_DEM). Dự kiến để so với số đếm là
+         dự kiến TRỪ phần đã duyệt đó; phần còn chờ duyệt (duyệt khu là duyệt luôn) cũng kể ra để người duyệt biết tồn sau khi
+         bấm = số đếm + sau + cho. */
+      const sau = (sauBy[key] || []).reduce((s, x) => s + (x.ts > sr.ts ? x.qty : 0), 0);
+      const cho = pendR.results.reduce((s, x) => s + (x.khu_id === k.id && x.phi_id === p.id && x.ts > sr.ts ? x.qty : 0), 0);
+      const expDem = exp - sau;
+      const d = sr.v - expDem;
       const kg = Math.abs(d) * kgBy[p.id];
       /* Ngưỡng CHỈ để tô đậm. Đếm dư thì thép không tự sinh ra nên nhạy hơn; hụt thì có thể là
          xuất dùng thật nên phải vừa lớn theo kg vừa quá nửa dự kiến mới tô. */
-      const big = d > 0 ? kg > KHU_UP_KG : d < 0 && kg > KHU_DOWN_KG && -d > Math.max(0, exp) * KHU_DOWN_PCT;
+      const big = d > 0 ? kg > KHU_UP_KG : d < 0 && kg > KHU_DOWN_KG && -d > Math.max(0, expDem) * KHU_DOWN_PCT;
       /* Để trống trong khi phi đang có thép: lỗi dễ xảy ra nhất của quy tắc "không điền = 0",
          nên nêu riêng cho người duyệt thấy, không trộn vào đám lệch. Phân biệt được nhờ kind:
          'zero' là để trống, còn bấm "Hết (0)" ghi 'dem' với v = 0. */
-      const left = sr.kind === 'zero' && exp > 0;
+      const left = sr.kind === 'zero' && expDem > 0;
       if (left) blank++;
-      if (exp !== 0 || sr.v !== 0) {
-        items.push({ phi: p.id, ref, mv, exp, cnt: sr.v, d, kind: sr.kind, big: !!big, blank: left, duyet: ok });
+      if (exp !== 0 || sr.v !== 0 || cho !== 0) {
+        // exp vẫn là dự kiến (tồn theo phiếu) như cũ; dem = dự kiến LÚC ĐẾM, cái mà số đếm phải khớp (d = cnt - dem)
+        items.push({ phi: p.id, ref, mv, exp, dem: expDem, sau, cho, cnt: sr.v, d, kind: sr.kind, big: !!big, blank: left, duyet: ok });
       }
     }
     phieuSau = !!(r && subTs && rcTs[k.id] && rcTs[k.id] > subTs);
@@ -433,6 +450,7 @@ export async function doClose(env, user, rv, note, action, extra = []) {
          + COALESCE((SELECT SUM(r.qty) FROM receipts r
                      WHERE r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
                        AND r.duyet_day IS NOT NULL AND r.duyet_day <= ?1
+                       AND r.duyet_day >= MIN(?2, COALESCE(${TU_DEM('c.duyet_ts')}, ?2)) -- mốc dưới cho index, xem TU_DEM
                        AND (c.duyet_at IS NULL AND r.duyet_day > ?2 OR r.ts > c.duyet_ts
                             OR r.duyet_day > ?2 AND r.duyet_ts > c.duyet_at)), 0)
          /* Số đếm của ngày này được DUYỆT SAU nửa đêm (trước lúc lịch chốt sổ): phiếu duyệt hôm sau trước / cùng lúc đó mà LẬP

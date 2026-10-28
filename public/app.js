@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v68';
+const BAN = 'kho-thep-v69';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -1906,11 +1906,15 @@ function vDuyet() {
       const dTxt = x.d === null ? '—' : x.d === 0 ? '0' : (x.d > 0 ? '+' : '−') + fmtQe(Math.abs(x.d), p);
       const cnTxt = x.cnt === null ? '<span class="muted">chưa báo</span>' : fmtQe(x.cnt, p);
       const blank = x.blank ? ' <b style="color:var(--bad)">để trống</b>' : '';
+      /* phiếu LẬP SAU lúc đếm (đã duyệt + đang chờ): số đếm không gồm, duyệt khu là cộng lên trên (SAU_DEM ở src/counts.js).
+         Nói rõ tồn sau khi bấm, để người duyệt thấy khi phiếu ghi muộn mà thép thật ra đã nằm trong số đếm — lúc đó cho khu đếm lại. */
+      const them = x.cnt === null ? 0 : (x.sau || 0) + (x.cho || 0);
+      const sauTxt = !them ? '' : `<div class="sm" style="padding:0 12px 6px 58px;color:var(--warn);line-height:1.4">Phiếu lập sau lúc đếm ${fmtQd(them, p, true)}, cộng thêm khi duyệt → tồn ${fmtQe(x.cnt + them, p)}</div>`;
       return `<div class="li" style="gap:6px"><b style="width:46px">${x.phi}</b>
-        <span class="sm" style="flex:1">${fmtQe(x.exp, p)} → <b>${cnTxt}</b>${blank}</span>
-        <b class="sm" style="color:${x.d ? col : 'var(--ink)'};white-space:nowrap;${x.big ? 'font-size:16px' : ''}">${dTxt}</b></div>`;
+        <span class="sm" style="flex:1">${fmtQe(x.dem == null ? x.exp : x.dem, p)} → <b>${cnTxt}</b>${blank}</span>
+        <b class="sm" style="color:${x.d ? col : 'var(--ink)'};white-space:nowrap;${x.big ? 'font-size:16px' : ''}">${dTxt}</b></div>${sauTxt}`;
     };
-    const lech = k.items.filter((x) => x.d || x.cnt === null);
+    const lech = k.items.filter((x) => x.d || x.cnt === null || x.sau || x.cho);
     const khop = k.items.length - lech.length;
     const bang = !k.items.length ? '<span class="sm muted">Khu không có thép, không có gì để đối chiếu.</span>'
       : `<div class="card" style="padding:0;overflow:hidden;margin:4px 0"><div class="li sm b" style="background:#E8EEF6"><span style="width:46px">ɸ</span><span class="f1">Dự kiến → Khu báo</span><span>Lệch</span></div>${(lech.length ? lech : k.items).map(row).join('')}</div>`
@@ -4090,6 +4094,8 @@ function bcQuanSo(B, nguon = S.bcNguon) {
        (hay sản lượng hôm nay) sẽ tưởng tổ "làm ca kia" và bỏ mất số tổ đã báo. Tổ đã tự báo có người đi làm ở CA NÀY thì
        chắc chắn làm ca này. */
     if (L === kia && r0 && r0.lam > 0) L = ca;
+    // bản chép lúc hết ca CA NÀY chỉ có khi lúc đó tổ làm ca này (soTlCa ở src/quanso.js) — cũng chắc chắn như tổ tự báo
+    if (L === kia && cp && cp.lam != null) L = ca;
     /* tổng quân số của tổ, cùng nguồn với dòng của tổ: chọn "Chỉ số thiết lập" thì số thiết lập; theo tổ báo thì lần tổ
        báo CA NÀY, rồi số thiết lập (CVKTHT vừa sửa thì tổng đổi theo), rồi lần báo ca liền trước, rồi số tổ tự khai */
     const tongTo = ((chiTl && tlT) || r0 || tlT || p0 || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
@@ -4542,8 +4548,9 @@ async function tvTai() {
   const cu = layNho(khoa);
   if (cu && !S.tv) { S.tv = cu; render(); }
   const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}${tvQ() ? '&q=' + encodeURIComponent(tvQ()) : ''}`);
-  datNho(khoa, d);
+  // kiểm lượt TRƯỚC khi cất: đăng xuất / đổi người giữa chừng (tvQuen tăng tvSoTai) thì số của người trước không bị cất dưới tên người sau
   if (so !== tvSoTai) return;
+  datNho(khoa, d);
   S.tv = d;
 }
 // tính lại kg tự tính của một dòng đang gõ (cùng công thức với máy chủ)
@@ -5268,14 +5275,15 @@ function bcLuu(van_ban, them, okMsg) {
 }
 
 /* --- Cài đặt (admin) --- */
-/* Số gõ kiểu Việt, cùng luật với tvKgSo (sổ thép về): "." chia nhóm ĐÚNG 3 chữ số là dấu nghìn ("1.500" = 1500,
-   "1.500,5" = 1500,5), "," là dấu thập phân. Trước đây chỉ đổi "," thành "." rồi parseFloat: admin gõ cuộn
+/* Số gõ ở Cài đặt. CHỈ ô kg / cuộn (nghin = true, số cỡ 1.000–2.500) đọc "." chia nhóm ĐÚNG 3 chữ số là dấu nghìn
+   ("1.500" = 1500, "1.500,5" = 1500,5; số đầu 0 như "0.500" luôn là số lẻ). Ô khác (kg / cây, cây / bó, báo động): "." và ","
+   đều là dấu thập phân — "7.219" kg / cây gõ bằng bàn phím số điện thoại là 7,219 chứ không phải 7219. Trước đây chỉ đổi "," thành "." rồi parseFloat: admin gõ cuộn
    "1.500" kg thì lưu 1,5 kg, tấn của cả phi thấp đi 1000 lần. "1.5" / "0.5" (không phải nhóm 3 số) vẫn là số lẻ.
    Number thay parseFloat: "12abc" là số sai chứ không lặng lẽ thành 12; ô trống vẫn là NaN như trước. */
-const numIn = (s) => {
+const numIn = (s, nghin) => {
   let t = String(s == null ? '' : s).trim().replace(/\s/g, '');
   if (t === '') return NaN;
-  t = /^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t) ? t.replace(/\./g, '').replace(',', '.') : t.replace(',', '.');
+  t = nghin && /^[1-9]\d{0,2}(\.\d{3})+(,\d+)?$/.test(t) ? t.replace(/\./g, '').replace(',', '.') : t.replace(',', '.');
   const x = Number(t); return Number.isFinite(x) ? x : NaN;
 };
 // số của một phi theo đơn vị người dùng hiểu: thép cây theo bó/cây/kg, thép cuộn theo kg mỗi cuộn
@@ -5287,7 +5295,7 @@ const phiStdOf = (id) => (S.boot.phiStd || []).find((s) => s.id === id);
 const PHI_FIELDS = ['bo', 'kg', 'kgc', 'mn'];
 // dòng quy đổi đọc số đang gõ trong form, để admin thấy ngay số sai
 function phiHint(p) {
-  const f = phiForm(p), g = (k) => numIn(fv(k + '-' + p.id, f[k]));
+  const f = phiForm(p), g = (k) => numIn(fv(k + '-' + p.id, f[k]), k === 'kgc');
   const mn = g('mn');
   if (isCuon(p)) {
     const kgc = g('kgc'), d = parseInt(p.id.slice(1), 10) || 0;
@@ -5304,12 +5312,12 @@ function phiHint(p) {
 }
 function phiCard(p) {
   const cu = isCuon(p), f = phiForm(p), s = phiStdOf(p.id), sf = s ? phiForm({ ...s, unit: p.unit }) : null;
-  const custom = sf && Object.keys(f).some((k) => numIn(f[k]) !== numIn(sf[k]));
+  const custom = sf && Object.keys(f).some((k) => numIn(f[k], k === 'kgc') !== numIn(sf[k], k === 'kgc'));
   const inp = (k, label, mode) => `<label class="f1 sm">${label}<input class="inp s" style="width:100%" id="${k}-${p.id}" data-model="${k}-${p.id}" inputmode="${mode}" value="${esc(fv(k + '-' + p.id, f[k]))}"></label>`;
   const fields = cu
     ? inp('kgc', 'kg / 1 cuộn', 'numeric') + inp('mn', 'Báo động (cuộn)', 'decimal')
     : inp('bo', 'Cây / 1 bó', 'numeric') + inp('kg', 'kg / 1 cây', 'decimal') + inp('mn', 'Báo động (bó)', 'decimal');
-  const stdTxt = !sf ? '' : cu ? `Chuẩn: cuộn ${fmtInt(numIn(sf.kgc))} kg · báo động ${sf.mn} cuộn` : `Chuẩn: ${sf.bo} cây/bó · ${sf.kg} kg/cây · báo động ${sf.mn} bó`;
+  const stdTxt = !sf ? '' : cu ? `Chuẩn: cuộn ${fmtInt(numIn(sf.kgc, true))} kg · báo động ${sf.mn} cuộn` : `Chuẩn: ${sf.bo} cây/bó · ${sf.kg} kg/cây · báo động ${sf.mn} bó`;
   const off = p.active === 0;
   return `<div class="card col gap6" style="${off ? 'opacity:.6' : ''}"><div class="row" style="justify-content:space-between;align-items:baseline"><b style="font-size:18px">${p.id} <span class="sm muted">${off ? 'đang tắt' : cu ? 'thép cuộn' : 'thép cây 11,7 m'}</span></b>${sf ? `<span class="sm b" style="color:${custom ? 'var(--warn)' : 'var(--ok)'}">${custom ? 'Số riêng' : 'Số chuẩn'}</span>` : ''}</div>
     ${off ? '' : `<div class="row gap6">${fields}</div>
@@ -6508,7 +6516,7 @@ const ACTIONS = {
   psaveall() {
     const items = [];
     for (const p of S.boot.phiAct) { // phi đã tắt không có ô nhập trên màn hình, không gửi lên
-      const g = (k) => numIn(val(k + '-' + p.id));
+      const g = (k) => numIn(val(k + '-' + p.id), k === 'kgc');
       // "đã sửa" = chữ trong ô khác với số đang lưu mà ô hiển thị; so trực tiếp trên ô nên không
       // phụ thuộc vào việc S.form có được điền hay không
       const f0 = phiForm(p);

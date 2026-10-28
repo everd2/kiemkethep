@@ -307,7 +307,7 @@ export async function restoreData(req, env, user) {
      TRẠNG THÁI BẢO MẬT KHÔNG BAO GIỜ LÙI THEO BẢN SAO. Trước đây bảng users bị thay nguyên dòng, kèm PIN / khoá / xoá: PIN đã
      đặt lại SAU ngày sao lưu (vì lộ) quay về PIN cũ đã lộ, người đã bị xoá / khoá sống lại với PIN cũ — trái luật khôi phục tài
      khoản ở src/admin.js (khôi phục phải cấp PIN mới, vì PIN cũ coi như đã mất). Nay:
-     - tài khoản CÓ trong database hiện tại: giữ PIN, must_change (đi cùng PIN tạm), locked, deleted, bộ đếm / khoá nhập sai
+     - tài khoản CÓ trong database hiện tại (cùng id VÀ cùng số điện thoại): giữ PIN, must_change (đi cùng PIN tạm), locked, deleted, bộ đếm / khoá nhập sai
        của HIỆN TẠI; tên, số điện thoại, vai trò... lấy theo tệp;
      - tài khoản CHỈ có trong tệp (không có dòng nào trong database hiện tại, vd nạp vào bản cài mới sau sự cố): về y như trong
        tệp, cả PIN / xoá / khoá / must_change. Lo PIN lộ chỉ đúng với tài khoản đang có: người đã xoá / khoá / đặt lại PIN đều
@@ -317,10 +317,18 @@ export async function restoreData(req, env, user) {
        nguyên dòng của mình.
      Trạng thái hiện tại được cất tạm vào meta ('nap_users', JSON) NGAY TRONG batch nạp, nên không có khe nào giữa lúc đọc và
      lúc ghi (một lần đổi PIN chen giữa cũng không bị ghi đè). Đổi PEPPER thì PIN hiện tại cũng đã sai sẵn — không do nạp. */
+  /* "Cùng một người" = cùng id VÀ cùng số điện thoại. Chỉ so id thì nạp vào bản cài mới (id đánh lại từ 1) gắn PIN của người
+     mới tạo lên tài khoản người cũ trùng id: người cũ không vào được bằng PIN của mình, ai biết PIN người mới lại vào được. */
   const fileUsers = f.bang.users.slice();
-  const toi = fileUsers.findIndex((u) => Number(u.id) === user.id);
+  const me = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+  const toi = fileUsers.findIndex((u) => Number(u.id) === user.id && String(u.phone) === String(me.phone));
+  /* Tệp có id của mình mà là người khác, hoặc có số điện thoại của mình dưới id khác: không biết giữ ai làm admin mà không đẩy
+     mình ra hay trao quyền cho người khác — từ chối, chưa ghi gì. */
+  if (toi < 0 && fileUsers.some((u) => Number(u.id) === user.id || String(u.phone) === String(me.phone))) {
+    throw bad('Bản sao có tài khoản trùng số thứ tự hoặc trùng số điện thoại của bạn nhưng là người khác. Chưa nạp gì cả. Hãy nạp bằng tài khoản admin có trong bản sao (cùng số điện thoại).');
+  }
   // tệp không có admin đang nạp: giữ nguyên dòng của mình
-  if (toi < 0) fileUsers.push(await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first());
+  if (toi < 0) fileUsers.push(me);
   else if (fileUsers[toi].role !== 'admin') fileUsers[toi] = { ...fileUsers[toi], role: 'admin' };
   f.bang.users = fileUsers;
   const NAP = "(SELECT value FROM meta WHERE key = 'nap_users')";
@@ -392,7 +400,7 @@ export async function restoreData(req, env, user) {
      có trong bản cất nên giữ y như tệp), admin đang nạp vẫn là admin, rồi bỏ bản cất. */
   stmts.push(
     env.DB.prepare(`DELETE FROM sessions WHERE user_id <> ? AND user_id IN (SELECT u.id FROM users u JOIN json_each(${NAP}) j ON json_extract(j.value, '$.id') = u.id WHERE u.role IS NOT json_extract(j.value, '$.role') OR u.phone IS NOT json_extract(j.value, '$.phone'))`).bind(user.id),
-    env.DB.prepare(`UPDATE users SET (${BM.join(', ')}) = (SELECT ${BM.map((c) => `json_extract(j.value, '$.${c}')`).join(', ')} FROM json_each(${NAP}) j WHERE json_extract(j.value, '$.id') = users.id) WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each(${NAP}))`),
+    env.DB.prepare(`UPDATE users SET (${BM.join(', ')}) = (SELECT ${BM.map((c) => `json_extract(j.value, '$.${c}')`).join(', ')} FROM json_each(${NAP}) j WHERE json_extract(j.value, '$.id') = users.id AND json_extract(j.value, '$.phone') = users.phone) WHERE EXISTS (SELECT 1 FROM json_each(${NAP}) j WHERE json_extract(j.value, '$.id') = users.id AND json_extract(j.value, '$.phone') = users.phone)`),
     env.DB.prepare("UPDATE users SET role = 'admin', deleted = 0, locked = 0 WHERE id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM meta WHERE key = 'nap_users'"),
   );
