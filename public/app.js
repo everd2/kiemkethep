@@ -1864,7 +1864,8 @@ function vDuyet() {
   // khu "cần xem lại" cũng cần một lần bấm Duyệt khu, nên tính vào số khu đang chờ
   const nCho = khus.filter((k) => k.waiting || k.phieu.length || k.recheck).length;
   // trong đó, số khu NGƯỜI NÀY duyệt được: nút "Duyệt tất cả" chỉ nói về phần này
-  const nDuoc = khus.filter((k) => (k.waiting || k.phieu.length || k.recheck) && khuDuoc(k)).length;
+  // "Duyệt tất cả" không gồm khu chỉ cần xem lại (recheck): khu đó duyệt lại từng khu, sau khi xem bảng lệch
+  const nDuoc = khus.filter((k) => (k.waiting || k.phieu.length) && khuDuoc(k)).length;
   const nDuyet = khus.filter((k) => k.rep && !k.waiting).length;
   const khuHead = nCho
     ? `<span class="sm b" style="color:var(--warn)">${nCho} khu chờ duyệt</span>`
@@ -2249,6 +2250,9 @@ function fmtAudit(a) {
     tv_don_dong: ['đóng đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || ''), 'receipt'],
     tv_don_huy: ['huỷ đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || '') + (d.ly_do ? ' · lý do: ' + d.ly_do : ''), 'receipt'],
     tv_don_molai: ['mở lại đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || ''), 'receipt'],
+    tv_nhap_huy: ['huỷ cả lần nhập Excel sổ thép về: ' + (d.chuyen || 0) + ' chuyến' + (d.ly_do ? ' · lý do: ' + d.ly_do : ''), 'receipt'],
+    tv_don_sua: ['sửa đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || '') + ': ' + (d.moi || []).map((l) => l.phi + ' ' + fmtInt(l.kg || 0) + ' kg').join(', ') + (d.han !== d.han_cu ? ' · hạn ' + (d.han ? fmtDay(d.han) : 'bỏ') : ''), 'receipt'],
+    tv_gan_don: [(d.don ? 'gắn chuyến thép về ' + fmtDay(d.ngay) + ' · ' + (d.ncc || '') + ' vào đơn ' + (d.so_don || '') : 'bỏ gắn đơn của chuyến thép về ' + fmtDay(d.ngay) + ' · ' + (d.ncc || '')), 'receipt'],
     tv_nhap: ['nhập sổ thép về từ Excel: ' + (d.chuyen || 0) + ' chuyến, ' + fmtInt(Math.round((d.kg || 0) / 1000)) + ' tấn', 'receipt'],
     backup_kho: ['sao lưu toàn bộ lên kho' + (d.ten ? ' (' + d.ten.slice(0, 10).split('-').reverse().join('/') + ')' : ''), 'admin'],
     user_thep_ve: [(d.co ? 'giao' : 'bỏ') + ' quyền ghi sổ thép về cho ' + (d.name || ''), 'admin'],
@@ -3602,7 +3606,8 @@ const QS_LY_DO = [['om', 'ốm'], ['phep', 'nghỉ phép năm'], ['que', 'về q
 const caKhoa = (c) => c.ngay + ':' + c.ca;
 const caGoi = (c) => CA_TEN[c.ca] + ' ' + ngayNgan(c.ngay);
 const hoa = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const soTu = (s) => parseInt(String(s == null ? '' : s).replace(/\D/g, ''), 10) || 0;
+// số người: lấy phần số nguyên ở đầu ô — trước đây bỏ hết ký tự không phải số nên gõ nhầm "1,5" thành 15, "-3" thành 3
+const soTu = (s) => Math.max(0, parseInt(String(s == null ? '' : s).replace(/\s/g, ''), 10) || 0);
 /* Ca đang diễn ra để Tổng quan nhắc, theo giờ server. App hay nằm mở qua giờ giao ca: qua mốc `den` của bản
    đang có thì nhìn sang cột ca kế (server gửi sẵn cả hai), không nhắc nhầm theo ca cũ trong lúc chờ tải lại. */
 function qsCaNay() {
@@ -4038,6 +4043,10 @@ function bcQuanSo(B, nguon = S.bcNguon) {
     const chon = (row, c) => (chiTl ? tlDong(c) || row : row || tlDong(c));
     let L = qsLichCa(B.lich, u.id, B.ngay);
     if (!L) { const th = qsCaCua(r0 ? [r0] : p0 ? [p0] : tr ? [tr] : []); L = th.length === 2 ? 3 : th[0] || ca; }
+    /* Lịch ca chỉ là lịch HIỆN TẠI, không có lịch sử: tổ vừa đổi từ ca đêm sang ca ngày thì xem lại báo cáo ca đêm hôm qua
+       (hay sản lượng hôm nay) sẽ tưởng tổ "làm ca kia" và bỏ mất số tổ đã báo. Tổ đã tự báo có người đi làm ở CA NÀY thì
+       chắc chắn làm ca này. */
+    if (L === kia && r0 && r0.lam > 0) L = ca;
     /* tổng quân số của tổ, cùng nguồn với dòng của tổ: chọn "Chỉ số thiết lập" thì số thiết lập; theo tổ báo thì lần tổ
        báo CA NÀY, rồi số thiết lập (CVKTHT vừa sửa thì tổng đổi theo), rồi lần báo ca liền trước, rồi số tổ tự khai */
     const tongTo = ((chiTl && tl) || r0 || tl || p0 || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
@@ -4473,11 +4482,12 @@ const tvKg = (l) => (l.kg != null ? l.kg : l.kg_tinh || 0);
 const tvTan = (kg) => fmtDec(Math.round(kg / 10) / 100) + ' tấn';
 const tvKgTxt = (kg) => (kg == null ? '—' : fmtInt(kg) + ' kg');
 const tvKy = () => { const n = S.boot.today; return S.tvKy || { tu: n.slice(0, 4) + '-01-01', den: n }; };
+const tvQ = () => String(S.tvTim || '').trim();
 async function tvTai() {
-  const k = tvKy(), khoa = 'tv:' + k.tu + ':' + k.den;
+  const k = tvKy(), khoa = 'tv:' + k.tu + ':' + k.den + (tvQ() ? ':' + tvQ() : '');
   const cu = layNho(khoa);
   if (cu && !S.tv) { S.tv = cu; render(); }
-  const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}`);
+  const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}${tvQ() ? '&q=' + encodeURIComponent(tvQ()) : ''}`);
   datNho(khoa, d);
   S.tv = d;
 }
@@ -4543,15 +4553,16 @@ function tvFormVe() {
     <div class="row gap8"><span class="f1 sm">Tổng chuyến: <b>${tvTan(tong)}</b></span><button class="btn s" data-a="tvdong">Đóng</button><button class="btn s pri" data-a="tvluu">LƯU CHUYẾN</button></div></div>`;
 }
 function tvFormDon() {
-  return `<div class="card col gap8" style="border:2px solid var(--pri)"><b>Lập đơn hàng</b>
-    <div class="row gap6"><label class="col f1 sm" style="min-width:0">Nhà cung cấp<input class="inp s" id="tdf_ncc" list="tvnccds" maxlength="80" autocomplete="off" data-model="tdf_ncc" value="${esc(S.form.tdf_ncc || '')}"></label>
-      <label class="col f1 sm" style="min-width:0">Số đơn hàng<input class="inp s" id="tdf_so" maxlength="40" autocomplete="off" data-model="tdf_so" value="${esc(S.form.tdf_so || '')}"></label></div>${tvNccList()}
-    <div class="row gap6"><label class="col f1 sm" style="min-width:0">Ngày đặt<input type="date" class="inp s" id="tdf_ngay" max="${S.boot.today}" data-model="tdf_ngay" value="${esc(fv('tdf_ngay', S.boot.today))}"></label>
+  const sua = S.tvSuaDon && S.tv.don.find((d) => d.id === S.tvSuaDon);
+  return `<div class="card col gap8" style="border:2px solid var(--pri)"><b>${sua ? `Sửa đơn ${esc(sua.so_don)} · ${esc(tvNcc(sua.ncc_id))}` : 'Lập đơn hàng'}</b>
+    ${sua ? '<span class="sm muted">Sửa hạn giao, ghi chú và số lượng đặt từng phi. Nhà cung cấp, số đơn, ngày đặt giữ nguyên.</span>' : `<div class="row gap6"><label class="col f1 sm" style="min-width:0">Nhà cung cấp<input class="inp s" id="tdf_ncc" list="tvnccds" maxlength="80" autocomplete="off" data-model="tdf_ncc" value="${esc(S.form.tdf_ncc || '')}"></label>
+      <label class="col f1 sm" style="min-width:0">Số đơn hàng<input class="inp s" id="tdf_so" maxlength="40" autocomplete="off" data-model="tdf_so" value="${esc(S.form.tdf_so || '')}"></label></div>${tvNccList()}`}
+    <div class="row gap6">${sua ? `<label class="col f1 sm" style="min-width:0">Ngày đặt<span class="inp s" style="display:flex;align-items:center;background:#F7F5F0">${fmtDay(sua.ngay_dat)}</span></label>` : `<label class="col f1 sm" style="min-width:0">Ngày đặt<input type="date" class="inp s" id="tdf_ngay" max="${S.boot.today}" data-model="tdf_ngay" value="${esc(fv('tdf_ngay', S.boot.today))}"></label>`}
       <label class="col f1 sm" style="min-width:0">Hạn giao (không bắt buộc)<input type="date" class="inp s" id="tdf_han" data-model="tdf_han" value="${esc(S.form.tdf_han || '')}"></label></div>
     <span class="sm b">Các phi đặt</span>${tvDongHtml('d')}
     <button class="btn s" data-a="tvthemdong">+ Thêm phi</button>
     <input class="inp s" id="tdf_gc" maxlength="200" autocomplete="off" placeholder="Ghi chú (không bắt buộc)" data-model="tdf_gc" value="${esc(S.form.tdf_gc || '')}">
-    <div class="row gap8"><span class="f1"></span><button class="btn s" data-a="tvdong">Đóng</button><button class="btn s pri" data-a="tvluudon">LƯU ĐƠN</button></div></div>`;
+    <div class="row gap8"><span class="f1"></span><button class="btn s" data-a="tvdong">Đóng</button><button class="btn s pri" data-a="tvluudon">${sua ? 'LƯU SỬA ĐƠN' : 'LƯU ĐƠN'}</button></div></div>`;
 }
 // thống kê của kỳ đang xem — cộng sẵn trên máy chủ (S.tv.tk), không cộng từ danh sách chuyến (danh sách chỉ là một trang)
 function tvThongKe() {
@@ -4619,11 +4630,20 @@ function tvBangVe(ds) {
       ${phu ? `<span class="sm muted">${phu}</span>` : ''}
       <table class="bang nho"><thead><tr><th>Phi</th><th class="so">Bó</th><th class="so">Cây</th><th class="so">Kg phiếu</th><th class="so">Kg tính</th></tr></thead><tbody>${hang}</tbody></table>
       ${v.ghi_chu ? `<span class="sm" style="line-height:1.35">${esc(v.ghi_chu)}</span>` : ''}
-      ${ghi ? `<div class="row"><span class="f1"></span><button class="btn s bad" style="flex:none" data-a="tvhuy" data-id="${v.id}">Huỷ chuyến</button></div>` : ''}</div>`;
+      ${ghi && S.tvGan === v.id ? tvGanHtml(v) : ghi ? `<div class="row gap6"><button class="btn s f1" data-a="tvgan" data-id="${v.id}">${v.don_id ? 'Đổi đơn hàng' : 'Gắn vào đơn hàng'}</button><button class="btn s bad" style="flex:none" data-a="tvhuy" data-id="${v.id}">Huỷ chuyến</button></div>` : ''}</div>`;
   };
   return `<div class="card row gap8" style="padding:10px 12px;background:#F7F5F0"><b class="f1">TỔNG ${ds.length} chuyến đang hiện${S.tv.trang && S.tv.trang.tong > ds.length ? ' / ' + S.tv.trang.tong : ''}</b><b>${tvT(tong)} tấn</b></div>` + ds.map(the).join('');
 }
 // Bảng đơn hàng: mỗi hàng một phi của một đơn; cột của đơn gộp ô dọc. Tấn đặt / đã về / còn thiếu / %, trạng thái và việc của đơn.
+// chọn đơn hàng cho một chuyến đã ghi: chỉ đơn chưa huỷ của cùng nhà cung cấp
+function tvGanHtml(v) {
+  const ds = S.tv.don.filter((d) => d.tt !== 'huy' && d.ncc_id === v.ncc_id);
+  const chon = S.form.tvgan != null ? String(S.form.tvgan) : String(v.don_id || '');
+  return `<div class="col gap6" style="border-top:1px solid var(--line);padding-top:6px"><label class="col sm">Gắn chuyến vào đơn hàng (cùng nhà cung cấp)<select class="inp s" style="width:100%" id="tvgan" data-model="tvgan">
+      <option value="">— Không gắn đơn nào —</option>${ds.map((d) => `<option value="${d.id}" ${chon === String(d.id) ? 'selected' : ''}>${esc(d.so_don)}${d.tt === 'xong' ? ' (đã đóng)' : ''} · đặt ${fmtDay(d.ngay_dat)}</option>`).join('')}</select></label>
+    ${ds.length ? '' : '<span class="sm muted">Nhà cung cấp này chưa có đơn hàng nào — lập đơn ở tab Đơn hàng trước.</span>'}
+    <div class="row gap6"><span class="f1"></span><button class="btn s" data-a="tvganbo">Thôi</button><button class="btn s pri" data-a="tvganluu" data-id="${v.id}">LƯU</button></div></div>`;
+}
 function tvBangDon(ds) {
   /* VỪA MÀN ĐIỆN THOẠI: mỗi đơn một thẻ — tên đơn · nhà cung cấp, trạng thái, thanh tiến độ, BẢNG NHỎ 4 cột Phi | Đặt (tấn) | Đã về |
      Còn thiếu, và nút "Ghi chuyến về theo đơn này" (mở form điền sẵn nhà cung cấp và các phi của đơn). */
@@ -4639,7 +4659,7 @@ function tvBangDon(ds) {
         <td class="so ${!l ? '' : con > 0 ? 'thieu' : con < 0 ? 'lech' : 'du'}">${!l ? '' : con > 0 ? 'thiếu ' + tvT(con) : con < 0 ? 'dư ' + tvT(-con) : 'đủ'}</td></tr>`;
     }).join('');
     const nut = !ghi ? '' : d.tt === 'mo'
-      ? `<button class="btn s pri full" data-a="tvghidon" data-id="${d.id}">+ GHI CHUYẾN VỀ THEO ĐƠN NÀY</button><div class="row gap6"><button class="btn s f1" data-a="tvdonviec" data-id="${d.id}" data-v="dong">Đóng đơn</button>${ve ? '' : `<button class="btn s bad f1" data-a="tvdonviec" data-id="${d.id}" data-v="huy">Huỷ đơn</button>`}</div>`
+      ? `<button class="btn s pri full" data-a="tvghidon" data-id="${d.id}">+ GHI CHUYẾN VỀ THEO ĐƠN NÀY</button><div class="row gap6"><button class="btn s f1" data-a="tvsuadon" data-id="${d.id}">Sửa đơn</button><button class="btn s f1" data-a="tvdonviec" data-id="${d.id}" data-v="dong">Đóng đơn</button>${ve ? '' : `<button class="btn s bad f1" data-a="tvdonviec" data-id="${d.id}" data-v="huy">Huỷ đơn</button>`}</div>`
       : d.tt === 'xong' ? `<button class="btn s full" data-a="tvdonviec" data-id="${d.id}" data-v="molai">Mở lại đơn</button>` : '';
     return `<div class="card col gap6" style="padding:10px 12px;${d.tt === 'huy' ? 'opacity:.6' : ''}">
       <div class="row gap8"><b class="f1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.so_don)} · ${esc(tvNcc(d.ncc_id))}</b><span class="badge ${tre ? 'bad' : d.tt === 'mo' ? 'warn' : ''}" style="flex:none">${tt}</span></div>
@@ -4679,8 +4699,10 @@ function vThepVe() {
   const TK = tvThongKe();
   if (tab === 've') {
     than = (S.tvMo === 've' ? tvFormVe() : ghi ? '<button class="btn pri full" data-a="tvmo" data-v="ve">+ GHI CHUYẾN THÉP VỀ</button>' : '')
-      + `<span class="sm muted">${TK.chuyen} chuyến · ${tvTan(TK.tong)} trong kỳ</span>`
-      + (T.ve.length ? tvBangVe(T.ve) + (T.trang.tong > T.ve.length ? `<button class="btn s full" data-a="tvthem">Xem thêm (còn ${T.trang.tong - T.ve.length} chuyến)</button>` : '') : '<div class="card muted">Chưa có chuyến nào trong kỳ này.</div>');
+      + `<div class="row gap6"><input class="inp s f1" id="tvtim" style="min-width:0" maxlength="40" autocomplete="off" enterkeyhint="search" placeholder="Tìm số phiếu, biển số, NCC, số đơn, phi…" data-model="tvtim" data-enter="tvtim" value="${esc(S.form.tvtim != null ? S.form.tvtim : S.tvTim || '')}">
+          <button class="btn s pri" style="flex:none" data-a="tvtim">Tìm</button>${tvQ() ? '<button class="btn s" style="flex:none" data-a="tvtimbo">Bỏ</button>' : ''}</div>`
+      + (tvQ() ? `<span class="sm"><b>${T.trang.tong}</b> chuyến khớp "${esc(tvQ())}" trong kỳ</span>` : `<span class="sm muted">${TK.chuyen} chuyến · ${tvTan(TK.tong)} trong kỳ</span>`)
+      + (T.ve.length ? tvBangVe(T.ve) + (T.trang.tong > T.ve.length ? `<button class="btn s full" data-a="tvthem">Xem thêm (còn ${T.trang.tong - T.ve.length} chuyến)</button>` : '') : `<div class="card muted">${tvQ() ? 'Không có chuyến nào khớp.' : 'Chưa có chuyến nào trong kỳ này.'}</div>`);
   } else if (tab === 'don') {
     const ds = T.don.filter((d) => S.tvDonHien === 'tat' || d.tt === 'mo');
     than = (S.tvMo === 'don' ? tvFormDon() : ghi ? '<button class="btn pri full" data-a="tvmo" data-v="don">+ LẬP ĐƠN HÀNG</button>' : '')
@@ -4705,7 +4727,10 @@ function vThepVe() {
           <span class="sm">${N.dong} dòng → ${N.chuyen} chuyến · ${N.ncc} nhà cung cấp · ${tvTan(N.kg || 0)}${N.gan_don ? ` · ${N.gan_don} chuyến gắn vào đơn đã lập` : ''}</span>
           ${N.tu ? `<span class="sm">Ngày về đọc được: <b>${fmtDay(N.tu)} → ${fmtDay(N.den)}</b>${S.tvKieuMy ? ' (cột ngày theo kiểu tháng/ngày của Excel tiếng Anh)' : ''} — soát lại cho đúng.</span>` : ''}
           ${N.so_canh ? `<span class="sm b" style="color:var(--warn)">${N.so_canh} dòng chỉ có kg mà dưới 100 kg — cột khối lượng có phải đang ghi TẤN? Nếu đúng là tấn, đổi tên cột thành "Tấn" rồi dán lại.</span>${N.canh.slice(0, 5).map((x) => `<span class="sm muted">${fmtDay(x.ngay)} · ${esc(x.ncc)} · ${esc(x.phi)}: ${x.kg} kg</span>`).join('')}` : ''}
-          ${(N.loi || []).slice(0, 30).map((x) => `<span class="sm" style="color:var(--bad)">Dòng ${x.dong + 1}: ${esc(x.loi)}</span>`).join('')}${(N.loi || []).length > 30 ? '<span class="sm muted">…</span>' : ''}</div>` : '');
+          ${(N.loi || []).slice(0, 30).map((x) => `<span class="sm" style="color:var(--bad)">Dòng ${x.dong + 1}: ${esc(x.loi)}</span>`).join('')}${(N.loi || []).length > 30 ? '<span class="sm muted">…</span>' : ''}</div>` : '')
+      + ((T.lo_nhap || []).length ? `<div class="card col gap6"><b>Các lần nhập gần đây (7 ngày)</b><span class="sm muted">Nhập nhầm (sai kỳ, sai đơn vị, dán trùng) thì huỷ cả lần nhập một lượt.</span>
+          ${T.lo_nhap.map((x) => `<div class="row gap8" style="border-top:1px solid var(--line);padding-top:6px"><span class="f1 sm" style="min-width:0">${dmy(x.ts)} · ${esc(x.uname)}<br><b>${x.chuyen} chuyến</b> · ngày về ${fmtDay(x.tu)} → ${fmtDay(x.den)}</span>
+            <button class="btn s bad" style="flex:none" data-a="tvnhaphuy" data-v="${esc(x.lo)}" data-n="${x.chuyen}">Huỷ cả lần</button></div>`).join('')}</div>` : '');
   }
   return `${top}<div class="col gap6 tbar" style="padding:6px 16px"><div class="row gap6">${tabs.map(([v, ten]) => `<button class="chip s f1 ${tab === v ? 'on' : ''}" style="min-width:0;padding:6px 2px;font-size:14px;white-space:nowrap" data-a="tvtab" data-v="${v}">${ten}</button>`).join('')}</div>${tab !== 'nhap' ? ky : ''}</div>
     <div class="f1 pad col gap8" id="body" style="overflow:auto">${than}</div>`;
@@ -6445,7 +6470,8 @@ const ACTIONS = {
   },
   async khuduyetall() {
     const R = S.review; if (!R) return;
-    const ks = (R.khus || []).filter((k) => (k.waiting || k.phieu.length || k.recheck) && duyetCap(Math.max(k.capBao || 0, k.capPhieu || 0)));
+    // cùng luật với nút trên màn (khuDuoc) và máy chủ: không gồm khu chỉ cần xem lại, không gồm khu chính mình báo
+    const ks = (R.khus || []).filter((k) => (k.waiting || k.phieu.length) && duyetCap(Math.max(k.capBao || 0, k.capPhieu || 0)) && (isCH() || !(k.nguoiBao || []).includes(S.me.id)));
     if (!ks.length) return say('Không còn khu nào bạn duyệt được.', true), render();
     if (!(await ask('Duyệt cả ' + ks.length + ' khu đang chờ?\n' + ks.map((k) => k.name).join(', ')
       + '\nSố của các khu này sẽ thành tồn chính thức. Hãy xem bảng lệch trước khi duyệt hàng loạt.', 'DUYỆT TẤT CẢ'))) return;
@@ -7122,15 +7148,49 @@ const ACTIONS = {
     if (!T || S.busy) return;
     S.busy = true; S.busyMsg = 'Đang tải thêm...'; render();
     try {
-      const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}&bo_qua=${T.ve.length}&so=200`);
+      const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}&bo_qua=${T.ve.length}&so=200${tvQ() ? '&q=' + encodeURIComponent(tvQ()) : ''}`);
       if (S.tv === T) { T.ve = T.ve.concat(d.ve.filter((v) => !T.ve.some((x) => x.id === v.id))); T.trang = d.trang; }
     } catch (e) { say(e.message, true); }
     finally { S.busy = false; S.busyMsg = ''; }
     render();
   },
   tvdonloc(d) { S.tvDonHien = d.v; render(); },
-  tvmo(d) { S.tvMo = d.v; S.tvSoDong = 1; Object.keys(S.form).filter((k) => /^(t[vd][pbck]_|tvf_|tdf_)/.test(k)).forEach((k) => delete S.form[k]); render(); },
-  tvdong() { S.tvMo = null; render(); },
+  async tvtim() {
+    S.tvTim = String(S.form.tvtim || '').trim(); delete S.form.tvtim;
+    try { await tvTai(); } catch (e) { say(e.message, true); }
+    render();
+  },
+  async tvtimbo() { S.tvTim = ''; delete S.form.tvtim; try { await tvTai(); } catch (e) { say(e.message, true); } render(); },
+  tvgan(d) { S.tvGan = Number(d.id); delete S.form.tvgan; render(); },
+  tvganbo() { S.tvGan = null; delete S.form.tvgan; render(); },
+  tvganluu(d) {
+    const don = S.form.tvgan != null ? S.form.tvgan : null;
+    if (don == null) { S.tvGan = null; return render(); }
+    act(async () => {
+      await api('POST', `/thepve/${d.id}/don`, { don_id: don || null });
+      S.tvGan = null; delete S.form.tvgan; Object.keys(NHO).filter((k) => k.startsWith('tv:')).forEach((k) => delete NHO[k]); await tvTai();
+    }, don ? 'Đã gắn chuyến vào đơn hàng.' : 'Đã bỏ gắn đơn hàng.');
+  },
+  // sửa đơn: mở form đơn, điền sẵn hạn / ghi chú / các phi đặt
+  tvsuadon(d) {
+    const don = S.tv.don.find((x) => x.id === Number(d.id)); if (!don) return;
+    ACTIONS.tvmo({ v: 'don' }); S.tvSuaDon = don.id;
+    S.form.tdf_han = don.han || ''; S.form.tdf_gc = don.ghi_chu || '';
+    S.tvSoDong = Math.max(1, don.dong.length);
+    don.dong.forEach((l, i) => { S.form['tdp_' + i] = l.phi; if (l.bo != null) S.form['tdb_' + i] = String(l.bo); if (l.cay != null) S.form['tdc_' + i] = String(l.cay); if (l.kg != null) S.form['tdk_' + i] = String(l.kg); });
+    render(); const b = typeof document !== 'undefined' && document.getElementById('body'); if (b) b.scrollTop = 0;
+  },
+  async tvnhaphuy(d) {
+    const ly = await askText(`Huỷ CẢ lần nhập này (${d.n} chuyến)?\nMọi chuyến còn lại của lần nhập sẽ bị huỷ một lượt.`, 'HUỶ CẢ LẦN NHẬP', 'Lý do (ví dụ: dán nhầm file, sai đơn vị)');
+    if (!ly) return render();
+    act(async () => {
+      const r = await api('POST', `/thepve/nhap/${d.v}/huy`, { ly_do: ly });
+      Object.keys(NHO).filter((k) => k.startsWith('tv:')).forEach((k) => delete NHO[k]); await tvTai();
+      say(`Đã huỷ ${r.chuyen} chuyến của lần nhập.`);
+    });
+  },
+  tvmo(d) { S.tvMo = d.v; S.tvSoDong = 1; S.tvSuaDon = null; Object.keys(S.form).filter((k) => /^(t[vd][pbck]_|tvf_|tdf_)/.test(k)).forEach((k) => delete S.form[k]); render(); },
+  tvdong() { S.tvMo = null; S.tvSuaDon = null; render(); },
   // từ thẻ đơn hàng: mở form ghi chuyến, điền sẵn đơn, nhà cung cấp và các phi của đơn
   tvghidon(d) { S.tvTab = 've'; ACTIONS.tvmo({ v: 've' }); tvApDon(d.id); render(); const b = typeof document !== 'undefined' && document.getElementById('body'); if (b) b.scrollTop = 0; },
   tvthemdong() { S.tvSoDong = Math.min(40, (S.tvSoDong || 1) + 1); render(); },
@@ -7156,11 +7216,12 @@ const ACTIONS = {
   tvluudon() {
     const lines = tvDong('d').filter((l) => l.phi || l.bo || l.cay || l.kg);
     if (!lines.length) return say('Chưa có phi nào trong đơn.', true), render();
+    const dong = lines.map((l) => ({ phi: l.phi, bo: l.bo, cay: l.cay, kg: S.form[`tdk_${l.i}`] || null })), sua = S.tvSuaDon;
     act(async () => {
-      await api('POST', '/thepve/don', { ncc: String(S.form.tdf_ncc || '').trim(), so_don: S.form.tdf_so || '', ngay_dat: S.form.tdf_ngay || S.boot.today, han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '',
-        lines: lines.map((l) => ({ phi: l.phi, bo: l.bo, cay: l.cay, kg: S.form[`tdk_${l.i}`] || null })) });
-      S.tvMo = null; await tvTai();
-    }, 'Đã lập đơn hàng.');
+      if (sua) await api('PATCH', `/thepve/don/${sua}`, { han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong });
+      else await api('POST', '/thepve/don', { ncc: String(S.form.tdf_ncc || '').trim(), so_don: S.form.tdf_so || '', ngay_dat: S.form.tdf_ngay || S.boot.today, han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong });
+      S.tvMo = null; S.tvSuaDon = null; await tvTai();
+    }, sua ? 'Đã sửa đơn hàng.' : 'Đã lập đơn hàng.');
   },
   async tvhuy(d) {
     const ly = await askText('Huỷ chuyến thép về này? (ghi nhầm, ghi trùng…)', 'HUỶ CHUYẾN', 'Lý do huỷ');
@@ -7227,7 +7288,9 @@ const ACTIONS = {
     act(async () => {
       await api('PUT', '/sanluong/thietlap', body, 0, false);
       delete NHO['sl:' + L.ngay];
-      await slTai(L.ngay, false);
+      // giữ công đã sửa tay và nguồn đang chọn: chỉ bỏ các ô thiết lập vừa lưu
+      Object.keys(S.form).filter((k) => k.startsWith('slt_')).forEach((k) => delete S.form[k]);
+      await slTai(L.ngay, true);
       S.slTlMo = false;
     }, 'Đã lưu thiết lập sản lượng.');
   },

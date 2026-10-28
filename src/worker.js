@@ -16,7 +16,7 @@ import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
 import { slPut, slThietLap, slView } from './sanluong.js';
 import { saoLuuDs, saoLuuNgay, saoLuuTai, saoLuuTuDong } from './saoluu.js';
-import { tvCsv, tvDon, tvDonViec, tvGhi, tvGiaoQuyen, tvHuy, tvNhap, tvView } from './thepve.js';
+import { tvCsv, tvDon, tvDonSua, tvDonViec, tvGanDon, tvGhi, tvGiaoQuyen, tvHuy, tvNhap, tvNhapHuy, tvView } from './thepve.js';
 import { computeReview, hourly, reopenDay, reviewDuyet } from './review.js';
 import { backupData, resetData, restoreData } from './data.js';
 import { createUser, khuCreate, khuUpdate, khuUsers, listUsers, phiBulk, phiUpdate, seedPhiApi,
@@ -207,7 +207,10 @@ async function route(req, env, url, user, method, p, r0) {
     if (method === 'GET' && p.length === 1) return tvView(env, url, user);
     if (method === 'GET' && p[1] === 'csv') return tvCsv(env, url, user);
     if (method === 'POST' && p.length === 1) return tvGhi(req, env, user);
-    if (method === 'POST' && p[1] === 'nhap') return tvNhap(req, env, user);
+    if (method === 'POST' && p[1] === 'nhap' && p.length === 4 && p[3] === 'huy') return tvNhapHuy(req, env, user, p[2]);
+    if (method === 'POST' && p[1] === 'nhap' && p.length === 2) return tvNhap(req, env, user);
+    if (method === 'PATCH' && p[1] === 'don' && p.length === 3) return tvDonSua(req, env, user, Number(p[2]));
+    if (method === 'POST' && p.length === 3 && p[2] === 'don') return tvGanDon(req, env, user, Number(p[1]));
     if (method === 'POST' && p[1] === 'don' && p.length === 2) return tvDon(req, env, user);
     if (method === 'POST' && p[1] === 'don' && p.length === 4) return tvDonViec(req, env, user, Number(p[2]), p[3]);
     if (method === 'POST' && p.length === 3 && p[2] === 'huy') return tvHuy(req, env, user, Number(p[1]));

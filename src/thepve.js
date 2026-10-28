@@ -72,6 +72,7 @@ const docNgay = (v, label) => {
   return d;
 };
 
+const NHAP_HUY_MS = 7 * 864e5; // huỷ cả một lần nhập Excel: trong 7 ngày kể từ lúc nhập
 /* Nhà cung cấp theo tên (tạo mới nếu chưa có). Trả về câu lệnh tạo + biểu thức SQL lấy id theo tên. */
 const nccTao = (env, name) => env.DB.prepare('INSERT OR IGNORE INTO thep_ncc (name, active, ts) VALUES (?, 1, ?)').bind(name, Date.now());
 
@@ -87,14 +88,20 @@ export async function tvView(env, url, user) {
      - Danh sách chuyến theo TRANG: mới nhất trước, mỗi trang `so` chuyến (mặc định 100), bỏ qua `bo_qua` chuyến đầu ("Xem thêm"). */
   const so = Math.min(300, Math.max(1, Number(url.searchParams.get('so')) || 100)), boQua = Math.max(0, Number(url.searchParams.get('bo_qua')) || 0);
   const KG = 'COALESCE(d.kg, d.kg_tinh, 0)', TU = 'FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2';
-  const [nccR, donR, donDongR, veR, dongR, daVeR, phiR, tongR, thangR, nccTkR, phiTkR, cheoR] = await env.DB.batch([
+  /* TÌM CHUYẾN (đối chiếu hoá đơn nhà cung cấp): q khớp số phiếu / biển số / số đơn / ghi chú / tên nhà cung cấp (chứa chữ), hoặc đúng
+     một phi ("D16"). Chỉ lọc DANH SÁCH chuyến; thống kê vẫn là của cả kỳ. */
+  const tim = String(url.searchParams.get('q') || '').trim().slice(0, 40), qL = '%' + tim.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  const LOCF = (a, b) => `v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 AND (?${a} = '' OR v.so_phieu LIKE ?${b} ESCAPE '\\' OR v.bien_so LIKE ?${b} ESCAPE '\\' OR v.so_don LIKE ?${b} ESCAPE '\\'
+    OR v.ghi_chu LIKE ?${b} ESCAPE '\\' OR (SELECT name FROM thep_ncc WHERE id = v.ncc_id) LIKE ?${b} ESCAPE '\\' OR EXISTS (SELECT 1 FROM thep_ve_dong x WHERE x.ve_id = v.id AND x.phi_id = ?${a} COLLATE NOCASE))`;
+  const LOC = LOCF(5, 6);
+  const [nccR, donR, donDongR, veR, dongR, daVeR, phiR, tongR, thangR, nccTkR, phiTkR, cheoR, khopR, loR] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, active FROM thep_ncc ORDER BY name'),
     env.DB.prepare("SELECT d.*, COALESCE(u.name, '(đã xoá)') uname FROM thep_don d LEFT JOIN users u ON u.id = d.user_id ORDER BY (d.tt = 'mo') DESC, d.ngay_dat DESC, d.id DESC LIMIT 500"),
     env.DB.prepare('SELECT don_id, phi_id phi, bo, cay, kg FROM thep_don_dong'),
-    env.DB.prepare("SELECT v.id, v.ngay, v.ncc_id, v.don_id, v.so_don, v.so_phieu, v.bien_so, v.ghi_chu, v.nguon, v.ts, COALESCE(u.name, '(đã xoá)') uname FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4").bind(tu, den, so, boQua),
+    env.DB.prepare(`SELECT v.id, v.ngay, v.ncc_id, v.don_id, v.so_don, v.so_phieu, v.bien_so, v.ghi_chu, v.nguon, v.ts, COALESCE(u.name, '(đã xoá)') uname FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE ${LOC} ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4`).bind(tu, den, so, boQua, tim, qL),
     // chỉ dòng phi của các chuyến trong TRANG này
     env.DB.prepare(`SELECT d.ve_id, d.phi_id phi, d.bo, d.cay, d.kg, d.kg_tinh FROM thep_ve_dong d WHERE d.ve_id IN (
-                      SELECT v.id FROM thep_ve v WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4) ORDER BY d.id`).bind(tu, den, so, boQua),
+                      SELECT v.id FROM thep_ve v WHERE ${LOC} ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4) ORDER BY d.id`).bind(tu, den, so, boQua, tim, qL),
     // đã về theo đơn × phi (MỌI ngày, không chỉ trong khoảng đang xem): tiến độ đơn hàng
     env.DB.prepare('SELECT v.don_id, d.phi_id phi, SUM(COALESCE(d.kg, d.kg_tinh, 0)) kg, COUNT(DISTINCT v.id) chuyen FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.don_id IS NOT NULL GROUP BY v.don_id, d.phi_id'),
     env.DB.prepare('SELECT id, bo_size, kg_per_cay, unit, active FROM phi ORDER BY sort, id'),
@@ -103,6 +110,12 @@ export async function tvView(env, url, user) {
     env.DB.prepare(`SELECT v.ncc_id, COUNT(DISTINCT v.id) n, SUM(${KG}) kg ${TU} GROUP BY v.ncc_id ORDER BY kg DESC`).bind(tu, den),
     env.DB.prepare(`SELECT d.phi_id phi, SUM(${KG}) kg ${TU} GROUP BY d.phi_id`).bind(tu, den),
     env.DB.prepare(`SELECT v.ncc_id, d.phi_id phi, SUM(${KG}) kg ${TU} GROUP BY v.ncc_id, d.phi_id`).bind(tu, den),
+    // số chuyến khớp ô tìm (để "Xem thêm" biết còn bao nhiêu)
+    env.DB.prepare(`SELECT COUNT(*) n FROM thep_ve v WHERE ${LOCF(3, 4)}`).bind(tu, den, tim, qL),
+    // các lần nhập Excel còn chuyến chưa huỷ, mới nhất trước: để huỷ cả lần nhập nếu nhập nhầm
+    env.DB.prepare(`SELECT substr(v.khoa, 1, instr(v.khoa, '-') - 1) lo, MIN(v.ts) ts, COUNT(*) chuyen, MIN(v.ngay) tu, MAX(v.ngay) den, COALESCE(u.name, '(đã xoá)') uname
+                    FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE v.voided = 0 AND v.nguon = 'excel' AND v.khoa LIKE 'n%-%' AND v.ts > ?1
+                    GROUP BY lo ORDER BY ts DESC LIMIT 10`).bind(Date.now() - NHAP_HUY_MS),
   ]);
   const dongBy = {};
   for (const d of dongR.results) (dongBy[d.ve_id] = dongBy[d.ve_id] || []).push(d);
@@ -114,7 +127,7 @@ export async function tvView(env, url, user) {
     tu, den, quyen: { ghi: q.ghi }, ncc: nccR.results, phi: phiR.results,
     don: donR.results.map((d) => ({ ...d, dong: ddBy[d.id] || [], da_ve: veDon[d.id] || {} })),
     ve: veR.results.map((v) => ({ ...v, dong: dongBy[v.id] || [] })),
-    trang: { so, bo_qua: boQua, tong: tong.chuyen },
+    trang: { so, bo_qua: boQua, tong: tim ? khopR.results[0].n : tong.chuyen }, q: tim, lo_nhap: loR.results,
     tk: { tong, thang: thangR.results, ncc: nccTkR.results, phi: phiTkR.results, cheo: cheoR.results },
   });
 }
@@ -304,6 +317,78 @@ export async function tvNhap(req, env, user) {
     bump(env),
   ]);
   return json({ ok: true, ...tomTat });
+}
+
+/* ---------- HUỶ CẢ MỘT LẦN NHẬP EXCEL ----------
+   Một lần dán có thể ghi hàng trăm chuyến; nhập nhầm (sai kỳ, sai đơn vị, dán trùng) mà phải huỷ từng chuyến là không làm nổi.
+   Mỗi lần nhập có khoá chung (khoa = lo + '-' + số thứ tự, lo = 'n' + giờ nhập): huỷ mọi chuyến còn lại của lần đó trong một lượt,
+   một lý do. Chỉ trong NHAP_HUY_MS kể từ lúc nhập — lâu hơn thì số liệu đã được dùng, huỷ từng chuyến. */
+export async function tvNhapHuy(req, env, user, lo) {
+  await canGhi(env, user);
+  if (!/^n[0-9a-z]{4,12}$/.test(String(lo || ''))) throw new HttpError(404, 'Không tìm thấy lần nhập này');
+  const b = await readJson(req);
+  const ly = chu(b.ly_do, 200);
+  if (!ly) throw bad('Cần ghi lý do huỷ');
+  const r = await env.DB.prepare("SELECT COUNT(*) n, MIN(ts) ts FROM thep_ve WHERE khoa LIKE ? AND nguon = 'excel' AND voided = 0").bind(lo + '-%').first();
+  if (!r || !r.n) throw new HttpError(404, 'Lần nhập này không còn chuyến nào chưa huỷ');
+  if (Date.now() - r.ts > NHAP_HUY_MS) throw bad('Lần nhập đã quá 7 ngày, không huỷ cả lần được nữa — huỷ từng chuyến');
+  const ts = Date.now();
+  const res = await env.DB.batch([
+    env.DB.prepare("UPDATE thep_ve SET voided = 1, voided_ts = ?, voided_by = ?, voided_note = ? WHERE khoa LIKE ? AND nguon = 'excel' AND voided = 0").bind(ts, user.id, ly, lo + '-%'),
+    auditStmt(env, user, 'tv_nhap_huy', { lo, chuyen: r.n, ly_do: ly }),
+    bump(env),
+  ]);
+  return json({ ok: true, chuyen: res[0].meta.changes });
+}
+
+/* ---------- SỬA ĐƠN HÀNG ----------
+   Số lượng đặt / hạn giao thay đổi giữa chừng là chuyện thường: sửa hạn, ghi chú và các dòng phi đặt (nhà cung cấp, số đơn giữ nguyên).
+   Nhật ký ghi cả cũ lẫn mới. Đơn đã huỷ thì không sửa. */
+export async function tvDonSua(req, env, user, id) {
+  await canGhi(env, user);
+  const b = await readJson(req);
+  const d = await env.DB.prepare('SELECT d.*, n.name ncc FROM thep_don d LEFT JOIN thep_ncc n ON n.id = d.ncc_id WHERE d.id = ?').bind(id).first();
+  if (!d) throw new HttpError(404, 'Không tìm thấy đơn hàng');
+  if (d.tt === 'huy') throw bad('Đơn đã huỷ, không sửa được');
+  let han = null;
+  if (b.han) { han = String(b.han); if (!ngayThat(han) || han < d.ngay_dat) throw bad('Hạn giao phải từ ngày đặt trở đi'); }
+  const phiR = await env.DB.prepare('SELECT id, bo_size, kg_per_cay FROM phi').all();
+  const lines = docDong(b.lines, Object.fromEntries(phiR.results.map((p) => [p.id, p])), 'Đơn hàng');
+  if (new Set(lines.map((l) => l.phi)).size !== lines.length) throw bad('Mỗi phi chỉ một dòng trong đơn');
+  const cu = (await env.DB.prepare('SELECT phi_id phi, kg FROM thep_don_dong WHERE don_id = ?').bind(id).all()).results;
+  const data = JSON.stringify(lines.map((l) => ({ phi: l.phi, bo: l.bo, cay: l.cay, kg: l.kg ?? l.kg_tinh })));
+  await batchGuarded(env, guardStmt(env, "NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ? AND tt <> 'huy')", id), [
+    env.DB.prepare('UPDATE thep_don SET han = ?, ghi_chu = ? WHERE id = ?').bind(han, chu(b.ghi_chu, 200) || null, id),
+    env.DB.prepare('DELETE FROM thep_don_dong WHERE don_id = ?').bind(id),
+    env.DB.prepare(`INSERT INTO thep_don_dong (don_id, phi_id, bo, cay, kg) SELECT ?1, json_extract(j.value, '$.phi'), json_extract(j.value, '$.bo'),
+                    json_extract(j.value, '$.cay'), json_extract(j.value, '$.kg') FROM json_each(?2) j`).bind(id, data),
+    auditStmt(env, user, 'tv_don_sua', { id, ncc: d.ncc, so_don: d.so_don, han_cu: d.han || undefined, han: han || undefined, cu, moi: lines.map((l) => ({ phi: l.phi, kg: l.kg ?? l.kg_tinh })) }),
+    bump(env),
+  ], new HttpError(409, 'Đơn hàng vừa bị huỷ', 'changed'));
+  return json({ ok: true });
+}
+
+/* ---------- GẮN / BỎ GẮN MỘT CHUYẾN VỚI ĐƠN HÀNG ----------
+   Đơn lập SAU khi chuyến đã ghi (hoặc nhập Excel trước khi có đơn) thì tiến độ đơn sai mãi — gắn lại ở đây. don_id = null: bỏ gắn. */
+export async function tvGanDon(req, env, user, id) {
+  await canGhi(env, user);
+  const b = await readJson(req);
+  const v = await env.DB.prepare('SELECT v.*, n.name ncc FROM thep_ve v LEFT JOIN thep_ncc n ON n.id = v.ncc_id WHERE v.id = ?').bind(id).first();
+  if (!v || v.voided) throw new HttpError(404, 'Không tìm thấy chuyến (hoặc chuyến đã huỷ)');
+  const donId = b.don_id == null || b.don_id === '' ? null : Number(b.don_id);
+  let d = null;
+  if (donId != null) {
+    d = await env.DB.prepare('SELECT d.id, d.so_don, d.tt, d.ncc_id FROM thep_don d WHERE d.id = ?').bind(donId).first();
+    if (!d) throw bad('Không tìm thấy đơn hàng');
+    if (d.tt === 'huy') throw bad('Đơn hàng đã huỷ');
+    if (d.ncc_id !== v.ncc_id) throw bad('Đơn hàng này của nhà cung cấp khác');
+  }
+  await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM thep_ve WHERE id = ? AND voided = 0)', id), [
+    env.DB.prepare('UPDATE thep_ve SET don_id = ?, so_don = ? WHERE id = ?').bind(donId, d ? d.so_don : v.so_don, id),
+    auditStmt(env, user, 'tv_gan_don', { id, ngay: v.ngay, ncc: v.ncc, so_phieu: v.so_phieu || undefined, don_cu: v.don_id || undefined, don: donId || undefined, so_don: d ? d.so_don : undefined }),
+    bump(env),
+  ], new HttpError(409, 'Chuyến này vừa bị huỷ', 'changed'));
+  return json({ ok: true });
 }
 
 /* ---------- XUẤT EXCEL (CSV) ---------- */

@@ -385,7 +385,8 @@ export async function phiBulk(req, env, admin) {
   const by = Object.fromEntries(results.map((p) => [p.id, p]));
   const stmts = [], log = [], doiBo = [];
   for (const it of items.slice(0, 50)) {
-    const p = by[String(it.id || '')];
+    if (!it || typeof it !== 'object') throw bad('Dữ liệu phi không hợp lệ');
+    const p = Object.hasOwn(by, String(it.id || '')) ? by[String(it.id)] : null;
     if (!p) throw bad('Phi không hợp lệ: ' + it.id);
     const bo = intIn(it.bo_size ?? p.bo_size, 1, 9999, 'Số cây mỗi bó của ' + p.id);
     const min = intIn(it.min_stock ?? p.min_stock, 0, 99999, 'Mức tối thiểu của ' + p.id);

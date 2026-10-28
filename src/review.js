@@ -423,6 +423,12 @@ export async function doClose(env, user, rv, note, action, extra = []) {
                      WHERE r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
                        AND r.duyet_day IS NOT NULL AND r.duyet_day > ?2 AND r.duyet_day <= ?1
                        AND (c.duyet_at IS NULL OR r.duyet_ts > c.duyet_at)), 0)
+         /* Số đếm của ngày này được DUYỆT SAU nửa đêm (trước lúc lịch chốt sổ): phiếu duyệt hôm sau trước / cùng lúc đó đã nằm
+            trong số đếm, mà hôm sau lại được cộng như "thép về sau lần đếm" (không có số đếm nào của hôm sau) — cộng HAI LẦN.
+            Tồn chuẩn cuối ngày = số đếm TRỪ những phiếu đó; hôm sau cộng lại đúng một lần. */
+         - COALESCE((SELECT SUM(r.qty) FROM receipts r
+                     WHERE c.duyet_at IS NOT NULL AND r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
+                       AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_ts <= c.duyet_at), 0)
        FROM (${KHU_X_PHI}
              UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?2 AND v <> 0
              UNION SELECT khu_id, phi_id FROM counts
@@ -514,7 +520,9 @@ export async function reviewDuyet(req, env, user) {
      được duyệt hoặc bị huỷ SAU lúc số của khu đã duyệt, số dự kiến đổi mà số đã duyệt thì không,
      và đường gỡ chính là admin xem bảng lệch mới rồi DUYỆT LẠI. Không nhận thì nút "Duyệt lại"
      bị từ chối và cảnh báo treo vĩnh viễn — đúng cái bệnh của exception 'late' bản cũ. */
-  const cho = rv.khus.filter((k) => (all || k.khu === khu) && (k.waiting || k.phieu.length || k.recheck));
+  /* "Duyệt tất cả" KHÔNG gồm khu chỉ bị nhắc xem lại (recheck): duyệt lại khu đó là chấp nhận số đếm cũ thay cho phiếu vừa duyệt
+     sau lúc đếm — phiếu biến khỏi tồn. Việc đó phải làm từng khu, sau khi xem bảng lệch (nút DUYỆT LẠI có cảnh báo riêng). */
+  const cho = rv.khus.filter((k) => (all ? k.waiting || k.phieu.length : k.khu === khu && (k.waiting || k.phieu.length || k.recheck)));
   if (!cho.length) {
     throw bad(all ? 'Không còn khu nào chờ duyệt' : rv.khus.some((k) => k.khu === khu) ? 'Khu này không có gì chờ duyệt' : 'Khu không hợp lệ');
   }

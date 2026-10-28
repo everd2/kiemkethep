@@ -134,6 +134,11 @@ export async function changePin(req, env, user) {
   /* Nhập sai "PIN hiện tại" tính vào đúng bộ đếm / khoá của đăng nhập (fail_count, locked_until): không thì ai cầm máy
      đang mở sẵn dò được PIN không giới hạn. Đang bị khoá thì không cho thử. */
   if (u.locked_until > Date.now()) throw new HttpError(429, khoaTxt(u));
+  /* PIN MỚI sai luật (quá dễ, trùng PIN cũ) kiểm TRƯỚC khi đếm lượt thử: đó không phải đoán PIN. Trước đây kiểm sau, người mới
+     thử 1234 / 1111 năm lần là bộ đếm đầy mà không gì đặt lại — tài khoản bị khoá luôn, cả đăng nhập. */
+  const np = String(b.newPin || '');
+  checkPin(np);
+  if (np === String(b.pin)) throw bad('PIN mới phải khác PIN cũ');
   const n = await lanThu(env, u.id);
   if (n === null) throw new HttpError(429, 'Đang có quá nhiều lượt thử, hãy đợi một lát rồi thử lại');
   if (!safeEq(await hashPin(env, u.pin_salt, String(b.pin || '')), u.pin_hash)) {
@@ -149,9 +154,6 @@ export async function changePin(req, env, user) {
     }
     throw new HttpError(401, 'PIN hiện tại không đúng');
   }
-  const np = String(b.newPin || '');
-  checkPin(np);
-  if (np === String(b.pin)) throw bad('PIN mới phải khác PIN cũ');
   const salt = rand(16);
   // PIN đổi thì các máy khác đang đăng nhập bằng PIN cũ phải đăng nhập lại; giữ phiên của máy đang đổi
   const m = (req.headers.get('Cookie') || '').match(/(?:^|;\s*)sid=([a-f0-9]{64})/);

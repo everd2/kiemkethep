@@ -253,7 +253,8 @@ export async function gcUpdate(req, env, user, id) {
     env.DB.prepare('UPDATE don_gc SET cau_kien = ?, hang_muc = ?, phan_khu = ?, tang = ?, cote = ?, truc = ?, noi_dung = ?, od_nguoi = ?, od_dd = ?, user_id = ?, han = ?, buoi = ?, tt = ?, cap_ts = ? WHERE id = ?')
       .bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.od_nguoi, f.od_dd, f.user_id, f.han, f.buoi, giaoLai ? 'moi' : d.tt, ts, id),
     // giao lại cho người khác: cờ vướng là của tổ cũ, người mới nhận đơn không thừa hưởng
-    ...(giaoLai ? [env.DB.prepare('UPDATE don_gc SET vuong = NULL, vuong_loai = NULL, vuong_dung = 0, vuong_ts = NULL, vuong_xem_by = NULL, vuong_xem_ts = NULL WHERE id = ?').bind(id)] : []),
+    // (cả câu "cần trả lời" và lời nhắn "bị mở lại" gửi tổ cũ). Tiến độ % giữ nguyên: phần thép đã làm vẫn còn đó.
+    ...(giaoLai ? [env.DB.prepare('UPDATE don_gc SET vuong = NULL, vuong_loai = NULL, vuong_dung = 0, vuong_ts = NULL, vuong_xem_by = NULL, vuong_xem_ts = NULL, cho_tl = NULL, mo_lai = NULL WHERE id = ?').bind(id)] : []),
     env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id = ? AND user_id NOT IN (SELECT value FROM json_each(?))').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id) SELECT ?, value FROM json_each(?)').bind(id, JSON.stringify(f.user_ids)),
     env.DB.prepare('INSERT INTO don_gc_log (don_id, ts, user_id, viec, pct, note) VALUES (?,?,?,?,?,?)').bind(id, ts, user.id, 'sua', d.pct, doi.join(' · ')),
@@ -415,12 +416,14 @@ export async function gcViec(req, env, user, id, viec) {
     if (d.tt === 'moi') throw sai('Hãy nhận đơn trước khi cập nhật tiến độ.');
     if (dong) throw sai(dong);
     const pct = Number(b.pct);
-    if (!GC_PCT.includes(pct)) throw bad('Tiến độ không hợp lệ');
     note = chu(b.note, 200) || null;
+    // đơn cũ còn mức 25% / 75% (trước khi đổi thang): vẫn ghi chú thêm được mà không phải đổi mức
+    if (!GC_PCT.includes(pct) && !(pct === d.pct && note)) throw bad('Tiến độ không hợp lệ');
     if (pct === d.pct && !note) throw bad('Tiến độ chưa đổi. Chọn mức khác hoặc ghi chú thêm.');
     set.pct = pct;
     set.lam_ts = ts;
-    if (pct > 0) set.tt = 'lam';
+    // hạ về 0% thì về "đã nhận", không để đơn "đang làm" mà 0% (báo cáo ca bỏ sót đơn đó)
+    set.tt = pct > 0 ? 'lam' : 'nhan';
   } else if (viec === 'vuong') {
     if (dong) throw sai(dong);
     const ghi = chu(b.ly_do, 200), loai = chu(b.loai, 40);

@@ -242,6 +242,54 @@ async function main() {
   R(`go('users')`); await cho();
   ok('màn Người dùng của admin đầu tiên có nút giao / bỏ quyền ghi sổ thép về', R('vMain()').includes('data-a="uthepve"'));
 
+  /* ===== Hoàn thiện: tìm chuyến, sửa đơn, gắn chuyến vào đơn, huỷ cả lần nhập ===== */
+  const tim = async (q) => (await S.call('GET', `/thepve?tu=2000-01-01&den=${D}&q=${encodeURIComponent(q)}`, undefined, LAN)).data;
+  const tm1 = await tim('vu-1');
+  eq('tìm theo số phiếu: đúng chuyến, đếm theo ô tìm', [tm1.ve.map((v) => v.so_phieu), tm1.trang.tong], [['VU-1'], 1]);
+  ok('tìm theo phi D10: chỉ chuyến có D10', (await tim('d10')).ve.every((v) => v.dong.some((l) => l.phi === 'D10')) && (await tim('d10')).ve.length > 0);
+  const tUc = await tim('úc'), idUc = tUc.ncc.filter((n) => /úc/i.test(n.name)).map((n) => n.id);
+  ok('tìm theo tên nhà cung cấp (một phần)', tUc.ve.length > 0 && tUc.ve.every((v) => idUc.includes(v.ncc_id)));
+  eq('tìm có ký tự % không làm lộ hết', (await tim('%')).trang.tong, 0);
+  ok('tìm không đổi thống kê của kỳ', (await tim('vu-1')).tk.tong.chuyen > 1);
+  // sửa đơn
+  const dn2 = (await S.call('POST', '/thepve/don', { ncc: 'Hòa Phát', so_don: 'HP-SUA', ngay_dat: D, lines: [{ phi: 'D16', kg: '10000' }] }, LAN)).data.id;
+  eq('sửa đơn: thêm phi, đổi số lượng, đặt hạn', (await S.call('PATCH', '/thepve/don/' + dn2, { han: D, lines: [{ phi: 'D16', kg: '12000' }, { phi: 'D20', kg: '5000' }] }, LAN)).status, 200);
+  eq('đơn sau khi sửa', S.sql('SELECT phi_id, kg FROM thep_don_dong WHERE don_id = ? ORDER BY phi_id', dn2).map((x) => [x.phi_id, x.kg]), [['D16', 12000], ['D20', 5000]]);
+  eq('sửa đơn: hạn trước ngày đặt bị từ chối', (await S.call('PATCH', '/thepve/don/' + dn2, { han: '2000-01-01', lines: [{ phi: 'D16', kg: '1' }] }, LAN)).status, 400);
+  eq('CVKTHT (chỉ xem) không sửa đơn được', (await S.call('PATCH', '/thepve/don/' + dn2, { lines: [{ phi: 'D16', kg: '1' }] }, CV)).status, 403);
+  // gắn chuyến đã ghi vào đơn lập sau
+  const c9 = (await chuyen({ so_phieu: 'GAN-01', bien_so: '51D-999.88', lines: [{ phi: 'D16', kg: '3000' }] }, LAN)).data.id;
+  ok('tìm theo biển số (một phần)', (await tim('999.8')).ve.some((v) => v.id === c9));
+  eq('gắn chuyến vào đơn lập sau', (await S.call('POST', `/thepve/${c9}/don`, { don_id: dn2 }, LAN)).status, 200);
+  eq('tiến độ đơn tính cả chuyến vừa gắn', (await S.call('GET', '/thepve', undefined, LAN)).data.don.find((d) => d.id === dn2).da_ve.D16, 3000);
+  const dnKhac = (await S.call('POST', '/thepve/don', { ncc: 'Việt Úc Gắn', so_don: 'VU-G', ngay_dat: D, lines: [{ phi: 'D16', kg: '1000' }] }, LAN)).data.id;
+  eq('gắn vào đơn của nhà cung cấp khác: từ chối', (await S.call('POST', `/thepve/${c9}/don`, { don_id: dnKhac }, LAN)).status, 400);
+  eq('bỏ gắn đơn', [(await S.call('POST', `/thepve/${c9}/don`, { don_id: null }, LAN)).status, S.one('SELECT don_id FROM thep_ve WHERE id = ?', c9).don_id], [200, null]);
+  // huỷ cả lần nhập Excel
+  const nh = await S.call('POST', '/thepve/nhap', { rows: [{ ngay: D, ncc: 'NCC Nhập Nhầm', so_phieu: 'NN1', phi: 'D16', kg: '1000' }, { ngay: D, ncc: 'NCC Nhập Nhầm', so_phieu: 'NN2', phi: 'D18', kg: '2000' }] }, LAN);
+  const lo = (await S.call('GET', '/thepve', undefined, LAN)).data.lo_nhap.find((x) => x.chuyen === 2);
+  ok('danh sách lần nhập gần đây có lần vừa nhập', nh.status === 200 && lo && /^n[0-9a-z]+$/.test(lo.lo), JSON.stringify(lo));
+  eq('huỷ cả lần nhập: cần lý do', (await S.call('POST', `/thepve/nhap/${lo.lo}/huy`, {}, LAN)).status, 400);
+  const hu = await S.call('POST', `/thepve/nhap/${lo.lo}/huy`, { ly_do: 'dán nhầm file' }, LAN);
+  eq('huỷ cả lần nhập: 2 chuyến, không còn trong sổ', [hu.status, hu.data.chuyen, S.one("SELECT COUNT(*) n FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE n.name = 'NCC Nhập Nhầm' AND v.voided = 0").n], [200, 2, 0]);
+  eq('huỷ lại lần đó: không còn gì', (await S.call('POST', `/thepve/nhap/${lo.lo}/huy`, { ly_do: 'x' }, LAN)).status, 404);
+  eq('lô lạ: 404', (await S.call('POST', '/thepve/nhap/abc%25/huy', { ly_do: 'x' }, LAN)).status, 404);
+  // giao diện
+  who = LAN;
+  R(`S.me = ${JSON.stringify({ id: U[LAN], name: LAN, role: 'tieudoi', thep_ve: 1 })}; S.tv = null; S.tvTab = 've'; S.tvTim = ''`);
+  R(`ACTIONS.nav({ s: 'thepve' })`); await cho();
+  R(`ACTIONS.tvky({ tu: '2000-01-01', den: '${D}' })`); await cho();
+  R(`S.form.tvtim = 'GAN-01'; ACTIONS.tvtim()`); await cho();
+  ok('ô tìm: chỉ hiện chuyến khớp, có dòng đếm', R('S.tv.ve.length') === 1 && R('vThepVe()').includes('chuyến khớp'));
+  R(`ACTIONS.tvtimbo()`); await cho();
+  ok('bỏ tìm: hiện lại cả kỳ', R('S.tv.ve.length') > 1);
+  R(`ACTIONS.tvgan({ id: '${c9}' })`);
+  ok('thẻ chuyến: hộp gắn đơn chỉ đơn cùng NCC', R('vThepVe()').includes('HP-SUA') && !R('vThepVe()').includes('VU-G'));
+  R(`ACTIONS.tvganbo(); ACTIONS.tvtab({ v: 'don' }); ACTIONS.tvsuadon({ id: '${dn2}' })`);
+  eq('sửa đơn: form điền sẵn các phi', R(`JSON.stringify([S.tvMo, S.tvSuaDon, tvDong('d').map((l) => l.phi), S.form.tdk_1])`), JSON.stringify(['don', dn2, ['D16', 'D20'], '5000']));
+  ok('form sửa đơn: tiêu đề Sửa đơn, nút LƯU SỬA ĐƠN', R('vThepVe()').includes('Sửa đơn HP-SUA') && R('vThepVe()').includes('LƯU SỬA ĐƠN'));
+  R(`ACTIONS.tvdong()`);
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

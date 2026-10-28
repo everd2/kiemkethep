@@ -151,7 +151,7 @@ export async function putCounts(req, env, user) {
   const seen = new Set();
   const clean = items.map((it) => {
     const phi = String((it && it.phi) || '');
-    const pi = phiBy[phi];
+    const pi = Object.hasOwn(phiBy, phi) ? phiBy[phi] : null;
     if (!pi) throw bad('Phi không hợp lệ: ' + phi);
     if (seen.has(phi)) throw bad('Trùng phi: ' + phi);
     seen.add(phi);
@@ -350,7 +350,7 @@ export async function conflictResolve(req, env, user) {
   }
   const changes = [];
   for (const phi of Object.keys(pick)) {
-    if (!(phi in cur)) throw bad('Phi không có trong báo cáo: ' + phi);
+    if (!Object.hasOwn(cur, phi)) throw bad('Phi không có trong báo cáo: ' + phi);
     const v = intIn(pick[phi], 0, 99999, 'Số đếm của ' + phi);
     const kind = v === 0 && logKind[srcTs(phi) + '|' + phi] === 'zero' ? 'zero' : 'dem';
     // ô đang "giữ nguyên" mà admin chọn đúng số cũ: không đổi gì, khỏi thành "đếm" và chờ duyệt lại
