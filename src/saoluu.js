@@ -61,7 +61,12 @@ export async function saoLuuTuDong(env, now = Date.now()) {
   if (gio !== 2) return null;
   const ds = await dsBanSao(env);
   if (ds.length && now - ds[0].luc < TUAN_MS) return null;
-  return luuLenKho(env, SYSTEM);
+  try { return await luuLenKho(env, SYSTEM); } catch (e) {
+    /* Hỏng thì ghi vào nhật ký (mục "Cần chú ý"), không chỉ console: không ai đọc log máy chủ, và giờ sau lịch thử lại vì vẫn
+       chưa có bản mới. Ghi nhật ký cũng hỏng thì thôi. */
+    await auditStmt(env, SYSTEM, 'backup_kho_loi', { loi: String((e && e.message) || e).slice(0, 200) }).run().catch(() => {});
+    throw e;
+  }
 }
 
 const chiAdminDau = async (env, user) => {

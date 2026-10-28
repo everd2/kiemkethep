@@ -25,7 +25,7 @@ const today = vnDay();
 /* ---------- 1. Cấu trúc ---------- */
 const BANG = ['users', 'sessions', 'login_fail', 'phi', 'khu', 'khu_phi', 'khu_user', 'counts', 'counts_log', 'khu_report', 'khu_report_log', 'receipts',
   'day_close', 'daily_summary', 'phi_rate', 'baseline', 'doitac', 'loans', 'satvun', 'audit', 'settings', 'meta', 'bao_cao_ngay', 'bao_cao_huy', 'don_gc',
-  'don_gc_log', 'quan_so', 'quan_so_tl', 'gc_muc', 'bao_cao_ca', 'san_luong', 'bc_mau', 'don_gc_nguoi', 'don_gc_tn', 'don_gc_doc', 'anh_bb'];
+  'don_gc_log', 'quan_so', 'quan_so_tl', 'gc_muc', 'bao_cao_ca', 'san_luong', 'bc_mau', 'don_gc_nguoi', 'don_gc_tn', 'don_gc_doc', 'anh_bb', 'thep_ncc', 'thep_don', 'thep_don_dong', 'thep_ve', 'thep_ve_dong'];
 loi('Thiếu bảng', BANG.filter((b) => !co(b)).map((b) => ({ bang: b })));
 const SCHEMA_NOW = Number(readFileSync(path.join(ROOT, 'src/db.js'), 'utf8').match(/SCHEMA_VERSION = (\d+)/)[1]);
 const sc = mot("SELECT value FROM meta WHERE key = 'schema'");
@@ -70,6 +70,13 @@ if (ok('receipts')) {
 /* ---------- 5. Số đếm, chốt ngày ---------- */
 if (ok('counts')) {
   loi('Số đếm âm', q('SELECT day, khu_id, phi_id, v FROM counts WHERE v < 0'));
+  // kiểu dữ liệu: số phải là số (nạp tệp sửa tay có thể đưa chữ vào cột số), ngày đúng dạng YYYY-MM-DD
+  loi('Giá trị không phải số ở cột số lượng', q(`SELECT 'counts' bang, day, v x FROM counts WHERE typeof(v) <> 'integer'
+     UNION ALL SELECT 'receipts', day, qty FROM receipts WHERE typeof(qty) <> 'integer'
+     UNION ALL SELECT 'baseline', day, v FROM baseline WHERE typeof(v) <> 'integer'`));
+  loi('Ngày sai dạng', q(`SELECT 'counts' bang, day x FROM counts WHERE day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+     UNION ALL SELECT 'receipts', day FROM receipts WHERE day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+     UNION ALL SELECT 'receipts.duyet_day', duyet_day FROM receipts WHERE duyet_day IS NOT NULL AND duyet_day NOT GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'`));
   loi('Số đếm "để trống" mà khác 0', q("SELECT day, khu_id, phi_id, v FROM counts WHERE kind = 'zero' AND v <> 0"));
   cb('Báo cáo đếm chờ duyệt từ ngày trước', q('SELECT day, khu_id, COUNT(*) n FROM counts WHERE NOT (duyet_ts IS NOT NULL AND duyet_ts = ts) AND day < ? GROUP BY day, khu_id', today));
 }
@@ -79,6 +86,10 @@ if (ok('day_close')) {
   const ho = [];
   for (let i = 1; i < ds.length; i++) { const sau = new Date(Date.parse(ds[i - 1] + 'T00:00:00Z') + 864e5).toISOString().slice(0, 10); if (sau !== ds[i]) ho.push({ tu: ds[i - 1], den: ds[i] }); }
   cb('Khoảng trống giữa các ngày chốt (ngày không có số liệu thì bình thường)', ho);
+  // trong khoảng trống mà CÓ số liệu thì ngày đó đã bị bỏ qua không chốt (không tổng hợp, không chấm công)
+  loi('Ngày có số liệu nằm trong khoảng trống giữa hai ngày chốt (bị bỏ qua không chốt)', ho.flatMap((h) =>
+    q(`SELECT ? tu, ? den, d FROM (SELECT day d FROM counts WHERE day > ? AND day < ? UNION SELECT duyet_day FROM receipts WHERE duyet_day > ? AND duyet_day < ?) GROUP BY d`, h.tu, h.den, h.tu, h.den, h.tu, h.den)));
+  if (ok('baseline')) loi('Tồn chuẩn âm', q('SELECT day, khu_id, phi_id, v FROM baseline WHERE v < 0'));
   const cuoi = ds[ds.length - 1];
   if (cuoi && cuoi < vnDay(Date.now() - 2 * 864e5)) CB.push(['Lâu chưa tự chốt ngày (lịch chạy mỗi giờ có thể đang hỏng)', 1, [{ ngay_chot_cuoi: cuoi }]]);
 }
@@ -104,7 +115,8 @@ if (ok('khu') && ok('phi') && ok('receipts') && ok('counts')) {
 if (ok('loans')) {
   loi('Dòng vay mượn trỏ tới đối tác không có thật', q('SELECT id, doitac_id FROM loans WHERE doitac_id NOT IN (SELECT id FROM doitac)'));
   loi('Dòng vay mượn số lượng ≤ 0', q('SELECT id, qty FROM loans WHERE qty <= 0'));
-  loi('Dư nợ âm (trả nhiều hơn vay) theo đối tác × phi',
+  // app cho ghi trả nhiều hơn vay (có cảnh báo ở form) — đây là điều cần soát, chưa chắc là lỗi
+  cb('Dư nợ âm (trả nhiều hơn vay) theo đối tác × phi',
     q(`SELECT doitac_id, phi_id, SUM(CASE WHEN kind IN ('vay','cho_vay') THEN qty ELSE -qty END) du, (kind IN ('vay','tra_vay')) chieu
        FROM loans WHERE voided = 0 AND duyet_ts IS NOT NULL GROUP BY doitac_id, phi_id, chieu HAVING du < 0`));
   cb('Số biên bản ghi trùng (cùng đối tác, loại, phi)', q("SELECT doitac_id, kind, phi_id, so_bb, COUNT(*) n FROM loans WHERE voided = 0 AND so_bb IS NOT NULL GROUP BY doitac_id, kind, phi_id, lower(replace(replace(replace(so_bb,' ',''),'-',''),'.','')) HAVING n > 1"));

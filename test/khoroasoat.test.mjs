@@ -85,6 +85,27 @@ async function main() {
     eq('PUT /phi id "toString": 400', (await S.call('PUT', '/phi', { items: [{ id: 'toString', bo_size: 5 }] }, 'Admin')).status, 400);
   }
 
+  /* ===== 5. Dữ liệu: đặt lại lúc nửa đêm, nạp tệp sai kiểu, duyệt phiếu vào khu đã ẩn ===== */
+  {
+    const vnMs = (Date.now() + 7 * 3600e3) % 864e5;
+    clock.offset += 22 * 3600e3 - vnMs + (vnMs > 22 * 3600e3 ? 864e5 : 0); // 22h
+    const S = await moi();
+    await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 10 }) }, 'An');
+    await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin');
+    clock.offset += 2 * 3600e3 + 2 * 60e3; // 0h02, lịch chưa chốt hôm qua
+    const rs = await S.call('POST', '/reset', { mode: 'zero', confirm: 'DAT VE 0' }, 'Admin');
+    eq('đặt lại lúc 0h02 (sổ hôm qua chưa chốt): chặn, chờ chốt xong', [rs.status, rs.data.code], [409, 'cho_chot']);
+    const f = (await S.call('GET', '/backup', undefined, 'Admin')).data;
+    const sai = JSON.parse(JSON.stringify(f)); sai.bang.counts[0].v = 'abc';
+    const nl = await S.call('POST', '/restore', { confirm: 'NAP LAI', file: sai }, 'Admin');
+    eq('nạp tệp có chữ ở cột số: 400, nói rõ bảng / cột, chưa đổi gì', [nl.status, /counts, cột v/.test(nl.data.error || ''), S.one("SELECT v FROM counts WHERE khu_id = 'A' AND phi_id = 'D16'").v], [400, true, 10]);
+    const sai2 = JSON.parse(JSON.stringify(f)); sai2.bang.counts[0].day = 'hom qua';
+    eq('nạp tệp ngày sai dạng: 400', (await S.call('POST', '/restore', { confirm: 'NAP LAI', file: sai2 }, 'Admin')).status, 400);
+    const p = await S.call('POST', '/receipts', { khu: 'B', lines: [{ phi: 'D20', qty: 40 }] }, 'Cv');
+    S.raw.prepare("UPDATE khu SET active = 0 WHERE id = 'B'").run(); // khu bị ẩn chen giữa lúc lập phiếu và lúc duyệt
+    eq('duyệt phiếu vào khu đã ẩn: chặn', (await S.call('POST', `/receipts/${p.data.id}/duyet`, {}, 'Trung')).status, 400);
+  }
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

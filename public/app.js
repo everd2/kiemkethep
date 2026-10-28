@@ -2254,6 +2254,7 @@ function fmtAudit(a) {
     tv_don_sua: ['sửa đơn hàng thép ' + (d.so_don || '') + ' · ' + (d.ncc || '') + ': ' + (d.moi || []).map((l) => l.phi + ' ' + fmtInt(l.kg || 0) + ' kg').join(', ') + (d.han !== d.han_cu ? ' · hạn ' + (d.han ? fmtDay(d.han) : 'bỏ') : ''), 'receipt'],
     tv_gan_don: [(d.don ? 'gắn chuyến thép về ' + fmtDay(d.ngay) + ' · ' + (d.ncc || '') + ' vào đơn ' + (d.so_don || '') : 'bỏ gắn đơn của chuyến thép về ' + fmtDay(d.ngay) + ' · ' + (d.ncc || '')), 'receipt'],
     tv_nhap: ['nhập sổ thép về từ Excel: ' + (d.chuyen || 0) + ' chuyến, ' + fmtInt(Math.round((d.kg || 0) / 1000)) + ' tấn', 'receipt'],
+    backup_kho_loi: ['SAO LƯU TỰ ĐỘNG BỊ HỎNG: ' + (d.loi || '') + ' — vào Cài đặt bấm "Sao lưu ngay" và tải một bản về cất', 'admin', true],
     backup_kho: ['sao lưu toàn bộ lên kho' + (d.ten ? ' (' + d.ten.slice(0, 10).split('-').reverse().join('/') + ')' : ''), 'admin'],
     user_thep_ve: [(d.co ? 'giao' : 'bỏ') + ' quyền ghi sổ thép về cho ' + (d.name || ''), 'admin'],
     sl_luu: ['chép báo cáo sản lượng ngày ' + fmtDay(d.ngay) + ' (công chuẩn ' + String(d.chuan).replace('.', ',') + ', tỷ lệ giá ' + String(d.gia).replace('.', ',') + ')', 'qs'],
@@ -2280,7 +2281,7 @@ function fmtAudit(a) {
     return { text: 'báo ' + kn(d.khu) + sau + (ch ? ' (' + ch + ')' : ' (không đổi)'), type: 'dem', flag: !!d.conflict || !!sau };
   }
   const m = M[a.action] || [a.action, 'admin'];
-  return { text: m[0], type: m[1] === 'flag' ? 'login' : m[1], flag: m[1] === 'flag' };
+  return { text: m[0], type: m[1] === 'flag' ? 'login' : m[1], flag: m[1] === 'flag' || m[2] === true };
 }
 function vNhatKy() {
   // "Điều chỉnh" đứng riêng, KHÔNG gộp vào "Nhập kho": đây là nhóm việc người ta sẽ phải soi lại

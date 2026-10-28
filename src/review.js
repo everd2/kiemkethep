@@ -681,6 +681,16 @@ function chamCongStmt(env, rv, logs, asg) {
   ).bind(rv.day, JSON.stringify(rows));
 }
 
+// Ngày đã qua (có số liệu) mà lịch chưa chốt — cùng cách tìm với hourly. null = không còn ngày nào.
+export async function ngayChuaChot(env, today = vnDay()) {
+  const r = await env.DB.prepare(
+    `SELECT (SELECT MAX(day) FROM day_close) last,
+            (SELECT MIN(d) FROM (SELECT MIN(day) d FROM counts UNION ALL
+                                 SELECT MIN(duyet_day) FROM receipts WHERE duyet_day IS NOT NULL)) first`
+  ).first();
+  const day = r.last ? nextDay(r.last) : r.first;
+  return day && day < today ? day : null;
+}
 // Chốt sổ một ngày ĐÃ QUA. Trả false nếu ngày đó đã chốt. Bộ test gọi thẳng hàm này.
 export async function closeDayAuto(env, day) {
   const rv = await computeReview(env, day, { cuoiNgay: true });

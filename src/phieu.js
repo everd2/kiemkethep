@@ -197,6 +197,12 @@ export async function checkTransferStock(env, day, lines, opt) {
    lúc được duyệt, nên nó thuộc về ngày duyệt. Phiếu nhập chiều ngày 7 mà duyệt sáng ngày 8 sẽ
    nằm trong số liệu ngày 8, còn chứng từ vẫn ghi đủ "nhập 07/10, duyệt 08/10". Nhờ vậy phiếu
    treo qua đêm không cần chặn chốt ngày và không bao giờ phải ghi lùi vào ngày đã chốt. */
+/* Kiểm tồn rồi mới ghi là hai lượt: hai người cùng lúc (duyệt phiếu xuất + huỷ phiếu nhập cùng ô) đều thấy đủ thép, cùng ghi,
+   khu âm. Đọc số `rev` (tăng sau MỌI lần ghi) TRƯỚC khi kiểm tồn, và lúc ghi đòi rev chưa đổi: ai chen vào giữa thì lần ghi này
+   bị chặn, người dùng tải lại rồi thử lại (lúc đó kiểm tồn thấy đúng số mới). */
+const docRev = async (env) => { const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'").first(); return r ? Number(r.value) : 0; };
+const REV_DOI = "(SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'rev') <> ?";
+const VUA_DOI = 'Số liệu vừa thay đổi (có người vừa duyệt hoặc huỷ phiếu), hãy tải lại rồi thử lại';
 export async function duyetReceipt(env, user, id) {
   const day = vnDay();
   const r = await env.DB.prepare('SELECT * FROM receipts WHERE id = ?').bind(id).first();
@@ -208,14 +214,19 @@ export async function duyetReceipt(env, user, id) {
   const rows = (await env.DB.prepare('SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND voided = 0 AND duyet_day IS NULL')
     .bind(r.grp || '').all()).results;
   const list = r.grp && rows.length ? rows : [{ phi_id: r.phi_id, khu_id: r.khu_id, qty: r.qty }];
+  // khu vừa bị ẩn sau khi phiếu được lập: không đưa thép vào một khu không còn ai đếm
+  const an = (await env.DB.prepare('SELECT name FROM khu WHERE active = 0 AND id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(list.map((x) => x.khu_id))).all()).results;
+  if (an.length) throw bad(`Khu ${an.map((k) => k.name).join(', ')} đã ẩn: không duyệt được phiếu vào khu đó. Huỷ phiếu, hoặc hiện lại khu.`);
   // chuyển khu và điều chỉnh giảm đều RÚT thép khỏi một khu, nên cùng phải kiểm lại tồn lúc duyệt
-  const rk = r.kind || 'nhap';
-  await checkTransferStock(env, day, ['chuyen', 'dc', 'xuat', 'vay'].includes(rk) ? list : [], { kind: rk });
+  const rk = r.kind || 'nhap', rut = ['chuyen', 'dc', 'xuat', 'vay'].includes(rk), rev = rut ? await docRev(env) : 0;
+  await checkTransferStock(env, day, rut ? list : [], { kind: rk });
   const ts = Date.now();
   /* Còn chặn khi phiếu vừa được người khác duyệt hoặc huỷ giữa lúc đọc và lúc ghi: không thì hai người
      duyệt cùng lúc ghi hai dòng nhật ký, và dòng vừa bị huỷ vẫn bị đóng dấu duyệt. */
   const conCho = r.grp ? 'grp = ?' : 'id = ?';
-  await batchGuarded(env, guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL)`, day, r.grp || id), [
+  const gd = rut ? guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL) OR ${REV_DOI}`, day, r.grp || id, rev)
+    : guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL)`, day, r.grp || id);
+  await batchGuarded(env, gd, [
     r.grp
       ? env.DB.prepare('UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_day IS NULL')
         .bind(day, ts, user.id, user.name, r.grp)
@@ -229,7 +240,7 @@ export async function duyetReceipt(env, user, id) {
     bump(env),
   ], closedErr('Ngày hôm nay đã chốt, không duyệt được phiếu')).catch(async (e) => {
     if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
-    throw new HttpError(409, 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
+    throw new HttpError(409, rut ? VUA_DOI : 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
   });
   return json({ ok: true, duyet_day: day });
 }
@@ -411,6 +422,7 @@ export async function voidReceipt(env, user, id) {
   if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
   /* Huỷ phiếu ĐÃ DUYỆT là rút lại phần thép nó đã đưa vào: các dòng dương phải còn đủ thép ở khu đó, không thì
      huỷ phiếu nhập sau khi số thép ấy đã chuyển đi / xuất đi sẽ làm khu âm. Phiếu chờ duyệt chưa vào tồn nên khỏi kiểm. */
+  const kiemTon = !pending && rows.some((x) => x.qty > 0), rev = kiemTon ? await docRev(env) : 0;
   if (!pending) {
     /* So với tồn THỰC CÓ (không trừ phiếu rút đang chờ): phiếu rút chờ duyệt sẽ tự bị chặn lúc duyệt, nên huỷ phiếu nhập
        trước đó vẫn được — chỉ chặn khi thép ấy đã THẬT SỰ đi mất (phiếu chuyển / xuất đã duyệt). */
@@ -419,12 +431,13 @@ export async function voidReceipt(env, user, id) {
   }
   // còn chặn khi phiếu vừa bị người khác huỷ / duyệt giữa lúc đọc và lúc ghi
   const doiTT = `NOT EXISTS (SELECT 1 FROM receipts WHERE id = ? AND voided = 0 AND (duyet_day IS NULL) = ?)`;
-  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND} OR ${doiTT}`, dayOf, r.grp, 0, id, pending ? 1 : 0)
-    : guardStmt(env, `${IS_CLOSED} OR ${doiTT}`, dayOf, id, pending ? 1 : 0);
+  const revDk = kiemTon ? ` OR ${REV_DOI}` : '', revTs = kiemTon ? [rev] : [];
+  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND} OR ${doiTT}${revDk}`, dayOf, r.grp, 0, id, pending ? 1 : 0, ...revTs)
+    : guardStmt(env, `${IS_CLOSED} OR ${doiTT}${revDk}`, dayOf, id, pending ? 1 : 0, ...revTs);
   const coAm = async (e) => {
     if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(dayOf).first()) throw e;
     if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
-    throw new HttpError(409, 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
+    throw new HttpError(409, kiemTon ? VUA_DOI : 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
   };
   await batchGuarded(env, chan, [
     r.grp

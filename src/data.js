@@ -3,7 +3,7 @@ import { HttpError, bad, json, vnDay } from './core.js';
 import { RATE_SQL } from './db.js';
 import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js';
 import { J, KHU_X_PHI } from './counts.js';
-import { computeReview } from './review.js';
+import { computeReview, ngayChuaChot } from './review.js';
 import { firstAdminId } from './admin.js';
 import { taoBanSao } from './saoluu.js';
 
@@ -36,6 +36,10 @@ export async function resetData(req, env, user) {
     throw new HttpError(403, 'Chỉ admin đầu tiên (người thiết lập hệ thống) mới đặt lại số liệu thép');
   }
   const day = vnDay();
+  /* Sổ ngày trước CHƯA CHỐT (0h–0h05, hoặc lịch lỡ): đặt lại lúc này ghi một ngày chốt cho hôm nay, lịch chỉ chốt từ ngày sau
+     ngày chốt mới nhất nên ngày trước bị bỏ qua mãi — không tổng hợp, không chấm công, số chờ duyệt không được chuyển. */
+  const cho = await ngayChuaChot(env, day);
+  if (cho) throw new HttpError(409, `Sổ ngày ${cho.split('-').reverse().join('/')} chưa tự chốt xong (lịch chạy mỗi giờ, sau 0h05). Đợi chốt xong rồi đặt lại.`, 'cho_chot');
   const rv = await computeReview(env, day);
 
   /* Tổng thép đang có theo từng phi, tính TRƯỚC khi xoá, để ghi vào nhật ký. rv.rows[].cnt là số
@@ -227,6 +231,10 @@ export const BK_LOG_MAX = 20000;
 export const BK_LO_MAX = 400000;
 // sessions và login_fail cố ý bỏ: phiên đăng nhập và số lần nhập sai PIN không phải số liệu bãi
 
+// cột kèm kiểu khai báo: nạp lại kiểm kiểu từng giá trị (số ở cột INTEGER, ngày ở cột ngày) trước khi ghi
+const bkColInfo = async (env, t) => (await env.DB.prepare(`SELECT name, type FROM pragma_table_info('${t}')`).all()).results;
+const COT_NGAY = new Set(['day', 'ngay', 'duyet_day', 'han', 'ngay_dat']);
+const NGAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const bkCols = async (env, t) => {
   const { results } = await env.DB.prepare(`SELECT name FROM pragma_table_info('${t}')`).all();
   return results.map((r) => r.name);
@@ -307,7 +315,15 @@ export async function restoreData(req, env, user) {
     dem[t] = rows.length;
     stmts.push(env.DB.prepare(`DELETE FROM ${t}`));
     if (!rows.length) continue;
-    const cols = await bkCols(env, t);
+    const info = await bkColInfo(env, t), cols = info.map((c) => c.name);
+    /* Kiểu từng giá trị: SQLite nhận "abc" vào cột số mà không báo gì, rồi mọi phép cộng tồn sai lặng lẽ. Kiểm trước, sai thì
+       từ chối cả tệp (chưa nạp gì). */
+    for (const c of info) {
+      const so = /INT|REAL/i.test(c.type || ''), ngay = COT_NGAY.has(c.name);
+      if (!so && !ngay) continue;
+      const sai = rows.find((r) => r[c.name] != null && (so ? typeof r[c.name] !== 'number' && typeof r[c.name] !== 'boolean' : typeof r[c.name] !== 'string' || !NGAY_RE.test(r[c.name])));
+      if (sai) throw bad(`Bản sao có giá trị sai kiểu ở bảng ${t}, cột ${c.name} ("${String(sai[c.name]).slice(0, 30)}"). Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.`);
+    }
     // chỉ lấy cột mà bảng HIỆN TẠI có; cột lạ trong tệp thì bỏ, thiếu cột thì để mặc định
     const use = cols.filter((c) => rows.some((r) => r[c] !== undefined));
     if (!use.length) continue;
@@ -333,6 +349,22 @@ export async function restoreData(req, env, user) {
   /* Người làm của đơn gia công phải khớp với bảng đơn vừa nạp: bản sao cũ chưa có don_gc_nguoi thì mỗi đơn lấy người
      phụ trách của nó; dòng của đơn không còn trong bảng đơn thì bỏ. */
   stmts.push(env.DB.prepare('DELETE FROM don_gc_nguoi WHERE don_id NOT IN (SELECT id FROM don_gc)'));
+  /* Tệp của cấu trúc cũ: các bản nâng cấp 29 / 30 / 35 đã ĐIỀN số cho đơn gia công cũ lúc nâng cấp (xem src/db.js). Nạp tệp cũ
+     thì phải điền lại y như vậy — không thì đơn đã xong từ trước bản 35 thành "xong mà chưa xuất" và báo trễ mãi. */
+  const scTep = Number(f.schema);
+  if (scTep < 29) stmts.push(env.DB.prepare("UPDATE don_gc SET huy_ts = cap_ts, biet_ts = cap_ts WHERE tt = 'huy' AND huy_ts IS NULL"));
+  if (scTep < 30) stmts.push(env.DB.prepare('UPDATE don_gc SET lam_ts = cap_ts WHERE lam_ts IS NULL'), env.DB.prepare('UPDATE don_gc SET vuong_ts = cap_ts WHERE vuong IS NOT NULL AND vuong_ts IS NULL'));
+  if (scTep < 35) stmts.push(env.DB.prepare("UPDATE don_gc SET xuat_tt = 'duyet', xuat_ts = xong_ts, xuat_duyet_ts = xong_ts WHERE tt = 'xong' AND xuat_tt IS NULL"));
+  /* Bảng giữ nguyên (tệp cũ chưa có) có thể trỏ vào dòng của bảng vừa bị thay: ảnh của lần vay không còn, tin / nhật ký của đơn
+     gia công không còn, dòng phi của chuyến / đơn thép về không còn. Bỏ các dòng mồ côi đó. */
+  stmts.push(
+    env.DB.prepare("DELETE FROM anh_bb WHERE (loai = 'loan' AND entity_id NOT IN (SELECT id FROM loans)) OR (loai = 'satvun' AND entity_id NOT IN (SELECT id FROM satvun)) OR (loai = 'gc' AND entity_id NOT IN (SELECT id FROM don_gc))"),
+    env.DB.prepare('DELETE FROM don_gc_log WHERE don_id NOT IN (SELECT id FROM don_gc)'),
+    env.DB.prepare('DELETE FROM don_gc_tn WHERE don_id NOT IN (SELECT id FROM don_gc)'),
+    env.DB.prepare('DELETE FROM don_gc_doc WHERE don_id NOT IN (SELECT id FROM don_gc)'),
+    env.DB.prepare('DELETE FROM thep_ve_dong WHERE ve_id NOT IN (SELECT id FROM thep_ve)'),
+    env.DB.prepare('DELETE FROM thep_don_dong WHERE don_id NOT IN (SELECT id FROM thep_don)'),
+  );
   stmts.push(env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id, biet_ts) SELECT id, user_id, biet_ts FROM don_gc WHERE id NOT IN (SELECT don_id FROM don_gc_nguoi)'));
   // phiên của tài khoản không còn trong bảng vừa nạp phải bị thu hồi, không thì người đó còn vào được bằng phiên cũ
   stmts.push(env.DB.prepare('DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)'));
@@ -346,6 +378,8 @@ export async function restoreData(req, env, user) {
        gì bị thay — nhưng phải nói rõ vì sao, không để người đang cứu dữ liệu nhận một câu "lỗi máy chủ". */
     if (/Sat vun/.test(String((e && e.message) || ''))) throw bad('Bản sao có dòng sổ sắt vụn không hợp lệ (khối lượng không dương, thiếu ngày hoặc nơi nhận). Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.');
     if (/So vay/.test(String((e && e.message) || ''))) throw bad('Bản sao có dòng sổ vay mượn không hợp lệ (số lượng không dương, thiếu ngày giao nhận, hoặc đối tác không có trong tệp). Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.');
+    // ràng buộc khác của database (thiếu cột bắt buộc, trùng khoá, giá trị ngoài miền): nói rõ thay vì "Lỗi máy chủ"
+    if (/constraint|NOT NULL|UNIQUE|CHECK|datatype/i.test(String((e && e.message) || ''))) throw bad('Bản sao có dòng vi phạm ràng buộc dữ liệu (' + String(e.message).replace(/^.*?:\s*/, '').slice(0, 120) + '). Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.');
     throw e;
   }
   return json({ ok: true, dong: dem, giu });
