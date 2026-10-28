@@ -137,7 +137,7 @@ async function main() {
   const { readFileSync } = await import('node:fs');
   const vm = (await import('node:vm')).default;
   const path = (await import('node:path')).default;
-  let who = CV, chep = null;
+  let who = CV, chep = null, moc = null;
   const el = () => ({ value: '', dataset: {}, style: {}, click() {}, focus() {}, remove() {}, select() {}, setAttribute() {}, setSelectionRange() {}, querySelector: () => null, querySelectorAll: () => [], appendChild() {}, closest: () => null, set innerHTML(v) {}, get innerHTML() { return ''; } });
   const store = {};
   // bộ bắt sự kiện thật của app (input, click...) để phát sự kiện gõ như trên điện thoại; ô xem trước giữ một đối tượng cố định
@@ -153,6 +153,8 @@ async function main() {
     fetch: async (url, o = {}) => {
       if (!/^\/api\/(baocao|thepve|users|bootstrap|quanso)/.test(String(url))) return new Promise(() => {});
       const r = await S.call(o.method || 'GET', String(url).replace(/^\/api/, ''), o.body ? JSON.parse(o.body) : undefined, who);
+      // moc: chèn trễ / làm "mất mạng sau khi máy chủ đã ghi" cho từng lần gọi
+      if (moc && (await moc(String(url), o)) === 'mat') throw new TypeError('Failed to fetch');
       return { ok: r.status < 400, status: r.status, json: async () => r.data, headers: { get: () => null } };
     },
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },
@@ -289,6 +291,112 @@ async function main() {
   eq('sửa đơn: form điền sẵn các phi', R(`JSON.stringify([S.tvMo, S.tvSuaDon, tvDong('d').map((l) => l.phi), S.form.tdk_1])`), JSON.stringify(['don', dn2, ['D16', 'D20'], '5000']));
   ok('form sửa đơn: tiêu đề Sửa đơn, nút LƯU SỬA ĐƠN', R('vThepVe()').includes('Sửa đơn HP-SUA') && R('vThepVe()').includes('LƯU SỬA ĐƠN'));
   R(`ACTIONS.tvdong()`);
+
+  /* ===== Rà soát: số nguyên, tấn "0.500", tên NCC hoa / thường / NFD, tiến độ đơn theo phi, ngày mơ hồ, trang theo con trỏ, tham số sai,
+     ghi chen (đơn huỷ giữa chừng), khoá chống trùng theo nội dung, quên người trước, tải chồng, số dòng lỗi ===== */
+  // 1. bó / cây là số nguyên
+  for (const [nhan, l] of [['bó "2.5"', { bo: '2.5' }], ['bó JSON 2.5', { bo: 2.5 }], ['cây "1,5"', { cay: '1,5' }], ['bó "0.500"', { bo: '0.500' }], ['bó "1.25"', { bo: '1.25' }]]) {
+    const r = await chuyen({ lines: [{ phi: 'D16', ...l }] }, LAN);
+    eq('từ chối ' + nhan + ': 400 "phải là số nguyên"', [r.status, /phải là số nguyên/.test(r.data.error || '')], [400, true]);
+  }
+  const ng = await chuyen({ so_phieu: 'SN-1', lines: [{ phi: 'D16', bo: '1.250', cay: '2,000' }] }, LAN);
+  eq('bó "1.250" / cây "2,000" (đúng nhóm 3 chữ số) = 1250 / 2000', ng.status === 200 && S.sql('SELECT bo, cay FROM thep_ve_dong WHERE ve_id = ?', ng.data.id).map((x) => [x.bo, x.cay]), [[1250, 2000]]);
+  const nx = await S.call('POST', '/thepve/nhap', { thu: true, rows: [{ ngay: D, ncc: 'X', phi: 'D16', bo: '1.5' }] }, LAN);
+  eq('Excel bó "1.5": dòng lỗi, không thành 15', [nx.data.so_loi, /số nguyên/.test(((nx.data.loi || [])[0] || {}).loi)], [1, true]);
+  // 2. kg "0.500" không phải 500
+  const k05 = await chuyen({ so_phieu: 'K05', lines: [{ phi: 'D16', kg: '0.500' }, { phi: 'D18', kg: '0,500' }] }, LAN);
+  eq('kg "0.500" / "0,500" = 0,5 kg (làm tròn 1), không phải 500', S.sql('SELECT kg FROM thep_ve_dong WHERE ve_id = ? ORDER BY id', k05.data.id).map((x) => x.kg), [1, 1]);
+  // 3. tên NCC: hoa / thường có dấu, NFD, khoảng trắng — cùng một NCC
+  const soNcc = () => S.one('SELECT COUNT(*) n FROM thep_ncc').n;
+  const n0 = soNcc();
+  const h1 = await chuyen({ ncc: 'HÒA PHÁT', so_phieu: 'HOA-1' }, LAN), h2 = await chuyen({ ncc: '  hòa   phát '.normalize('NFD'), so_phieu: 'HOA-2' }, LAN);
+  eq('"HÒA PHÁT" / "hòa phát" dạng NFD: không thêm NCC, gắn vào Hòa Phát', [h1.status, h2.status, soNcc() - n0, S.one('SELECT n.name FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE v.id = ?', h2.data.id).name], [200, 200, 0, 'Hòa Phát']);
+  const h3 = await chuyen({ ncc: 'HÒA PHÁT', so_phieu: 'hoa 1' }, LAN);
+  eq('trùng số phiếu với NCC viết hoa: vẫn hỏi lại', [h3.status, h3.data.code], [409, 'trung_tv']);
+  eq('đơn của Việt Úc, ghi "VIỆT ÚC" dạng NFD: nhận', (await chuyen({ ncc: 'VIỆT ÚC'.normalize('NFD'), don_id: d1.data.id, so_phieu: 'VU-NFD', lines: [{ phi: 'D16', kg: 100 }] }, LAN)).status, 200);
+  eq('lập đơn trùng số đơn với NCC viết hoa: từ chối', (await don({ ncc: 'VIỆT ÚC' })).status, 400);
+  const nh3 = await S.call('POST', '/thepve/nhap', { rows: [{ ngay: D, ncc: 'HÒA PHÁT', so_phieu: 'HOA-X1', phi: 'D16', kg: '1000' }, { ngay: D, ncc: 'NCC Mới Ơi', so_phieu: 'M1', phi: 'D16', kg: '1000' }, { ngay: D, ncc: 'NCC MỚI ƠI', so_phieu: 'M1', phi: 'D18', kg: '1000' }] }, LAN);
+  eq('nhập Excel: "HÒA PHÁT" vào Hòa Phát; "NCC Mới Ơi" / "NCC MỚI ƠI" là một NCC mới, một chuyến', [nh3.status, nh3.data.chuyen, soNcc() - n0], [200, 2, 1]);
+  eq('nhập lại "hoa-x1" với "hòa phát": báo phiếu đã có', (await S.call('POST', '/thepve/nhap', { thu: true, rows: [{ ngay: D, ncc: 'hòa phát', so_phieu: 'hoa-x1', phi: 'D16', kg: '1' }] }, LAN)).data.so_loi, 1);
+  ok('tìm "ƠI" khớp NCC "NCC Mới Ơi" (không phân biệt hoa thường có dấu)', (await tim('ƠI')).ve.some((v) => v.so_phieu === 'M1'));
+  // 6, 7. trang theo con trỏ; tham số sai là 400
+  const ky = `tu=2000-01-01&den=${D}`;
+  const ca = (await S.call('GET', `/thepve?${ky}&so=300`, undefined, LAN)).data.ve;
+  const t1p = (await S.call('GET', `/thepve?${ky}&so=3`, undefined, LAN)).data.ve;
+  await S.call('POST', `/thepve/${t1p[0].id}/huy`, { ly_do: 'thử trang' }, LAN); // huỷ một chuyến của trang 1 giữa hai lần tải
+  const cu = t1p[t1p.length - 1], t2p = (await S.call('GET', `/thepve?${ky}&so=3&sau_ngay=${cu.ngay}&sau_id=${cu.id}`, undefined, LAN)).data.ve;
+  eq('trang 2 theo con trỏ: đúng 3 chuyến kế tiếp, không sót dù trang 1 vừa có chuyến bị huỷ', t2p.map((v) => v.id), ca.slice(3, 6).map((v) => v.id));
+  for (const q of ['so=2.5', 'bo_qua=1.5', 'so=1e400', 'bo_qua=-1', 'so=abc', 'sau_ngay=2026-13-01&sau_id=5', 'sau_ngay=' + D, 'sau_id=1.5&sau_ngay=' + D]) {
+    eq('tham số sai ?' + q + ': 400', (await S.call('GET', `/thepve?${q}`, undefined, LAN)).status, 400);
+  }
+  // 8. ghi chen: đơn bị huỷ giữa lúc kiểm và lúc ghi; chuyến gắn vào đơn giữa lúc kiểm và lúc huỷ đơn
+  const chen = async (khop, sql, goi) => {
+    const goc = S.env.DB.batch.bind(S.env.DB);
+    let xong = false;
+    S.env.DB.batch = async (st) => { if (!xong && st.some((x) => String(x.sql || x.query || '').includes(khop))) { xong = true; S.raw.exec(sql); } return goc(st); };
+    try { return await goi(); } finally { S.env.DB.batch = goc; }
+  };
+  const dC = (await don({ so_don: 'DH-CHEN' })).data.id;
+  const rC = await chen('INSERT INTO thep_ve (', `UPDATE thep_don SET tt = 'huy' WHERE id = ${dC}`, () => chuyen({ ncc: 'Việt Úc', don_id: dC, so_phieu: 'CHEN-1', lines: [{ phi: 'D16', kg: 100 }] }, LAN));
+  eq('đơn bị huỷ chen giữa: chuyến gắn đơn bị từ chối 409, không ghi', [rC.status, S.sql("SELECT 1 FROM thep_ve WHERE so_phieu = 'CHEN-1'").length], [409, 0]);
+  const dC2 = (await don({ so_don: 'DH-CHEN2' })).data.id, vC = (await chuyen({ ncc: 'Việt Úc', so_phieu: 'CHEN-2', lines: [{ phi: 'D16', kg: 100 }] }, LAN)).data.id;
+  const rH = await chen('UPDATE thep_don SET tt', `UPDATE thep_ve SET don_id = ${dC2} WHERE id = ${vC}`, () => S.call('POST', `/thepve/don/${dC2}/huy`, { ly_do: 'x' }, LAN));
+  eq('chuyến gắn vào đơn chen giữa: huỷ đơn bị từ chối 409, đơn vẫn mở', [rH.status, S.one('SELECT tt FROM thep_don WHERE id = ?', dC2).tt], [409, 'mo']);
+  const dC3 = (await don({ so_don: 'DH-CHEN3' })).data.id, vC3 = (await chuyen({ ncc: 'Việt Úc', so_phieu: 'CHEN-3', lines: [{ phi: 'D16', kg: 100 }] }, LAN)).data.id;
+  const rG = await chen('UPDATE thep_ve SET don_id', `UPDATE thep_don SET tt = 'huy' WHERE id = ${dC3}`, () => S.call('POST', `/thepve/${vC3}/don`, { don_id: dC3 }, LAN));
+  eq('đơn bị huỷ chen giữa: gắn chuyến vào đơn bị từ chối 409', [rG.status, S.one('SELECT don_id FROM thep_ve WHERE id = ?', vC3).don_id], [409, null]);
+
+  // giao diện
+  eq('tvSo cùng luật máy chủ: "2.5" / "1,5" / "0.500" là NaN, "1.250" / "1,250" = 1250, "12" = 12', R(`['2.5', '1,5', '0.500', '1.250', '1,250', '12', ''].map((x) => String(tvSo(x)))`), ['NaN', 'NaN', 'NaN', '1250', '1250', '12', 'null']);
+  eq('cột Tấn: "0.500" = 0,5 t; "12,5" = 12,5; "25,340" = 25,34; "1.234,5" = 1234,5; "1.234.567" = 1234567', R(`['0.500', '12,5', '25,340', '1.234,5', '1.234.567'].map(tvKgSo)`), [0.5, 12.5, 25.34, 1234.5, 1234567]);
+  eq('ô Kg phiếu "0.500" = 1 kg (không phải 500)', R(`tvKgPhieu('0.500')`), 1);
+  const dTien = R(`tvDonTien({ dong: [{ phi: 'D10', kg: 10000 }, { phi: 'D12', kg: 10000 }], da_ve: { D10: 15000, D12: 5000 } })`);
+  eq('tiến độ đơn theo phi: D10 dư không bù D12 thiếu (còn thiếu 5 t, 75%)', [dTien.con, dTien.pct, dTien.ve], [5000, 75, 20000]);
+  R(`S.tv.don.push({ id: 99999, ncc_id: S.tv.ncc[0].id, so_don: 'TRE-1', ngay_dat: '2000-01-01', han: '2000-02-01', tt: 'mo', dong: [{ phi: 'D10', kg: 10000 }, { phi: 'D12', kg: 10000 }], da_ve: { D10: 15000, D12: 5000 } }); S.tvTab = 'don'`);
+  ok('thẻ đơn: D10 dư mà D12 còn thiếu quá hạn là "Trễ hạn", 75%', /TRE-1[\s\S]*?Trễ hạn[\s\S]*?\(75%\)/.test(R('vThepVe()')));
+  R(`S.tv.don.pop(); S.tvTab = 've'`);
+  // 5. ngày mơ hồ
+  const mh = R(`tvDocDan(${JSON.stringify(['Ngày\tNCC\tPhi\tKg', `03/04/${nam}\tA\tD16\t1`, `05/06/${nam}\tA\tD16\t1`].join('\n'))})`);
+  eq('ngày mơ hồ (03/04, 05/06): báo mơ hồ, mặc định ngày/tháng', [mh.moHo, mh.kieuMy, mh.rows.map((r) => r.ngay)], [true, false, [nam + '-04-03', nam + '-06-05']]);
+  eq('... chọn tháng/ngày thì đọc lại', R(`tvDocDan(${JSON.stringify(['Ngày\tNCC\tPhi\tKg', `03/04/${nam}\tA\tD16\t1`].join('\n'))}, 'my').rows[0].ngay`), nam + '-03-04');
+  eq('ngày cùng số (04/04) hoặc có ô > 12: không mơ hồ', [R(`tvDocDan('Ngày\\tNCC\\tPhi\\n04/04/${nam}\\tA\\tD16').moHo`), R(`tvDocDan('Ngày\\tNCC\\tPhi\\n03/04/${nam}\\tA\\tD16\\n25/04/${nam}\\tA\\tD16').moHo`)], [false, false]);
+  // 11. số dòng lỗi theo dòng thật của bảng dán (có dòng trống)
+  R(`S.tvTab = 'nhap'; S.form.tvdan = ${JSON.stringify(['Ngày\tNCC\tPhi\tKg', '', `03/04/${nam}\tA\tD16\t1`, '', '', `03/04/${nam}\tA\tD77\t1`].join('\n'))}`);
+  R(`ACTIONS.tvnhap({ v: 'thu' })`); await cho();
+  const vN = R('vThepVe()');
+  ok('dòng lỗi báo đúng dòng thật trong bảng dán (Dòng 6, không phải Dòng 3)', vN.includes('Dòng 6:') && !vN.includes('Dòng 3:'), vN.match(/Dòng \d+:/g));
+  ok('ngày mơ hồ: màn nhập hiện cảnh báo + nút chọn kiểu ngày', vN.includes('data-a="tvkieungay"') && vN.includes('Tháng/ngày (mm/dd)'));
+  R(`ACTIONS.tvkieungay({ v: 'my' })`); await cho();
+  eq('bấm Tháng/ngày: kiểm tra lại theo tháng/ngày', [R('S.tvKieuMy'), R('S.tvNhapKq.tu')], [true, nam + '-03-04']);
+  // 9. khoá chống trùng theo nội dung: lần lưu mất mạng (máy chủ đã ghi), sửa thành chuyến khác rồi lưu -> phải ghi chuyến mới
+  R(`S.tvTab = 've'; ACTIONS.tvmo({ v: 've' }); S.form.tvf_ncc = 'Pomina'; S.form.tvf_sp = 'KHOA-A'; S.form.tvp_0 = 'D16'; S.form.tvk_0 = '1000'`);
+  moc = async (u, o) => (o.method === 'POST' && /\/api\/thepve$/.test(u) ? 'mat' : null);
+  R(`ACTIONS.tvluu()`); await cho(); moc = null;
+  eq('lần lưu mất mạng: máy chủ đã ghi KHOA-A, form còn mở', [S.sql("SELECT 1 FROM thep_ve WHERE so_phieu = 'KHOA-A'").length, R('S.tvMo')], [1, 've']);
+  R(`S.form.tvf_sp = 'KHOA-B'; S.form.tvk_0 = '2000'; ACTIONS.tvluu()`); await cho();
+  eq('sửa thành chuyến khác rồi lưu: ghi thật KHOA-B (không bị coi là gửi lại)', S.sql("SELECT 1 FROM thep_ve WHERE so_phieu = 'KHOA-B'").length, 1);
+  R(`ACTIONS.tvmo({ v: 've' }); S.form.tvf_ncc = 'Pomina'; S.form.tvf_sp = 'KHOA-C'; S.form.tvp_0 = 'D16'; S.form.tvk_0 = '1000'`);
+  moc = async (u, o) => (o.method === 'POST' && /\/api\/thepve$/.test(u) ? 'mat' : null);
+  R(`ACTIONS.tvluu()`); await cho(); moc = null;
+  R(`ACTIONS.tvluu()`); await cho();
+  eq('bấm lưu lại ĐÚNG nội dung sau khi mất mạng: không ghi hai lần', S.sql("SELECT 1 FROM thep_ve WHERE so_phieu = 'KHOA-C'").length, 1);
+  R(`ACTIONS.tvmo({ v: 've' }); S.form.tvp_0 = 'D16'; S.form.tvb_0 = '2.5'`);
+  ok('form: bó "2.5" hiện lỗi số nguyên, không tự tính', R('vThepVe()').includes('phải là số nguyên') && R('tvDong("v")[0].kg_tinh') === null);
+  R(`ACTIONS.tvdong()`);
+  // 10. hai lần tải chồng nhau: lần về sau (gửi trước) không đè
+  let mo1;
+  moc = async (u) => { if (u.includes('tu=2000-01-01')) await new Promise((r) => { mo1 = r; }); return null; };
+  R(`S.tvTim = ''; S.tvKy = { tu: '2000-01-01', den: '${D}' }; globalThis.__p1 = tvTai(); S.tvKy = { tu: '${nam}-01-01', den: '${D}' }; globalThis.__p2 = tvTai()`);
+  await R('__p2'); for (let k = 0; k < 200 && !mo1; k++) await new Promise((r) => setImmediate(r));
+  if (mo1) mo1(); await R('__p1'); moc = null;
+  eq('tải chồng: kỳ mới nhất thắng (lần cũ về sau không đè)', R('S.tv.tu'), nam + '-01-01');
+  // 9. quên người trước + không có quyền ghi thì không vẽ tab Nhập
+  R(`S.tvTab = 'nhap'; S.tvNhapKq = { thu: true, dong: 1, chuyen: 1, ncc: 1, kg: 1 }; S.tvKhoa = { dau: 'x', k: 'abc' }; S.form.tvdan = 'bí mật'; quenNguoiTruoc()`);
+  eq('quenNguoiTruoc: bỏ kết quả nhập, khoá, tab, bảng dán của người trước', R(`JSON.stringify([S.tv, S.tvTab, S.tvNhapKq, S.tvKhoa, S.form.tvdan || null])`), JSON.stringify([null, null, null, null, null]));
+  who = CV;
+  R(`S.me = ${JSON.stringify({ id: U[CV], name: CV, role: 'cvktht' })}; S.tvTab = 'nhap'`);
+  R(`ACTIONS.nav({ s: 'thepve' })`); await cho();
+  ok('người chỉ xem mà S.tvTab còn "nhap": không vẽ màn Nhập Excel', !R('vThepVe()').includes('Nhập số liệu cũ từ Excel') && R('vThepVe()').includes('Chuyến về'));
 
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));

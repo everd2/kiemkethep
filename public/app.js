@@ -232,6 +232,7 @@ function xoaPhien() {
     review: null, users: null, pinShown: null, loans: null, loanDetail: null, svs: null, audit: null, usage: null, cmp: null, subs: {},
     ask: null, gcXu: null, gcVg: null, sel: null });
   ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = []; S.anhXem = null;
+  tvQuen();
 }
 async function api(method, path, body, choMs, kem) {
   const uid = S.me ? S.me.id : 0;
@@ -4487,20 +4488,44 @@ const tvTan = (kg) => fmtDec(Math.round(kg / 10) / 100) + ' tấn';
 const tvKgTxt = (kg) => (kg == null ? '—' : fmtInt(kg) + ' kg');
 const tvKy = () => { const n = S.boot.today; return S.tvKy || { tu: n.slice(0, 4) + '-01-01', den: n }; };
 const tvQ = () => String(S.tvTim || '').trim();
+/* Hai lần tải chồng nhau (đổi kỳ / tìm khi lần trước chưa về): lần về SAU mà là lần gửi TRƯỚC thì mang số của kỳ / ô tìm cũ, không
+   được đè lên. Đánh số từng lần như loadBoot (bootSo), chỉ lần mới nhất được ghi vào S.tv. */
+let tvSoTai = 0;
+/* Quên sổ thép về của người trước (đăng xuất / hết phiên / người khác đăng nhập trên máy dùng chung): kết quả nhập Excel, bảng đã dán,
+   khoá chống trùng, kỳ / ô tìm, form đang gõ — người sau không được thấy, cũng không thừa hưởng. Lần tải đang bay cũng bỏ. */
+function tvQuen() {
+  tvSoTai++;
+  Object.assign(S, { tv: null, tvTab: null, tvMo: null, tvNhapKq: null, tvKhoa: null, tvKy: null, tvTim: '', tvSuaDon: null, tvKieuMy: false, tvNgayChon: null,
+    tvGan: null, tvDonHien: null, tvSoDong: 1, tvSoHien: null });
+  if (S.form) Object.keys(S.form).filter((k) => /^t[vd]/.test(k)).forEach((k) => delete S.form[k]);
+}
 async function tvTai() {
-  const k = tvKy(), khoa = 'tv:' + k.tu + ':' + k.den + (tvQ() ? ':' + tvQ() : '');
+  const so = ++tvSoTai, k = tvKy(), khoa = 'tv:' + k.tu + ':' + k.den + (tvQ() ? ':' + tvQ() : '');
   const cu = layNho(khoa);
   if (cu && !S.tv) { S.tv = cu; render(); }
   const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}${tvQ() ? '&q=' + encodeURIComponent(tvQ()) : ''}`);
   datNho(khoa, d);
+  if (so !== tvSoTai) return;
   S.tv = d;
 }
 // tính lại kg tự tính của một dòng đang gõ (cùng công thức với máy chủ)
-const tvKgTinh = (phi, bo, cay) => { const p = S.boot.phiBy[phi] || (S.tv && S.tv.phi.find((x) => x.id === phi)); if (!p || (!bo && !cay)) return null; return Math.round(((bo || 0) * p.bo_size + (cay || 0)) * p.kg_per_cay); };
-const tvSo = (v) => { const t = String(v == null ? '' : v).trim().replace(/[\s.]/g, ''); return t === '' ? null : Number(t.replace(',', '.')); };
-// kg gõ trong ô "Kg phiếu": cùng luật với máy chủ (kgOr ở src/thepve.js) — "25.340" và "25,340" (Excel kiểu Mỹ) đều là 25340 kg
-const tvKgPhieu = (v) => { let t = String(v == null ? '' : v).trim().replace(/\s/g, ''); if (t === '') return null; if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, ''); else t = t.replace(',', '.'); const n = Number(t); return Number.isFinite(n) ? Math.round(n) : NaN; };
-const tvKgSo = (v) => { let t = String(v == null ? '' : v).trim().replace(/\s/g, ''); if (t === '') return null; if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(',', '.'); return Number(t); };
+const tvKgTinh = (phi, bo, cay) => { const p = S.boot.phiBy[phi] || (S.tv && S.tv.phi.find((x) => x.id === phi)); if (!p || (!bo && !cay) || Number.isNaN(bo) || Number.isNaN(cay)) return null; return Math.round(((bo || 0) * p.bo_size + (cay || 0)) * p.kg_per_cay); };
+/* số bó / số cây: SỐ NGUYÊN, cùng luật với máy chủ (soNguyen ở src/thepve.js) — dấu ngăn nghìn chỉ khi đúng nhóm 3 chữ số ("1.250",
+   "1,250" = 1250); "2.5", "1,5", "0.500" là NaN (báo "phải là số nguyên"), không còn xoá dấu chấm thành 25. */
+const tvSo = (v) => { let t = String(v == null ? '' : v).trim().replace(/\s/g, ''); if (t === '') return null; if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(t) || /^[1-9]\d{0,2}(,\d{3})+$/.test(t)) t = t.replace(/[.,]/g, ''); return /^\d{1,9}$/.test(t) ? Number(t) : NaN; };
+// kg gõ trong ô "Kg phiếu": cùng luật với máy chủ (kgOr ở src/thepve.js) — "25.340" và "25,340" (Excel kiểu Mỹ) đều là 25340 kg; "0.500" là 0,5
+const tvKgPhieu = (v) => { let t = String(v == null ? '' : v).trim().replace(/\s/g, ''); if (t === '') return null; if (/^[1-9]\d{0,2}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else if (/^[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, ''); else t = t.replace(',', '.'); const n = Number(t); return Number.isFinite(n) ? Math.round(n) : NaN; };
+/* cột TẤN của bảng dán: một dòng tối đa 500 tấn nên "1.234" tấn (nghìn tấn) không có thật — một dấu (chấm HAY phẩy) là dấu THẬP PHÂN
+   ("0.500" = 0,5 t, "25,34" = 25,34 t; trước đây "0.500" bị đọc thành 500 t). Có cả hai dấu thì dấu đứng sau là thập phân ("1.234,5");
+   nhiều dấu cùng loại ("1.234.567") mới là ngăn nghìn. */
+const tvKgSo = (v) => {
+  let t = String(v == null ? '' : v).trim().replace(/\s/g, ''); if (t === '') return null;
+  const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+  if (c >= 0 && d >= 0) t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if ((t.match(/[.,]/g) || []).length > 1) t = t.replace(/[.,]/g, '');
+  else t = t.replace(',', '.');
+  return /^\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+};
 // các dòng phi đang gõ trong form (k = 'v' chuyến về, 'd' đơn hàng)
 function tvDong(k) {
   const n = S.tvSoDong || 1, out = [];
@@ -4517,7 +4542,7 @@ function tvDongHtml(k) {
   const hang = tvDong(k).map((l) => {
     const chenh = l.kg != null && Number.isFinite(l.kg) && l.kg_tinh != null ? l.kg - l.kg_tinh : null;
     const dl = don && l.phi ? don.dong.find((x) => x.phi === l.phi) : null, con = dl ? Math.max(0, (dl.kg || 0) - (don.da_ve[l.phi] || 0)) : null;
-    const goi = [l.kg_tinh != null ? `tự tính <b>${fmtInt(l.kg_tinh)} kg</b>` : '', chenh != null ? `chênh <b style="color:var(--${Math.abs(chenh) > Math.max(50, (l.kg_tinh || 0) * 0.03) ? 'bad' : 'ok'})">${chenh > 0 ? '+' : ''}${fmtInt(chenh)} kg</b>` : '',
+    const goi = [Number.isNaN(l.bo) || Number.isNaN(l.cay) ? `<b style="color:var(--bad)">Số ${Number.isNaN(l.bo) ? 'bó' : 'cây'} phải là số nguyên</b>` : '', l.kg_tinh != null ? `tự tính <b>${fmtInt(l.kg_tinh)} kg</b>` : '', chenh != null ? `chênh <b style="color:var(--${Math.abs(chenh) > Math.max(50, (l.kg_tinh || 0) * 0.03) ? 'bad' : 'ok'})">${chenh > 0 ? '+' : ''}${fmtInt(chenh)} kg</b>` : '',
       con != null ? `đơn còn thiếu <b>${tvT(con)} t</b>` : (don && l.phi ? '<span style="color:var(--warn)">phi ngoài đơn</span>' : '')].filter(Boolean).join(' · ');
     return `<div class="row gap6" style="display:grid;grid-template-columns:84px 1fr 1fr 1.5fr;gap:6px">
         <select class="inp s" style="width:100%;min-width:0;padding:0 4px" id="t${k}p_${l.i}" data-model="t${k}p_${l.i}" data-change="tvphi"><option value="">Phi</option>${phis.map((p) => `<option value="${p}" ${l.phi === p ? 'selected' : ''}>${p}</option>`).join('')}</select>
@@ -4539,11 +4564,19 @@ function tvApDon(id) {
   S.tvSoDong = Math.max(1, d.dong.length);
   d.dong.forEach((l, i) => { S.form['tvp_' + i] = l.phi; });
 }
+/* Tiến độ một đơn TÍNH THEO TỪNG PHI: D10 về dư không bù được D12 còn thiếu. Còn thiếu = cộng các phi đặt max(0, đặt − đã về của phi
+   đó); % = đã về (mỗi phi tính tối đa bằng số đặt) / tổng đặt; về phi ngoài đơn không tính vào %. ve = tổng thật đã về (mọi phi). */
+function tvDonTien(d) {
+  let dat = 0, du = 0, con = 0;
+  for (const l of d.dong) { const a = l.kg || 0, v = d.da_ve[l.phi] || 0; dat += a; du += Math.min(a, v); con += Math.max(0, a - v); }
+  const ve = Object.values(d.da_ve).reduce((a, x) => a + x, 0);
+  return { dat, ve, con, pct: dat ? Math.floor((du / dat) * 100) : 0 };
+}
 function tvFormVe() {
   const T = S.tv, ncc = String(S.form.tvf_ncc || '').trim().toLowerCase();
   const donMo = T.don.filter((d) => d.tt === 'mo' && (!ncc || String(d.id) === String(S.form.tvf_don || '') || (T.ncc.find((n) => n.id === d.ncc_id) || {}).name.toLowerCase() === ncc));
   const tong = tvDong('v').reduce((a, l) => a + (l.kg != null ? l.kg : l.kg_tinh || 0), 0);
-  const conThieu = (d) => { const dat = d.dong.reduce((a, l) => a + (l.kg || 0), 0), ve = Object.values(d.da_ve).reduce((a, x) => a + x, 0); return Math.max(0, dat - ve); };
+  const conThieu = (d) => tvDonTien(d).con;
   return `<div class="card col gap8" style="border:2px solid var(--pri)"><b>Ghi chuyến thép về</b>
     <label class="col sm">Theo đơn hàng (chọn đơn là tự điền nhà cung cấp và các phi)<select class="inp s" style="width:100%" id="tvf_don" data-model="tvf_don" data-change="tvdon"><option value="">— Không theo đơn nào —</option>${donMo.map((d) => `<option value="${d.id}" ${String(S.form.tvf_don || '') === String(d.id) ? 'selected' : ''}>${esc(d.so_don)} · ${esc((T.ncc.find((n) => n.id === d.ncc_id) || {}).name || '')} · còn thiếu ${tvT(conThieu(d))} t</option>`).join('')}</select></label>
     <div class="row gap6"><label class="col f1 sm" style="min-width:0">Ngày về<input type="date" class="inp s" id="tvf_ngay" max="${S.boot.today}" data-model="tvf_ngay" value="${esc(fv('tvf_ngay', S.boot.today))}"></label>
@@ -4580,8 +4613,11 @@ function tvThongKe() {
 const tvCotTen = { ngay: ['ngay', 'ngay ve', 'ngay nhap', 'date'], ncc: ['ncc', 'nha cung cap', 'nha cc', 'don vi cung cap', 'nha cung ung', 'nha san xuat'], so_don: ['so don', 'don hang', 'so don hang', 'ma don', 'po'],
   so_phieu: ['so phieu', 'phieu', 'so phieu giao', 'so phieu can', 'phieu giao', 'phieu can'], bien_so: ['bien so', 'xe', 'bien so xe', 'so xe'], phi: ['phi', 'loai', 'duong kinh', 'loai thep', 'chung loai', 'thep'],
   bo: ['bo', 'so bo', 'so luong bo', 'sl bo'], cay: ['cay', 'so cay', 'so luong cay', 'sl cay'], kg: ['kg', 'so luong', 'so luong kg', 'sl kg', 'kg thuc te', 'khoi luong thuc te', 'khoi luong', 'trong luong', 'kg theo phieu', 'khoi luong kg', 'trong luong kg', 'kl'], tan: ['tan', 'khoi luong tan', 'trong luong tan'], ghi_chu: ['ghi chu', 'note'] };
-function tvDocDan(text) {
-  const dong = String(text || '').replace(/\r/g, '').split('\n').filter((l) => l.trim());
+/* chon: người dùng đã chọn kiểu ngày cho cột KHÔNG tự đoán được ('my' tháng/ngày, 'vn' ngày/tháng; mặc định ngày/tháng).
+   Trả thêm dongGoc[i] = số dòng THẬT trong bảng dán (dòng tiêu đề là 1) của rows[i]: dòng trống bị bỏ không làm lệch số dòng báo lỗi. */
+function tvDocDan(text, chon) {
+  const tat = String(text || '').replace(/\r/g, '').split('\n'), soGoc = [];
+  const dong = tat.filter((l, i) => l.trim() && soGoc.push(i + 1));
   if (dong.length < 2) return { rows: [], cot: {}, loi: 'Dán cả dòng tiêu đề và ít nhất một dòng số liệu.' };
   const tach = (l) => (l.includes('\t') ? l.split('\t') : l.split(';'));
   const tieuDe = tach(dong[0]).map((h) => gcKhongDau(h).replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim());
@@ -4593,7 +4629,11 @@ function tvDocDan(text) {
   const RE_DMY = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/;
   const cotNgay = dong.slice(1).map((l) => String(tach(l)[cot.ngay] || '').trim()).map((t) => RE_DMY.exec(t)).filter(Boolean);
   // Excel cài kiểu Mỹ ghi tháng/ngày: có ô mà số thứ HAI > 12 (không thể là tháng) và không ô nào số thứ nhất > 12 -> cả cột là m/d/y
-  const kieuMy = cotNgay.some((m) => Number(m[2]) > 12) && !cotNgay.some((m) => Number(m[1]) > 12);
+  const coMy = cotNgay.some((m) => Number(m[2]) > 12), coVn = cotNgay.some((m) => Number(m[1]) > 12);
+  /* KHÔNG ô nào tự phân định mà có ngày hai số đều ≤ 12 và khác nhau (03/04: 3 tháng 4 hay 4 tháng 3?): không đoán im lặng — báo mơ hồ để
+     màn nhập hỏi lại, mặc định ngày/tháng, người dùng bấm đổi sang tháng/ngày thì đọc lại theo chon. */
+  const moHo = !coMy && !coVn && cotNgay.some((m) => Number(m[1]) !== Number(m[2]) && Number(m[1]) <= 12 && Number(m[2]) <= 12);
+  const kieuMy = coMy && !coVn ? true : moHo ? chon === 'my' : false;
   const ngayCua = (v) => {
     const t = String(v || '').trim();
     let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
@@ -4608,7 +4648,7 @@ function tvDocDan(text) {
     if (!kg && g('tan')) { const t = tvKgSo(g('tan')); kg = Number.isFinite(t) ? String(Math.round(t * 1000)) : g('tan'); }
     return { ngay: ngayCua(g('ngay')), ncc: g('ncc'), so_don: g('so_don'), so_phieu: g('so_phieu'), bien_so: g('bien_so'), phi: phiCua(g('phi')), bo: g('bo'), cay: g('cay'), kg, ghi_chu: g('ghi_chu') };
   });
-  return { rows, cot, loi: '', kieuMy };
+  return { rows, cot, loi: '', kieuMy, moHo, dongGoc: soGoc.slice(1) };
 }
 /* ---- TRÌNH BÀY DẠNG BẢNG (sổ thép về) ----
    Bảng chuyến về: mỗi HÀNG một phi; các cột của chuyến (ngày, nhà cung cấp, phiếu, đơn) gộp ô dọc theo số phi của chuyến, để đọc một
@@ -4654,8 +4694,8 @@ function tvBangDon(ds) {
   const ghi = tvGhiDuoc();
   return ds.map((d) => {
     const phis = [...d.dong.map((l) => l.phi), ...Object.keys(d.da_ve).filter((p) => !d.dong.some((l) => l.phi === p))];
-    const dat = d.dong.reduce((a, l) => a + (l.kg || 0), 0), ve = Object.values(d.da_ve).reduce((a, x) => a + x, 0), pct = dat ? Math.round((ve / dat) * 100) : 0;
-    const tre = d.tt === 'mo' && d.han && d.han < S.boot.today && ve < dat;
+    const { dat, ve, con: conT, pct } = tvDonTien(d);
+    const tre = d.tt === 'mo' && d.han && d.han < S.boot.today && conT > 0; // còn phi nào thiếu quá hạn là trễ, dù phi khác về dư
     const tt = { mo: tre ? 'Trễ hạn' : 'Đang giao', xong: 'Đã đóng', huy: 'Đã huỷ' }[d.tt];
     const hang = phis.map((p) => {
       const l = d.dong.find((x) => x.phi === p), datP = l ? l.kg || 0 : 0, veP = d.da_ve[p] || 0, con = datP - veP;
@@ -4667,7 +4707,7 @@ function tvBangDon(ds) {
       : d.tt === 'xong' ? `<button class="btn s full" data-a="tvdonviec" data-id="${d.id}" data-v="molai">Mở lại đơn</button>` : '';
     return `<div class="card col gap6" style="padding:10px 12px;${d.tt === 'huy' ? 'opacity:.6' : ''}">
       <div class="row gap8"><b class="f1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.so_don)} · ${esc(tvNcc(d.ncc_id))}</b><span class="badge ${tre ? 'bad' : d.tt === 'mo' ? 'warn' : ''}" style="flex:none">${tt}</span></div>
-      <span class="sm muted">Đặt ${fmtDay(d.ngay_dat)}${d.han ? ' · hạn ' + fmtDay(d.han) : ''} · về <b>${tvT(ve)}</b> / ${tvT(dat)} tấn (${pct}%)</span>
+      <span class="sm muted">Đặt ${fmtDay(d.ngay_dat)}${d.han ? ' · hạn ' + fmtDay(d.han) : ''} · về <b>${tvT(ve)}</b> / ${tvT(dat)} tấn (${pct}%)${conT > 0 ? ` · còn thiếu <b>${tvT(conT)}</b> t` : ''}</span>
       <div style="height:8px;border-radius:4px;background:var(--line)"><div style="height:8px;border-radius:4px;background:var(--${tre ? 'bad' : pct >= 100 ? 'ok' : 'pri'});width:${Math.min(100, Math.max(2, pct))}%"></div></div>
       <table class="bang nho"><thead><tr><th>Phi</th><th class="so">Đặt (tấn)</th><th class="so">Đã về</th><th class="so">Còn thiếu</th></tr></thead><tbody>${hang}</tbody></table>
       ${nut}</div>`;
@@ -4694,7 +4734,7 @@ function tvBangCheo() {
 function vThepVe() {
   const T = S.tv, top = head('Thép về công trình', T ? fmtDay(T.tu) + ' – ' + fmtDay(T.den) : '', 'more');
   if (!T) return `${top}${panelWait('thepve')}`;
-  const tab = S.tvTab || 've', ghi = tvGhiDuoc();
+  const ghi = tvGhiDuoc(), tab = S.tvTab === 'nhap' && !ghi ? 've' : S.tvTab || 've'; // không có quyền ghi thì không vẽ tab Nhập Excel
   const tabs = [['ve', 'Chuyến về'], ['don', 'Đơn hàng'], ['tk', 'Thống kê'], ...(ghi ? [['nhap', 'Nhập Excel']] : [])];
   const k = tvKy(), n = S.boot.today;
   const kyChip = (tu, den, ten) => `<button class="chip s f1 ${k.tu === tu && k.den === den ? 'on' : ''}" style="min-width:0;padding:6px 2px;font-size:14px;white-space:nowrap" data-a="tvky" data-tu="${tu}" data-den="${den}">${ten}</button>`;
@@ -4730,8 +4770,10 @@ function vThepVe() {
       + (N ? `<div class="card col gap6 ${N.so_loi ? 'warn' : ''}"><b>${N.so_loi ? `${N.so_loi} dòng lỗi — sửa trong Excel rồi dán lại` : N.thu ? 'Kiểm tra xong, chưa ghi' : 'Đã nhập xong'}</b>
           <span class="sm">${N.dong} dòng → ${N.chuyen} chuyến · ${N.ncc} nhà cung cấp · ${tvTan(N.kg || 0)}${N.gan_don ? ` · ${N.gan_don} chuyến gắn vào đơn đã lập` : ''}</span>
           ${N.tu ? `<span class="sm">Ngày về đọc được: <b>${fmtDay(N.tu)} → ${fmtDay(N.den)}</b>${S.tvKieuMy ? ' (cột ngày theo kiểu tháng/ngày của Excel tiếng Anh)' : ''} — soát lại cho đúng.</span>` : ''}
+          ${N.moHo ? `<div class="col gap6" style="border:2px solid var(--warn);border-radius:8px;padding:8px"><span class="sm b" style="color:var(--warn)">Cột ngày không tự biết được là ngày/tháng hay tháng/ngày (ví dụ 03/04 là 3 tháng 4 hay 4 tháng 3?). Chọn đúng kiểu của file rồi mới nhập:</span>
+            <div class="row gap6"><button class="chip s f1 ${S.tvKieuMy ? '' : 'on'}" data-a="tvkieungay" data-v="vn">Ngày/tháng (dd/mm)</button><button class="chip s f1 ${S.tvKieuMy ? 'on' : ''}" data-a="tvkieungay" data-v="my">Tháng/ngày (mm/dd)</button></div></div>` : ''}
           ${N.so_canh ? `<span class="sm b" style="color:var(--warn)">${N.so_canh} dòng chỉ có kg mà dưới 100 kg — cột khối lượng có phải đang ghi TẤN? Nếu đúng là tấn, đổi tên cột thành "Tấn" rồi dán lại.</span>${N.canh.slice(0, 5).map((x) => `<span class="sm muted">${fmtDay(x.ngay)} · ${esc(x.ncc)} · ${esc(x.phi)}: ${x.kg} kg</span>`).join('')}` : ''}
-          ${(N.loi || []).slice(0, 30).map((x) => `<span class="sm" style="color:var(--bad)">Dòng ${x.dong + 1}: ${esc(x.loi)}</span>`).join('')}${(N.loi || []).length > 30 ? '<span class="sm muted">…</span>' : ''}</div>` : '')
+          ${(N.loi || []).slice(0, 30).map((x) => `<span class="sm" style="color:var(--bad)">Dòng ${(N.dongGoc && N.dongGoc[x.dong - 1]) || x.dong + 1}: ${esc(x.loi)}</span>`).join('')}${(N.loi || []).length > 30 ? '<span class="sm muted">…</span>' : ''}</div>` : '')
       + ((T.lo_nhap || []).length ? `<div class="card col gap6"><b>Các lần nhập gần đây (7 ngày)</b><span class="sm muted">Nhập nhầm (sai kỳ, sai đơn vị, dán trùng) thì huỷ cả lần nhập một lượt.</span>
           ${T.lo_nhap.map((x) => `<div class="row gap8" style="border-top:1px solid var(--line);padding-top:6px"><span class="f1 sm" style="min-width:0">${dmy(x.ts)} · ${esc(x.uname)}<br><b>${x.chuyen} chuyến</b> · ngày về ${fmtDay(x.tu)} → ${fmtDay(x.den)}</span>
             <button class="btn s bad" style="flex:none" data-a="tvnhaphuy" data-v="${esc(x.lo)}" data-n="${x.chuyen}">Huỷ cả lần</button></div>`).join('')}</div>` : '');
@@ -5867,6 +5909,7 @@ function quenNguoiTruoc() {
   Object.assign(S.loan, { lines: [], bb: false, zl: false, done: null });
   S.sv.done = null;
   ['loan', 'satvun', 'gc'].forEach(anhChoBo); S.anhLoi = []; S.anhXem = null;
+  tvQuen();
 }
 
 const ACTIONS = {
@@ -7152,7 +7195,9 @@ const ACTIONS = {
     if (!T || S.busy) return;
     S.busy = true; S.busyMsg = 'Đang tải thêm...'; render();
     try {
-      const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}&bo_qua=${T.ve.length}&so=200${tvQ() ? '&q=' + encodeURIComponent(tvQ()) : ''}`);
+      // con trỏ = chuyến cuối đã có (không gửi số đã có làm OFFSET: có chuyến huỷ / ghi ngày cũ chen giữa thì sót chuyến)
+      const c = T.ve[T.ve.length - 1], tro = c ? `&sau_ngay=${c.ngay}&sau_id=${c.id}` : '';
+      const d = await api('GET', `/thepve?tu=${k.tu}&den=${k.den}${tro}&so=200${tvQ() ? '&q=' + encodeURIComponent(tvQ()) : ''}`);
       if (S.tv === T) { T.ve = T.ve.concat(d.ve.filter((v) => !T.ve.some((x) => x.id === v.id))); T.trang = d.trang; }
     } catch (e) { say(e.message, true); }
     finally { S.busy = false; S.busyMsg = ''; }
@@ -7193,7 +7238,7 @@ const ACTIONS = {
       say(`Đã huỷ ${r.chuyen} chuyến của lần nhập.`);
     });
   },
-  tvmo(d) { S.tvMo = d.v; S.tvSoDong = 1; S.tvSuaDon = null; Object.keys(S.form).filter((k) => /^(t[vd][pbck]_|tvf_|tdf_)/.test(k)).forEach((k) => delete S.form[k]); render(); },
+  tvmo(d) { S.tvMo = d.v; S.tvSoDong = 1; S.tvSuaDon = null; S.tvKhoa = null; Object.keys(S.form).filter((k) => /^(t[vd][pbck]_|tvf_|tdf_)/.test(k)).forEach((k) => delete S.form[k]); render(); },
   tvdong() { S.tvMo = null; S.tvSuaDon = null; render(); },
   // từ thẻ đơn hàng: mở form ghi chuyến, điền sẵn đơn, nhà cung cấp và các phi của đơn
   tvghidon(d) { S.tvTab = 've'; ACTIONS.tvmo({ v: 've' }); tvApDon(d.id); render(); const b = typeof document !== 'undefined' && document.getElementById('body'); if (b) b.scrollTop = 0; },
@@ -7203,9 +7248,17 @@ const ACTIONS = {
     if (!lines.length) return say('Chưa có phi nào trong chuyến.', true), render();
     const sai = lines.find((l) => !l.phi);
     if (sai) return say(`Dòng ${sai.i + 1}: chưa chọn phi.`, true), render();
-    if (!S.tvKhoa) S.tvKhoa = khoaMoi();
+    const leS = lines.find((l) => Number.isNaN(l.bo) || Number.isNaN(l.cay));
+    if (leS) return say(`Dòng ${leS.i + 1}: số ${Number.isNaN(leS.bo) ? 'bó' : 'cây'} phải là số nguyên.`, true), render();
+    // gửi đúng chữ đã gõ (máy chủ đọc cùng luật với tvSo / tvKgPhieu) — không gửi NaN (JSON thành null, mất số)
     const body = { ngay: S.form.tvf_ngay || S.boot.today, ncc: String(S.form.tvf_ncc || '').trim(), don_id: S.form.tvf_don || null, so_phieu: S.form.tvf_sp || '', bien_so: S.form.tvf_bs || '', ghi_chu: S.form.tvf_gc || '',
-      lines: lines.map((l) => ({ phi: l.phi, bo: l.bo, cay: l.cay, kg: S.form[`tvk_${l.i}`] || null })), khoa: S.tvKhoa };
+      lines: lines.map((l) => ({ phi: l.phi, bo: S.form[`tvb_${l.i}`] || null, cay: S.form[`tvc_${l.i}`] || null, kg: S.form[`tvk_${l.i}`] || null })) };
+    /* Khoá chống ghi trùng gắn với NỘI DUNG chuyến + người ghi (như phiếu Nhập kho: N.khoa = { dau, k }): bấm lưu lại đúng nội dung đó
+       (lần trước mạng chậm / lỗi) thì cùng khoá — máy chủ trả lại chuyến đã ghi; sửa bất cứ gì, form mới, đổi người là khoá mới. Trước đây
+       khoá chỉ xoá khi lưu được: lưu hỏng một lần thì chuyến KHÁC gõ sau dùng lại khoá cũ, máy chủ coi là gửi lại, báo "Đã ghi" mà không ghi. */
+    const dau = JSON.stringify([S.me && S.me.id, body]);
+    if (!S.tvKhoa || S.tvKhoa.dau !== dau) S.tvKhoa = { dau, k: khoaMoi() };
+    body.khoa = S.tvKhoa.k;
     const gui = async (them) => {
       try { await api('POST', '/thepve', { ...body, ...(them || {}) }); }
       catch (e) {
@@ -7220,7 +7273,9 @@ const ACTIONS = {
   tvluudon() {
     const lines = tvDong('d').filter((l) => l.phi || l.bo || l.cay || l.kg);
     if (!lines.length) return say('Chưa có phi nào trong đơn.', true), render();
-    const dong = lines.map((l) => ({ phi: l.phi, bo: l.bo, cay: l.cay, kg: S.form[`tdk_${l.i}`] || null })), sua = S.tvSuaDon;
+    const leS = lines.find((l) => Number.isNaN(l.bo) || Number.isNaN(l.cay));
+    if (leS) return say(`Dòng ${leS.i + 1}: số ${Number.isNaN(leS.bo) ? 'bó' : 'cây'} phải là số nguyên.`, true), render();
+    const dong = lines.map((l) => ({ phi: l.phi, bo: S.form[`tdb_${l.i}`] || null, cay: S.form[`tdc_${l.i}`] || null, kg: S.form[`tdk_${l.i}`] || null })), sua = S.tvSuaDon;
     act(async () => {
       if (sua) await api('PATCH', `/thepve/don/${sua}`, { han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong });
       else await api('POST', '/thepve/don', { ncc: String(S.form.tdf_ncc || '').trim(), so_don: S.form.tdf_so || '', ngay_dat: S.form.tdf_ngay || S.boot.today, han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong });
@@ -7241,16 +7296,20 @@ const ACTIONS = {
   },
   tvcsv() { const k = tvKy(); download(`/thepve/csv?tu=${k.tu}&den=${k.den}`, `thep-ve-${k.tu}-den-${k.den}.csv`); },
   tvnhap(d) {
-    const D = tvDocDan(S.form.tvdan);
+    // kiểu ngày người dùng chọn chỉ áp cho ĐÚNG bảng đã dán lúc chọn; dán bảng khác thì về mặc định ngày/tháng
+    const chon = S.tvNgayChon && S.tvNgayChon.dan === S.form.tvdan ? S.tvNgayChon.v : '';
+    const D = tvDocDan(S.form.tvdan, chon);
     if (D.loi) { S.tvNhapKq = null; return say(D.loi, true), render(); }
     S.tvKieuMy = !!D.kieuMy;
-    const thu = d.v === 'thu';
+    const thu = d.v === 'thu', them = { dongGoc: D.dongGoc, moHo: D.moHo };
     act(async () => {
       const r = await api('POST', '/thepve/nhap', { rows: D.rows, thu }, 60e3);
-      S.tvNhapKq = r;
-      if (!thu && r.ok) { delete S.form.tvdan; S.tvNhapKq = { ...r, thu: false }; Object.keys(NHO).filter((k) => k.startsWith('tv:')).forEach((k) => delete NHO[k]); await tvTai(); }
+      S.tvNhapKq = { ...r, ...them };
+      if (!thu && r.ok) { delete S.form.tvdan; S.tvNgayChon = null; S.tvNhapKq = { ...r, thu: false }; Object.keys(NHO).filter((k) => k.startsWith('tv:')).forEach((k) => delete NHO[k]); await tvTai(); }
     }, thu ? '' : 'Đã nhập số liệu từ Excel.');
   },
+  // cột ngày mơ hồ: người dùng chọn ngày/tháng hay tháng/ngày -> đọc lại bảng và kiểm tra lại (không ghi)
+  tvkieungay(d) { S.tvNgayChon = { dan: S.form.tvdan, v: d.v === 'my' ? 'my' : 'vn' }; ACTIONS.tvnhap({ v: 'thu' }); },
   uthepve(d) {
     const co = d.v === '1';
     act(async () => { await api('POST', `/users/${d.id}/thep-ve`, { co }); await loadUsers(); }, co ? 'Đã giao quyền ghi sổ thép về.' : 'Đã bỏ quyền ghi sổ thép về.');

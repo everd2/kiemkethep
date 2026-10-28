@@ -20,22 +20,45 @@ import { bbKhoa } from './loans.js';
 export const TV_MAX_KG = 500000; // một dòng tối đa 500 tấn: hơn là gõ nhầm đơn vị
 const SO = 99999;
 
-const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
+// chữ gõ tay: NFC (điện thoại / Excel có thể gửi dạng tổ hợp NFD — "Hòa" hai kiểu mã trông như nhau) + gộp khoảng trắng
+const chu = (v, max) => String(v == null ? '' : v).normalize('NFC').replace(/\s+/g, ' ').trim().slice(0, max);
+/* KHOÁ TÊN nhà cung cấp: so trong JS (NFC + chữ thường đủ dấu), KHÔNG dựa COLLATE NOCASE (SQLite chỉ không phân biệt hoa thường
+   với chữ ASCII: "Hòa Phát" và "HÒA PHÁT" thành hai NCC). Tên đã có thì dùng đúng tên lưu trong sổ để tra / gắn. */
+const tenKhoa = (s) => chu(s, 200).toLowerCase();
+async function nccMap(env) {
+  const m = new Map();
+  for (const n of (await env.DB.prepare('SELECT id, name FROM thep_ncc ORDER BY id').all()).results) {
+    const k = tenKhoa(n.name), o = m.get(k);
+    if (o) o.ids.push(n.id); else m.set(k, { name: n.name, ids: [n.id] }); // sổ cũ lỡ có hai dòng cùng tên: lấy dòng đầu, gom cả hai id
+  }
+  return m;
+}
+const nccTen = (m, ten) => (m.get(tenKhoa(ten)) || { name: ten }).name;
 const ngayThat = (d) => { const t = Date.parse(d + 'T00:00:00Z'); return DAY_RE.test(d) && Number.isFinite(t) && vnDay(t) === d; };
-const intOr = (v, max, label) => {
+/* Số bó / số cây: SỐ NGUYÊN. Nhận dấu ngăn nghìn chỉ khi đúng từng nhóm 3 chữ số ("1.250" kiểu Việt, "1,250" Excel kiểu Mỹ = 1250);
+   trước đây xoá mọi dấu chấm nên "2.5" bó thành 25 bó. Khác thế ("2.5", "1,5", "0.500", số JSON 2.5, số âm) là báo lỗi. Cùng luật
+   với tvSo ở public/app.js. */
+export const soNguyen = (v) => {
   if (v === undefined || v === null || v === '') return null;
   let t = String(v).trim().replace(/\s/g, '');
-  if (/^\d{1,3}(,\d{3})+$/.test(t)) t = t.replace(/,/g, ''); // "1,250" của Excel kiểu Mỹ = 1250
-  const n = Number(t.replace(/\./g, '').replace(',', '.'));
-  if (!Number.isInteger(n) || n < 0 || n > max) throw bad(label + ' không hợp lệ');
+  if (t === '') return null;
+  if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(t) || /^[1-9]\d{0,2}(,\d{3})+$/.test(t)) t = t.replace(/[.,]/g, '');
+  return /^\d{1,9}$/.test(t) ? Number(t) : NaN;
+};
+const intOr = (v, max, label) => {
+  const n = soNguyen(v);
+  if (n === null) return null;
+  if (Number.isNaN(n)) throw bad(label + ' phải là số nguyên');
+  if (n > max) throw bad(label + ' không hợp lệ');
   return n;
 };
 // kg gõ tay: nhận "25340", "25.340" (dấu chấm nghìn kiểu Việt), "25340,5" -> làm tròn kg
 const kgOr = (v, label) => {
   if (v === undefined || v === null || v === '') return null;
   let t = String(v).trim().replace(/\s/g, '');
-  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
-  else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, ''); // Excel kiểu Mỹ: "25,340" = 25340 kg
+  // nhóm đầu là 0 ("0.500", "0,500") là số thập phân, không phải dấu nghìn
+  if (/^[1-9]\d{0,2}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, ''); // Excel kiểu Mỹ: "25,340" = 25340 kg
   else t = t.replace(',', '.');
   const n = Number(t);
   if (!Number.isFinite(n) || n < 0 || n > TV_MAX_KG) throw bad(label + ' không hợp lệ (kg, tối đa ' + TV_MAX_KG / 1000 + ' tấn một dòng)');
@@ -85,23 +108,29 @@ export async function tvView(env, url, user) {
   if (!ngayThat(tu) || !ngayThat(den) || tu > den) throw bad('Khoảng ngày không hợp lệ');
   /* TỐI ƯU: cả năm có thể gần nghìn chuyến / vài nghìn dòng phi (~350 KB) — không gửi hết xuống điện thoại.
      - Thống kê của kỳ (tổng, theo tháng, theo nhà cung cấp, theo phi, bảng chéo NCC × phi) cộng sẵn bằng SQL, chỉ gửi kết quả.
-     - Danh sách chuyến theo TRANG: mới nhất trước, mỗi trang `so` chuyến (mặc định 100), bỏ qua `bo_qua` chuyến đầu ("Xem thêm"). */
-  const so = Math.min(300, Math.max(1, Number(url.searchParams.get('so')) || 100)), boQua = Math.max(0, Number(url.searchParams.get('bo_qua')) || 0);
+     - Danh sách chuyến theo TRANG: mới nhất trước (ngày, id giảm dần), mỗi trang `so` chuyến (mặc định 100). "Xem thêm" gửi CON TRỎ là
+       chuyến cuối đã có (sau_ngay + sau_id): lấy các chuyến đứng sau nó. Không dùng OFFSET: giữa hai trang có người huỷ một chuyến /
+       ghi chuyến ngày cũ thì OFFSET lệch, sót hoặc lặp chuyến. (bo_qua: máy còn bản app cũ.) Tham số sai là 400, không 500. */
+  const soQ = (k, def, max) => { const s = url.searchParams.get(k); if (s == null || s === '') return def; if (!/^\d{1,13}$/.test(s) || Number(s) > max) throw bad('Tham số ' + k + ' không hợp lệ'); return Number(s); };
+  const so = Math.max(1, soQ('so', 100, 300)), boQua = soQ('bo_qua', 0, 1e6), sauId = soQ('sau_id', 0, 1e12), sauNgay = String(url.searchParams.get('sau_ngay') || '');
+  if (sauNgay && (!ngayThat(sauNgay) || !sauId)) throw bad('Con trỏ trang không hợp lệ');
   const KG = 'COALESCE(d.kg, d.kg_tinh, 0)', TU = 'FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2';
   /* TÌM CHUYẾN (đối chiếu hoá đơn nhà cung cấp): q khớp số phiếu / biển số / số đơn / ghi chú / tên nhà cung cấp (chứa chữ), hoặc đúng
      một phi ("D16"). Chỉ lọc DANH SÁCH chuyến; thống kê vẫn là của cả kỳ. */
-  const tim = String(url.searchParams.get('q') || '').trim().slice(0, 40), qL = '%' + tim.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
-  const LOCF = (a, b) => `v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 AND (?${a} = '' OR v.so_phieu LIKE ?${b} ESCAPE '\\' OR v.bien_so LIKE ?${b} ESCAPE '\\' OR v.so_don LIKE ?${b} ESCAPE '\\'
-    OR v.ghi_chu LIKE ?${b} ESCAPE '\\' OR (SELECT name FROM thep_ncc WHERE id = v.ncc_id) LIKE ?${b} ESCAPE '\\' OR EXISTS (SELECT 1 FROM thep_ve_dong x WHERE x.ve_id = v.id AND x.phi_id = ?${a} COLLATE NOCASE))`;
-  const LOC = LOCF(5, 6);
+  const tim = chu(url.searchParams.get('q'), 40), qL = '%' + tim.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  /* tên NCC so trong JS (LIKE của SQLite chỉ bỏ hoa thường với chữ ASCII: "úc" không khớp "Úc") -> danh sách id NCC khớp */
+  const nccKhop = !tim ? '[]' : JSON.stringify((await env.DB.prepare('SELECT id, name FROM thep_ncc').all()).results.filter((n) => tenKhoa(n.name).includes(tenKhoa(tim))).map((n) => n.id));
+  const LOCF = (a, b, c) => `v.voided = 0 AND v.ngay >= ?1 AND v.ngay <= ?2 AND (?${a} = '' OR v.so_phieu LIKE ?${b} ESCAPE '\\' OR v.bien_so LIKE ?${b} ESCAPE '\\' OR v.so_don LIKE ?${b} ESCAPE '\\'
+    OR v.ghi_chu LIKE ?${b} ESCAPE '\\' OR v.ncc_id IN (SELECT value FROM json_each(?${c})) OR EXISTS (SELECT 1 FROM thep_ve_dong x WHERE x.ve_id = v.id AND x.phi_id = ?${a} COLLATE NOCASE))`;
+  const LOC = LOCF(5, 6, 9) + " AND (?7 = '' OR v.ngay < ?7 OR (v.ngay = ?7 AND v.id < ?8))";
   const [nccR, donR, donDongR, veR, dongR, daVeR, phiR, tongR, thangR, nccTkR, phiTkR, cheoR, khopR, loR] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, active FROM thep_ncc ORDER BY name'),
     env.DB.prepare("SELECT d.*, COALESCE(u.name, '(đã xoá)') uname FROM thep_don d LEFT JOIN users u ON u.id = d.user_id ORDER BY (d.tt = 'mo') DESC, d.ngay_dat DESC, d.id DESC LIMIT 500"),
     env.DB.prepare('SELECT don_id, phi_id phi, bo, cay, kg FROM thep_don_dong'),
-    env.DB.prepare(`SELECT v.id, v.ngay, v.ncc_id, v.don_id, v.so_don, v.so_phieu, v.bien_so, v.ghi_chu, v.nguon, v.ts, COALESCE(u.name, '(đã xoá)') uname FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE ${LOC} ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4`).bind(tu, den, so, boQua, tim, qL),
+    env.DB.prepare(`SELECT v.id, v.ngay, v.ncc_id, v.don_id, v.so_don, v.so_phieu, v.bien_so, v.ghi_chu, v.nguon, v.ts, COALESCE(u.name, '(đã xoá)') uname FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE ${LOC} ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4`).bind(tu, den, so, sauNgay ? 0 : boQua, tim, qL, sauNgay, sauId, nccKhop),
     // chỉ dòng phi của các chuyến trong TRANG này
     env.DB.prepare(`SELECT d.ve_id, d.phi_id phi, d.bo, d.cay, d.kg, d.kg_tinh FROM thep_ve_dong d WHERE d.ve_id IN (
-                      SELECT v.id FROM thep_ve v WHERE ${LOC} ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4) ORDER BY d.id`).bind(tu, den, so, boQua, tim, qL),
+                      SELECT v.id FROM thep_ve v WHERE ${LOC} ORDER BY v.ngay DESC, v.id DESC LIMIT ?3 OFFSET ?4) ORDER BY d.id`).bind(tu, den, so, sauNgay ? 0 : boQua, tim, qL, sauNgay, sauId, nccKhop),
     // đã về theo đơn × phi (MỌI ngày, không chỉ trong khoảng đang xem): tiến độ đơn hàng
     env.DB.prepare('SELECT v.don_id, d.phi_id phi, SUM(COALESCE(d.kg, d.kg_tinh, 0)) kg, COUNT(DISTINCT v.id) chuyen FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.voided = 0 AND v.don_id IS NOT NULL GROUP BY v.don_id, d.phi_id'),
     env.DB.prepare('SELECT id, bo_size, kg_per_cay, unit, active FROM phi ORDER BY sort, id'),
@@ -111,7 +140,7 @@ export async function tvView(env, url, user) {
     env.DB.prepare(`SELECT d.phi_id phi, SUM(${KG}) kg ${TU} GROUP BY d.phi_id`).bind(tu, den),
     env.DB.prepare(`SELECT v.ncc_id, d.phi_id phi, SUM(${KG}) kg ${TU} GROUP BY v.ncc_id, d.phi_id`).bind(tu, den),
     // số chuyến khớp ô tìm (để "Xem thêm" biết còn bao nhiêu)
-    env.DB.prepare(`SELECT COUNT(*) n FROM thep_ve v WHERE ${LOCF(3, 4)}`).bind(tu, den, tim, qL),
+    env.DB.prepare(`SELECT COUNT(*) n FROM thep_ve v WHERE ${LOCF(3, 4, 5)}`).bind(tu, den, tim, qL, nccKhop),
     // các lần nhập Excel còn chuyến chưa huỷ, mới nhất trước: để huỷ cả lần nhập nếu nhập nhầm
     env.DB.prepare(`SELECT substr(v.khoa, 1, instr(v.khoa, '-') - 1) lo, MIN(v.ts) ts, COUNT(*) chuyen, MIN(v.ngay) tu, MAX(v.ngay) den, COALESCE(u.name, '(đã xoá)') uname
                     FROM thep_ve v LEFT JOIN users u ON u.id = v.user_id WHERE v.voided = 0 AND v.nguon = 'excel' AND v.khoa LIKE 'n%-%' AND v.ts > ?1
@@ -137,10 +166,10 @@ export async function tvGhi(req, env, user) {
   await canGhi(env, user);
   const b = await readJson(req);
   const ngay = docNgay(b.ngay, 'Ngày về');
-  const ncc = chu(b.ncc, 80);
-  if (!ncc) throw bad('Chưa ghi nhà cung cấp');
+  if (!chu(b.ncc, 80)) throw bad('Chưa ghi nhà cung cấp');
   const phiR = await env.DB.prepare('SELECT id, bo_size, kg_per_cay FROM phi').all();
   const lines = docDong(b.lines, Object.fromEntries(phiR.results.map((p) => [p.id, p])), 'Chuyến');
+  const nccM = await nccMap(env), ncc = nccTen(nccM, chu(b.ncc, 80)), nccIds = (nccM.get(tenKhoa(ncc)) || { ids: [] }).ids;
   const soPhieu = chu(b.so_phieu, 40), bienSo = chu(b.bien_so, 20), ghiChu = chu(b.ghi_chu, 200), soDon = chu(b.so_don, 40);
   // khoá chống ghi trùng do máy gửi (bấm đúp / gửi lại lúc mạng chậm thì cùng khoá); không có thì server tự sinh — khoá cũng là chỗ nối dòng vào chuyến
   const khoaMay = /^[a-f0-9]{16}$/.test(String(b.khoa || '')) ? String(b.khoa) : null;
@@ -155,12 +184,13 @@ export async function tvGhi(req, env, user) {
     const d = await env.DB.prepare('SELECT d.id, d.tt, n.name ncc FROM thep_don d JOIN thep_ncc n ON n.id = d.ncc_id WHERE d.id = ?').bind(donId).first();
     if (!d) throw bad('Không tìm thấy đơn hàng');
     if (d.tt === 'huy') throw bad('Đơn hàng đã huỷ');
-    if (d.ncc.toLowerCase() !== ncc.toLowerCase()) throw bad(`Đơn hàng này của ${d.ncc}, khác nhà cung cấp đang ghi`);
+    if (tenKhoa(d.ncc) !== tenKhoa(ncc)) throw bad(`Đơn hàng này của ${d.ncc}, khác nhà cung cấp đang ghi`);
   }
   // cùng nhà cung cấp, cùng số phiếu, chưa huỷ: gần như chắc ghi hai lần — hỏi lại (trung: true để ghi thêm)
   if (soPhieu && b.trung !== true) {
     const k = bbKhoa(soPhieu);
-    const tr = (await env.DB.prepare('SELECT v.so_phieu, v.ngay FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE v.voided = 0 AND v.so_phieu IS NOT NULL AND n.name = ? COLLATE NOCASE').bind(ncc).all()).results.filter((x) => bbKhoa(x.so_phieu) === k);
+    const tr = !nccIds.length ? [] : (await env.DB.prepare('SELECT v.so_phieu, v.ngay FROM thep_ve v WHERE v.voided = 0 AND v.so_phieu IS NOT NULL AND v.ncc_id IN (SELECT value FROM json_each(?))')
+      .bind(JSON.stringify(nccIds)).all()).results.filter((x) => bbKhoa(x.so_phieu) === k);
     if (tr.length) throw new HttpError(409, `Phiếu số ${tr[0].so_phieu} của ${ncc} đã có trong sổ (ngày ${tr[0].ngay.split('-').reverse().join('/')}). Nếu đúng là chuyến khác thì xác nhận để ghi thêm.`, 'trung_tv');
   }
   const ts = Date.now();
@@ -177,9 +207,13 @@ export async function tvGhi(req, env, user) {
     bump(env),
     env.DB.prepare('SELECT id FROM thep_ve WHERE khoa = ?').bind(khoa),
   ];
-  // gửi lại cùng khoá (bấm đúp, mạng chậm): không ghi thêm
-  const res = await batchGuarded(env, guardStmt(env, 'EXISTS (SELECT 1 FROM thep_ve WHERE khoa = ?)', khoa), stmts,
-    new HttpError(409, 'Chuyến này vừa được ghi (gửi hai lần). Xem lại sổ.', 'trung_tv'));
+  /* gửi lại cùng khoá (bấm đúp, mạng chậm): không ghi thêm. Gắn đơn: đơn phải CÒN chưa huỷ ngay trong giao dịch ghi (kiểm ở trên là đọc
+     trước — người khác huỷ đơn chen giữa thì chuyến gắn vào đơn đã huỷ). */
+  const res = await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM thep_ve WHERE khoa = ?1) OR (?2 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ?2 AND tt <> 'huy'))", khoa, donId), stmts,
+    new HttpError(409, 'Chuyến này vừa được ghi (gửi hai lần). Xem lại sổ.', 'trung_tv')).catch(async (e) => {
+    if (e instanceof HttpError && e.code === 'trung_tv' && donId != null && !(await env.DB.prepare('SELECT 1 x FROM thep_ve WHERE khoa = ?').bind(khoa).first())) throw new HttpError(409, 'Đơn hàng vừa bị huỷ — chọn lại đơn', 'changed');
+    throw e;
+  });
   return json({ ok: true, id: res[res.length - 1].results[0].id });
 }
 
@@ -204,8 +238,8 @@ export async function tvHuy(req, env, user, id) {
 export async function tvDon(req, env, user) {
   await canGhi(env, user);
   const b = await readJson(req);
-  const ncc = chu(b.ncc, 80), soDon = chu(b.so_don, 40);
-  if (!ncc) throw bad('Chưa ghi nhà cung cấp');
+  const soDon = chu(b.so_don, 40);
+  if (!chu(b.ncc, 80)) throw bad('Chưa ghi nhà cung cấp');
   if (!soDon) throw bad('Chưa ghi số đơn hàng');
   const ngayDat = docNgay(b.ngay_dat, 'Ngày đặt');
   let han = null;
@@ -213,7 +247,9 @@ export async function tvDon(req, env, user) {
   const phiR = await env.DB.prepare('SELECT id, bo_size, kg_per_cay FROM phi').all();
   const lines = docDong(b.lines, Object.fromEntries(phiR.results.map((p) => [p.id, p])), 'Đơn hàng');
   if (new Set(lines.map((l) => l.phi)).size !== lines.length) throw bad('Mỗi phi chỉ một dòng trong đơn');
-  const trung = await env.DB.prepare("SELECT d.id FROM thep_don d JOIN thep_ncc n ON n.id = d.ncc_id WHERE n.name = ? COLLATE NOCASE AND d.so_don = ? COLLATE NOCASE AND d.tt <> 'huy'").bind(ncc, soDon).first();
+  const nccM = await nccMap(env), ncc = nccTen(nccM, chu(b.ncc, 80)), nccIds = (nccM.get(tenKhoa(ncc)) || { ids: [] }).ids;
+  const trung = !nccIds.length ? 0 : (await env.DB.prepare("SELECT so_don FROM thep_don WHERE tt <> 'huy' AND ncc_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(nccIds)).all())
+    .results.filter((x) => tenKhoa(x.so_don) === tenKhoa(soDon)).length;
   if (trung) throw bad(`Đơn số ${soDon} của ${ncc} đã có`);
   const ts = Date.now(), khoaDon = 'd' + rand(8);
   // kg đặt của dòng = kg gõ tay, không thì kg tự tính từ bó / cây
@@ -241,16 +277,21 @@ export async function tvDonViec(req, env, user, id, viec) {
   if (!moi) throw new HttpError(404, 'Không tìm thấy');
   if (viec === 'molai' && d.tt !== 'xong') throw bad('Chỉ mở lại được đơn đã đóng');
   if (viec !== 'molai' && d.tt !== 'mo') throw bad('Đơn này không còn mở');
+  const coChuyen = async () => (await env.DB.prepare('SELECT COUNT(*) n FROM thep_ve WHERE don_id = ? AND voided = 0').bind(id).first()).n;
   if (viec === 'huy') {
     if (!ly) throw bad('Cần ghi lý do huỷ đơn');
-    const co = await env.DB.prepare('SELECT COUNT(*) n FROM thep_ve WHERE don_id = ? AND voided = 0').bind(id).first();
-    if (co.n) throw bad(`Đơn đã có ${co.n} chuyến về: không huỷ được, hãy "Đóng đơn" thay vì huỷ`);
+    const n = await coChuyen();
+    if (n) throw bad(`Đơn đã có ${n} chuyến về: không huỷ được, hãy "Đóng đơn" thay vì huỷ`);
   }
-  await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ? AND tt = ?)', id, d.tt), [
+  // huỷ: kiểm lại "chưa có chuyến" NGAY TRONG giao dịch — người khác gắn chuyến vào đơn chen giữa thì không huỷ
+  await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ?1 AND tt = ?2) OR (?3 = 1 AND EXISTS (SELECT 1 FROM thep_ve WHERE don_id = ?1 AND voided = 0))', id, d.tt, viec === 'huy' ? 1 : 0), [
     env.DB.prepare('UPDATE thep_don SET tt = ?, dong_ts = ?, dong_by = ?, dong_note = ? WHERE id = ?').bind(moi, Date.now(), user.id, ly || null, id),
     auditStmt(env, user, 'tv_don_' + viec, { id, ncc: d.ncc, so_don: d.so_don, ly_do: ly || undefined }),
     bump(env),
-  ], new HttpError(409, 'Đơn hàng vừa được người khác cập nhật', 'changed'));
+  ], new HttpError(409, 'Đơn hàng vừa được người khác cập nhật', 'changed')).catch(async (e) => {
+    if (e instanceof HttpError && e.code === 'changed' && viec === 'huy' && (await coChuyen())) throw new HttpError(409, 'Đơn vừa có chuyến về gắn vào: không huỷ được, hãy "Đóng đơn" thay vì huỷ', 'changed');
+    throw e;
+  });
   return json({ ok: true });
 }
 
@@ -264,25 +305,31 @@ export async function tvNhap(req, env, user) {
   const rows = Array.isArray(b.rows) ? b.rows : [];
   if (!rows.length) throw bad('Không có dòng nào để nhập');
   if (rows.length > 3000) throw bad('Mỗi lần nhập tối đa 3.000 dòng — chia file làm nhiều lần');
-  const [phiR, donR, coR] = await env.DB.batch([
+  const [phiR, donR, coR, nccR] = await env.DB.batch([
     env.DB.prepare('SELECT id, bo_size, kg_per_cay FROM phi'),
     env.DB.prepare("SELECT d.id, d.so_don, n.name ncc FROM thep_don d JOIN thep_ncc n ON n.id = d.ncc_id WHERE d.tt <> 'huy'"),
     env.DB.prepare('SELECT v.so_phieu, n.name ncc FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE v.voided = 0 AND v.so_phieu IS NOT NULL'),
+    env.DB.prepare('SELECT id, name FROM thep_ncc ORDER BY id'),
   ]);
+  // tên NCC trong file khớp NCC đã có (không phân biệt hoa thường, NFC) thì dùng đúng tên trong sổ; tên mới thì tên đầu tiên gặp trong file
+  const nccM = new Map();
+  for (const n of nccR.results) if (!nccM.has(tenKhoa(n.name))) nccM.set(tenKhoa(n.name), { name: n.name });
   const phiBy = Object.fromEntries(phiR.results.map((p) => [p.id, p]));
-  const donBy = Object.fromEntries(donR.results.map((d) => [d.ncc.toLowerCase() + '|' + bbKhoa(d.so_don), d.id]));
-  const daCo = new Set(coR.results.map((x) => x.ncc.toLowerCase() + '|' + bbKhoa(x.so_phieu)));
+  const donBy = Object.fromEntries(donR.results.map((d) => [tenKhoa(d.ncc) + '|' + bbKhoa(d.so_don), d.id]));
+  const daCo = new Set(coR.results.map((x) => tenKhoa(x.ncc) + '|' + bbKhoa(x.so_phieu)));
   const loi = [], chuyen = new Map();
   rows.forEach((r, i) => {
     const so = i + 1;
     try {
       const ngay = docNgay(String((r && r.ngay) || '').trim(), 'Ngày về');
-      const ncc = chu(r.ncc, 80);
-      if (!ncc) throw bad('Chưa có nhà cung cấp');
+      const ncc0 = chu(r && r.ncc, 80);
+      if (!ncc0) throw bad('Chưa có nhà cung cấp');
+      if (!nccM.has(tenKhoa(ncc0))) nccM.set(tenKhoa(ncc0), { name: ncc0 });
+      const ncc = nccTen(nccM, ncc0);
       const [l] = docDong([{ phi: r.phi, bo: r.bo, cay: r.cay, kg: r.kg }], phiBy, 'Dòng');
       const soPhieu = chu(r.so_phieu, 40), soDon = chu(r.so_don, 40);
-      if (soPhieu && daCo.has(ncc.toLowerCase() + '|' + bbKhoa(soPhieu)) && b.bo_trung !== true) throw bad(`Phiếu ${soPhieu} của ${ncc} đã có trong sổ`);
-      const k = soPhieu ? ngay + '|' + ncc.toLowerCase() + '|' + bbKhoa(soPhieu) : 'dong' + so;
+      if (soPhieu && daCo.has(tenKhoa(ncc) + '|' + bbKhoa(soPhieu)) && b.bo_trung !== true) throw bad(`Phiếu ${soPhieu} của ${ncc} đã có trong sổ`);
+      const k = soPhieu ? ngay + '|' + tenKhoa(ncc) + '|' + bbKhoa(soPhieu) : 'dong' + so;
       let c = chuyen.get(k);
       if (!c) { c = { ngay, ncc, so_phieu: soPhieu || null, so_don: soDon || null, bien_so: chu(r.bien_so, 20) || null, ghi_chu: chu(r.ghi_chu, 200) || null, dong: [], khoa: 'nh' + chuyen.size }; chuyen.set(k, c); }
       if (soDon && !c.so_don) c.so_don = soDon;
@@ -290,7 +337,7 @@ export async function tvNhap(req, env, user) {
     } catch (e) { loi.push({ dong: so, loi: e.message.replace(/^Dòng [^:]*: /, '') }); }
   });
   const ds = [...chuyen.values()];
-  ds.forEach((c) => { c.don_id = c.so_don ? donBy[c.ncc.toLowerCase() + '|' + bbKhoa(c.so_don)] || null : null; });
+  ds.forEach((c) => { c.don_id = c.so_don ? donBy[tenKhoa(c.ncc) + '|' + bbKhoa(c.so_don)] || null : null; });
   const tongKg = ds.reduce((a, c) => a + c.dong.reduce((s, l) => s + (l.kg ?? l.kg_tinh ?? 0), 0), 0);
   const ngays = ds.map((c) => c.ngay).sort();
   /* CẢNH BÁO (không chặn): dòng chỉ có kg mà kg rất nhỏ — gần như chắc cột "Khối lượng" đang ghi TẤN (25,34) chứ không phải kg.
@@ -306,7 +353,9 @@ export async function tvNhap(req, env, user) {
   const ve = JSON.stringify(ds.map((c) => ({ ngay: c.ngay, ncc: c.ncc, don_id: c.don_id, so_don: c.so_don, so_phieu: c.so_phieu, bien_so: c.bien_so, ghi_chu: c.ghi_chu, khoa: c.khoa })));
   const dong = JSON.stringify(ds.flatMap((c) => c.dong.map((l) => ({ khoa: c.khoa, ...l }))));
   const J = (f) => `json_extract(j.value, '$.${f}')`;
-  await env.DB.batch([
+  // đơn được gắn phải còn chưa huỷ lúc ghi (người khác huỷ đơn giữa lúc Kiểm tra và lúc Nhập)
+  const donIds = JSON.stringify([...new Set(ds.map((c) => c.don_id).filter(Boolean))]);
+  await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM json_each(?) j JOIN thep_don d ON d.id = j.value WHERE d.tt = 'huy')", donIds), [
     env.DB.prepare(`INSERT OR IGNORE INTO thep_ncc (name, active, ts) SELECT value, 1, ? FROM json_each(?)`).bind(ts, JSON.stringify(ncc)),
     env.DB.prepare(`INSERT INTO thep_ve (ngay, ncc_id, don_id, so_don, so_phieu, bien_so, ghi_chu, nguon, user_id, ts, khoa)
                     SELECT ${J('ngay')}, (SELECT id FROM thep_ncc WHERE name = ${J('ncc')} COLLATE NOCASE), ${J('don_id')}, ${J('so_don')}, ${J('so_phieu')}, ${J('bien_so')}, ${J('ghi_chu')},
@@ -315,7 +364,7 @@ export async function tvNhap(req, env, user) {
                     SELECT (SELECT id FROM thep_ve WHERE khoa = ${J('khoa')}), ${J('phi')}, ${J('bo')}, ${J('cay')}, ${J('kg')}, ${J('kg_tinh')} FROM json_each(?) j`).bind(dong),
     auditStmt(env, user, 'tv_nhap', tomTat),
     bump(env),
-  ]);
+  ], new HttpError(409, 'Có đơn hàng vừa bị huỷ — bấm Kiểm tra lại rồi nhập', 'changed'));
   return json({ ok: true, ...tomTat });
 }
 
@@ -378,16 +427,17 @@ export async function tvGanDon(req, env, user, id) {
   const donId = b.don_id == null || b.don_id === '' ? null : Number(b.don_id);
   let d = null;
   if (donId != null) {
-    d = await env.DB.prepare('SELECT d.id, d.so_don, d.tt, d.ncc_id FROM thep_don d WHERE d.id = ?').bind(donId).first();
+    d = await env.DB.prepare('SELECT d.id, d.so_don, d.tt, d.ncc_id, n.name ncc FROM thep_don d LEFT JOIN thep_ncc n ON n.id = d.ncc_id WHERE d.id = ?').bind(donId).first();
     if (!d) throw bad('Không tìm thấy đơn hàng');
     if (d.tt === 'huy') throw bad('Đơn hàng đã huỷ');
-    if (d.ncc_id !== v.ncc_id) throw bad('Đơn hàng này của nhà cung cấp khác');
+    if (d.ncc_id !== v.ncc_id && tenKhoa(d.ncc) !== tenKhoa(v.ncc)) throw bad('Đơn hàng này của nhà cung cấp khác');
   }
-  await batchGuarded(env, guardStmt(env, 'NOT EXISTS (SELECT 1 FROM thep_ve WHERE id = ? AND voided = 0)', id), [
+  // đơn phải còn chưa huỷ NGAY TRONG giao dịch (huỷ đơn chen giữa lúc đọc ở trên và lúc ghi)
+  await batchGuarded(env, guardStmt(env, "NOT EXISTS (SELECT 1 FROM thep_ve WHERE id = ?1 AND voided = 0) OR (?2 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ?2 AND tt <> 'huy'))", id, donId), [
     env.DB.prepare('UPDATE thep_ve SET don_id = ?, so_don = ? WHERE id = ?').bind(donId, d ? d.so_don : v.so_don, id),
     auditStmt(env, user, 'tv_gan_don', { id, ngay: v.ngay, ncc: v.ncc, so_phieu: v.so_phieu || undefined, don_cu: v.don_id || undefined, don: donId || undefined, so_don: d ? d.so_don : undefined }),
     bump(env),
-  ], new HttpError(409, 'Chuyến này vừa bị huỷ', 'changed'));
+  ], new HttpError(409, donId != null ? 'Chuyến hoặc đơn hàng vừa bị huỷ — tải lại' : 'Chuyến này vừa bị huỷ', 'changed'));
   return json({ ok: true });
 }
 
