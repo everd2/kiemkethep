@@ -489,7 +489,11 @@ async function main() {
     vm.createContext(ctx);
     vm.runInContext(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8'), ctx, { filename: 'app.js' });
     const R = (src) => vm.runInContext(src, ctx);
-    const cho = async () => { for (let i = 0; i < 200; i++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && i > 5) return; } };
+    // chờ cả các lần chuyển màn (go) đang chạy dở, không chỉ S.busy — chỉ chờ S.busy thì test hỏng ngẫu nhiên tuỳ máy nhanh chậm
+    let dangGo = 0;
+    const go0 = ctx.go;
+    ctx.go = (...a) => { dangGo++; return Promise.resolve(go0(...a)).finally(() => { dangGo--; }); };
+    const cho = async () => { for (let i = 0; i < 3000; i++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && !dangGo && i > 5) return; } };
     const vao = async (name, role) => {
       who = name;
       const bt = (await S3.call('GET', '/bootstrap', undefined, name)).data;
