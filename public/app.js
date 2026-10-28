@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v67';
+const BAN = 'kho-thep-v68';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4828,10 +4828,10 @@ function slKhoHtml() {
     : L.loi ? `<span class="sm" style="color:var(--bad)">${esc(L.loi)}</span>`
     : !L.ds.length ? '<span class="sm muted">Chưa có bản nào. Bản đầu tiên tự lưu lúc 2 giờ sáng gần nhất, hoặc bấm "Sao lưu ngay".</span>'
     : `<div class="bangw"><table class="bang"><thead><tr><th class="c1">Ngày lưu</th><th class="so">Cỡ</th><th></th></tr></thead><tbody>${L.ds.map((x) =>
-      `<tr><td class="c1">${fmtDay(x.ten.slice(0, 10))}${x.luc ? ' <span class="muted">' + hhmm(x.luc) + '</span>' : ''}</td><td class="so">${x.co >= 1048576 ? fmtDec(Math.round(x.co / 10485.76) / 100) + ' MB' : Math.max(1, Math.round(x.co / 1024)) + ' KB'}</td>
+      `<tr><td class="c1">${fmtDay(x.ten.slice(0, 10))}${x.luc ? ' <span class="muted">' + hhmm(x.luc) + '</span>' : ''}${x.tay ? ' <span class="muted">(bấm tay)</span>' : ''}</td><td class="so">${x.co >= 1048576 ? fmtDec(Math.round(x.co / 10485.76) / 100) + ' MB' : Math.max(1, Math.round(x.co / 1024)) + ' KB'}</td>
         <td><button class="v" data-a="slkhotai" data-v="${esc(x.ten)}">Tải về</button></td></tr>`).join('')}</tbody></table></div>`;
   return `<div style="border-top:1px solid var(--line);padding-top:8px" class="col gap6"><b class="sm">Bản sao tự động trên kho (mỗi tuần)</b>
-    <span class="sm" style="line-height:1.45">App tự lưu một bản mỗi tuần (2 giờ sáng), giữ ${(L && L.giu) || 8} bản gần nhất. Tải về là nạp lại được bằng ô bên dưới.</span>
+    <span class="sm" style="line-height:1.45">App tự lưu một bản mỗi tuần (2 giờ sáng), giữ ${(L && L.giu) || 8} bản gần nhất; bản bấm "Sao lưu ngay" giữ riêng ${(L && L.giu_tay) || 5} bản, không đẩy bản hằng tuần ra. Tải về là nạp lại được bằng ô bên dưới.</span>
     ${dong}<button class="btn s full" data-a="slkhongay">SAO LƯU NGAY LÊN KHO</button></div>`;
 }
 function vBaoCaoCa() {
