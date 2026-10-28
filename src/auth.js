@@ -49,25 +49,32 @@ export async function login(req, env, url) {
   const fail = () => new HttpError(401, 'Sai số điện thoại hoặc PIN');
   const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
   const today = gioVN(); // đếm theo giờ (xem IP_FAIL_MAX)
-  const [uR, ipR] = await env.DB.batch([
+  /* GIỮ CHỖ một lượt của địa chỉ TRƯỚC khi thử PIN, cộng rồi đọc trong cùng một batch (một giao dịch). Trước đây đọc số đếm
+     lúc đầu rồi chỉ cộng SAU khi băm PIN: 150 yêu cầu song song đều đọc thấy "chưa tới 60" và đều được thử (30 máy, mỗi máy
+     dưới ngưỡng khoá riêng = 150 PIN). Nay lượt thứ IP_FAIL_MAX + 1 trở đi thấy n vượt trần ngay, bị từ chối mà không băm.
+     Lượt không phải đoán PIN (đúng PIN, tài khoản đang khoá) TRẢ LẠI chỗ đã giữ (traIp), nên trần vẫn chỉ đếm lần sai. Đăng
+     nhập đúng không thêm lượt gọi D1 nào: giữ chỗ đi chung batch đọc tài khoản, trả lại đi chung batch ghi đăng nhập. */
+  const [, uR, ipR] = await env.DB.batch([
+    env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today),
     env.DB.prepare('SELECT * FROM users WHERE phone = ?').bind(phone),
     env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today),
   ]);
-  if (ipR.results[0] && ipR.results[0].n >= IP_FAIL_MAX) throw new HttpError(429, 'Mạng này vừa nhập sai PIN quá nhiều lần, hãy thử lại sau ít phút (tối đa một giờ) hoặc báo admin');
-  // chỉ ghi khi nhập sai, đăng nhập đúng không tốn lượt ghi
-  const ipFail = env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today);
+  // vượt trần: chỗ vừa giữ để nguyên (đằng nào cũng bị chặn tới hết giờ), không trả lại để khỏi mở thêm chỗ cho lượt khác
+  if (ipR.results[0] && ipR.results[0].n > IP_FAIL_MAX) throw new HttpError(429, 'Mạng này vừa nhập sai PIN quá nhiều lần, hãy thử lại sau ít phút (tối đa một giờ) hoặc báo admin');
+  const traIp = env.DB.prepare('UPDATE login_fail SET n = n - 1 WHERE ip = ? AND day = ? AND n > 0').bind(ip, today);
   const u = uR.results[0];
-  if (!u) { await ipFail.run(); throw fail(); }
+  if (!u) throw fail(); // số không có tài khoản: chỗ đã giữ tính là một lần sai
   /* Tài khoản đã xoá: trả lời y như sai PIN, không nói "tài khoản đã xoá". Nói rõ là tiết lộ
      số điện thoại nào từng có tài khoản cho người đang dò. Người bị xoá thật thì hỏi admin. */
-  if (u.deleted) { await ipFail.run(); throw fail(); }
-  if (u.locked) throw new HttpError(403, 'Tài khoản đã bị khoá, liên hệ admin');
+  if (u.deleted) throw fail();
+  if (u.locked) { await traIp.run(); throw new HttpError(403, 'Tài khoản đã bị khoá, liên hệ admin'); }
   if (u.locked_until > Date.now()) {
+    await traIp.run();
     const mins = Math.ceil((u.locked_until - Date.now()) / 60000);
     throw new HttpError(429, `Nhập sai nhiều lần, thử lại sau ${mins >= 120 ? Math.ceil(mins / 60) + ' giờ' : mins + ' phút'}`);
   }
   const n = await lanThu(env, u.id);
-  if (n === null) throw new HttpError(429, 'Đang có quá nhiều lượt thử, hãy đợi một lát rồi thử lại');
+  if (n === null) { await traIp.run(); throw new HttpError(429, 'Đang có quá nhiều lượt thử, hãy đợi một lát rồi thử lại'); }
   const ok = safeEq(await hashPin(env, u.pin_salt, pin), u.pin_hash);
   if (!ok) {
     const ua = (req.headers.get('User-Agent') || '').slice(0, 80);
@@ -77,20 +84,17 @@ export async function login(req, env, url) {
       await env.DB.batch([
         env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = ?, lock_level = ? WHERE id = ?').bind(Date.now() + ms, level + 1, u.id),
         auditStmt(env, u, 'login_locked', { phone, mins: ms / 60e3, ip }),
-        ipFail,
       ]);
     } else {
-      await env.DB.batch([
-        auditStmt(env, u, 'login_fail', { n, ua, ip }),
-        ipFail,
-      ]);
+      await auditStmt(env, u, 'login_fail', { n, ua, ip }).run();
     }
-    throw fail();
+    throw fail(); // sai PIN: chỗ đã giữ ở login_fail chính là lần sai này
   }
   const cookie = await createSession(env, url, req, u.id);
   await env.DB.batch([
     env.DB.prepare('UPDATE users SET fail_count = 0, locked_until = 0, lock_level = 0 WHERE id = ?').bind(u.id),
     auditStmt(env, u, 'login', { ua: (req.headers.get('User-Agent') || '').slice(0, 80) }),
+    traIp,
   ]);
   return json({ user: { id: u.id, name: u.name, role: u.role, must_change: u.must_change } }, 200, { 'Set-Cookie': cookie });
 }
@@ -107,12 +111,16 @@ export async function recoverAdmin(req, env) {
   /* Thử token khôi phục cũng có trần theo địa chỉ mỗi ngày (dùng chung bảng login_fail, khoá riêng 'rec:'): token dài nên
      khó đoán, nhưng thử sai không được là miễn phí và không để lại dấu vết nào. */
   const ip = 'rec:' + (req.headers.get('CF-Connecting-IP') || 'unknown'), today = vnDay();
-  const dem = await env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today).first();
-  if (dem && dem.n >= REC_FAIL_MAX) throw new HttpError(429, 'Thử token sai quá nhiều lần hôm nay, hãy thử lại vào ngày mai');
-  if (!b.token || !safeEq(String(b.token), env.RECOVERY_TOKEN)) {
-    await env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today).run();
-    throw new HttpError(403, 'Token không đúng');
-  }
+  /* Giữ chỗ TRƯỚC khi so token, cộng rồi đọc trong một batch — y như đăng nhập (xem login): đọc trước rồi chỉ cộng khi sai
+     thì gửi song song hàng trăm token cùng lúc đều đọc thấy "chưa tới trần" và đều được so. Token đúng thì trả lại chỗ. */
+  const [, demR] = await env.DB.batch([
+    env.DB.prepare('INSERT INTO login_fail (ip, day, n) VALUES (?,?,1) ON CONFLICT(ip, day) DO UPDATE SET n = n + 1').bind(ip, today),
+    env.DB.prepare('SELECT n FROM login_fail WHERE ip = ? AND day = ?').bind(ip, today),
+  ]);
+  if (demR.results[0] && demR.results[0].n > REC_FAIL_MAX) throw new HttpError(429, 'Thử token sai quá nhiều lần hôm nay, hãy thử lại vào ngày mai');
+  if (!b.token || !safeEq(String(b.token), env.RECOVERY_TOKEN)) throw new HttpError(403, 'Token không đúng');
+  // token đúng: không phải lần thử sai, trả lại chỗ (lần khôi phục rất hiếm, thêm một lượt ghi không đáng kể)
+  await env.DB.prepare('UPDATE login_fail SET n = n - 1 WHERE ip = ? AND day = ? AND n > 0').bind(ip, today).run();
   const phone = String(b.phone || '').replace(/\D/g, '');
   if (!phone) throw bad('Thiếu số điện thoại');
   const np = String(b.newPin || '');

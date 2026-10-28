@@ -1,7 +1,7 @@
 /* Sao lưu tự động hằng tuần lên R2: node saoluu.test.mjs <đường-dẫn-repo>
    Những điều tính năng này hứa:
    1. Lịch mỗi giờ: đúng 2h sáng giờ Việt Nam, bản mới nhất cũ hơn ~6,5 ngày (hoặc chưa có) thì lưu MỘT bản; giờ khác / chưa đủ tuần thì không.
-   2. Giữ 8 bản mới nhất, bản cũ hơn tự xoá.
+   2. Giữ 8 bản tự động mới nhất, bản cũ hơn tự xoá (bản bấm tay giữ riêng, xem baomat2.test.mjs).
    3. Bản trên kho y hệt "Tải bản sao toàn bộ" và NẠP LẠI được bằng đúng chỗ nạp sẵn có.
    4. Đọc mọi bảng trong MỘT lượt gọi D1 (lịch mỗi giờ gói miễn phí chỉ ~50 lượt mỗi lần chạy).
    5. Xem / tải / sao lưu ngay: chỉ admin đầu tiên. */
@@ -62,11 +62,15 @@ async function main() {
   eq('3h sáng: không sao lưu', kho().length, 1);
   datGio(2, 5);
   await S.cron();
-  eq('2h sáng nhưng bản mới nhất chưa đủ tuần: không lưu thêm', kho().length, 1);
+  // bản "Sao lưu ngay" (đuôi _tay) không tính vào lịch tuần, nên chưa có bản tự động nào thì lưu luôn (xem baomat2.test.mjs)
+  eq('2h sáng, mới có bản bấm tay: lưu bản tự động đầu tiên', kho().length, 2);
+  advance(864e5); await S.cron();
+  eq('2h sáng nhưng bản tự động mới nhất chưa đủ tuần: không lưu thêm', kho().length, 2);
+  const tuDong0 = kho().find((k) => !k.endsWith('_tay.json'));
   for (let i = 0; i < 10; i++) { advance(7 * 864e5); await S.cron(); }
-  eq('mỗi tuần 2h sáng: một bản, giữ 8 bản mới nhất', kho().length, 8);
-  ok('bản cũ nhất đã bị xoá', !kho().includes('saoluu/' + n0.data.ten), kho()[0]);
-  eq('nhật ký ghi lại các lần lưu lên kho', S.sql("SELECT 1 FROM audit WHERE action = 'backup_kho'").length, 11);
+  eq('mỗi tuần 2h sáng: một bản, giữ 8 bản tự động mới nhất (+ bản bấm tay riêng)', kho().length, 9);
+  ok('bản tự động cũ nhất đã bị xoá, bản bấm tay vẫn còn', !kho().includes(tuDong0) && kho().includes('saoluu/' + n0.data.ten), kho()[0]);
+  eq('nhật ký ghi lại các lần lưu lên kho', S.sql("SELECT 1 FROM audit WHERE action = 'backup_kho'").length, 12);
 
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));

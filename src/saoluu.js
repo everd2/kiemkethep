@@ -8,11 +8,16 @@ import { firstAdminId } from './admin.js';
    Trước đây sao lưu chỉ có nút tải tay: quên tải là không có bản nào, mà Cloudflare chỉ giữ lịch sử khôi phục có hạn.
    - Mỗi tuần một bản, chạy trong lịch mỗi giờ (worker.scheduled) lúc 2h sáng giờ Việt Nam nếu bản mới nhất đã cũ hơn ~6,5 ngày.
      Nằm trong R2 `ANH` dưới thư mục saoluu/, giữ SL_GIU bản mới nhất, bản cũ hơn tự xoá.
+   - Bản "Sao lưu ngay" (bấm tay) mang đuôi _tay trong tên và tính RIÊNG: giữ SL_GIU_TAY bản tay mới nhất, không đẩy bản tự động
+     nào ra, và không dời lịch tuần. Trước đây cả hai chung một hàng 8 bản: bấm tay vài lần là đẩy hết bản hằng tuần (đường lùi
+     xa nhất), còn một bản tay mới làm lịch tuần bỏ qua — bấm tay mỗi 6 ngày là không bao giờ có bản tự động. Bản cũ không có
+     đuôi (từ trước khi tách) coi là bản tự động: đa số đúng là do lịch lưu, và giữ thừa vài bản cũ an toàn hơn xoá nhầm.
    - Nội dung y hệt tệp "Tải bản sao toàn bộ" (cùng hàm taoBanSao), nên tải về là nạp lại được bằng đúng chỗ nạp sẵn có.
    - Đọc mọi bảng trong MỘT lượt gọi D1 (batch): lần chạy lịch mỗi giờ của gói miễn phí chỉ được ~50 lượt, còn phải tự chốt sổ và
      chép quân số; đọc từng bảng một (~44 lượt) là vượt.
    - Xem / tải / sao lưu ngay: chỉ admin đầu tiên (như tải bản sao tay). */
 export const SL_GIU = 8;
+export const SL_GIU_TAY = 5;
 const SL_THU_MUC = 'saoluu/';
 const TUAN_MS = 6.5 * 864e5;
 
@@ -39,18 +44,21 @@ export async function taoBanSao(env, boi) {
 async function dsBanSao(env) {
   if (!env.ANH || typeof env.ANH.list !== 'function') return [];
   const r = await env.ANH.list({ prefix: SL_THU_MUC });
-  return (r.objects || []).map((o) => ({ ten: o.key.slice(SL_THU_MUC.length), co: o.size, luc: o.uploaded ? new Date(o.uploaded).getTime() : 0 }))
-    .sort((a, z) => (a.ten < z.ten ? 1 : -1));
+  // xếp theo mốc giờ ghi trong tên (ms lúc lưu), mới trước; tay: bản "Sao lưu ngay" (đuôi _tay), còn lại là bản tự động
+  return (r.objects || []).map((o) => {
+    const ten = o.key.slice(SL_THU_MUC.length), m = ten.match(/_(\d+)(_tay)?\.json$/);
+    return { ten, co: o.size, luc: o.uploaded ? new Date(o.uploaded).getTime() : 0, tay: !!(m && m[2]), ms: m ? Number(m[1]) : 0 };
+  }).sort((a, z) => z.ms - a.ms || (a.ten < z.ten ? 1 : -1)).map(({ ms, ...x }) => x);
 }
-async function luuLenKho(env, user) {
+async function luuLenKho(env, user, tay = false) {
   const body = await taoBanSao(env, user.name);
-  const ten = `${body.ngay}_${body.luc}.json`;
+  const ten = `${body.ngay}_${body.luc}${tay ? '_tay' : ''}.json`;
   const chu = JSON.stringify(body);
   await env.ANH.put(SL_THU_MUC + ten, chu, { httpMetadata: { contentType: 'application/json; charset=utf-8' } });
-  // giữ SL_GIU bản mới nhất
-  const ds = await dsBanSao(env);
-  for (const x of ds.slice(SL_GIU)) await env.ANH.delete(SL_THU_MUC + x.ten);
-  await auditStmt(env, user, 'backup_kho', { ten, co: chu.length, dong: Object.fromEntries(Object.keys(body.bang).map((t) => [t, body.bang[t].length])) }).run();
+  // giữ SL_GIU bản tự động / SL_GIU_TAY bản tay mới nhất: mỗi loại chỉ xoá bản cũ của RIÊNG loại đó
+  const ds = (await dsBanSao(env)).filter((x) => x.tay === tay);
+  for (const x of ds.slice(tay ? SL_GIU_TAY : SL_GIU)) await env.ANH.delete(SL_THU_MUC + x.ten);
+  await auditStmt(env, user, 'backup_kho', { ten, co: chu.length, tay: tay || undefined, dong: Object.fromEntries(Object.keys(body.bang).map((t) => [t, body.bang[t].length])) }).run();
   return { ten, co: chu.length };
 }
 
@@ -59,7 +67,8 @@ export async function saoLuuTuDong(env, now = Date.now()) {
   if (!env.ANH || typeof env.ANH.list !== 'function') return null;
   const gio = Math.floor(((now + 7 * 3600e3) % 864e5) / 3600e3);
   if (gio !== 2) return null;
-  const ds = await dsBanSao(env);
+  // chỉ bản TỰ ĐỘNG tính lịch tuần: bản bấm tay không dời lịch (xem đầu tệp)
+  const ds = (await dsBanSao(env)).filter((x) => !x.tay);
   if (ds.length && now - ds[0].luc < TUAN_MS) return null;
   try { return await luuLenKho(env, SYSTEM); } catch (e) {
     /* Hỏng thì ghi vào nhật ký (mục "Cần chú ý"), không chỉ console: không ai đọc log máy chủ, và giờ sau lịch thử lại vì vẫn
@@ -74,16 +83,16 @@ const chiAdminDau = async (env, user) => {
 };
 export async function saoLuuDs(env, user) {
   await chiAdminDau(env, user);
-  return json({ ds: await dsBanSao(env), giu: SL_GIU });
+  return json({ ds: await dsBanSao(env), giu: SL_GIU, giu_tay: SL_GIU_TAY });
 }
 export async function saoLuuNgay(env, user) {
   await chiAdminDau(env, user);
   if (!env.ANH) throw new HttpError(503, 'Chưa cấu hình kho lưu trữ');
-  return json({ ok: true, ...(await luuLenKho(env, user)) });
+  return json({ ok: true, ...(await luuLenKho(env, user, true)) });
 }
 export async function saoLuuTai(env, user, ten) {
   await chiAdminDau(env, user);
-  if (!/^\d{4}-\d{2}-\d{2}_\d+\.json$/.test(ten)) throw new HttpError(404, 'Không tìm thấy bản sao');
+  if (!/^\d{4}-\d{2}-\d{2}_\d+(_tay)?\.json$/.test(ten)) throw new HttpError(404, 'Không tìm thấy bản sao');
   const o = await env.ANH.get(SL_THU_MUC + ten);
   if (!o) throw new HttpError(404, 'Không tìm thấy bản sao');
   await auditStmt(env, user, 'backup', { ngay: ten.slice(0, 10), tu_kho: ten }).run();

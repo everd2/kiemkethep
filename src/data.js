@@ -303,8 +303,33 @@ export async function restoreData(req, env, user) {
   }
   /* Tài khoản nằm trong bản sao kèm PIN đã băm. Băm đó vô dụng nếu không có PEPPER, mà PEPPER
      chỉ nằm trên máy chủ chứ không nằm trong tệp — nên tệp rơi ra ngoài cũng không mở được tài
-     khoản nào. Nhưng đổi PEPPER rồi nạp lại bản sao cũ thì mọi PIN cũ thành sai: phải đặt lại. */
-  const stmts = [];
+     khoản nào.
+     TRẠNG THÁI BẢO MẬT KHÔNG BAO GIỜ LÙI THEO BẢN SAO. Trước đây bảng users bị thay nguyên dòng, kèm PIN / khoá / xoá: PIN đã
+     đặt lại SAU ngày sao lưu (vì lộ) quay về PIN cũ đã lộ, người đã bị xoá / khoá sống lại với PIN cũ — trái luật khôi phục tài
+     khoản ở src/admin.js (khôi phục phải cấp PIN mới, vì PIN cũ coi như đã mất). Nay:
+     - tài khoản CÓ trong database hiện tại: giữ PIN, must_change (đi cùng PIN tạm), locked, deleted, bộ đếm / khoá nhập sai
+       của HIỆN TẠI; tên, số điện thoại, vai trò... lấy theo tệp;
+     - tài khoản CHỈ có trong tệp: về ở trạng thái đã xoá (deleted = 1). Admin muốn dùng lại thì bấm Khôi phục — đường đó cấp
+       PIN mới, đúng như mọi tài khoản đã xoá;
+     - đổi vai trò / số điện thoại so với hiện tại thì thu hồi phiên của người đó (đăng nhập lại cho rõ quyền mới);
+     - admin đang nạp không bao giờ tự khoá mình ngoài: giữ PIN / phiên của mình, vẫn là admin, tệp không có mình thì giữ
+       nguyên dòng của mình.
+     Trạng thái hiện tại được cất tạm vào meta ('nap_users', JSON) NGAY TRONG batch nạp, nên không có khe nào giữa lúc đọc và
+     lúc ghi (một lần đổi PIN chen giữa cũng không bị ghi đè). Đổi PEPPER thì PIN hiện tại cũng đã sai sẵn — không do nạp. */
+  const fileUsers = f.bang.users.slice();
+  const cur = await env.DB.batch([
+    env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id),
+    env.DB.prepare('SELECT id FROM users'),
+  ]);
+  const toi = fileUsers.findIndex((u) => Number(u.id) === user.id);
+  if (toi < 0) fileUsers.push(cur[0].results[0]); // tệp không có admin đang nạp: giữ nguyên dòng của mình
+  else if (fileUsers[toi].role !== 'admin') fileUsers[toi] = { ...fileUsers[toi], role: 'admin' };
+  f.bang.users = fileUsers;
+  const coId = new Set(cur[1].results.map((r) => r.id));
+  const tkXoa = fileUsers.filter((u) => !coId.has(Number(u.id)) && !u.deleted).map((u) => u.name); // để báo admin: cần khôi phục lại
+  const NAP = "(SELECT value FROM meta WHERE key = 'nap_users')";
+  const BM = ['pin_salt', 'pin_hash', 'must_change', 'locked', 'deleted', 'fail_count', 'locked_until', 'lock_level'];
+  const stmts = [env.DB.prepare(`INSERT OR REPLACE INTO meta (key, value) SELECT 'nap_users', json_group_array(json_object('id', id, 'role', role, 'phone', phone, ${BM.map((c) => `'${c}', ${c}`).join(', ')})) FROM users`)];
   const dem = {}, giu = [];
   for (const t of BK_STATE) {
     /* Sổ vay mượn là công nợ với bên NGOÀI, không phải trạng thái của bãi: bản sao cũ chưa có bảng
@@ -366,11 +391,21 @@ export async function restoreData(req, env, user) {
     env.DB.prepare('DELETE FROM thep_don_dong WHERE don_id NOT IN (SELECT id FROM thep_don)'),
   );
   stmts.push(env.DB.prepare('INSERT OR IGNORE INTO don_gc_nguoi (don_id, user_id, biet_ts) SELECT id, user_id, biet_ts FROM don_gc WHERE id NOT IN (SELECT don_id FROM don_gc_nguoi)'));
+  /* Trạng thái bảo mật về lại như HIỆN TẠI (xem đầu hàm, cất trong meta 'nap_users'). Thứ tự: thu hồi phiên người đổi vai trò /
+     số điện thoại (so dòng vừa nạp với dòng đã cất), trả PIN / khoá / xoá cho người đang có, tài khoản chỉ có trong tệp thành đã
+     xoá, admin đang nạp vẫn là admin, rồi bỏ bản cất. */
+  stmts.push(
+    env.DB.prepare(`DELETE FROM sessions WHERE user_id <> ? AND user_id IN (SELECT u.id FROM users u JOIN json_each(${NAP}) j ON json_extract(j.value, '$.id') = u.id WHERE u.role IS NOT json_extract(j.value, '$.role') OR u.phone IS NOT json_extract(j.value, '$.phone'))`).bind(user.id),
+    env.DB.prepare(`UPDATE users SET (${BM.join(', ')}) = (SELECT ${BM.map((c) => `json_extract(j.value, '$.${c}')`).join(', ')} FROM json_each(${NAP}) j WHERE json_extract(j.value, '$.id') = users.id) WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each(${NAP}))`),
+    env.DB.prepare(`UPDATE users SET deleted = 1 WHERE id NOT IN (SELECT json_extract(value, '$.id') FROM json_each(${NAP}))`),
+    env.DB.prepare("UPDATE users SET role = 'admin', deleted = 0, locked = 0 WHERE id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM meta WHERE key = 'nap_users'"),
+  );
   // phiên của tài khoản không còn trong bảng vừa nạp phải bị thu hồi, không thì người đó còn vào được bằng phiên cũ
   stmts.push(env.DB.prepare('DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)'));
   stmts.push(env.DB.prepare('UPDATE daily_summary SET kg = (SELECT kg_per_cay FROM phi WHERE phi.id = daily_summary.phi_id) WHERE kg IS NULL'));
   stmts.push(
-    auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu }),
+    auditStmt(env, user, 'restore', { ngay: f.ngay, luc: f.luc, boi: f.boi, dong: dem, giu, tk_xoa: tkXoa.length ? tkXoa : undefined }),
     bump(env)
   );
   try { await env.DB.batch(stmts); } catch (e) {
@@ -382,5 +417,5 @@ export async function restoreData(req, env, user) {
     if (/constraint|NOT NULL|UNIQUE|CHECK|datatype/i.test(String((e && e.message) || ''))) throw bad('Bản sao có dòng vi phạm ràng buộc dữ liệu (' + String(e.message).replace(/^.*?:\s*/, '').slice(0, 120) + '). Chưa nạp gì cả, dữ liệu hiện tại giữ nguyên.');
     throw e;
   }
-  return json({ ok: true, dong: dem, giu });
+  return json({ ok: true, dong: dem, giu, tk_xoa: tkXoa });
 }
