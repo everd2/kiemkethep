@@ -2,7 +2,7 @@
    1. Trần nhập sai PIN theo địa chỉ (IP_FAIL_MAX / giờ) không bị lách bằng yêu cầu song song: giữ chỗ TRƯỚC khi thử PIN.
    2. Trần thử token khôi phục (20 / ngày) cũng vậy.
    3. Nạp lại bản sao không lùi trạng thái bảo mật: PIN đã đặt lại, khoá, xoá giữ như hiện tại; tài khoản chỉ có trong tệp về
-      ở trạng thái đã xoá (khôi phục thì cấp PIN mới); đổi vai trò thì thu hồi phiên; admin đang nạp không tự khoá mình ngoài.
+      y như tệp (nạp vào bản cài mới sau sự cố); đổi vai trò thì thu hồi phiên; admin đang nạp không tự khoá mình ngoài.
    4. "Sao lưu ngay" không đẩy bản hằng tuần ra, không dời lịch tuần; hai loại giữ riêng (8 tự động + 5 tay). */
 import { advance, boot } from './harness.mjs';
 import { IP_FAIL_MAX } from '../src/core.js';
@@ -77,14 +77,15 @@ async function main() {
   await S.call('POST', '/users/' + idVt + '/role', { role: 'cvktht' });
   await S.login('Đổi vai', '0930000004', '1357');
   eq('admin đổi PIN sau ngày sao lưu', (await S.call('POST', '/change-pin', { pin: '2468', newPin: '8642' })).status, 200);
-  // tệp mang thêm một tài khoản không có trong database hiện tại (PIN cũ trong tệp), và dòng admin bị sửa thành tieudoi
+  /* tệp mang thêm ba tài khoản không có dòng nào trong database hiện tại (PIN 1357 như trong tệp): một đang dùng (phải đổi PIN),
+     một đã xoá, một bị khoá — về y như tệp. Và dòng admin bị sửa thành tieudoi. */
   const goc = f.bang.users.find((u) => u.id === idGiu);
-  f.bang.users.push({ ...goc, id: 999, name: 'Chỉ trong tệp', phone: '0930000999', deleted: 0 });
+  f.bang.users.push({ ...goc, id: 999, name: 'Chỉ trong tệp', phone: '0930000999', deleted: 0, must_change: 1 },
+    { ...goc, id: 998, name: 'Tệp: đã xoá', phone: '0930000998', deleted: 1 }, { ...goc, id: 997, name: 'Tệp: bị khoá', phone: '0930000997', locked: 1 });
   // (người bị khoá thành admin trong tệp để tệp vẫn qua bước kiểm "có admin dùng được")
   f.bang.users = f.bang.users.map((u) => (u.id === 1 ? { ...u, role: 'tieudoi' } : u.id === idKhoa ? { ...u, role: 'admin' } : u));
   const nap = await S.call('POST', '/restore', { confirm: 'NAP LAI', file: f });
   eq('nạp lại được', nap.status === 200 ? 200 : nap.data, 200);
-  eq('báo tên tài khoản chỉ có trong tệp (về ở trạng thái đã xoá)', nap.data.tk_xoa, ['Chỉ trong tệp']);
   eq('admin đang nạp: vẫn đăng nhập, vẫn là admin', [(await S.call('GET', '/me')).status, S.one('SELECT role FROM users WHERE id = 1').role], [200, 'admin']);
   eq('admin: PIN mới (đổi sau ngày sao lưu) vẫn dùng được, PIN cũ thì không',
     [await goi('/login', { phone: '0900000001', pin: '2468' }, '10.1.0.1'), await goi('/login', { phone: '0900000001', pin: '8642' }, '10.1.0.1')], [401, 200]);
@@ -94,9 +95,11 @@ async function main() {
   eq('tài khoản đã xoá sau ngày sao lưu: vẫn xoá, PIN cũ không vào', [S.one('SELECT deleted FROM users WHERE id = ?', idXoa).deleted, await goi('/login', { phone: '0930000003', pin: '1357' }, '10.1.0.4')], [1, 401]);
   eq('vai trò lấy theo tệp, phiên của người đổi vai trò bị thu hồi', [S.one('SELECT role FROM users WHERE id = ?', idVt).role, (await S.call('GET', '/me', undefined, 'Đổi vai')).status], ['tieudoi', 401]);
   eq('người không đổi gì: giữ phiên', (await S.call('GET', '/me', undefined, 'Giữ nguyên')).status, 200);
-  eq('tài khoản chỉ có trong tệp: về ở trạng thái đã xoá, PIN trong tệp không vào', [(S.one('SELECT deleted FROM users WHERE id = 999') || {}).deleted, await goi('/login', { phone: '0930000999', pin: '1357' }, '10.1.0.5')], [1, 401]);
-  const kp = await S.call('POST', '/users/999/restore', {});
-  eq('khôi phục tài khoản đó: cấp PIN mới, PIN mới vào được', [kp.status, await goi('/login', { phone: '0930000999', pin: kp.data.pin }, '10.1.0.5')], [200, 200]);
+  const tep = (id) => S.one('SELECT deleted, locked, must_change FROM users WHERE id = ?', id) || {};
+  eq('tài khoản chỉ có trong tệp (đang dùng): về y như tệp, PIN trong tệp vào được, vẫn phải đổi PIN',
+    [tep(999), await goi('/login', { phone: '0930000999', pin: '1357' }, '10.1.0.5')], [{ deleted: 0, locked: 0, must_change: 1 }, 200]);
+  eq('tài khoản chỉ có trong tệp (đã xoá trong tệp): vẫn xoá, không vào', [tep(998).deleted, await goi('/login', { phone: '0930000998', pin: '1357' }, '10.1.0.5')], [1, 401]);
+  eq('tài khoản chỉ có trong tệp (bị khoá trong tệp): vẫn khoá', [tep(997).locked, await goi('/login', { phone: '0930000997', pin: '1357' }, '10.1.0.5')], [1, 403]);
   eq('không còn bản cất tạm trong meta', S.one("SELECT COUNT(*) n FROM meta WHERE key = 'nap_users'").n, 0);
   // tệp không có dòng của admin đang nạp: giữ nguyên dòng của mình
   const f2 = (await S.call('GET', '/backup')).data;
