@@ -1,6 +1,6 @@
 // Đặt lại số liệu thép, sao lưu toàn bộ và nạp lại.
 import { HttpError, bad, json, vnDay } from './core.js';
-import { RATE_SQL } from './db.js';
+import { rateStmts } from './db.js';
 import { auditStmt, batchGuarded, bump, guardStmt, readJson } from './helpers.js';
 import { J, KHU_X_PHI } from './counts.js';
 import { computeReview, ngayChuaChot } from './review.js';
@@ -131,7 +131,7 @@ export async function resetData(req, env, user) {
         `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat, vay, kg)
          SELECT ?1, ${J('phi')}, 0, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, NULL, 1, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')} FROM json_each(?2) j`
       ).bind(day, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, kg: r.kg })))),
-      env.DB.prepare(RATE_SQL).bind(day),
+      ...rateStmts(env, day),
       // tồn chuẩn hôm nay = 0 ở MỌI ô từng có số, kể cả ô thuộc khu/phi đã bị ẩn mà còn thép
       env.DB.prepare(
         `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)

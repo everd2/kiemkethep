@@ -24,41 +24,59 @@ export const EFF_JOIN = (A, B) => `LEFT JOIN counts c
                WHERE c2.khu_id = kx.khu_id AND c2.phi_id = kx.phi_id AND c2.day > ?${A} AND c2.day <= ?${B}
                  AND c2.duyet_v IS NOT NULL)`;
 // ?1 = ngày chốt trước ('' nếu chưa có), ?2 = ngày đang xét
-export const EFF_SELECT = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c.duyet_at ts, c.day FROM counts c
+/* ts = lúc DUYỆT số đếm, cts = lúc ĐẾM của chính con số đã duyệt (duyet_ts; c.ts có thể là lần báo lại đang chờ). Cần cả
+   hai mốc để biết phiếu nào đã nằm trong số đếm, xem SAU_DEM. */
+export const EFF_SELECT = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c.duyet_at ts, c.duyet_ts cts, c.day FROM counts c
   WHERE c.day > ?1 AND c.day <= ?2 AND c.duyet_v IS NOT NULL
     AND c.day = (SELECT MAX(c2.day) FROM counts c2
                  WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id AND c2.day > ?1 AND c2.day <= ?2
                    AND c2.duyet_v IS NOT NULL)`;
 // như trên nhưng mốc là ngày có tồn chuẩn gần nhất tính đến ?1 (dùng cho xuất CSV một ngày bất kỳ)
-export const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_at ts FROM counts c
+export const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_at ts, c.duyet_ts cts FROM counts c
   WHERE c.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c.day <= ?1
     AND c.duyet_v IS NOT NULL
     AND c.day = (SELECT MAX(c2.day) FROM counts c2
                  WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id AND c2.duyet_v IS NOT NULL
                    AND c2.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c2.day <= ?1)`;
 
+/* PHIẾU r CHƯA NẰM TRONG SỐ ĐẾM e (e.ts = lúc duyệt số, e.cts = lúc đếm). Phiếu nằm trong số đếm khi và chỉ khi nó được
+   LẬP TRƯỚC lúc khu ra đếm (thép đã về / đã đi rồi mới đếm) VÀ được duyệt trước hoặc cùng lúc với số đếm. Bản cũ chỉ so lúc
+   DUYỆT: khu đếm 100 lúc 8h, 10h lập phiếu chuyển 90 sang khu B, 11h "Duyệt khu A" duyệt cả số lẫn phiếu cùng một mốc, phiếu
+   bị coi như đã nằm trong số đếm — A vẫn 100, B thêm 90, cả bãi tự sinh ra 90 cây. Phiếu lập SAU lúc đếm thì số đếm không thể
+   gồm nó, duyệt lúc nào cũng phải cộng lên trên. Mốc lập phiếu là receipts.ts, mốc đếm là ts của lần báo (cả hai là giờ máy
+   chủ lúc nhận; báo cáo gửi dồn sau khi mất mạng mang mốc lúc tới máy chủ, như lâu nay). Trùng đúng mili-giây thì coi
+   là nằm trong số đếm, như luật cũ. */
+export const SAU_DEM = (r, e) => `(${r}.duyet_ts > ${e}.ts OR ${r}.ts > ${e}.cts)`;
+/* Phần CỘNG LÊN số đếm / tồn chuẩn của ô, theo đúng SAU_DEM. Hai nhánh:
+   - phiếu duyệt TRONG KỲ (sau ngày mốc A): ô chưa có số đếm đã duyệt thì mọi phiếu (cộng lên tồn chuẩn), có thì phiếu SAU_DEM;
+   - phiếu duyệt ở các ngày ĐÃ CHỐT (<= A) mà lập sau lúc đếm: chỉ có khi số đếm chưa duyệt được chuyển qua 0h (carryStmts)
+     rồi mới duyệt. Tồn chuẩn đã gồm phiếu đó, nhưng số đếm THAY tồn chuẩn — không cộng lại thì đếm 100 lúc 9h, 14h nhập 50,
+     hôm sau duyệt số là tồn tụt về 100 và 50 cây thành "đã dùng" (vào daily_summary, phi_rate).
+   Tách hai nhánh (UNION ALL) để mỗi nhánh đi index theo ngày duyệt / theo ô, không quét cả bảng phiếu.
+   A, B = biểu thức ngày mốc / ngày đang xét; eff = câu số đếm hiệu lực (có ts, cts). */
+const MV_SAU = (A, B, eff) => `SELECT khu_id, phi_id, SUM(q) q FROM (
+    SELECT r.khu_id, r.phi_id, r.qty q FROM receipts r
+    LEFT JOIN (${eff}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
+    WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ${A} AND r.duyet_day <= ${B}
+      AND (e.ts IS NULL OR ${SAU_DEM('r', 'e')})
+    UNION ALL
+    SELECT r.khu_id, r.phi_id, r.qty FROM (${eff}) e
+    JOIN receipts r ON r.phi_id = e.phi_id AND r.khu_id = e.khu_id
+    WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day <= ${A} AND r.ts > e.cts)
+  GROUP BY khu_id, phi_id HAVING SUM(q) <> 0`;
 /* Thép ĐÃ DUYỆT về SAU lần đếm, tính đến ngày ?1 — tức phần chưa nằm trong số đếm.
    Tồn mà app hiện = số đếm + phần này (xem tonOf ở app.js). Chỗ nào đọc tồn mà bỏ phần này thì
    nói ít hơn chính app, và lệch đúng bằng lượng thép vừa về mà khu chưa kịp đếm.
    Ngày ĐÃ CHỐT thì mốc tồn chuẩn chính là ngày đó nên phiếu duyệt trong ngày không lọt vào đây,
    và kết quả bằng đúng tồn chuẩn — hai cách đọc vẫn khớp. */
-export const MV_CHUA_DEM = `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
-  LEFT JOIN (${EFF_BY_BASELINE}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
-  WHERE r.voided = 0 AND r.duyet_day IS NOT NULL
-    AND r.duyet_day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1)
-    AND r.duyet_day <= ?1 AND (e.ts IS NULL OR r.duyet_ts > e.ts)
-  GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`;
+export const MV_CHUA_DEM = MV_SAU("(SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1)", '?1', EFF_BY_BASELINE);
 /* Mọi (khu x phi) đang dùng. Thay cho khu_phi làm bảng liệt kê: từ bản 1.3 khu nào cũng có đủ phi,
    nên tồn chuẩn thành đặc (8 khu x 13 phi) và bỏ được trường hợp "khu hôm qua không có phi đó". */
 export const KHU_X_PHI = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p WHERE k.active = 1 AND p.active = 1`;
-/* Phiếu được duyệt SAU lần duyệt báo cáo của ô (ô chưa có báo cáo đã duyệt: mọi phiếu đã duyệt trong
-   kỳ) — phần thép chưa nằm trong số báo cáo. ?1 = ngày chốt trước, ?2 = ngày đang xét. Bootstrap và
+/* Phiếu chưa nằm trong số báo cáo đã duyệt của ô (SAU_DEM; ô chưa có báo cáo đã duyệt: mọi phiếu đã
+   duyệt trong kỳ) — phần thép cộng lên số báo cáo. ?1 = ngày chốt trước, ?2 = ngày đang xét. Bootstrap và
    màn Duyệt dùng CHUNG câu này, nên "tồn" ở Tổng quan và ở màn Duyệt không thể lệch nhau. */
-export const MV_NEW = `SELECT r.khu_id, r.phi_id, SUM(r.qty) q FROM receipts r
-  LEFT JOIN (${EFF_SELECT}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
-  WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_day <= ?2
-    AND (e.ts IS NULL OR r.duyet_ts > e.ts)
-  GROUP BY r.khu_id, r.phi_id HAVING SUM(r.qty) <> 0`;
+export const MV_NEW = MV_SAU('?1', '?2', EFF_SELECT);
 
 /* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
    So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
@@ -93,20 +111,10 @@ export async function putCounts(req, env, user) {
     env.DB.prepare('SELECT phi_id, v, kind, user_id, ts, duyet_at FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
     /* Thép ĐÃ DUYỆT về khu này sau lần đếm đã duyệt: chỉ phần này là chưa nằm trong số đếm.
        Thép đã về trước lần đếm thì số đếm đã bao gồm, "giữ nguyên" vẫn hợp lệ.
-       Mốc hai bên đều là lúc DUYỆT (duyet_ts/duyet_day), không phải lúc nhập hay lúc báo:
-       từ bản 1.3 một con số chỉ tác động tới tồn kể từ khi được duyệt. */
+       Đúng câu MV_NEW của màn Duyệt / Tổng quan (luật SAU_DEM), lọc riêng khu này. */
     env.DB.prepare(
-      `SELECT r.phi_id, SUM(r.qty) q FROM receipts r
-       LEFT JOIN (SELECT c.phi_id, c.duyet_at ts FROM counts c
-                  WHERE c.khu_id = ?1 AND c.duyet_v IS NOT NULL
-                    AND c.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND c.day <= ?2
-                    AND c.day = (SELECT MAX(c2.day) FROM counts c2 WHERE c2.khu_id = ?1 AND c2.phi_id = c.phi_id
-                                 AND c2.duyet_v IS NOT NULL
-                                 AND c2.day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND c2.day <= ?2)
-                 ) e ON e.phi_id = r.phi_id
-       WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.khu_id = ?1 AND (e.ts IS NULL OR r.duyet_ts > e.ts)
-         AND r.duyet_day > (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2) AND r.duyet_day <= ?2
-       GROUP BY r.phi_id HAVING SUM(r.qty) <> 0`
+      `SELECT m.phi_id, m.q FROM (${MV_NEW.replace(/\?1/g, "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2)")}) m
+       WHERE m.khu_id = ?1`
     ).bind(khuId, day),
     env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(khuId),
     /* Số MỐC của từng phi, đúng con số máy khách gọi là "số hôm qua" (refOf ở app.js): lần đếm đã

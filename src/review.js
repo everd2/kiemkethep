@@ -2,7 +2,7 @@
 import { CAP_TREN, HIGH_KG, HttpError, KHU_DOWN_KG, KHU_DOWN_PCT, KHU_UP_KG, MIN_RATE_DAYS, NEG_KG,
   PEAK_K, RATE_K, SYSTEM, bad, daysBetween, duyetCuaNguoi, json, vnDay, vnHour } from './core.js';
 import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
-import { RATE_SQL } from './db.js';
+import { rateStmts } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
   guardStmt, parseSettings, readJson } from './helpers.js';
 import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW } from './counts.js';
@@ -68,10 +68,17 @@ export async function computeReview(env, day, opt = {}) {
        Thiếu chiều thứ hai thì huỷ phiếu lại LÀM GIẢM mốc này nên cảnh báo im lặng, trong khi
        khu vẫn mang nhãn "Đã duyệt" mà số đã duyệt không còn khớp dự kiến — đúng cái bản 1.2 bắt
        được bằng exception 'late' với q < 0. Chỉ xét phiếu từng được duyệt: phiếu lập rồi từ chối
-       luôn chưa bao giờ vào tồn nên không làm dự kiến đổi. */
-    db.prepare(`SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b
-                FROM receipts
-                WHERE duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ?
+       luôn chưa bao giờ vào tồn nên không làm dự kiến đổi.
+       Gồm cả phiếu duyệt ở ngày ĐÃ CHỐT mà sau lần báo cũ nhất còn trong kỳ: báo cáo chưa duyệt được chuyển qua 0h
+       (carryStmts) giữ giờ đếm của hôm trước, phiếu duyệt chiều hôm trước vẫn là "phiếu sau lần báo" (phieuSau), không
+       thì sang ngày mới cấp duyệt khu tụt về CVKTHT. Các mốc khác (recheck: so với lúc duyệt số, luôn trong kỳ) không đổi. */
+    // cận dưới theo NGÀY của lần báo cũ nhất (giờ VN) để câu vẫn đi index duyet_day, không quét mọi phiếu từ trước tới nay
+    db.prepare(`WITH m AS (SELECT MIN(ts) t FROM counts WHERE day > ?1 AND day <= ?2)
+                SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b
+                FROM receipts, m
+                WHERE duyet_day IS NOT NULL AND duyet_day <= ?2
+                  AND duyet_day >= MIN(?1, COALESCE(date(m.t / 1000 + 25200, 'unixepoch'), ?1))
+                  AND (duyet_day > ?1 OR duyet_ts > m.t)
                 GROUP BY khu_id`).bind(last, day),
     /* Phiếu đang chờ duyệt, của BẤT KỲ ngày nào: phiếu lập hôm qua chưa ai duyệt thì hôm nay vẫn
        phải nằm trên màn Duyệt, không được rơi khỏi màn hình chỉ vì sang ngày mới. */
@@ -302,6 +309,8 @@ export async function computeReview(env, day, opt = {}) {
              khi phiếu vào tồn, mà duyệt báo cáo là lấy tồn theo báo cáo, tức phiếu vừa duyệt bị coi
              như đã nằm sẵn trong số đếm (hoặc phiếu vừa huỷ bị coi như chưa từng huỷ). Đó là quyết
              định về một phiếu kho, nên CVKTHT không bấm được; khu đếm lại là hết.
+             (Từ 10/2026 phiếu LẬP sau lúc đếm không còn bị số đếm nuốt — xem SAU_DEM ở counts.js — nên duyệt khu chỉ còn
+             "quyết" những phiếu lập trước lúc đếm; vẫn giữ cấp chỉ huy cho cả trường hợp này, kể cả khi số đếm đã chuyển qua 0h.)
          Duyệt khu là duyệt cả số lẫn phiếu trong một lần ghi, nên phải đủ cấp cho cả hai. */
       capBao, nguoiBao: [...nguoiBao], phieuSau, capPhieu: (pendKhu[k.id] || []).length || phieuSau ? 2 : 0,
       rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved } : null,
@@ -405,7 +414,7 @@ export async function doClose(env, user, rv, note, action, extra = []) {
       `INSERT OR REPLACE INTO daily_summary (day, phi_id, ton, nhap, dung, span, dc, xuat, vay, kg, bt)
        SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')}, ${J('bt')} FROM json_each(?3) j`
     ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, used: r.used, kg: r.kg, bt: r.neg || r.high ? 1 : 0 })))),
-    env.DB.prepare(RATE_SQL).bind(day),
+    ...rateStmts(env, day),
     /* Tồn chuẩn chốt theo THÉP ĐANG CÓ: báo cáo ĐÃ DUYỆT gần nhất (EFF_JOIN đã lọc duyet_v IS NOT
        NULL — báo cáo chưa duyệt không bao giờ thành tồn chuẩn) cộng phiếu được duyệt SAU lần duyệt
        đó. Thiếu phần phiếu thì thép đã duyệt mà khu chưa kịp báo lại biến mất khỏi sổ đúng lúc 0h. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
@@ -419,16 +428,20 @@ export async function doClose(env, user, rv, note, action, extra = []) {
     env.DB.prepare(
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kx.khu_id, kx.phi_id, COALESCE(c.duyet_v, b.v, 0)
+         /* phần cộng lên đúng luật SAU_DEM / MV_NEW (counts.js): chưa có số đếm thì mọi phiếu duyệt trong kỳ; có thì phiếu duyệt
+            sau lúc duyệt số HOẶC lập sau lúc đếm (c.duyet_ts) — kể cả phiếu của ngày đã chốt khi số đếm là số chuyển qua 0h. */
          + COALESCE((SELECT SUM(r.qty) FROM receipts r
                      WHERE r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
-                       AND r.duyet_day IS NOT NULL AND r.duyet_day > ?2 AND r.duyet_day <= ?1
-                       AND (c.duyet_at IS NULL OR r.duyet_ts > c.duyet_at)), 0)
-         /* Số đếm của ngày này được DUYỆT SAU nửa đêm (trước lúc lịch chốt sổ): phiếu duyệt hôm sau trước / cùng lúc đó đã nằm
-            trong số đếm, mà hôm sau lại được cộng như "thép về sau lần đếm" (không có số đếm nào của hôm sau) — cộng HAI LẦN.
-            Tồn chuẩn cuối ngày = số đếm TRỪ những phiếu đó; hôm sau cộng lại đúng một lần. */
+                       AND r.duyet_day IS NOT NULL AND r.duyet_day <= ?1
+                       AND (c.duyet_at IS NULL AND r.duyet_day > ?2 OR r.ts > c.duyet_ts
+                            OR r.duyet_day > ?2 AND r.duyet_ts > c.duyet_at)), 0)
+         /* Số đếm của ngày này được DUYỆT SAU nửa đêm (trước lúc lịch chốt sổ): phiếu duyệt hôm sau trước / cùng lúc đó mà LẬP
+            TRƯỚC lúc đếm đã nằm trong số đếm, mà hôm sau lại được cộng như "thép về sau lần đếm" (không có số đếm nào của hôm
+            sau) — cộng HAI LẦN. Tồn chuẩn cuối ngày = số đếm TRỪ những phiếu đó; hôm sau cộng lại đúng một lần. Phiếu lập sau
+            lúc đếm thì không nằm trong số đếm: hôm nay không cộng (duyệt hôm sau), hôm sau cộng — khỏi trừ. */
          - COALESCE((SELECT SUM(r.qty) FROM receipts r
                      WHERE c.duyet_at IS NOT NULL AND r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
-                       AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_ts <= c.duyet_at), 0)
+                       AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_ts <= c.duyet_at AND r.ts <= c.duyet_ts), 0)
        FROM (${KHU_X_PHI}
              UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?2 AND v <> 0
              UNION SELECT khu_id, phi_id FROM counts
@@ -487,7 +500,7 @@ export async function reopenDay(req, env, user) {
     ).bind(day, JSON.stringify(snap.reports)));
   }
   stmts.push(
-    env.DB.prepare(RATE_SQL).bind(day),
+    ...rateStmts(env, day),
     auditStmt(env, user, 'reopen_day', { day, note, reset: true }),
     bump(env)
   );

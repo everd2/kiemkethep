@@ -558,9 +558,15 @@ export const MIGRATIONS = {
     'ALTER TABLE users ADD COLUMN thep_ve INTEGER NOT NULL DEFAULT 0',
   ],
 };
+const RATE_WHERE = "dung IS NOT NULL AND bt = 0 AND day > date(?1, '-28 days') AND day <= ?1";
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)
   SELECT phi_id, SUM(dung) * 1.0 / SUM(span), SUM(span) FROM daily_summary
-  WHERE dung IS NOT NULL AND bt = 0 AND day > date(?1, '-28 days') AND day <= ?1 GROUP BY phi_id`;
+  WHERE ${RATE_WHERE} GROUP BY phi_id`;
+/* RATE_SQL chỉ GHI ĐÈ dòng của phi còn ngày hợp lệ trong 28 ngày; phi không còn ngày nào (mọi ngày bất thường, mốc đặt lại,
+   lâu không chốt có số) thì dòng cũ nằm lại mãi — "còn đủ dùng N ngày" và ngưỡng "dùng cao bất thường" bám một mức dùng từ
+   hàng tháng trước. Xoá dòng đó: không có số thì nói "chưa đủ dữ liệu", như phi mới. Luôn chạy CÙNG batch, ngay trước RATE_SQL. */
+export const RATE_XOA_SQL = `DELETE FROM phi_rate WHERE phi_id NOT IN (SELECT phi_id FROM daily_summary WHERE ${RATE_WHERE})`;
+export const rateStmts = (env, day) => [env.DB.prepare(RATE_XOA_SQL).bind(day), env.DB.prepare(RATE_SQL).bind(day)];
 export async function migrate(env) {
   /* Hai câu kiểm (phiên bản cấu trúc, bảng phi đã có dữ liệu) đi chung MỘT lượt gọi: isolate của app ít người dùng bị
      thu hồi liên tục, nên request "nguội" rất thường gặp và mỗi lượt gọi D1 ở đây là thời gian người dùng phải chờ. */

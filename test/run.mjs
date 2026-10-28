@@ -23,6 +23,7 @@ const SUITES = [
   ['Vá bảo mật: CSV công thức, đổi PIN, ảnh gửi dồn', 'baomat.test.mjs'],
   ['Rà soát: LIMIT âm, ngày không có thật', 'roasoat.test.mjs'],
   ['Rà soát kho: duyệt lúc nửa đêm không cộng phiếu hai lần, Duyệt tất cả không làm mất phiếu, đổi PIN không tự khoá, phi tên lạ', 'khoroasoat.test.mjs'],
+  ['Lõi tính tồn: phiếu lập sau lúc đếm vẫn cộng lên số đếm, số đếm chuyển qua 0h, huỷ phiếu sai sau khi đếm lại, phi_rate cũ', 'kho3.test.mjs'],
   ['Báo cáo sản lượng: quyền, quân số lấy từ báo cáo ca, (công x 158 x tỷ lệ gia công) / tỷ lệ giá, bản chữ', 'sanluong.test.mjs'],
   ['Bấm loạn: mọi nút trên mọi màn, hai lượt (Quay lại / Đồng ý), không lỗi JavaScript, không bị khoá ngoài', 'bam.test.mjs'],
   ['Chuyển màn không chờ trắng: mở lại mọi màn hiện ngay, tải sẵn màn hay dùng, mỗi lần mở <= 3 lượt gọi', 'chuyenman.test.mjs'],

@@ -87,9 +87,11 @@ export async function tonCells(env, day, cells, choRut = true) {
   const { results } = await env.DB.prepare(
     `SELECT ${K} khu, ${P} phi,
        CASE WHEN e.v IS NOT NULL
+         /* phiếu chưa nằm trong số đếm (SAU_DEM ở counts.js): duyệt trong kỳ sau lúc duyệt số, hoặc lập sau lúc đếm —
+            kể cả phiếu của ngày đã chốt khi số đếm là số chưa duyệt được chuyển qua 0h. Cùng luật với MV_NEW. */
          THEN e.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
-                               AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
-                               AND rr.duyet_day <= ?1 AND rr.duyet_day > ${LAST} AND rr.duyet_ts > e.ts), 0)
+                               AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL AND rr.duyet_day <= ?1
+                               AND (rr.ts > e.cts OR (rr.duyet_day > ${LAST} AND rr.duyet_ts > e.ts))), 0)
          ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
                                AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
                                AND rr.duyet_day <= ?1 AND rr.duyet_day > ${LAST}), 0)
@@ -426,7 +428,16 @@ export async function voidReceipt(env, user, id) {
   if (!pending) {
     /* So với tồn THỰC CÓ (không trừ phiếu rút đang chờ): phiếu rút chờ duyệt sẽ tự bị chặn lúc duyệt, nên huỷ phiếu nhập
        trước đó vẫn được — chỉ chặn khi thép ấy đã THẬT SỰ đi mất (phiếu chuyển / xuất đã duyệt). */
-    const ra = rows.filter((x) => x.qty > 0).map((x) => ({ phi_id: x.phi_id, khu_id: x.khu_id, qty: -x.qty }));
+    /* Chỉ kiểm phần còn ĐANG NẰM TRONG TỒN. Khu đã đếm lại (số đếm đã duyệt) sau phiếu thì tồn là số đếm, phiếu đã "chìm" vào
+       số đó (SAU_DEM ở counts.js sai): huỷ không rút gì khỏi tồn, chỉ sửa cột nhập / đã dùng. Kiểm như phiếu còn sống thì phiếu
+       nhập sai (xe không về) bị chặn mãi: tồn 100, phiếu sai +50 đã duyệt, khu đếm thật còn 20 rồi duyệt -> "Khu A chỉ còn 20
+       cây D16" và không còn đường nào gỡ phiếu sai. Mọi dòng của phiếu cùng mốc lập (ts) và mốc duyệt (duyet_ts) với r. */
+    const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
+    const effR = (await env.DB.prepare(`SELECT khu_id, phi_id, ts, cts FROM (${EFF_SELECT.replace(/\?1/g, LAST).replace(/\?2/g, '?1')})`)
+      .bind(vnDay()).all()).results;
+    const effBy = Object.fromEntries(effR.map((e) => [e.khu_id + '|' + e.phi_id, e]));
+    const song = (x) => { const e = effBy[x.khu_id + '|' + x.phi_id]; return !e || r.duyet_ts > e.ts || r.ts > e.cts; };
+    const ra = rows.filter((x) => x.qty > 0 && song(x)).map((x) => ({ phi_id: x.phi_id, khu_id: x.khu_id, qty: -x.qty }));
     if (ra.length) await checkTransferStock(env, vnDay(), ra, { kind: 'huy', duyet: false, ctx: await rutCtx(env, vnDay(), ra, false) });
   }
   // còn chặn khi phiếu vừa bị người khác huỷ / duyệt giữa lúc đọc và lúc ghi

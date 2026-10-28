@@ -370,7 +370,9 @@ async function main() {
     await gui(S, 950); advance(60e3);
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }, 'Kho'); advance(60e3);
     await duyet(S, 'A'); advance(60e3);
-    eq('duyệt khu kèm phiếu đang chờ: vẫn lấy theo báo cáo', await cua(S), [950, 950, 130, 950]);
+    /* phiếu LẬP SAU lúc khu báo: số báo cáo không thể gồm nó, nên duyệt chung một lần bấm vẫn cộng lên trên (luật SAU_DEM ở
+       counts.js; bản cũ coi là "nằm trong báo cáo" và thép tự sinh / tự mất) */
+    eq('duyệt khu kèm phiếu lập sau lúc báo: cộng lên báo cáo', await cua(S), [1130, 1130, -50, 1130]);
 
     S = await mk();
     await gui(S, 950); advance(60e3); await duyet(S, 'A'); advance(60e3);
@@ -383,7 +385,7 @@ async function main() {
     await gui(S, 950); advance(60e3); await duyet(S, 'A'); advance(60e3);
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
     await duyet(S, 'A'); advance(60e3);
-    eq('admin bấm duyệt lại khu: tồn về lại đúng báo cáo', await cua(S), [950, 950, 130, 950]);
+    eq('admin bấm duyệt lại khu: phiếu lập sau lúc báo vẫn trong tồn', await cua(S), [1130, 1130, -50, 1130]);
 
     S = await mk();
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
@@ -773,10 +775,12 @@ async function main() {
     await chot(S, { note: '' });
     addDays(1); day = vnDay();
     // khu A: D22 dư 20 cây và D18 hụt sạch 100 cây; khu B: D22 hụt 20 cây
+    // phiếu chờ duyệt của khu A: vẫn chỉ là một việc, vì nút "Duyệt khu A" xử lý luôn cả nó. Lập TRƯỚC lúc khu đếm (thép về
+    // rồi mới đếm, số 120 đã gồm nó), không thì duyệt chung vẫn cộng 50 lên số đếm (SAU_DEM) và D22 thành dùng âm
+    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 50 }] });
+    advance(1000);
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 120, D18: 0 }) }, 'An');
     await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D22: 80 }) }, 'Binh');
-    // phiếu chờ duyệt của khu A: vẫn chỉ là một việc, vì nút "Duyệt khu A" xử lý luôn cả nó
-    await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 50 }] });
     let rv = (await S.call('GET', '/review')).data;
     eq('hai khu chờ duyệt + một phiếu chờ = ba việc', rv.pending, 3);
     const kA = rv.khus.find((k) => k.khu === 'A');
