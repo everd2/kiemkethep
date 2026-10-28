@@ -305,7 +305,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v66';
+const BAN = 'kho-thep-v67';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -484,7 +484,7 @@ function askHtml() {
   if (!a) return '';
   return `<div class="modal" role="dialog" aria-modal="true" aria-label="Xác nhận"><div class="box col gap8">
     <div style="font-size:18px;line-height:1.45;white-space:pre-line">${esc(a.msg)}</div>
-    ${a.input ? `<input class="inp" id="askin" data-model="askin" data-enter="askyes" enterkeyhint="done" maxlength="300" autocomplete="off" placeholder="${esc(a.input)}" value="${esc(S.form.askin || '')}">${a.thieu ? `<span class="sm b" style="color:var(--bad)">${esc(a.can || 'Phải ghi lý do thì mới huỷ được.')}</span>` : ''}` : ''}
+    ${a.input ? `<input class="inp" id="askin" data-model="askin" data-enter="askyes" enterkeyhint="done" maxlength="300" autocomplete="off" placeholder="${esc(a.input)}" value="${esc(S.form.askin || '')}">${a.thieu ? `<span class="sm b" style="color:var(--bad)">${esc(a.can || 'Phải ghi lý do thì mới ' + String(a.ok || 'huỷ').toLowerCase() + ' được.')}</span>` : ''}` : ''}
     <button class="btn ${a.danger ? 'bad' : 'pri'} full" data-a="askyes">${esc(a.ok)}</button>
     <button class="btn full" data-a="askno">Quay lại</button>
   </div></div>`;
@@ -920,7 +920,7 @@ function pendingHtml() {
 
 /* ===================== MÀN HÌNH ===================== */
 function head(title, sub, back) {
-  return `<div class="top">${back ? `<button class="iconbtn" aria-label="Quay lại" data-a="nav" data-s="${back}">${IC.back}</button>` : ''}<div class="t"><h1>${title}</h1>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
+  return `<div class="top"${back ? '' : ' style="padding-left:16px"'}>${back ? `<button class="iconbtn" aria-label="Quay lại" data-a="nav" data-s="${back}">${IC.back}</button>` : ''}<div class="t"><h1>${title}</h1>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
 }
 
 function lastPhone() { try { return localStorage.getItem('kt:phone') || ''; } catch (e) { return ''; } }
@@ -1586,7 +1586,7 @@ function vNhap() {
   const reasons = reasons0(b);
   return `${head(tieu[0], tieu[1], 'home')}
   <div class="f1 scroll pad col gap12" id="body">
-    <div class="row gap6"><button class="chip s f1 ${N.mode === 'nhap' ? 'on' : ''}" data-a="nmode" data-v="nhap">Nhập thép về</button><button class="chip s f1 ${chuyen ? 'on' : ''}" data-a="nmode" data-v="chuyen">Chuyển khu</button><button class="chip s f1 ${xuat ? 'on' : ''}" data-a="nmode" data-v="xuat">Xuất kho</button><button class="chip s f1 ${dc ? 'on' : ''}" data-a="nmode" data-v="dc">Điều chỉnh</button></div>
+    <div class="row gap6">${[['nhap', N.mode === 'nhap', 'Nhập về'], ['chuyen', chuyen, 'Chuyển khu'], ['xuat', xuat, 'Xuất kho'], ['dc', dc, 'Điều chỉnh']].map(([v, on, t]) => `<button class="chip s f1 ${on ? 'on' : ''}" style="min-width:0;border-radius:12px;padding:6px 2px;font-size:15px;line-height:1.15;min-height:52px" data-a="nmode" data-v="${v}">${t}</button>`).join('')}</div>
     <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:2px 0;text-decoration:underline" data-a="nav" data-s="vaymuon">Cho đối tác mượn hoặc đi vay thép? Ghi ở Vay mượn ngoài bãi →</button>
     ${N.done ? `<div class="card warn col gap8"><b style="font-size:18px">Đã lưu phiếu · chờ cấp trên duyệt</b><span style="font-size:18px">${esc(N.done.text)}</span><span class="sm" style="line-height:1.4">Phiếu chỉ tính vào tồn sau khi được duyệt. Chứng từ ghi cả ngày nhập và ngày duyệt.</span><button class="btn s full" data-a="void" data-id="${N.done.id}">RÚT LẠI CẢ PHIẾU</button></div>` : ''}
     ${xuat ? `<div class="card col gap6" style="border:2px solid var(--pri)"><b style="font-size:18px">Phiếu xuất: không bắt buộc</b><span class="sm" style="line-height:1.45">Ghi để biết thép đi đâu; không ghi thì lượng dùng vẫn được tính. Phiếu cần cấp trên duyệt.</span></div>` : ''}
@@ -2639,7 +2639,7 @@ function loanCard(rows) {
   const quyen = r0.kho ? isCH() : duyetDuoc(r0);
   const nut = huy ? ''
     : quyen && cho
-      ? `<div class="row gap6"><button class="btn s ok" data-a="lduyet" data-id="${id}">Duyệt</button><button class="btn s bad" data-a="lvoid" data-id="${id}">Từ chối</button></div>`
+      ? `<div class="row gap8"><button class="btn s ok f1" data-a="lduyet" data-id="${id}">Duyệt</button><button class="btn s bad f1" data-a="lvoid" data-id="${id}">Từ chối</button></div>`
     // cùng luật với server: admin huỷ lần ghi đã duyệt trong 7 ngày; quá hạn thì ghi một lần ngược lại
     : !cho && quyen && svNow() - r0.duyet_ts > 7 * 864e5
       ? '<span class="sm muted" style="text-align:right;max-width:110px">quá 7 ngày, ghi lần ngược lại để sửa</span>'
@@ -2653,7 +2653,9 @@ function loanCard(rows) {
   const ct = [r0.so_bb ? 'BB ' + esc(r0.so_bb) : '', hanTxt(r0.han, conNo), r0.bien_so ? 'xe ' + esc(r0.bien_so) : '', r0.nguoi ? esc(r0.nguoi) : '',
     r0.kho ? 'phiếu kho ' + esc(kName(r0.kho)) : ''].filter(Boolean).join(' · ');
   // chữ và dải ảnh chung MỘT cột bên trái: .li là hàng space-between, dải ảnh đứng riêng sẽ thành cột giữa ép chữ hẹp lại
-  return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
+  // chờ duyệt: hai nút Duyệt / Từ chối xếp DƯỚI nội dung, chia đôi bề ngang — đặt cạnh nhau bên phải thì chữ bị ép còn ~130px, nút ~55px dễ bấm nhầm
+  const doc = !huy && quyen && cho;
+  return `<div class="li" style="${huy ? 'opacity:.6;' : ''}${doc ? 'flex-direction:column;align-items:stretch' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}">${r0.ngay ? `<b>${ngayNgan(r0.ngay)}</b> · ` : ''}<b>${esc(loanTitle(r0.kind, r0.doitac_name || '#' + r0.doitac_id))}</b> ${nhan}<br>
     ${esc(kemTan(rows.map((r) => r.phi_id + ' ' + fmtQs(r.qty, r.phi_id)).join(' · '), kg))}<br>
     ${ct ? `<span class="sm">${ct}</span><br>` : ''}<span class="sm muted">ghi sổ: ${esc(r0.uname)} · ${dmy(r0.ts)}${r0.note ? ' · ' + esc(r0.note) : ''}</span>${huy && r0.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r0.voided_note)}</span>` : ''}</span>${anhStrip('loan', id, loanAnh(rows, id), !huy && mine)}</div>${nut}</div>`;
 }
@@ -2813,13 +2815,14 @@ function svCard(r) {
   // cùng luật với server (voidSv): người duyệt được thì từ chối / huỷ trong 7 ngày; người ghi rút lại, hoặc huỷ trong 10 phút sau duyệt
   const quyen = duyetDuoc(r) || (isCH() && !huy);
   const nut = huy ? ''
-    : quyen && cho ? `<div class="row gap6"><button class="btn s ok" data-a="svduyet" data-id="${r.id}">Duyệt</button><button class="btn s bad" data-a="svvoid" data-id="${r.id}">Từ chối</button></div>`
+    : quyen && cho ? `<div class="row gap8"><button class="btn s ok f1" data-a="svduyet" data-id="${r.id}">Duyệt</button><button class="btn s bad f1" data-a="svvoid" data-id="${r.id}">Từ chối</button></div>`
     // đã duyệt quá 7 ngày: chỉ cấp chỉ huy còn huỷ được (kèm lý do), xem voidSv
     : !cho && quyen && !isCH() && svNow() - r.duyet_ts > 7 * 864e5 ? ''
     : quyen || (mine && (cho || svNow() - r.duyet_ts < 10 * 60e3)) ? `<button class="btn s bad" data-a="svvoid" data-id="${r.id}">${cho ? 'Rút lại' : 'Huỷ'}</button>` : '';
   const nhan = huy ? `<span class="badge bad">Đã huỷ${r.voided_uname ? ' · ' + esc(r.voided_uname) : ''}</span>` : cho ? '<span class="badge warn">Chờ duyệt</span>'
     : `<span class="badge ok">Đã duyệt${r.duyet_uname ? ' · ' + esc(r.duyet_uname) : ''}</span>`;
-  return `<div class="li" style="${huy ? 'opacity:.6' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
+  const doc = !huy && quyen && cho;
+  return `<div class="li" style="${huy ? 'opacity:.6;' : ''}${doc ? 'flex-direction:column;align-items:stretch' : ''}"><div class="col" style="flex:1;min-width:0;gap:0"><span style="${huy ? 'text-decoration:line-through' : ''}"><b>${ngayNgan(r.ngay)}</b> · <b>${svT(r.kg)} tấn → ${esc(r.noi)}</b> ${nhan}<br>
     <span class="sm">${esc(svCt(r))}</span><br><span class="sm muted">ghi: ${esc(r.uname)} · ${dmy(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</span>${huy && r.voided_note ? `<br><span class="sm">Lý do huỷ: ${esc(r.voided_note)}</span>` : ''}</span>${anhStrip('satvun', r.id, r.anh, !huy && mine)}</div>${nut}</div>`;
 }
 function vSatVun() {
@@ -3350,7 +3353,7 @@ function vGcDon() {
   // ô nhắn ở đáy màn: trả lời nhanh một chạm; người giao (ngoài nhóm làm) bật được "Cần trả lời"
   const tnDuoc = gcTnDuoc(d), laNguoiGiao = !cuaToi && isQL();
   const oNhan = !tnDuoc ? '' : `<div class="sendbar col gap6">
-    <div class="row gap6" style="overflow-x:auto">${GC_TN_NHANH[cuaToi ? 'lam' : 'giao'].map((x) => `<button class="chip s" style="flex:none;white-space:nowrap;min-height:36px;padding:2px 12px;font-size:15px" data-a="gctnq" data-v="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+    <div class="row gap6" style="overflow-x:auto">${GC_TN_NHANH[cuaToi ? 'lam' : 'giao'].map((x) => `<button class="chip s" style="flex:none;white-space:nowrap;min-height:44px;padding:2px 12px;font-size:15px" data-a="gctnq" data-v="${esc(x)}">${esc(x)}</button>`).join('')}</div>
     <div class="row gap6"><input class="inp s f1" id="gctn" style="min-width:0" maxlength="500" autocomplete="off" enterkeyhint="send" placeholder="${cuaToi ? 'Nhắn người giao…' : 'Nhắn ' + esc(gcTenNguoi(d, true)) + '…'}" data-model="gctn" data-enter="gctngui" value="${esc(S.form.gctn || '')}">
       ${laNguoiGiao ? `<button class="chip s ${S.gcTnCan ? 'on' : ''}" style="flex:none;min-height:44px;padding:2px 8px;font-size:14px;white-space:nowrap" aria-pressed="${!!S.gcTnCan}" data-a="gctncan">Cần trả lời</button>` : ''}
       <button class="btn s pri" style="flex:none" data-a="gctngui">Gửi</button></div></div>`;
@@ -3512,7 +3515,7 @@ function vGcForm() {
     <div class="wrap">${cks.map((c) => `<button class="chip s ${F.ck === c ? 'on' : ''}" data-a="gcckq" data-v="${esc(c)}">${esc(c)}</button>`).join('')}<button class="chip s ${F.ck === 'khac' ? 'on' : ''}" data-a="gcckq" data-v="khac">Khác</button></div>
     <input class="inp s" id="gcck" maxlength="70" placeholder="${F.ck === 'khac' ? 'Tên cấu kiện (bắt buộc), ví dụ: Bể nước, ram dốc' : 'Số hiệu, ví dụ: D3 (không bắt buộc)'}" autocomplete="off" enterkeyhint="next" data-enter="gcnext" data-model="gcck" value="${esc(S.form.gcck || '')}">
     <b class="sm">Vị trí trục</b>
-    <div class="row gap6">${[['xy', 'Theo ô X / Y / Trục'], ['tu', 'Gõ tự do']].map(([k, l]) => `<button class="chip s ${kieu === k ? 'on' : ''}" style="flex:1;min-height:38px;padding:2px 4px;font-size:15px;white-space:nowrap" data-a="gctruck" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="row gap6">${[['xy', 'Theo ô X / Y / Trục'], ['tu', 'Gõ tự do']].map(([k, l]) => `<button class="chip s ${kieu === k ? 'on' : ''}" style="flex:1;min-height:44px;padding:2px 4px;font-size:15px;white-space:nowrap" data-a="gctruck" data-v="${k}">${l}</button>`).join('')}</div>
     ${truc}
     ${trucGoiY.length ? `<div class="row gap6" ${cuon} data-sx="gctruc">${trucGoiY.map((t) => gcChipGoiY('truc', t, t === gcTrucCua(), 'gctrucq')).join('')}</div>` : ''}
     <b class="sm">Phân khu</b>
@@ -4411,7 +4414,7 @@ function slDau(L) {
     g('du_an') && 'Dự Án: ' + g('du_an'), g('khu_vuc') && 'Khu vực thi công: ' + g('khu_vuc'), `Tổng số tổ: ${L.to.length} tổ`].filter(Boolean);
 }
 // quân số của tổ trong báo cáo: ca ngày hôm nay và/hoặc ca đêm hôm trước
-const slNguon = (u) => [u.ngay && `ca ngày ${u.ngay.lam}/${u.ngay.tong}`, u.dem && `ca đêm ${fmtDay(u.dem.ngay).slice(0, 5)} ${u.dem.lam}/${u.dem.tong}`].filter(Boolean).join(' + ');
+const slNguon = (u) => [u.ngay && `ca ngày ${u.ngay.lam}/${u.ngay.tong} người`, u.dem && `ca đêm (${fmtDay(u.dem.ngay).slice(0, 5)}) ${u.dem.lam}/${u.dem.tong} người`].filter(Boolean).join(' · ');
 /* Bản chữ để dán vào Zalo, đúng mẫu đơn vị đang dùng: tiêu đề, phần đầu, rồi MỖI TỔ MỘT DÒNG (cn = công nhân, kg = sản lượng của tổ).
      • Tổ A: ca ngày 12/21 cn gia công thép 8532 kg
      • Tổ B: ca ngày 7/19 cn, ca đêm 7/19 cn gia công thép 8395 kg   (tổ làm cả hai ca; cùng kiểu, không ghi số nghỉ)
@@ -4465,7 +4468,7 @@ function vSanLuong() {
       <span class="sm muted" style="line-height:1.4">Quân số lấy từ chính <b>Báo cáo ca</b> (cùng một cách tính): ca ngày ${fmtDay(L.ngay).slice(0, 5)} và ca đêm ${fmtDay(L.hom).slice(0, 5)} (tổ làm đêm). Công gia công thép mặc định bằng số đi làm, sửa được.</span>
       <div class="row gap6">${[['to', 'Theo tổ báo'], ['tl', 'Chỉ số thiết lập']].map(([v, n]) => `<button class="chip s f1 ${nguonHien === v ? 'on' : ''}" style="min-width:0;white-space:nowrap" data-a="slnguon" data-v="${v}">${n}</button>`).join('')}</div>
       ${hang || '<div class="card muted">Chưa có tổ nào.</div>'}
-      <div class="card col gap6"><div class="row gap8"><span class="f1">Đi làm / tổng quân số</span><b>${T.lam} / ${T.tong}</b></div>
+      <div class="card col gap6"><div class="row gap8"><span class="f1">Công đi làm (cả hai ca) · Quân số</span><b>${T.lam} công · ${T.tong} người</b></div>
         <div class="row gap8"><span class="f1">Quân số gia công thép được</span><b>${T.cong} công</b></div></div>
       <b>3. Sản lượng</b>
       <div class="card col gap8"><span class="sm muted" style="line-height:1.4">Mỗi tổ: (công × ${slFmt(cs.chuan)} kg × tỷ lệ gia công của tổ) ÷ ${slFmt(cs.gia)} (tỷ lệ giá)</span>
@@ -5031,7 +5034,7 @@ function tkNhiet(T, K, ca, ng) {
   const o = (x, c, dam) => {
     const co = x && x.lam + x.nghi > 0, [nen, chu] = tkNen(x ? x.pct : null, x && x.thieu, co, ng), on = c.k === K.k;
     const v = !x || (x.pct == null && !x.thieu) ? '' : x.pct == null ? '?' : String(Math.round(x.pct * 100));
-    return `<button style="height:${dam ? 38 : 36}px;min-width:0;border-radius:6px;border:${on ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.06)'};background:${nen};color:${chu};font:inherit;font-size:13px;font-weight:${dam || (x && x.pct >= ng) ? 800 : 600};padding:0" ${c.k > het ? 'disabled' : `data-a="tkden" data-v="${c.k}"`} aria-label="${esc(c.nhan)}: ${v ? 'nghỉ ' + v + '%' : 'không có số'}">${v}</button>`;
+    return `<button style="height:44px;min-width:0;border-radius:6px;border:${on ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.06)'};background:${nen};color:${chu};font:inherit;font-size:13px;font-weight:${dam || (x && x.pct >= ng) ? 800 : 600};padding:0" ${c.k > het ? 'disabled' : `data-a="tkden" data-v="${c.k}"`} aria-label="${esc(c.nhan)}: ${v ? 'nghỉ ' + v + '%' : 'không có số'}">${v}</button>`;
   };
   const hang = tos.map((u) => `<button style="border:0;background:transparent;padding:0;text-align:left;font:inherit;color:inherit;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-a="tkto" data-v="${u.id}">${esc(u.name)}</button>${cols.map((c, i) => o(cua(X[i], u.id), c)).join('')}`).join('');
   const mau = (p, t) => { const [nen] = tkNen(p, 0, 1, ng); return `<span class="row" style="gap:4px"><span style="width:14px;height:14px;border-radius:4px;background:${nen};border:1px solid rgba(0,0,0,.08);flex:none"></span>${t}</span>`; };
@@ -5397,7 +5400,7 @@ function vMain() {
   }
   const showToast = S.toast && S.screen !== 'dem';
   const noTabs = S.screen === 'dem' && S.sel;
-  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}" style="margin-top:calc(8px + env(safe-area-inset-top))">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}${gcVgHtml()}${gcXuatHtml()}${anhXemHtml()}`;
+  return `${busyHtml()}${verBar()}${netBar()}${showToast ? `<div class="toast ${S.toastErr ? 'err' : ''}" data-toast="1" role="${S.toastErr ? 'alert' : 'status'}" aria-live="${S.toastErr ? 'assertive' : 'polite'}">${esc(S.toast)}</div>` : ''}${body}${noTabs ? '' : tabsHtml()}${askHtml()}${gcVgHtml()}${gcXuatHtml()}${anhXemHtml()}`;
 }
 
 function render() {

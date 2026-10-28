@@ -60,6 +60,13 @@ a{color:var(--pri)}
 .bar i{display:block;height:100%;background:var(--pri)}
 .toast{margin:4px 16px;padding:12px 16px;border-radius:12px;font-size:18px;font-weight:600;background:var(--okbg);color:#124F27;border:1px solid var(--ok)}
 .toast.err{background:var(--badbg);color:#6E1212;border-color:var(--bad)}
+/* Lời báo sau thao tác NỔI trên màn, không chiếm chỗ: trước đây nó chen vào đầu trang, đẩy cả màn xuống ~80px rồi 5 giây sau
+   bật lên lại — người đeo găng bấm trúng nút khác vừa trượt vào chỗ. Bấm xuyên qua được (không chặn nút bên dưới). */
+.toast[data-toast]{position:fixed;left:12px;right:12px;top:calc(8px + env(safe-area-inset-top));z-index:70;margin:0;box-shadow:0 6px 20px rgba(0,0,0,.25);pointer-events:none}
+/* Dải mạng (luôn nằm đó khi mất mạng): màu vàng, khác lời báo lỗi đỏ */
+.toast[data-net]{background:var(--warnbg,#FFF4D6);color:#5A3B00;border-color:var(--warn)}
+/* Chữ gạch chân dùng làm nút (sửa, Xếp thứ tự tổ, Cách tính, Xem chi tiết…): vùng bấm tối thiểu 44px như mọi nút */
+button[style*="text-decoration:underline"]{min-height:44px;display:inline-flex;align-items:center}
 
 /* hero */
 .hero{background:var(--pri);color:#fff;padding:calc(18px + env(safe-area-inset-top)) 16px 16px;display:flex;flex-direction:column;gap:10px}
