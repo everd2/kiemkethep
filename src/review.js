@@ -5,8 +5,7 @@ import { SLOT_LATE_MS, slotDefs, slotOf, slotsDue } from './slots.js';
 import { rateStmts } from './db.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, auditStmt, batchGuarded, batchNeuChuaDoi, bump,
   guardStmt, parseSettings, readJson } from './helpers.js';
-import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI, MV_NEW, TU_DEM } from './counts.js';
-import { checkTransferStock, rutCtx } from './phieu.js';
+import { EFF_JOIN, EFF_SELECT, J, KHU_X_PHI } from './counts.js';
 import { SV_CHO_SQL } from './satvun.js';
 import { anhJson, docAnh } from './anh.js';
 import { firstAdminId } from './admin.js';
@@ -33,7 +32,7 @@ export async function computeReview(env, day, opt = {}) {
   const db = env.DB;
   const lc = await db.prepare('SELECT day FROM day_close WHERE day < ? ORDER BY day DESC LIMIT 1').bind(day).first();
   const last = lc ? lc.day : '';
-  const [phiR, khuR, repR, effR, subR, baseR, rcR, mvTsR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, mvnR, svR, sauR] = await db.batch([
+  const [phiR, khuR, repR, effR, subR, baseR, rcR, pendR, usedR, rateR, closedR, revR, setR, slotR, loanR, slotByR, svR] = await db.batch([
     db.prepare('SELECT id, kg_per_cay, active FROM phi ORDER BY sort'),
     db.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     /* Mọi lần báo kể từ lần chốt trước, không chỉ của hôm nay. Bản cũ chỉ đọc khu_report của hôm
@@ -53,33 +52,18 @@ export async function computeReview(env, day, opt = {}) {
                                WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id
                                  AND c2.day > ?1 AND c2.day <= ?2)`).bind(last, day),
     db.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = ?').bind(last),
-    /* Chỉ phiếu ĐÃ DUYỆT và chưa bị huỷ mới vào dự kiến, tính theo NGÀY DUYỆT.
+    /* Chỉ phiếu ĐÃ DUYỆT và chưa bị huỷ mới vào thống kê (cột nhập, lượng dùng) và số tham chiếu
+       "theo phiếu" của thẻ khu, tính theo NGÀY DUYỆT. Phiếu KHÔNG vào tồn (v70, xem tonCells).
        Lấy kèm kind để tách được phần ĐIỀU CHỈNH ra khỏi phần NHẬP THẬT. Tách chỉ để hiển thị:
-       mọi phép tính tồn, dự kiến và lượng dùng vẫn dùng TỔNG (xem inn bên dưới), vì điều chỉnh
+       lượng dùng và số tham chiếu vẫn dùng TỔNG (xem inn bên dưới), vì điều chỉnh
        cũng là thép vào/ra sổ thật sự. Nhưng cột "Nhập" của báo cáo kỳ thì không được gộp, nếu
        không thì một lần sửa sổ hiện ra thành "thép về" — và tính năng điều chỉnh thành chỗ giấu
        chênh lệch thay vì chỗ phơi nó ra. */
     db.prepare(`SELECT phi_id, khu_id, kind, SUM(qty) q FROM receipts
                 WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ? AND duyet_day <= ?
                 GROUP BY phi_id, khu_id, kind`).bind(last, day),
-    /* Mốc "lần gần nhất dự kiến của khu bị phiếu làm đổi". Phải gồm CẢ HAI chiều:
-       - duyet_ts: lúc một phiếu được duyệt (thép cộng vào dự kiến)
-       - voided_ts: lúc một phiếu ĐÃ DUYỆT bị huỷ (thép rút khỏi dự kiến)
-       Thiếu chiều thứ hai thì huỷ phiếu lại LÀM GIẢM mốc này nên cảnh báo im lặng, trong khi
-       khu vẫn mang nhãn "Đã duyệt" mà số đã duyệt không còn khớp dự kiến — đúng cái bản 1.2 bắt
-       được bằng exception 'late' với q < 0. Chỉ xét phiếu từng được duyệt: phiếu lập rồi từ chối
-       luôn chưa bao giờ vào tồn nên không làm dự kiến đổi.
-       Gồm cả phiếu duyệt ở ngày ĐÃ CHỐT mà sau lần báo cũ nhất còn trong kỳ: báo cáo chưa duyệt được chuyển qua 0h
-       (carryStmts) giữ giờ đếm của hôm trước, phiếu duyệt chiều hôm trước vẫn là "phiếu sau lần báo" (phieuSau), không
-       thì sang ngày mới cấp duyệt khu tụt về CVKTHT. Các mốc khác (recheck: so với lúc duyệt số, luôn trong kỳ) không đổi. */
-    // cận dưới theo NGÀY của lần báo cũ nhất (giờ VN) để câu vẫn đi index duyet_day, không quét mọi phiếu từ trước tới nay
-    db.prepare(`WITH m AS (SELECT MIN(ts) t FROM counts WHERE day > ?1 AND day <= ?2)
-                SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b
-                FROM receipts, m
-                WHERE duyet_day IS NOT NULL AND duyet_day <= ?2
-                  AND duyet_day >= MIN(?1, COALESCE(date(m.t / 1000 + 25200, 'unixepoch'), ?1))
-                  AND (duyet_day > ?1 OR duyet_ts > m.t)
-                GROUP BY khu_id`).bind(last, day),
+    /* (v70) Bỏ câu "mốc phiếu duyệt / huỷ gần nhất của khu" (mvTsR): nó chỉ phục vụ phieuSau / recheck / capPhieu — những thứ
+       tồn tại vì phiếu từng đổi tồn. Phiếu không đổi tồn thì duyệt hay huỷ phiếu sau lúc đếm không làm số đã duyệt sai đi. */
     /* Phiếu đang chờ duyệt, của BẤT KỲ ngày nào: phiếu lập hôm qua chưa ai duyệt thì hôm nay vẫn
        phải nằm trên màn Duyệt, không được rơi khỏi màn hình chỉ vì sang ngày mới. */
     db.prepare(`SELECT r.id, r.grp, r.day, r.phi_id, r.khu_id, r.qty, r.kind, r.note, r.ts, ${UNAME}
@@ -103,20 +87,10 @@ export async function computeReview(env, day, opt = {}) {
                 ORDER BY l.id`),
     // ai vừa đổi khung giờ đếm (xem settingsUpdate): tên để màn Duyệt nói ra
     db.prepare("SELECT name FROM users WHERE id = (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'slot_changed_by')"),
-    /* Phiếu được duyệt SAU lần duyệt báo cáo của ô (ô chưa có báo cáo đã duyệt thì là mọi phiếu đã
-       duyệt trong kỳ): phần thép chưa nằm trong số báo cáo. Cùng câu với mvNew của bootstrap, để
-       "tồn" ở màn Duyệt và lúc chốt là đúng con số Tổng quan đang hiện. */
-    db.prepare(MV_NEW).bind(last, day),
     // sổ xuất sắt vụn chờ duyệt: duyệt ngay ở màn Duyệt, như sổ vay
     db.prepare(SV_CHO_SQL),
-    /* Phiếu ĐÃ DUYỆT lập sau lần báo cũ nhất trong kỳ (kể cả phiếu của ngày đã chốt khi báo cáo chuyển qua 0h): số đếm không thể
-       gồm phiếu lập sau lúc đếm (SAU_DEM ở counts.js), nên thẻ phải so số đếm với dự kiến TRỪ các phiếu đó, rồi nói riêng phần
-       sẽ cộng thêm. Không vậy thì khu đếm 100 lúc 8h, 9h về thêm 50 và duyệt ngay: thẻ báo "hụt 50" trong khi duyệt xong tồn
-       vẫn đúng 150. Mốc dưới theo ngày để đi index (TU_DEM). */
-    db.prepare(`WITH m AS (SELECT MIN(ts) t FROM counts WHERE day > ?1 AND day <= ?2)
-                SELECT r.khu_id, r.phi_id, r.qty, r.ts FROM receipts r, m
-                WHERE m.t IS NOT NULL AND r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day <= ?2
-                  AND r.duyet_day >= MIN(?1, ${TU_DEM('m.t')}) AND r.ts > m.t`).bind(last, day),
+    /* (v70) Bỏ MV_NEW (phiếu cộng lên số đếm) và câu sauR (phiếu lập sau lúc đếm): tồn = số đếm đã duyệt, chưa có thì tồn
+       chuẩn — xem tonCells ở phieu.js. Thẻ khu không còn tách "dự kiến lúc đếm / phần cộng sau / phần chờ". */
   ]);
 
   /* Khung giờ đếm bắt buộc. Chỉ xét ngày đang duyệt (ngày quên chốt trước đó thì không ai đếm bù
@@ -136,25 +110,23 @@ export async function computeReview(env, day, opt = {}) {
   }
   const due = nSlot > 1 ? slotsDue(day, slotSt, Date.now(), !!opt.cuoiNgay) : [];
 
-  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, vc = {}, rcTs = {}, mvn = {};
-  mvnR.results.forEach((r) => (mvn[r.khu_id + '|' + r.phi_id] = r.q));
+  const eff = {}, sub = {}, base = {}, inn = {}, dcc = {}, xc = {}, vc = {};
   effR.results.forEach((r) => (eff[r.khu_id + '|' + r.phi_id] = r.v));
   subR.results.forEach((r) => (sub[r.khu_id + '|' + r.phi_id] = r));
   baseR.results.forEach((r) => (base[r.khu_id + '|' + r.phi_id] = r.v));
   /* PHẢI CỘNG DỒN, không gán: từ khi câu truy vấn gộp thêm kind, một ô (khu × phi) có thể trả về
      nhiều dòng — nhập thật một dòng, điều chỉnh một dòng. Gán như trước là dòng sau đè dòng
      trước, tức mất hẳn phần nhập hoặc phần điều chỉnh khỏi dự kiến và khỏi lượng dùng.
-     inn = TỔNG mọi loại (dùng cho tồn và dự kiến). dcc = riêng điều chỉnh, xc = riêng xuất. */
+     inn = TỔNG mọi loại (dùng cho lượng dùng và số tham chiếu). dcc = riêng điều chỉnh, xc = riêng xuất. */
   rcR.results.forEach((r) => {
     const key = r.khu_id + '|' + r.phi_id;
     inn[key] = (inn[key] || 0) + r.q;
     if (r.kind === 'dc') dcc[key] = (dcc[key] || 0) + r.q;
     if (r.kind === 'xuat') xc[key] = (xc[key] || 0) + r.q;
-    // thép ra/vào theo sổ vay mượn: đổi tồn, nhưng KHÔNG cộng lại vào lượng dùng như xuất —
+    // thép ra/vào theo sổ vay mượn: KHÔNG cộng lại vào lượng dùng như xuất —
     // cho đối tác mượn không phải là dùng thép, đi vay về cũng không phải thép mua về
     if (r.kind === 'vay') vc[key] = (vc[key] || 0) + r.q;
   });
-  mvTsR.results.forEach((r) => (rcTs[r.khu_id] = Math.max(r.a || 0, r.b || 0)));
   const khuAct = khuR.results.filter((k) => k.active);
   const hasBase = !!last;
   // quên chốt N ngày thì lượng dùng là của cả N ngày: chia đều khi so với mức bình thường
@@ -183,12 +155,11 @@ export async function computeReview(env, day, opt = {}) {
       const key = k.id + '|' + p.id;
       const b = base[key] || 0;
       const i = inn[key] || 0;
-      /* THÉP ĐANG CÓ của ô = báo cáo đã duyệt gần nhất + phiếu duyệt SAU lần duyệt đó (ô chưa có báo
-         cáo đã duyệt: tồn chuẩn + mọi phiếu đã duyệt). Trước đây chỗ này chỉ lấy số báo cáo, nên thép
-         về sau lần duyệt — hoặc về khu chưa báo — bị tính là "đã dùng" và rơi khỏi tồn chuẩn lúc
-         chốt: ban ngày Tổng quan hiện 1.130, qua 0h còn 950. Không cộng trùng: phiếu duyệt trước
-         hoặc cùng lúc với báo cáo thì không nằm trong mvn, vì duyệt báo cáo là lấy tồn theo báo cáo. */
-      const e = (eff[key] !== undefined ? eff[key] : b) + (mvn[key] || 0);
+      /* THÉP ĐANG CÓ của ô = báo cáo đã duyệt gần nhất trong kỳ, chưa có thì tồn chuẩn (v70: phiếu không cộng vào —
+         phiếu ghi muộn từng bị cộng hai lần, xem tonCells). Đúng con số Tổng quan / Tồn bãi hiện và con số thành tồn chuẩn lúc
+         chốt. Thép về mà khu chưa đếm thì chưa vào tồn — và "đã dùng" hôm đó tính thép về đó vào (tồn cũ + nhập − tồn): khu
+         đếm hôm sau thì hôm sau "đã dùng" âm lại đúng phần đó. Cách duy nhất cho số đúng là đếm và duyệt. */
+      const e = eff[key] !== undefined ? eff[key] : b;
       old += b; innT += i; dcT += dcc[key] || 0; xT += xc[key] || 0; vT += vc[key] || 0; cn += e;
       const net = e - (b + i);
       if (Math.abs(net) > Math.abs(topNet)) { topNet = net; topKhu = k.id; }
@@ -219,7 +190,7 @@ export async function computeReview(env, day, opt = {}) {
     return {
       // inn = tổng (dùng cho mọi phép tính), dc = riêng phần điều chỉnh, nhap = inn − dc (chỉ hiển thị)
       // xuat: phần đã dùng CÓ PHIẾU (số dương); used − xuat là phần không rõ
-      // vay: thép ra/vào theo sổ vay mượn (có dấu). Nằm trong inn nên tồn đúng, mà used thì không gồm nó
+      // vay: thép ra/vào theo sổ vay mượn (có dấu). Nằm trong inn nhưng used thì không gồm nó (cho mượn không phải dùng)
       phi: p.id, kg: p.kg_per_cay, old, inn: innT, dc: dcT, xuat: -xT, vay: vT, cnt: cn, used,
       avg: rt === null ? null : Math.round(rt * 10) / 10,
       peak: Math.round(peak * 10) / 10,
@@ -241,8 +212,6 @@ export async function computeReview(env, day, opt = {}) {
     pendBy[g].lines.push({ phi: r.phi_id, khu: r.khu_id, qty: r.qty });
   });
   const phieu = pendOrder.map((g) => pendBy[g]);
-  const sauBy = {}; // phiếu đã duyệt lập sau lần báo cũ nhất, theo ô (xem câu sauR)
-  sauR.results.forEach((r) => (sauBy[r.khu_id + '|' + r.phi_id] = sauBy[r.khu_id + '|' + r.phi_id] || []).push(r));
   /* Phiếu kho của sổ vay mượn: lần ghi sổ đi kèm KHÔNG nằm ở mục sổ vay chờ duyệt (duyệt phiếu là duyệt luôn sổ), nên
      ảnh biên bản của nó phải theo thẻ phiếu, kẻo người duyệt không thấy. Ảnh nằm ở dòng loans có id nhỏ nhất của nhóm
      (như thẻ ở màn Vay mượn). Chỉ hỏi khi có phiếu vay chờ duyệt: hàm này còn chạy cho việc tự chốt mỗi giờ. */
@@ -272,13 +241,16 @@ export async function computeReview(env, day, opt = {}) {
   const kgBy = Object.fromEntries(phiR.results.map((p) => [p.id, p.kg_per_cay]));
   const khus = khuAct.map((k) => {
     const r = reps[k.id];
-    let phieuSau = false; // tính sau vòng lặp phi, khi đã biết lần báo mới nhất (subTs)
     const items = [];
     let waiting = 0, blank = 0, lastDuyet = 0, subTs = 0, capBao = 0;
     const nguoiBao = new Set(); // ai đang đứng tên các ô số của khu: không ai dưới cấp chỉ huy tự duyệt số của mình
     for (const p of phiR.results) {
       const key = k.id + '|' + p.id;
       const sr = sub[key];
+      /* SỐ THAM CHIẾU "THEO PHIẾU" (v70): tồn chuẩn của lần chốt trước + mọi phiếu đã duyệt trong kỳ (có dấu). Nó KHÔNG
+         phải tồn và duyệt khu không cộng phiếu nào lên số đếm — chỉ để người duyệt đặt cạnh số đếm mà soi lỗi đếm: lệch
+         d = số đếm − tham chiếu lớn thì hoặc đếm sai, hoặc phiếu ghi thiếu / ghi muộn. Phiếu ghi thất thường nên lệch là
+         chuyện thường, không chặn gì. */
       const ref = base[key] === undefined ? 0 : base[key];
       const mv = inn[key] || 0;
       const exp = ref + mv;
@@ -293,54 +265,38 @@ export async function computeReview(env, day, opt = {}) {
       if (sr.user_id != null) nguoiBao.add(sr.user_id);
       subTs = Math.max(subTs, sr.ts || 0);
       if (sr.duyet_at) lastDuyet = Math.max(lastDuyet, sr.duyet_at);
-      /* Phiếu LẬP SAU lúc đếm (sr.ts): số đếm không gồm, duyệt khu thì cộng lên trên (SAU_DEM). Dự kiến để so với số đếm là
-         dự kiến TRỪ phần đã duyệt đó; phần còn chờ duyệt (duyệt khu là duyệt luôn) cũng kể ra để người duyệt biết tồn sau khi
-         bấm = số đếm + sau + cho. */
-      const sau = (sauBy[key] || []).reduce((s, x) => s + (x.ts > sr.ts ? x.qty : 0), 0);
-      const cho = pendR.results.reduce((s, x) => s + (x.khu_id === k.id && x.phi_id === p.id && x.ts > sr.ts ? x.qty : 0), 0);
-      const expDem = exp - sau;
-      const d = sr.v - expDem;
+      // v69 tách "dự kiến lúc đếm" (trừ phiếu lập sau lúc đếm) để khớp tồn sau khi duyệt; nay phiếu không vào tồn nên so thẳng
+      const d = sr.v - exp;
       const kg = Math.abs(d) * kgBy[p.id];
       /* Ngưỡng CHỈ để tô đậm. Đếm dư thì thép không tự sinh ra nên nhạy hơn; hụt thì có thể là
          xuất dùng thật nên phải vừa lớn theo kg vừa quá nửa dự kiến mới tô. */
-      const big = d > 0 ? kg > KHU_UP_KG : d < 0 && kg > KHU_DOWN_KG && -d > Math.max(0, expDem) * KHU_DOWN_PCT;
+      const big = d > 0 ? kg > KHU_UP_KG : d < 0 && kg > KHU_DOWN_KG && -d > Math.max(0, exp) * KHU_DOWN_PCT;
       /* Để trống trong khi phi đang có thép: lỗi dễ xảy ra nhất của quy tắc "không điền = 0",
          nên nêu riêng cho người duyệt thấy, không trộn vào đám lệch. Phân biệt được nhờ kind:
          'zero' là để trống, còn bấm "Hết (0)" ghi 'dem' với v = 0. */
-      const left = sr.kind === 'zero' && expDem > 0;
+      const left = sr.kind === 'zero' && exp > 0;
       if (left) blank++;
-      if (exp !== 0 || sr.v !== 0 || cho !== 0) {
-        // exp vẫn là dự kiến (tồn theo phiếu) như cũ; dem = dự kiến LÚC ĐẾM, cái mà số đếm phải khớp (d = cnt - dem)
-        items.push({ phi: p.id, ref, mv, exp, dem: expDem, sau, cho, cnt: sr.v, d, kind: sr.kind, big: !!big, blank: left, duyet: ok });
+      if (exp !== 0 || sr.v !== 0) {
+        // exp = tham chiếu theo phiếu (ref + mv), d = cnt − exp. Không phải tồn: tồn sau khi duyệt đúng bằng cnt
+        items.push({ phi: p.id, ref, mv, exp, cnt: sr.v, d, kind: sr.kind, big: !!big, blank: left, duyet: ok });
       }
     }
-    phieuSau = !!(r && subTs && rcTs[k.id] && rcTs[k.id] > subTs);
     return {
       khu: k.id, name: k.name, items, waiting, blank,
       /* CẤP CỦA NGƯỜI BÁO, để biết ai duyệt được (xem CAP ở core.js). capBao: cấp cao nhất ghi trong
          các ô số của khu (counts.cap, ghi lúc báo) — ô do CVKTHT báo, hoặc do CVKTHT/chỉ huy CHỌN SỐ khi
-         hai người báo khác nhau, là số của người đó. capPhieu: 2 khi việc duyệt khu quyết luôn cả một
-         phiếu kho — mà phiếu kho chỉ cấp chỉ huy quyết, ai lập cũng vậy:
-           - khu còn phiếu kho CHỜ duyệt: duyệt khu là duyệt luôn phiếu đó;
-           - phieuSau: có phiếu kho được duyệt hoặc huỷ SAU lần báo mới nhất của khu. Số đó đếm trước
-             khi phiếu vào tồn, mà duyệt báo cáo là lấy tồn theo báo cáo, tức phiếu vừa duyệt bị coi
-             như đã nằm sẵn trong số đếm (hoặc phiếu vừa huỷ bị coi như chưa từng huỷ). Đó là quyết
-             định về một phiếu kho, nên CVKTHT không bấm được; khu đếm lại là hết.
-             (Từ 10/2026 phiếu LẬP sau lúc đếm không còn bị số đếm nuốt — xem SAU_DEM ở counts.js — nên duyệt khu chỉ còn
-             "quyết" những phiếu lập trước lúc đếm; vẫn giữ cấp chỉ huy cho cả trường hợp này, kể cả khi số đếm đã chuyển qua 0h.)
-         Duyệt khu là duyệt cả số lẫn phiếu trong một lần ghi, nên phải đủ cấp cho cả hai. */
-      capBao, nguoiBao: [...nguoiBao], phieuSau, capPhieu: (pendKhu[k.id] || []).length || phieuSau ? 2 : 0,
+         hai người báo khác nhau, là số của người đó.
+         (v70) Bỏ capPhieu / phieuSau / recheck: chúng có vì "Duyệt khu" từng duyệt luôn phiếu chờ của khu, và vì phiếu duyệt /
+         huỷ sau lúc đếm làm số đã duyệt lệch tồn. Nay Duyệt khu CHỈ duyệt số đếm, phiếu duyệt riêng ở danh sách phiếu (cấp
+         chỉ huy như cũ), và phiếu không đổi tồn — nên ai duyệt được số đếm chỉ còn theo capBao. */
+      capBao, nguoiBao: [...nguoiBao],
       rep: r ? { uname: r.uname, ts: r.ts, day: r.day, conflict: r.conflict, resolved: r.resolved } : null,
-      /* Phiếu của khu được duyệt SAU số của khu: số đếm không gồm phần thép đó nên dự kiến vừa
-         đổi, số đã duyệt của khu không còn khớp. Thay cho cảnh báo 'late' cũ, và quan trọng là
-         GỠ ĐƯỢC: admin duyệt lại khu là lastDuyet nhảy lên, cảnh báo tự hết. Bản cũ không có
-         đường nào xoá nó, ngày đó bắt buộc chốt kèm ghi chú. */
-      recheck: !!(lastDuyet && rcTs[k.id] && rcTs[k.id] > lastDuyet),
+      // phiếu kho chờ duyệt có dòng ở khu này — chỉ để thẻ khu nhắc (duyệt riêng ở danh sách phiếu, không theo nút Duyệt khu)
       phieu: pendKhu[k.id] || [],
-      /* Dấu của ĐÚNG những gì admin đang nhìn: lần báo mới nhất, mốc phiếu đã duyệt/huỷ gần nhất và
-         danh sách phiếu chờ. Máy khách gửi lại dấu này khi bấm Duyệt; khác là có thứ mới tới sau lúc
-         admin tải màn hình (khu báo lại, phiếu mới), duyệt lúc đó là duyệt một con số chưa ai xem. */
-      mark: [subTs, rcTs[k.id] || 0, (pendKhu[k.id] || []).join(',')].join('|'),
+      /* Dấu của ĐÚNG những gì admin đang nhìn: lần báo mới nhất của khu. Máy khách gửi lại dấu này khi bấm Duyệt; khác là khu
+         vừa báo lại sau lúc admin tải màn hình, duyệt lúc đó là duyệt một con số chưa ai xem. (Phiếu không còn trong dấu:
+         Duyệt khu không đụng phiếu, phiếu mới tới không làm số đếm đang xem sai đi.) */
+      mark: String(subTs),
       duyet: r && !waiting && lastDuyet ? { by: lastDuyetBy(subR.results, k.id), ts: lastDuyet } : null,
       slots: nSlot > 1 ? {
         done: [...(slotDone[k.id] || [])].sort(),
@@ -363,7 +319,6 @@ export async function computeReview(env, day, opt = {}) {
     }
     if (k.waiting) exceptions.push({ type: 'khu_pending', khu: k.khu, name: k.name, n: k.waiting, blank: k.blank });
     if (k.rep.conflict && !k.rep.resolved) exceptions.push({ type: 'conflict', khu: k.khu, name: k.name });
-    if (k.recheck) exceptions.push({ type: 'recheck', khu: k.khu, name: k.name });
     /* Thiếu khung đếm. Khu chưa báo lần nào đã nằm ở khu_missing phía trên (nhánh continue), nên
        không bị tính hai việc. Khu trống trơn (items rỗng) không bị đòi, như với khu_missing. */
     if (k.slots && k.slots.missing.length && k.items.length) {
@@ -385,9 +340,8 @@ export async function computeReview(env, day, opt = {}) {
      không ai hiểu còn lại là gì. */
   const pending = new Set(exceptions.map((e) => {
     if (e.type === 'receipt_pending') return 'phieu|' + e.key;
-    /* "Chờ duyệt" và "cần xem lại" của cùng một khu dùng CHUNG một nút Duyệt khu, nên là một
-       việc. Xung đột hai người báo thì khác: admin phải chọn số trước, rồi mới duyệt được. */
-    if (e.type === 'khu_pending' || e.type === 'recheck') return 'khu|' + e.khu;
+    // xung đột hai người báo là việc riêng: admin phải chọn số trước, rồi mới duyệt được
+    if (e.type === 'khu_pending') return 'khu|' + e.khu;
     return e.type + '|' + (e.khu || e.phi);
   })).size;
   return {
@@ -432,10 +386,11 @@ export async function doClose(env, user, rv, note, action, extra = []) {
        SELECT ?1, ${J('phi')}, ${J('cnt')}, ${J('inn')} - ${J('dc')} + ${J('xuat')} - ${J('vay')}, ${J('used')}, ?2, ${J('dc')}, ${J('xuat')}, ${J('vay')}, ${J('kg')}, ${J('bt')} FROM json_each(?3) j`
     ).bind(day, rv.span, JSON.stringify(rv.rows.map((r) => ({ phi: r.phi, cnt: r.cnt, inn: r.inn, dc: r.dc || 0, xuat: r.xuat || 0, vay: r.vay || 0, used: r.used, kg: r.kg, bt: r.neg || r.high ? 1 : 0 })))),
     ...rateStmts(env, day),
-    /* Tồn chuẩn chốt theo THÉP ĐANG CÓ: báo cáo ĐÃ DUYỆT gần nhất (EFF_JOIN đã lọc duyet_v IS NOT
-       NULL — báo cáo chưa duyệt không bao giờ thành tồn chuẩn) cộng phiếu được duyệt SAU lần duyệt
-       đó. Thiếu phần phiếu thì thép đã duyệt mà khu chưa kịp báo lại biến mất khỏi sổ đúng lúc 0h. Liệt kê theo khu x phi chứ không theo khu_phi nữa, nên tồn
-       chuẩn thành ĐẶC — mọi ô đều có dòng. Nhờ vậy ngày sau không còn trường hợp "khu này hôm
+    /* Tồn chuẩn chốt theo THÉP ĐANG CÓ: báo cáo ĐÃ DUYỆT gần nhất của ô trong kỳ (EFF_JOIN đã lọc duyet_v IS NOT
+       NULL — báo cáo chưa duyệt không bao giờ thành tồn chuẩn), chưa có thì giữ tồn chuẩn cũ. Từ v70 KHÔNG cộng / trừ phiếu
+       nào (tồn = số đếm, xem tonCells): bản trước cộng phiếu duyệt sau lúc đếm và trừ phiếu duyệt sau nửa đêm mà lập trước lúc
+       đếm — cả hai dựa vào giờ ghi phiếu, mà phiếu ghi muộn là chuyện thường. Liệt kê theo khu x phi chứ không theo khu_phi
+       nữa, nên tồn chuẩn thành ĐẶC — mọi ô đều có dòng. Nhờ vậy ngày sau không còn trường hợp "khu này hôm
        qua không có phi đó" phải đoán xem dự kiến là 0 hay là không biết. */
     /* Liệt kê các ô ĐANG DÙNG, CỘNG mọi ô còn số liệu khác 0 dù khu hoặc phi đã bị ẩn.
        Phần UNION không phải cho đẹp: hệ thống từ chối ẩn khu/phi còn thép, nhưng dữ liệu cũ bị
@@ -445,27 +400,10 @@ export async function doClose(env, user, rv, note, action, extra = []) {
     env.DB.prepare(
       `INSERT OR REPLACE INTO baseline (day, khu_id, phi_id, v)
        SELECT ?1, kx.khu_id, kx.phi_id, COALESCE(c.duyet_v, b.v, 0)
-         /* phần cộng lên đúng luật SAU_DEM / MV_NEW (counts.js): chưa có số đếm thì mọi phiếu duyệt trong kỳ; có thì phiếu duyệt
-            sau lúc duyệt số HOẶC lập sau lúc đếm (c.duyet_ts) — kể cả phiếu của ngày đã chốt khi số đếm là số chuyển qua 0h. */
-         + COALESCE((SELECT SUM(r.qty) FROM receipts r
-                     WHERE r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
-                       AND r.duyet_day IS NOT NULL AND r.duyet_day <= ?1
-                       AND r.duyet_day >= MIN(?2, COALESCE(${TU_DEM('c.duyet_ts')}, ?2)) -- mốc dưới cho index, xem TU_DEM
-                       AND (c.duyet_at IS NULL AND r.duyet_day > ?2 OR r.ts > c.duyet_ts
-                            OR r.duyet_day > ?2 AND r.duyet_ts > c.duyet_at)), 0)
-         /* Số đếm của ngày này được DUYỆT SAU nửa đêm (trước lúc lịch chốt sổ): phiếu duyệt hôm sau trước / cùng lúc đó mà LẬP
-            TRƯỚC lúc đếm đã nằm trong số đếm, mà hôm sau lại được cộng như "thép về sau lần đếm" (không có số đếm nào của hôm
-            sau) — cộng HAI LẦN. Tồn chuẩn cuối ngày = số đếm TRỪ những phiếu đó; hôm sau cộng lại đúng một lần. Phiếu lập sau
-            lúc đếm thì không nằm trong số đếm: hôm nay không cộng (duyệt hôm sau), hôm sau cộng — khỏi trừ. */
-         - COALESCE((SELECT SUM(r.qty) FROM receipts r
-                     WHERE c.duyet_at IS NOT NULL AND r.voided = 0 AND r.khu_id = kx.khu_id AND r.phi_id = kx.phi_id
-                       AND r.duyet_day IS NOT NULL AND r.duyet_day > ?1 AND r.duyet_ts <= c.duyet_at AND r.ts <= c.duyet_ts), 0)
        FROM (${KHU_X_PHI}
              UNION SELECT khu_id, phi_id FROM baseline WHERE day = ?2 AND v <> 0
              UNION SELECT khu_id, phi_id FROM counts
-                   WHERE duyet_v IS NOT NULL AND duyet_v <> 0 AND day > ?2 AND day <= ?1
-             UNION SELECT khu_id, phi_id FROM receipts
-                   WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ?2 AND duyet_day <= ?1) kx
+                   WHERE duyet_v IS NOT NULL AND duyet_v <> 0 AND day > ?2 AND day <= ?1) kx
        ${EFF_JOIN(2, 1)}
        LEFT JOIN baseline b ON b.day = ?2 AND b.khu_id = kx.khu_id AND b.phi_id = kx.phi_id`
     ).bind(day, rv.last || ''),
@@ -533,9 +471,10 @@ export async function reopenDay(req, env, user) {
    - Duyệt theo khu, độc lập hoàn toàn: câu UPDATE chỉ đụng đúng các ô của khu đó.
    - Duyệt cả những ô của NGÀY TRƯỚC còn treo (day > lần chốt trước), không chỉ ô của hôm nay.
      Quên chốt là chuyện thường, báo cáo treo qua đêm không được biến mất khỏi tầm tay admin.
-   - Duyệt luôn phiếu đang chờ của khu đó trong CÙNG một lần ghi. Nếu để admin duyệt số trước rồi
-     duyệt phiếu sau, giữa hai cái đó số dự kiến của khu đã đổi mà số vừa duyệt thì không —
-     đúng cái tình huống mà cảnh báo 'recheck' phải bắt. Gộp lại thì không có khe hở nào.
+   - CHỈ duyệt số đếm (v70). Tới v69 nút này duyệt luôn phiếu đang chờ của khu, vì phiếu đổi tồn: duyệt số trước rồi phiếu
+     sau thì số vừa duyệt lệch tồn (cảnh báo 'recheck'). Nay phiếu không đổi tồn, nên duyệt số và duyệt phiếu là hai việc
+     độc lập: phiếu chờ của khu vẫn chờ, duyệt riêng ở danh sách phiếu (cấp chỉ huy như cũ). Nhờ vậy CVKTHT duyệt được số
+     đếm của cấp dưới dù khu đang có phiếu chờ.
 
    marks: { khu: mark } — dấu của từng khu lúc admin tải màn Duyệt (xem mark ở computeReview). Câu
    UPDATE bên dưới duyệt lần báo MỚI NHẤT, nên khu báo lại trong lúc admin đang xem thì không có dấu
@@ -547,23 +486,17 @@ export async function reviewDuyet(req, env, user) {
   const rv = await computeReview(env, day);
   if (rv.closed) throw new HttpError(409, 'Ngày hôm nay đã chốt', 'closed');
   const all = !!b.all, khu = String(b.khu || '');
-  /* Nhận cả khu đang bị nhắc "xem lại" (recheck) dù nó không có ô nào chờ duyệt: khi một phiếu
-     được duyệt hoặc bị huỷ SAU lúc số của khu đã duyệt, số dự kiến đổi mà số đã duyệt thì không,
-     và đường gỡ chính là admin xem bảng lệch mới rồi DUYỆT LẠI. Không nhận thì nút "Duyệt lại"
-     bị từ chối và cảnh báo treo vĩnh viễn — đúng cái bệnh của exception 'late' bản cũ. */
-  /* "Duyệt tất cả" KHÔNG gồm khu chỉ bị nhắc xem lại (recheck): duyệt lại khu đó là chấp nhận số đếm cũ thay cho phiếu vừa duyệt
-     sau lúc đếm — phiếu biến khỏi tồn. Việc đó phải làm từng khu, sau khi xem bảng lệch (nút DUYỆT LẠI có cảnh báo riêng). */
-  const cho = rv.khus.filter((k) => (all ? k.waiting || k.phieu.length : k.khu === khu && (k.waiting || k.phieu.length || k.recheck)));
+  // chỉ khu có số đếm đang chờ duyệt (phiếu chờ của khu không còn tính: Duyệt khu không duyệt phiếu, xem trên)
+  const cho = rv.khus.filter((k) => (all ? k.waiting : k.khu === khu && k.waiting));
   if (!cho.length) {
-    throw bad(all ? 'Không còn khu nào chờ duyệt' : rv.khus.some((k) => k.khu === khu) ? 'Khu này không có gì chờ duyệt' : 'Khu không hợp lệ');
+    throw bad(all ? 'Không còn khu nào chờ duyệt' : rv.khus.some((k) => k.khu === khu) ? 'Khu này không có số đếm nào chờ duyệt' : 'Khu không hợp lệ');
   }
-  /* THEO CẤP BẬC: CVKTHT chỉ duyệt khu mà số đếm do cấp dưới báo VÀ không còn phiếu kho nào chờ.
-     Khu có số của CVKTHT trở lên, hoặc còn phiếu kho, thì để nguyên cả khu cho cấp trên — không duyệt nửa khu: duyệt số
-     mà bỏ lại phiếu là mở đúng cái khe "số đã duyệt, dự kiến đổi sau" mà việc duyệt gộp sinh ra để
-     đóng. "Duyệt tất cả" thì duyệt những khu mình duyệt được, phần còn lại vẫn chờ. */
-  const list = cho.filter((k) => duyetCuaNguoi(user, Math.max(k.capBao, k.capPhieu), k.nguoiBao));
+  /* THEO CẤP BẬC: CVKTHT chỉ duyệt khu mà số đếm do cấp dưới báo (capBao), không ai dưới cấp chỉ huy tự duyệt số của mình.
+     Khu có số của CVKTHT trở lên thì để nguyên cả khu cho cấp trên. "Duyệt tất cả" thì duyệt những khu mình duyệt được, phần
+     còn lại vẫn chờ. */
+  const list = cho.filter((k) => duyetCuaNguoi(user, k.capBao, k.nguoiBao));
   if (!list.length) {
-    throw new HttpError(403, (all ? 'Các khu đang chờ' : cho[0].name) + ` có số do CVKTHT (hoặc cấp trên, hoặc chính bạn) báo, hoặc còn phiếu kho chờ: cần ${CAP_TREN} duyệt.`, 'cap');
+    throw new HttpError(403, (all ? 'Các khu đang chờ' : cho[0].name) + ` có số do CVKTHT (hoặc cấp trên, hoặc chính bạn) báo: cần ${CAP_TREN} duyệt.`, 'cap');
   }
   /* Dấu số liệu (marks) của màn Duyệt người duyệt đang nhìn là BẮT BUỘC: thiếu nó thì server không biết người duyệt có thấy số
      mới nhất chưa, có thể duyệt một con số chưa ai xem. Giao diện hiện tại luôn gửi; thiếu là bản app cũ còn trong máy -> báo
@@ -572,7 +505,7 @@ export async function reviewDuyet(req, env, user) {
   if (!marks) throw new HttpError(409, 'Bản app trên máy đã cũ, hãy tải lại trang (bấm dải "Có bản mới") rồi duyệt lại.', 'old_app');
   const moi = list.filter((k) => marks[k.khu] !== k.mark);
   if (moi.length) {
-    throw new HttpError(409, moi.map((k) => k.name).join(', ') + ' vừa có số hoặc phiếu mới. Màn Duyệt đã tải lại, hãy xem rồi duyệt.', 'changed');
+    throw new HttpError(409, moi.map((k) => k.name).join(', ') + ' vừa báo số mới. Màn Duyệt đã tải lại, hãy xem rồi duyệt.', 'changed');
   }
   const last = rv.last || '';
   const ts = Date.now();
@@ -581,46 +514,17 @@ export async function reviewDuyet(req, env, user) {
      - Ô đang chờ duyệt: duyet_v = v, duyet_ts = ts là duyệt số mới.
      - Ô đã duyệt rồi: hai phép trên là vô tác dụng (duyet_v đã bằng v, duyet_ts đã bằng ts),
        chỉ còn duyet_at nhảy lên — tức "admin vừa xem lại và vẫn chấp nhận số này".
-     Chính nhờ duyet_at nhảy lên mà cảnh báo recheck gỡ được: nó so duyet_at với mốc phiếu.
      MỘT câu cho mọi khu đang duyệt: mỗi khu một câu thì "Duyệt tất cả" đọc lại cả kỳ một lần cho mỗi khu. */
   stmts.push(env.DB.prepare(
     `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
      WHERE day > ?5 AND day <= ?6 AND khu_id IN (SELECT value FROM json_each(?4))`
   ).bind(ts, user.id, user.name, JSON.stringify(list.map((k) => k.khu)), last, day));
-  // phiếu chờ duyệt có dòng thuộc các khu đang duyệt; phiếu chuyển khu nằm ở cả hai khu nên
-  // duyệt từ phía nào cũng là duyệt cả phiếu, đúng như nó là một chứng từ
-  const keys = new Set();
-  list.forEach((k) => k.phieu.forEach((g) => keys.add(g)));
-  const phieu = rv.phieu.filter((v) => keys.has(v.key));
-  /* Phiếu chuyển và phiếu điều chỉnh giảm bị gộp vào đây cũng phải qua đúng chốt chặn như khi
-     duyệt riêng từng phiếu.
-     Kiểm TRƯỚC khi dựng batch: thà từ chối cả lần bấm còn hơn duyệt số của khu rồi mới phát hiện
-     phiếu không duyệt được, vì lúc đó admin không biết nửa nào đã vào. */
-  // mọi loại phiếu RÚT thép khỏi khu đều phải qua cùng một chốt chặn âm tồn
-  const rut = phieu.filter((v) => v.kind === 'chuyen' || v.kind === 'dc' || v.kind === 'xuat' || v.kind === 'vay')
-    .map((v) => ({ kind: v.kind, lines: v.lines.map((l) => ({ phi_id: l.phi, khu_id: l.khu, qty: l.qty })) }));
-  if (rut.some((v) => v.lines.some((l) => l.qty < 0))) {
-    // tồn đọc MỘT lần cho mọi phiếu; từng phiếu vẫn kiểm riêng như khi duyệt lẻ (xem rutCtx)
-    const ctx = await rutCtx(env, day, rut.flatMap((v) => v.lines));
-    for (const v of rut) await checkTransferStock(env, day, v.lines, { kind: v.kind, ctx });
-  }
-  for (const v of phieu) {
-    // phiếu kho của sổ vay mượn: duyệt phiếu là duyệt luôn lần ghi sổ đi kèm (cùng grp)
-    if (v.kind === 'vay' && v.grp) {
-      stmts.push(env.DB.prepare('UPDATE loans SET duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_ts IS NULL')
-        .bind(ts, user.id, user.name, v.grp));
-    }
-    stmts.push(v.grp
-      ? env.DB.prepare('UPDATE receipts SET duyet_day = ?1, duyet_ts = ?2, duyet_by = ?3, duyet_name = ?4 WHERE grp = ?5 AND voided = 0 AND duyet_day IS NULL')
-        .bind(day, ts, user.id, user.name, v.grp)
-      : env.DB.prepare('UPDATE receipts SET duyet_day = ?1, duyet_ts = ?2, duyet_by = ?3, duyet_name = ?4 WHERE id = ?5 AND voided = 0 AND duyet_day IS NULL')
-        .bind(day, ts, user.id, user.name, v.id));
-  }
+  // (v70) không còn duyệt kèm phiếu chờ của khu, cũng không kiểm tồn cho phiếu rút: phiếu duyệt riêng (duyetReceipt)
   stmts.push(
     auditStmt(env, user, 'khu_duyet', {
       day, khu: list.map((k) => k.khu), names: list.map((k) => k.name),
       so: list.map((k) => k.waiting).reduce((a, x) => a + x, 0),
-      phieu: phieu.map((v) => v.key),
+      // lệch = số đếm − tham chiếu theo phiếu, ghi lại để đọc nhật ký (không phải phần tồn bị đổi)
       lech: list.flatMap((k) => k.items.filter((i) => i.d).map((i) => `${k.khu}/${i.phi}=${i.d > 0 ? '+' : ''}${i.d}`)).slice(0, 40),
     }),
     bump(env)
@@ -629,7 +533,7 @@ export async function reviewDuyet(req, env, user) {
      duyệt lần báo MỚI NHẤT lúc ghi. Khu báo lại đúng giữa hai bước đó là duyệt một con số chưa ai
      xem. rev tăng ở mọi lần ghi số liệu, nên lệch rev là từ chối, admin tải lại rồi duyệt. */
   await batchNeuChuaDoi(env, day, rv.rev, stmts);
-  return json({ ok: true, khu: list.length, phieu: phieu.length, con: cho.length - list.length });
+  return json({ ok: true, khu: list.length, con: cho.length - list.length });
 }
 
 /* ========================= TỰ CHỐT SỔ NGÀY =========================
@@ -651,7 +555,6 @@ export function autoNote(rv) {
   const cho = rv.khus.filter((k) => k.waiting);
   if (cho.length) parts.push('chưa duyệt (chuyển sang ngày sau): ' + cho.map((k) => k.name).join(', '));
   if (by('conflict').length) parts.push('hai người báo khác số: ' + ten(by('conflict')));
-  if (by('recheck').length) parts.push('cần xem lại: ' + ten(by('recheck')));
   if (by('slot_missing').length) parts.push('thiếu lần đếm: ' + by('slot_missing').map((e) => e.name + ' ' + e.missing.join(', ')).join('; '));
   if (by('receipt_pending').length) parts.push(by('receipt_pending').length + ' phiếu chờ duyệt');
   const bt = rv.rows.filter((r) => r.neg || r.high);
@@ -661,7 +564,7 @@ export function autoNote(rv) {
 
 /* Chuyển báo cáo chưa duyệt của ngày D sang D+1. Chỉ ô đang chờ (ts khác duyet_ts) và chỉ khi D+1
    chưa có số của ô đó (số của D+1 bao giờ cũng mới hơn). Giữ ts: lần đếm diễn ra lúc nào thì vẫn là
-   lúc đó, nhờ vậy thép được duyệt sáng D+1 tính đúng là "về SAU lần đếm" và cộng thêm vào tồn.
+   lúc đó (khung giờ đếm, giờ báo hiện ở màn Duyệt). Duyệt sáng D+1 thì số đó thành tồn của D+1.
    Dấu "khu đã báo" cũng chuyển theo (không có nó thì màn Duyệt coi khu là chưa báo và không cho
    duyệt), nhưng xung đột và yêu cầu đếm lại thì không: bảng so sánh chỉ đọc lịch sử của hôm nay. */
 function carryStmts(env, day) {

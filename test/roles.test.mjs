@@ -129,7 +129,8 @@ async function main() {
   let lech = 0, buoc = 0, thuDuyet = 0, thuDuyetDung = 0, soLanXemLai = 0, soNgay = 0, soDoiVaiTro = 0;
   const loi = (msg) => { lech++; if (lech <= 12) ok(`[hạt giống ${SEED}, bước ${buoc}] ${msg}`, false, log.slice(-6).join(' | ')); };
   const review = async (who) => (await S.call('GET', '/review', undefined, who)).data;
-  const canViec = (k) => k.waiting || k.phieu.length || k.recheck;
+  // (v70) việc của nút Duyệt khu chỉ còn số đếm chờ duyệt: phiếu chờ của khu duyệt riêng, không còn "cần xem lại"
+  const canViec = (k) => k.waiting;
 
   async function doiChieu() {
     const rv = await review('Dai');
@@ -149,7 +150,7 @@ async function main() {
         else if (rvKhuTen.has(t)) choBan.add(t);
       }
       for (const k of rv.khus) {
-        const luat = CORE.duyetCuaNguoi(u, Math.max(k.capBao, k.capPhieu), k.nguoiBao);
+        const luat = CORE.duyetCuaNguoi(u, k.capBao, k.nguoiBao);
         // 2a. máy và luật phải khớp với MỌI khu đang có báo cáo chờ duyệt
         const choMay = R(`!!(S.boot.rm[${JSON.stringify(k.khu)}] && khuWaiting(${JSON.stringify(k.khu)}))`);
         if (choMay !== !!(k.waiting && k.rep && k.rep.day === bt.today)) {
@@ -157,17 +158,17 @@ async function main() {
           loi(`${who}: máy nói khu ${k.khu} ${choMay ? '' : 'không '}chờ duyệt, server nói waiting=${k.waiting}`);
         }
         if (choMay && R(`khuDuyetDuoc(${JSON.stringify(k.khu)})`) !== luat) {
-          loi(`${who}: máy tính khu ${k.khu} ${luat ? 'KHÔNG ' : ''}duyệt được, luật nói ${luat ? 'được' : 'không'} (capBao ${k.capBao}, capPhieu ${k.capPhieu}, phieuSau ${k.phieuSau})`);
+          loi(`${who}: máy tính khu ${k.khu} ${luat ? 'KHÔNG ' : ''}duyệt được, luật nói ${luat ? 'được' : 'không'} (capBao ${k.capBao}, phiếu chờ ${k.phieu.length})`);
         }
       }
-      // 2a'. thẻ "cần xem lại": cấp chỉ huy thấy đúng những khu server đánh dấu recheck (và không còn báo cáo chờ)
-      const xl = (home.match(/<b style="font-size:18px">([^<]*) cần xem lại<\/b>/) || [])[1] || '';
-      const nenXl = CORE.capOf(u.role) >= 2 ? rv.khus.filter((k) => k.recheck && !k.waiting) : [];
-      const thayXl = nenXl.length === 0 ? '' : nenXl.length === 1 ? nenXl[0].name : nenXl.length + ' khu';
-      if (xl !== thayXl) loi(`${who}: thẻ "cần xem lại" là "${xl}", đúng phải là "${thayXl}"`);
-      if (nenXl.length) soLanXemLai++;
+      /* 2a'. (v70) không còn thẻ "cần xem lại" (phiếu duyệt / huỷ sau khi số của khu đã duyệt): phiếu không đổi tồn. Server
+         cũng không còn gửi recheck / capPhieu / phieuSau. Đếm số lần có khu vừa chờ duyệt số vừa còn phiếu chờ: đó là tình huống
+         trước v70 CVKTHT bị chặn, nay phải duyệt được theo đúng capBao. */
+      if (/ cần xem lại<\/b>/.test(home)) loi(`${who}: Tổng quan vẫn hiện thẻ "cần xem lại"`);
+      for (const k of rv.khus) if ('recheck' in k || 'capPhieu' in k || 'phieuSau' in k) loi(`khu ${k.khu}: server còn gửi recheck / capPhieu / phieuSau`);
+      if (rv.khus.some((k) => k.waiting && k.phieu.length)) soLanXemLai++;
       // 2b. thẻ "chờ bạn duyệt" ở Tổng quan: đúng những khu chờ duyệt mà người này duyệt được
-      const nen = rv.khus.filter((k) => k.waiting && CORE.capOf(u.role) >= 1 && CORE.duyetCuaNguoi(u, Math.max(k.capBao, k.capPhieu), k.nguoiBao));
+      const nen = rv.khus.filter((k) => k.waiting && CORE.capOf(u.role) >= 1 && CORE.duyetCuaNguoi(u, k.capBao, k.nguoiBao));
       const thay = nen.length === 0 ? new Set() : nen.length === 1 ? new Set([nen[0].name]) : new Set(['*' + nen.length + ' khu']);
       if ([...thay].sort().join() !== [...choBan].sort().join()) loi(`${who}: thẻ "chờ bạn duyệt" là [${[...choBan]}], đúng phải là [${[...thay]}]`);
       // 2c. màn Duyệt: nút Duyệt khu đúng ở những khu người này duyệt được
@@ -177,7 +178,7 @@ async function main() {
         const dv = R('vDuyet()');
         for (const k of rvU.khus) {
           const coNut = new RegExp(`data-a="khuduyet" data-k="${k.khu}"`).test(dv);
-          const nen2 = !!canViec(k) && CORE.duyetCuaNguoi(u, Math.max(k.capBao, k.capPhieu), k.nguoiBao);
+          const nen2 = !!canViec(k) && CORE.duyetCuaNguoi(u, k.capBao, k.nguoiBao);
           if (coNut !== nen2) loi(`${who}: màn Duyệt ${coNut ? 'có' : 'thiếu'} nút duyệt khu ${k.khu} (luật: ${nen2 ? 'được' : 'không'})`);
           const nutHuy = new RegExp(`data-a="recount" data-k="${k.khu}"`).test(dv);
           if (nutHuy && !CORE.duyetCap(u.role, k.capBao)) loi(`${who}: màn Duyệt có nút huỷ báo cáo khu ${k.khu} mà không đủ cấp`);
@@ -222,11 +223,11 @@ async function main() {
       const rv = await review('Cv');
       const k = rv.khus.find((y) => y.khu === khu);
       if (k && canViec(k)) {
-        const du = CORE.duyetCuaNguoi(U.Cv, Math.max(k.capBao, k.capPhieu), k.nguoiBao);
+        const du = CORE.duyetCuaNguoi(U.Cv, k.capBao, k.nguoiBao);
         const r = await S.call('POST', '/review/duyet', { khu, marks: { [khu]: k.mark } }, 'Cv');
         thuDuyet++;
         log.push(`Cv duyệt ${khu}: ${r.status} (dự đoán ${du ? 200 : 403})`);
-        if ((r.status === 200) !== du || (!du && r.status !== 403)) loi(`CVKTHT duyệt khu ${khu}: HTTP ${r.status}, dự đoán ${du ? 200 : 403} (capBao ${k.capBao}, capPhieu ${k.capPhieu})`);
+        if ((r.status === 200) !== du || (!du && r.status !== 403)) loi(`CVKTHT duyệt khu ${khu}: HTTP ${r.status}, dự đoán ${du ? 200 : 403} (capBao ${k.capBao}, phiếu chờ ${k.phieu.length})`);
         else thuDuyetDung++;
       }
     } else if (x < 0.88) {
@@ -267,7 +268,7 @@ async function main() {
   }
   ok(`mô phỏng ${STEPS} bước (hạt giống ${SEED}): máy, server và luật khớp nhau ở mọi bước`, lech === 0, lech + ' chỗ lệch');
   ok(`đã bấm Duyệt khu thật bằng CVKTHT nhiều lần, đủ cả hai kết quả`, thuDuyet >= 20, thuDuyet + ' lần, ' + thuDuyetDung + ' đúng dự đoán');
-  ok('mô phỏng có đi qua tình huống khu "cần xem lại"', soLanXemLai > 0, soLanXemLai + ' lần');
+  ok('mô phỏng có đi qua tình huống khu vừa chờ duyệt số vừa còn phiếu chờ (phiếu không chặn Duyệt khu)', soLanXemLai > 0, soLanXemLai + ' lần');
   ok('mô phỏng có qua ngày mới và có đổi vai trò giữa chừng', soNgay > 0 && soDoiVaiTro > 0, soNgay + ' ngày, ' + soDoiVaiTro + ' lần đổi vai trò');
   const kq = S.sql("SELECT COUNT(*) n FROM audit WHERE action = 'khu_duyet' AND user_id = ?", U.Cv.id)[0].n;
   ok('trong đó có lần CVKTHT duyệt được thật', kq > 0, kq);

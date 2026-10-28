@@ -1,7 +1,7 @@
 // Xem lại ngày cũ, báo cáo theo kỳ, tệp CSV ngày, nhật ký và thống kê lượng dùng.
 import { DAY_RE, SYSTEM, bad, daysBetween, fmtDay, json, vnDay } from './core.js';
 import { CSV_HEAD, DUYET_JOIN, DUYET_NAME, UNAME, csvDec, csvQty, csvRow, csvUnit, isCuon } from './helpers.js';
-import { EFF_BY_BASELINE, MV_CHUA_DEM } from './counts.js';
+import { EFF_BY_BASELINE } from './counts.js';
 
 /* ========================= NGÀY BỊ DỒN SỐ =========================
    Báo cáo đếm CHƯA DUYỆT lúc tự chốt ngày D được chuyển sang D+1 (carryStmts ở review.js): ngày D khu
@@ -37,7 +37,7 @@ export async function dayView(env, url) {
   const day = url.searchParams.get('date') || '';
   if (!DAY_RE.test(day) || day > vnDay()) throw bad('Ngày không hợp lệ');
   const db = env.DB;
-  const [closeR, cntR, baseR, prevR, rcR, sumR, mvR, repR, lastR] = await db.batch([
+  const [closeR, cntR, baseR, prevR, rcR, sumR, repR, lastR] = await db.batch([
     // exc_json: những việc còn treo LÚC CHỐT (khu chưa báo, thiếu lần đếm...), để xem lại biết ngày đó chốt kèm gì
     db.prepare('SELECT dc.day, dc.ts, dc.note, dc.span, dc.exc_json, u.name uname FROM day_close dc LEFT JOIN users u ON u.id = dc.closed_by WHERE dc.day = ?').bind(day),
     /* Xem lại một ngày là xem số ĐÃ DUYỆT của ngày đó: đó mới là số liệu chính thức.
@@ -52,15 +52,15 @@ export async function dayView(env, url) {
                 WHERE (r.duyet_day = ?1 OR (r.duyet_day IS NULL AND r.day = ?1)) ORDER BY r.id`).bind(day),
     // dc đi kèm nhap: màn Lịch sử phải nói được "ngày đó sổ bị sửa bao nhiêu", y như báo cáo kỳ
     db.prepare('SELECT phi_id, ton, nhap, dung, span, dc, xuat, vay, kg FROM daily_summary WHERE day = ?').bind(day),
-    // ngày CHƯA chốt thì tồn còn phải cộng phần thép đã duyệt mà khu chưa kịp đếm, y như Tồn bãi
-    db.prepare(MV_CHUA_DEM).bind(day),
+    // (v70) ngày CHƯA chốt: tồn = số đếm đã duyệt, chưa có thì tồn chuẩn trước đó — không cộng phiếu, y như Tồn bãi
     db.prepare(`SELECT r.khu_id, r.ts, ${UNAME} FROM khu_report r LEFT JOIN users u ON u.id = r.user_id WHERE r.day = ?`).bind(day),
     // lần chốt gần nhất: chỉ ngày đó mở lại được, nên giao diện mới biết có bày nút hay không
     db.prepare('SELECT MAX(day) d FROM day_close'),
   ]);
   return json({
     day, close: closeR.results[0] || null, counts: cntR.results, baseline: baseR.results, prevBaseline: prevR.results,
-    receipts: rcR.results, summary: sumR.results, mvNew: mvR.results, reports: repR.results,
+    // mvNew luôn rỗng: chỉ để bản app cũ (v69 trở về trước, còn trong cache) không vỡ và cũng tính tồn = số đếm
+    receipts: rcR.results, summary: sumR.results, mvNew: [], reports: repR.results,
     lastClose: (lastR.results[0] || {}).d || null,
     // ngày bị dồn số: khu chưa duyệt lúc 0h (sang ngày sau) và khu nhận số của hôm trước (xem donNgay)
     don: (await donNgay(db, day, day))[day] || null,
@@ -297,24 +297,24 @@ export async function chamCong(env, url) {
 
 export async function exportCsv(env, url) {
   const day = DAY_RE.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : vnDay();
-  const [phiR, khuR, cntR, baseR, mvR, kgR] = await env.DB.batch([
+  const [phiR, khuR, cntR, baseR, kgR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, active, bo_size, unit FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare(EFF_BY_BASELINE).bind(day),
     env.DB.prepare('SELECT khu_id, phi_id, v FROM baseline WHERE day = (SELECT MAX(day) FROM baseline WHERE day <= ?)').bind(day),
-    env.DB.prepare(MV_CHUA_DEM).bind(day),
     // ngày đã chốt: số tấn theo kg/cây LÚC CHỐT, khớp với báo cáo kỳ và màn Xem lại ngày cũ
     env.DB.prepare('SELECT phi_id, kg FROM daily_summary WHERE day = ? AND kg IS NOT NULL').bind(day),
   ]);
   const kgLuc = Object.fromEntries(kgR.results.map((r) => [r.phi_id, r.kg]));
   const kgOf = (p) => (kgLuc[p.id] != null ? kgLuc[p.id] : p.kg_per_cay);
-  const c = {}, b = {}, mv = {};
+  /* Tồn của ô = số đếm đã duyệt gần nhất tính tới ngày đó (kể từ tồn chuẩn gần nhất), chưa có thì tồn chuẩn — v70 không cộng
+     phiếu (xem tonCells ở phieu.js), nên tệp khớp đúng màn Tồn bãi. */
+  const c = {}, b = {};
   cntR.results.forEach((r) => (c[r.khu_id + '|' + r.phi_id] = r.v));
   baseR.results.forEach((r) => (b[r.khu_id + '|' + r.phi_id] = r.v));
-  mvR.results.forEach((r) => (mv[r.khu_id + '|' + r.phi_id] = r.q));
   const hasData = new Set();
-  Object.keys(c).concat(Object.keys(b), Object.keys(mv)).forEach((key) => {
-    if (((c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0)) > 0) hasData.add(key.split('|')[1]);
+  Object.keys(c).concat(Object.keys(b)).forEach((key) => {
+    if ((c[key] !== undefined ? c[key] : (b[key] || 0)) > 0) hasData.add(key.split('|')[1]);
   });
   const phis = phiR.results.filter((p) => p.active !== 0 || hasData.has(p.id));
   const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
@@ -329,7 +329,7 @@ export async function exportCsv(env, url) {
     let sum = 0, kg = 0;
     const cells = phis.map((p, i) => {
       const key = k.id + '|' + p.id;
-      const v = (c[key] !== undefined ? c[key] : (b[key] || 0)) + (mv[key] || 0);
+      const v = c[key] !== undefined ? c[key] : (b[key] || 0);
       if (!isCuon(p)) sum += v;
       kg += v * kgOf(p); colV[i] += v;
       return csvQty(v, p);

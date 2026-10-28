@@ -95,7 +95,7 @@ const boot = {
   innKhu: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }, { khu_id: 'B', phi_id: 'D10', q: 50 }],
   // khu B đã đếm D10 hôm nay; phần còn lại chưa đếm nên vẫn là "chưa được đếm"
   eff: [{ khu_id: 'B', phi_id: 'D10', v: 240, kind: 'dem', ts: Date.now() - 36e5, day: today }],
-  mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 110 }, { khu_id: 'A', phi_id: 'D10', q: -50 }],
+  // (v70) server không còn gửi mvNew (phiếu cộng lên tồn): tồn = số đếm đã duyệt, chưa có thì tồn chuẩn
   rates: [{ phi_id: 'D8', per_day: 33, days: 28 }, { phi_id: 'D10', per_day: 120, days: 2 }],
   settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1, report_slots_per_day: 1 },
 };
@@ -115,7 +115,7 @@ const review = {
     { type: 'khu_missing', khu: 'A', name: 'Khu A' },
     { type: 'khu_pending', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm', n: 3, blank: 1 },
     { type: 'conflict', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
-    { type: 'recheck', khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm' },
+
     { type: 'recount', khu: 'C', name: 'Khu C' },
     { type: 'slot_missing', khu: 'C', name: 'Khu C', missing: ['buổi sáng (6h–12h)'] },
     { type: 'receipt_pending', key: 'g1', id: 71, kind: 'nhap', day: today },
@@ -125,7 +125,7 @@ const review = {
   /* Thẻ của từng khu: đủ các trạng thái cần vẽ — chưa báo, chờ duyệt kèm lệch và ô để trống,
      đã duyệt, và khu báo từ NGÀY TRƯỚC (quên chốt) để thử nhãn ngày. */
   khus: [
-    { khu: 'A', name: 'Khu A', items: [{ phi: 'D10', ref: 300, mv: 0, exp: 300, cnt: null, d: null, kind: null, duyet: null }], waiting: 0, blank: 0, rep: null, recheck: false, phieu: [], duyet: null },
+    { khu: 'A', name: 'Khu A', items: [{ phi: 'D10', ref: 300, mv: 0, exp: 300, cnt: null, d: null, kind: null, duyet: null }], waiting: 0, blank: 0, rep: null, phieu: [], duyet: null },
     { khu: 'B', name: 'Khu B dài tên để thử tràn nút bấm',
       items: [
         { phi: 'D8', ref: 220, mv: 110, exp: 330, cnt: 180, d: -150, kind: 'dem', big: true, blank: false, duyet: false },
@@ -134,10 +134,10 @@ const review = {
         { phi: 'D14', ref: 55, mv: 0, exp: 55, cnt: 55, d: 0, kind: 'dem', big: false, blank: false, duyet: false },
       ],
       waiting: 4, blank: 1, rep: { uname: 'Nguyễn Văn B', ts, day: today, conflict: 1, resolved: 0, recount: 0 },
-      recheck: true, phieu: ['g1'], duyet: null },
+      phieu: ['g1'], duyet: null },
     { khu: 'C', name: 'Khu C', items: [{ phi: 'D10', ref: 100, mv: 0, exp: 100, cnt: 100, d: 0, kind: 'dem', big: false, blank: false, duyet: true }],
       waiting: 0, blank: 0, rep: { uname: 'Trần Thị C', ts, day: yday, conflict: 0, resolved: 0, recount: 1 },
-      recheck: false, phieu: [], duyet: { by: 'Admin', ts },
+      phieu: [], duyet: { by: 'Admin', ts },
       // đếm nhiều lần/ngày: thiếu buổi sáng, và lần chiều gửi muộn sau mất mạng
       slots: { done: [1], missing: [0], late: [{ at: ts - 3600e3, ts }] } },
   ],
@@ -424,7 +424,7 @@ S.me.role = 'cvktht'; S.screen = 'nhap'; one('cvktht:nhap');
 S.me.role = 'admin';
 
 /* Màn Nhập có bốn chế độ dùng chung một hàm vẽ, nên phải render cả bốn. Chế độ Điều chỉnh còn phải
-   vẽ được ở hai chiều, lúc chưa gõ số, lúc đã gõ, lúc quá số đang có (báo đỏ), và lúc vượt ngưỡng
+   vẽ được ở hai chiều, lúc chưa gõ số, lúc đã gõ, lúc nhiều hơn số đang có (v70: không báo đỏ, phiếu không đổi tồn), và lúc vượt ngưỡng
    "rất lớn" (hiện ô gõ chữ xác nhận). */
 S.screen = 'nhap';
 S.nhap.mode = 'chuyen'; one('nhap+chuyen-khu');
@@ -433,7 +433,7 @@ one('nhap+dieu-chinh+chua-go');
 S.nhap.dir = 'giam'; S.nhap.qty = 10; S.nhap.reason = 'dem_sai'; one('nhap+dieu-chinh+giam');
 S.nhap.dir = 'tang'; S.nhap.qty = 10; one('nhap+dieu-chinh+tang');
 S.nhap.reason = 'khac'; one('nhap+dieu-chinh+ly-do-khac');
-// giảm 9999 cây D12 khi khu chỉ có 40: dòng "đang có → còn" phải báo quá số, và vượt ngưỡng tấn
+// giảm 9999 cây D12 khi khu chỉ có 40: dòng "đang có" vẫn vẽ được (không còn báo quá số), và vượt ngưỡng tấn
 S.nhap.dir = 'giam'; S.nhap.qty = 9999; S.nhap.reason = 'dem_sai'; one('nhap+dieu-chinh+qua-so-va-rat-lon');
 S.nhap.qty = 0; S.nhap.reason = null;
 // Xuất kho: chỉ có dòng âm và có ô nơi đến riêng, nên vẽ cả lúc chưa gõ và lúc đã gõ số

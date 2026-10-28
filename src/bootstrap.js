@@ -2,7 +2,7 @@
 import { HIGH_KG, MIN_RATE_DAYS, NEG_KG, PHI_DEFAULTS, capOf, duyetCuaNguoi, duyetPhieuDuoc, vnDay } from './core.js';
 import { slotInfo } from './slots.js';
 import { DUYET_JOIN, DUYET_NAME, SETTINGS_SQL, UNAME, parseSettings } from './helpers.js';
-import { EFF_SELECT, MV_NEW } from './counts.js';
+import { EFF_SELECT } from './counts.js';
 import { DC_BIG_KG, DC_REASONS, DC_WORD } from './phieu.js';
 import { LOAN_LOT_SQL, loanLots } from './loans.js';
 import { GC_BAO_HUY_MS, GC_CHUA_XUAT, GC_CHUA_XUAT_IDX, tnMoi, tnMoiStmt } from './giacong.js';
@@ -17,7 +17,7 @@ export async function bootstrap(env, user) {
      ?1 luôn là hôm nay. kyNay đổi câu dùng chung (?1 = ngày chốt trước, ?2 = ngày đang xét) sang dạng đó. */
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
   const kyNay = (sql) => sql.replace(/\?1/g, LAST).replace(/\?2/g, '?1');
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, mvNew, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, phieuTsR, lastR, gcR, qsR, qsToiR, bcDaR, cfgR, gcTnR, tnR, svR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, lastR, gcR, qsR, qsToiR, bcDaR, cfgR, gcTnR, tnR, svR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -31,7 +31,7 @@ export async function bootstrap(env, user) {
     env.DB.prepare('SELECT khu_id, at FROM khu_report_log WHERE day = ?').bind(day),
     /* Phiếu để hiện danh sách: của hôm nay, CỘNG mọi phiếu còn chờ duyệt của ngày trước.
        Phiếu lập hôm qua chưa ai duyệt vẫn phải nhìn thấy được, không thì nó biến mất khỏi
-       màn Nhập kho mà vẫn chưa vào tồn — không ai biết nó còn tồn tại. */
+       màn Nhập kho mà vẫn chưa ai duyệt — không ai biết nó còn tồn tại. */
     env.DB.prepare(`SELECT r.id, r.phi_id, r.khu_id, r.qty, r.note, r.kind, r.grp, r.ts, r.user_id, ${UNAME},
                       r.day, r.duyet_day, r.duyet_ts, COALESCE(ud.name, r.duyet_name) duyet_name
                     FROM receipts r LEFT JOIN users u ON u.id = r.user_id LEFT JOIN users ud ON ud.id = r.duyet_by
@@ -39,15 +39,14 @@ export async function bootstrap(env, user) {
     env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'"),
     /* Nhập/chuyển/xuất ĐÃ DUYỆT kể từ lần chốt gần nhất theo khu × phi × LOẠI (gồm cả ngày
-       quên chốt). Lọc theo duyet_day chứ không phải day: phiếu chỉ tác động tới tồn kể từ ngày được
-       duyệt. Phải tách theo kind vì màn Tổng quan cũng tính "đã dùng", và phần XUẤT phải bị trừ
-       ra khỏi vế nhập đúng như server làm — hai bên lệch nhau là hai màn nói hai con số khác nhau. */
+       quên chốt). Lọc theo duyet_day chứ không phải day: phiếu thuộc thống kê của ngày được duyệt.
+       Phiếu KHÔNG đổi tồn (v70): câu này chỉ cho "đã dùng" / "nhập" ở Tổng quan và số tham chiếu theo
+       phiếu. Phải tách theo kind vì phần XUẤT phải bị trừ ra khỏi vế nhập đúng như server làm — hai bên
+       lệch nhau là hai màn nói hai con số khác nhau. */
     env.DB.prepare(`SELECT khu_id, phi_id, kind, SUM(qty) q FROM receipts WHERE voided = 0 AND duyet_day IS NOT NULL AND duyet_day > ${LAST} AND duyet_day <= ?1 GROUP BY khu_id, phi_id, kind`).bind(day),
     // số đếm hiệu lực của từng ô: khu báo hôm qua mà hôm nay chưa báo thì vẫn phải lấy số hôm qua,
-    // không được quay về tồn chuẩn cũ (xem EFF_SELECT)
+    // không được quay về tồn chuẩn cũ (xem EFF_SELECT). Tồn của ô = số này, chưa có thì tồn chuẩn (v70)
     env.DB.prepare(kyNay(EFF_SELECT)).bind(day),
-    // lượng nhập/chuyển xảy ra SAU lần đếm hiệu lực: đây mới là phần chưa nằm trong số đếm
-    env.DB.prepare(kyNay(MV_NEW)).bind(day),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT phi_id, per_day, days FROM phi_rate'),
     // kèm tên: Tổng quan của admin nói được khu chưa báo là của ai, để biết nhắc ai
@@ -75,16 +74,8 @@ export async function bootstrap(env, user) {
        LEFT JOIN users u ON u.id = h.user_id
        WHERE h.day = ?1 AND h.id = (SELECT MAX(h2.id) FROM bao_cao_huy h2 WHERE h2.day = ?1 AND h2.khu_id = h.khu_id)`
     ).bind(day),
-    /* Lần gần nhất một phiếu kho của khu được duyệt hoặc (đã duyệt rồi) bị huỷ — đúng câu mvTsR của màn
-       Duyệt. Tổng quan dùng nó để biết khu nào đếm TRƯỚC lúc có phiếu kho mới (phieuSau), tức CVKTHT
-       không duyệt được, mà không phải đoán. */
-    // gồm cả phiếu duyệt ở ngày đã chốt sau lần báo cũ nhất còn trong kỳ (báo cáo chuyển qua 0h) — y câu mvTsR, xem đó
-    env.DB.prepare(`WITH l AS (SELECT ${LAST} d), m AS (SELECT MIN(ts) t FROM counts, l WHERE day > l.d AND day <= ?1)
-                    SELECT khu_id, MAX(duyet_ts) a, MAX(CASE WHEN voided = 1 THEN voided_ts END) b FROM receipts, l, m
-                    WHERE duyet_day IS NOT NULL AND duyet_day <= ?1
-                      AND duyet_day >= MIN(l.d, COALESCE(date(m.t / 1000 + 25200, 'unixepoch'), l.d))
-                      AND (duyet_day > l.d OR duyet_ts > m.t)
-                    GROUP BY khu_id`).bind(day),
+    /* (v70) Bỏ mvNew (phiếu cộng lên số đếm) và phieuTs (mốc phiếu mới nhất của khu, cho phieuSau / capPhieu ở Tổng quan):
+       phiếu không đổi tồn, Duyệt khu không còn dính phiếu. */
     env.DB.prepare(`SELECT ${LAST} d`).bind(day),
     /* Đơn gia công CÒN MỞ, chỉ mấy cột đủ để Tổng quan nhắc (đơn mới chưa nhận, trễ hạn, đang vướng, bị mở lại).
        Bảng đơn đầy đủ nạp riêng khi vào tab Gia công, như sổ vay mượn. */
@@ -131,12 +122,14 @@ export async function bootstrap(env, user) {
     baseline: baseline.results,
     reports: reports.results,
     huy: huyR.results,
-    phieuTs: Object.fromEntries(phieuTsR.results.map((r) => [r.khu_id, Math.max(r.a || 0, r.b || 0)])),
     slot: slotInfo(settings.results, reportTimes.results),
     receipts: receipts.results,
     innKhu: innKhu.results,
     eff: eff.results,
-    mvNew: mvNew.results,
+    /* mvNew / phieuTs luôn rỗng: chỉ để bản app cũ (v69 trở về trước, còn trong cache tới lúc nhận bản mới) không vỡ — với
+       mvNew rỗng nó cũng tính tồn = số đếm, đúng luật mới. Bản v70 không đọc hai trường này. */
+    mvNew: [],
+    phieuTs: {},
     rates: rates.results,
     khuUser: khuUser.results,
     settings: parseSettings(settings.results),

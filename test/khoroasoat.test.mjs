@@ -1,6 +1,7 @@
 /* Hồi quy đợt rà soát kho (10/2026): node khoroasoat.test.mjs <đường-dẫn-repo>
-   1. Duyệt số đếm của hôm qua lúc vừa qua nửa đêm (trước khi lịch chốt sổ): phiếu duyệt cùng lúc không bị cộng HAI LẦN.
-   2. "Duyệt tất cả" không gồm khu chỉ cần xem lại — không làm mất phiếu duyệt sau lần đếm.
+   1. Duyệt số đếm của hôm qua lúc vừa qua nửa đêm (trước khi lịch chốt sổ): tồn đúng số đếm, phiếu không cộng (v70: phiếu
+      không đổi tồn, Duyệt khu không duyệt phiếu).
+   2. Phiếu duyệt sau lần đếm không còn sinh việc "cần xem lại" (recheck bỏ ở v70): Duyệt tất cả / Duyệt khu không có gì để làm.
    3. Đổi PIN: thử PIN mới quá dễ nhiều lần không khoá tài khoản.
    4. Phi tên lạ ("constructor", "__proto__") không lọt vào sổ; PUT /phi có dòng null là 400. */
 import { boot, clock, advance, vnDay } from './harness.mjs';
@@ -33,7 +34,7 @@ async function main() {
     const vnMs = (Date.now() + 7 * 3600e3) % 864e5;
     clock.offset += 20 * 3600e3 - vnMs + (vnMs > 20 * 3600e3 ? 864e5 : 0); // 20h hôm nay
     const S = await moi();
-    const ton = async () => (await tonCells(S.env, vnDay(), [{ khu: 'A', phi: 'D16' }], false))['A|D16'];
+    const ton = async () => (await tonCells(S.env, vnDay(), [{ khu: 'A', phi: 'D16' }]))['A|D16'];
     await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 50 }) }, 'An');
     await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin');
     clock.offset += 6 * 3600e3; await S.cron(); // 2h sáng: chốt ngày đầu
@@ -41,27 +42,32 @@ async function main() {
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] }, 'Cv');
     await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 150 }) }, 'An');
     clock.offset += 7 * 3600e3 + 60e3; // 0h01 hôm sau, lịch chưa chạy
-    eq('0h01 duyệt khu (kèm phiếu chờ): tồn 150', [(await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin')).status, await ton()], [200, 150]);
+    eq('0h01 duyệt khu (chỉ số đếm): tồn 150', [(await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin')).status, await ton()], [200, 150]);
+    eq('phiếu +100 vẫn chờ duyệt (Duyệt khu không duyệt phiếu)', S.sql('SELECT 1 FROM receipts WHERE duyet_day IS NULL').length, 1);
     clock.offset += 4 * 60e3; await S.cron(); // 0h05: chốt hôm qua
-    eq('sau khi lịch chốt sổ hôm qua: tồn vẫn 150, không cộng phiếu hai lần', await ton(), 150);
-    eq('màn Duyệt cũng thấy 150', (await S.call('GET', '/review', undefined, 'Admin')).data.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 150);
+    eq('sau khi lịch chốt sổ hôm qua: tồn vẫn 150', await ton(), 150);
+    await S.call('POST', `/receipts/${S.one('SELECT id FROM receipts').id}/duyet`, {}, 'Trung');
+    eq('duyệt phiếu ghi muộn sau đó: tồn vẫn 150, không cộng', await ton(), 150);
+    // exp = tồn chuẩn 150 + phiếu đã duyệt trong kỳ 100: số tham chiếu theo phiếu, không phải tồn
+    { const rvA = (await S.call('GET', '/review', undefined, 'Admin')).data;
+      eq('màn Duyệt: tồn (cnt) 150, tham chiếu theo phiếu 250', [rvA.rows.find((x) => x.phi === 'D16').cnt, rvA.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp], [150, 250]); }
     clock.offset += 24 * 3600e3; await S.cron();
     eq('qua thêm một lần chốt nữa: vẫn 150', await ton(), 150);
   }
   /* ===== 2. Duyệt tất cả và khu chỉ cần xem lại ===== */
   {
     const S = await moi();
-    const ton = async () => (await tonCells(S.env, vnDay(), [{ khu: 'A', phi: 'D16' }], false))['A|D16'];
+    const ton = async () => (await tonCells(S.env, vnDay(), [{ khu: 'A', phi: 'D16' }]))['A|D16'];
     await S.call('PUT', '/counts', { khu: 'A', items: S.items({ D16: 100 }) }, 'An');
     advance(1000); await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin');
     advance(1000);
     const r = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 50 }] }, 'Cv');
     await S.call('POST', `/receipts/${r.data.id}/duyet`, {}, 'Trung');
     advance(1000);
-    eq('khu A chỉ cần xem lại (phiếu duyệt sau lần đếm)', (await S.call('GET', '/review', undefined, 'Admin')).data.exceptions.map((e) => e.type + ':' + e.khu), ['recheck:A']);
+    eq('phiếu duyệt sau lần đếm: không còn việc "cần xem lại"', (await S.call('GET', '/review', undefined, 'Admin')).data.exceptions.map((e) => e.type + ':' + e.khu), []);
     const d = await S.call('POST', '/review/duyet', { all: true }, 'Admin');
-    eq('"Duyệt tất cả" không đụng khu đó, phiếu vẫn trong tồn', [d.status, await ton()], [400, 150]);
-    eq('vẫn duyệt lại từng khu được', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin')).status, 200);
+    eq('"Duyệt tất cả": không còn khu nào chờ, tồn vẫn = số đếm 100', [d.status, await ton()], [400, 100]);
+    eq('Duyệt khu A: không có số đếm nào chờ', (await S.call('POST', '/review/duyet', { khu: 'A' }, 'Admin')).status, 400);
   }
   /* ===== 3. Đổi PIN ===== */
   {

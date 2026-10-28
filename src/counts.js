@@ -24,8 +24,8 @@ export const EFF_JOIN = (A, B) => `LEFT JOIN counts c
                WHERE c2.khu_id = kx.khu_id AND c2.phi_id = kx.phi_id AND c2.day > ?${A} AND c2.day <= ?${B}
                  AND c2.duyet_v IS NOT NULL)`;
 // ?1 = ngày chốt trước ('' nếu chưa có), ?2 = ngày đang xét
-/* ts = lúc DUYỆT số đếm, cts = lúc ĐẾM của chính con số đã duyệt (duyet_ts; c.ts có thể là lần báo lại đang chờ). Cần cả
-   hai mốc để biết phiếu nào đã nằm trong số đếm, xem SAU_DEM. */
+/* ts = lúc DUYỆT số đếm, cts = lúc ĐẾM của chính con số đã duyệt (duyet_ts; c.ts có thể là lần báo lại đang chờ). Từ v70
+   không còn phép tính nào cần hai mốc này (phiếu không đổi tồn), giữ trong câu chỉ để hiển thị / kiểm. */
 export const EFF_SELECT = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_kind kind, c.duyet_at ts, c.duyet_ts cts, c.day FROM counts c
   WHERE c.day > ?1 AND c.day <= ?2 AND c.duyet_v IS NOT NULL
     AND c.day = (SELECT MAX(c2.day) FROM counts c2
@@ -39,51 +39,16 @@ export const EFF_BY_BASELINE = `SELECT c.khu_id, c.phi_id, c.duyet_v v, c.duyet_
                  WHERE c2.khu_id = c.khu_id AND c2.phi_id = c.phi_id AND c2.duyet_v IS NOT NULL
                    AND c2.day > (SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1) AND c2.day <= ?1)`;
 
-/* PHIẾU r CHƯA NẰM TRONG SỐ ĐẾM e (e.ts = lúc duyệt số, e.cts = lúc đếm). Phiếu nằm trong số đếm khi và chỉ khi nó được
-   LẬP TRƯỚC lúc khu ra đếm (thép đã về / đã đi rồi mới đếm) VÀ được duyệt trước hoặc cùng lúc với số đếm. Bản cũ chỉ so lúc
-   DUYỆT: khu đếm 100 lúc 8h, 10h lập phiếu chuyển 90 sang khu B, 11h "Duyệt khu A" duyệt cả số lẫn phiếu cùng một mốc, phiếu
-   bị coi như đã nằm trong số đếm — A vẫn 100, B thêm 90, cả bãi tự sinh ra 90 cây. Phiếu lập SAU lúc đếm thì số đếm không thể
-   gồm nó, duyệt lúc nào cũng phải cộng lên trên. Mốc lập phiếu là receipts.ts, mốc đếm là ts của lần báo (cả hai là giờ máy
-   chủ lúc nhận; báo cáo gửi dồn sau khi mất mạng mang mốc lúc tới máy chủ, như lâu nay). Trùng đúng mili-giây thì coi
-   là nằm trong số đếm, như luật cũ. */
-export const SAU_DEM = (r, e) => `(${r}.duyet_ts > ${e}.ts OR ${r}.ts > ${e}.cts)`;
-/* Mốc DƯỚI theo ngày duyệt cho nhánh "phiếu lập sau lúc đếm" (cts = mili-giây lúc đếm). Không có mốc này thì câu đi index
-   (phi, khu, duyet_day) từ đầu lịch sử: mỗi lần tải / duyệt / kiểm tồn đọc MỌI phiếu từng có của ô (đo 50 nghìn phiếu: 0,1 ms
-   thành 13 ms, ~50 nghìn dòng D1 mỗi lượt — vượt hạn mức gói miễn phí khi dữ liệu lớn). Phiếu lập sau lúc đếm thì duyệt sau
-   lúc đó, nên ngày duyệt (ngày sổ ĐANG MỞ lúc duyệt) không sớm hơn ngày sổ mở lúc đếm; ngày đó có thể chậm hơn ngày thật vài
-   ngày khi lịch chốt bị lỡ, nên lùi hẳn 7 ngày cho chắc — vẫn chỉ đọc chừng một tuần phiếu của ô. */
-export const TU_DEM = (cts) => `date(${cts} / 1000 + 25200, 'unixepoch', '-7 days')`;
-/* Phần CỘNG LÊN số đếm / tồn chuẩn của ô, theo đúng SAU_DEM. Hai nhánh:
-   - phiếu duyệt TRONG KỲ (sau ngày mốc A): ô chưa có số đếm đã duyệt thì mọi phiếu (cộng lên tồn chuẩn), có thì phiếu SAU_DEM;
-   - phiếu duyệt ở các ngày ĐÃ CHỐT (<= A) mà lập sau lúc đếm: chỉ có khi số đếm chưa duyệt được chuyển qua 0h (carryStmts)
-     rồi mới duyệt. Tồn chuẩn đã gồm phiếu đó, nhưng số đếm THAY tồn chuẩn — không cộng lại thì đếm 100 lúc 9h, 14h nhập 50,
-     hôm sau duyệt số là tồn tụt về 100 và 50 cây thành "đã dùng" (vào daily_summary, phi_rate).
-   Tách hai nhánh (UNION ALL) để mỗi nhánh đi index theo ngày duyệt / theo ô, không quét cả bảng phiếu.
-   A, B = biểu thức ngày mốc / ngày đang xét; eff = câu số đếm hiệu lực (có ts, cts). */
-const MV_SAU = (A, B, eff) => `SELECT khu_id, phi_id, SUM(q) q FROM (
-    SELECT r.khu_id, r.phi_id, r.qty q FROM receipts r
-    LEFT JOIN (${eff}) e ON e.khu_id = r.khu_id AND e.phi_id = r.phi_id
-    WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day > ${A} AND r.duyet_day <= ${B}
-      AND (e.ts IS NULL OR ${SAU_DEM('r', 'e')})
-    UNION ALL
-    SELECT r.khu_id, r.phi_id, r.qty FROM (${eff}) e
-    JOIN receipts r ON r.phi_id = e.phi_id AND r.khu_id = e.khu_id
-    WHERE r.voided = 0 AND r.duyet_day IS NOT NULL AND r.duyet_day <= ${A} AND r.duyet_day >= ${TU_DEM('e.cts')} AND r.ts > e.cts)
-  GROUP BY khu_id, phi_id HAVING SUM(q) <> 0`;
-/* Thép ĐÃ DUYỆT về SAU lần đếm, tính đến ngày ?1 — tức phần chưa nằm trong số đếm.
-   Tồn mà app hiện = số đếm + phần này (xem tonOf ở app.js). Chỗ nào đọc tồn mà bỏ phần này thì
-   nói ít hơn chính app, và lệch đúng bằng lượng thép vừa về mà khu chưa kịp đếm.
-   Ngày ĐÃ CHỐT thì mốc tồn chuẩn chính là ngày đó nên phiếu duyệt trong ngày không lọt vào đây,
-   và kết quả bằng đúng tồn chuẩn — hai cách đọc vẫn khớp. */
-export const MV_CHUA_DEM = MV_SAU("(SELECT COALESCE(MAX(day), '') FROM baseline WHERE day <= ?1)", '?1', EFF_BY_BASELINE);
+/* TỒN = SỐ ĐẾM (v70). Tới v69 chỗ này có cả một bộ máy "phiếu chưa nằm trong số đếm" (SAU_DEM, TU_DEM,
+   MV_SAU, MV_NEW, MV_CHUA_DEM): tồn = số đếm đã duyệt + phiếu duyệt / lập SAU lúc đếm. Nó dựa trên giờ lập
+   phiếu, mà ở bãi phiếu được ghi thất thường, thường muộn hàng giờ sau khi thép đã về / đi và khu đã đếm
+   — nên cứ phiếu ghi muộn là tồn cộng hai lần (thép đã nằm trong số đếm, lại cộng thêm phiếu). Chủ bãi
+   chốt: tồn bãi CHỈ theo báo cáo đếm đã duyệt gần nhất của ô (EFF_SELECT), chưa có thì tồn chuẩn của
+   lần chốt trước; phiếu kho chỉ còn là thống kê thép vào / ra. Mọi câu đọc tồn (tonCells, bootstrap,
+   màn Duyệt, chốt ngày, CSV, xem lại ngày cũ) vì thế chỉ là COALESCE(số đếm hiệu lực, tồn chuẩn). */
 /* Mọi (khu x phi) đang dùng. Thay cho khu_phi làm bảng liệt kê: từ bản 1.3 khu nào cũng có đủ phi,
    nên tồn chuẩn thành đặc (8 khu x 13 phi) và bỏ được trường hợp "khu hôm qua không có phi đó". */
 export const KHU_X_PHI = `SELECT k.id khu_id, p.id phi_id FROM khu k, phi p WHERE k.active = 1 AND p.active = 1`;
-/* Phiếu chưa nằm trong số báo cáo đã duyệt của ô (SAU_DEM; ô chưa có báo cáo đã duyệt: mọi phiếu đã
-   duyệt trong kỳ) — phần thép cộng lên số báo cáo. ?1 = ngày chốt trước, ?2 = ngày đang xét. Bootstrap và
-   màn Duyệt dùng CHUNG câu này, nên "tồn" ở Tổng quan và ở màn Duyệt không thể lệch nhau. */
-export const MV_NEW = MV_SAU('?1', '?2', EFF_SELECT);
-
 /* "Có người KHÁC đã báo phi này với số KHÁC" — tính bằng SQL ngay trước khi ghi đè counts.
    So ở JS trên dữ liệu đọc trước đó sẽ bỏ sót khi hai người gửi gần như cùng lúc; còn chỉ so
    "người báo khác nhau" thì hai người báo giống số cũng bị coi là xung đột.
@@ -108,20 +73,13 @@ export async function putCounts(req, env, user) {
   if (!items.length) throw bad('Chưa có số liệu nào');
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
 
-  const [closedR, khuR, setR, phiR, kpR, prevR, innR, asgR, refR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR, asgR, refR] = await env.DB.batch([
     env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT id, bo_size, unit FROM phi WHERE active = 1'),
     env.DB.prepare('SELECT phi_id, keep_streak FROM khu_phi WHERE khu_id = ?').bind(khuId),
     env.DB.prepare('SELECT phi_id, v, kind, user_id, ts, duyet_at FROM counts WHERE day = ? AND khu_id = ?').bind(day, khuId),
-    /* Thép ĐÃ DUYỆT về khu này sau lần đếm đã duyệt: chỉ phần này là chưa nằm trong số đếm.
-       Thép đã về trước lần đếm thì số đếm đã bao gồm, "giữ nguyên" vẫn hợp lệ.
-       Đúng câu MV_NEW của màn Duyệt / Tổng quan (luật SAU_DEM), lọc riêng khu này. */
-    env.DB.prepare(
-      `SELECT m.phi_id, m.q FROM (${MV_NEW.replace(/\?1/g, "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2)")}) m
-       WHERE m.khu_id = ?1`
-    ).bind(khuId, day),
     env.DB.prepare('SELECT user_id FROM khu_user WHERE khu_id = ?').bind(khuId),
     /* Số MỐC của từng phi, đúng con số máy khách gọi là "số hôm qua" (refOf ở app.js): lần đếm đã
        duyệt gần nhất kể từ lần chốt trước (eff = 1), chưa có thì tồn chuẩn của lần chốt đó. Dùng để
@@ -140,7 +98,6 @@ export async function putCounts(req, env, user) {
   ]);
   const refBy = {};
   refR.results.forEach((r) => { if (r.eff || !(r.phi_id in refBy)) refBy[r.phi_id] = r.v; });
-  const moved = Object.fromEntries(innR.results.map((r) => [r.phi_id, r.q]));
   /* Sổ ngày tự chốt sau nửa đêm, nên ngày HÔM NAY chỉ bị khoá khi admin vừa đặt lại số liệu (mốc
      kiểm kê khoá luôn hôm đó) — hoặc ngày deploy bản này mà admin đã lỡ chốt tay từ trước. */
   if (closedR.results.length) {
@@ -234,13 +191,9 @@ export async function putCounts(req, env, user) {
     if (it.kind === 'giu' && keep0 >= settings.max_keep_streak) {
       throw bad(`Phi ${it.phi} đã giữ nguyên quá ${settings.max_keep_streak} ngày liên tiếp, hãy đếm lại`);
     }
-    if (it.kind === 'giu' && moved[it.phi]) {
-      /* Phiếu điều chỉnh cũng rơi vào đây, và đó là điều MONG MUỐN: admin vừa sửa tồn phi này
-         thì khu phải ra đếm thật để xác minh, không được bấm "giữ nguyên" lấy lại số cũ. Chỉ lời
-         nhắc phải nói đúng việc, chứ bảo "có thép chuyển đi" khi thực ra là sổ vừa được sửa thì
-         người đếm đi tìm một chuyến xe không tồn tại. */
-      throw bad(`Phi ${it.phi} có thay đổi tồn (nhập, chuyển khu hoặc điều chỉnh) ở khu này từ lần chốt trước, không giữ nguyên được, hãy đếm thực tế`);
-    }
+    /* Bản trước v70 cấm "giữ nguyên" khi ô có phiếu đã duyệt sau lần đếm (nhập, chuyển, điều chỉnh): phiếu đổi tồn nên số cũ
+       không còn đúng. Nay phiếu không đổi tồn — tồn là số đếm đã duyệt — nên "giữ nguyên" luôn đúng nghĩa "lấy lại số đã duyệt",
+       chỉ còn giới hạn số ngày giữ liền (trên) và phải đúng số mốc (dưới). */
     /* "Giữ nguyên" là LẤY LẠI số mốc, nên con số đi kèm phải đúng là số mốc. Máy khách chép số mốc
        vào nháp lúc bấm nút; nháp nằm trên máy cả buổi, trong lúc đó admin duyệt một báo cáo khác là
        số mốc đổi mà nháp thì không. Nhận nguyên con số cũ đó là ghi vào sổ một ô mang nhãn "giữ
@@ -429,7 +382,8 @@ export async function submissionsView(env, url) {
      đúng lần đã duyệt — số đã duyệt vẫn là tồn, huỷ không đụng tới nó.
    Tồn không đổi: báo cáo bị huỷ chưa bao giờ vào tồn (chưa duyệt thì không vào tồn).
    Chỉ huỷ được báo cáo ĐANG CHỜ DUYỆT. Báo cáo đã duyệt thì số đã là tồn; muốn sửa thì khu báo
-   lại, hoặc lập phiếu Điều chỉnh tồn — không có đường "huỷ" làm tồn lặng lẽ lùi về số cũ.
+   lại (đếm lại) rồi duyệt số mới — không có đường "huỷ" làm tồn lặng lẽ lùi về số cũ. (Phiếu Điều chỉnh tồn từ v70 không
+   đổi tồn nữa, chỉ là chứng từ.)
 
    Người gửi báo cáo thấy thông báo "báo cáo bị huỷ" kèm lý do (bảng bao_cao_huy, gửi xuống qua
    bootstrap) cho tới khi khu báo lại. Dấu khung giờ đã đếm của lần báo bị huỷ cũng gỡ: báo cáo bị
@@ -453,7 +407,7 @@ export async function huyBaoCao(req, env, user) {
   if (k.waiting && !duyetCap(user.role, k.capBao)) {
     throw new HttpError(403, `Báo cáo ${k.name} do CVKTHT hoặc cấp trên báo: cần ${CAP_TREN} huỷ.`, 'cap');
   }
-  if (!k.waiting) throw bad(k.rep ? 'Báo cáo của khu này đã duyệt, số đã vào tồn. Muốn sửa thì để khu báo lại, hoặc lập phiếu Điều chỉnh tồn.' : 'Khu này chưa có báo cáo nào để huỷ');
+  if (!k.waiting) throw bad(k.rep ? 'Báo cáo của khu này đã duyệt, số đã vào tồn. Muốn sửa thì để khu báo lại (đếm lại) rồi duyệt số mới.' : 'Khu này chưa có báo cáo nào để huỷ');
   const last = rv.last || '';
   const CHO = 'NOT (duyet_ts IS NOT NULL AND duyet_ts = ts)';
   const { results: cho } = await env.DB.prepare(

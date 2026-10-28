@@ -1,8 +1,8 @@
 // Phiếu nhập kho, chuyển khu, xuất kho và điều chỉnh tồn.
 import { CAP_TREN, HttpError, bad, duyetPhieuDuoc, json, rand, vnDay } from './core.js';
-import { IS_CLOSED, LOAN_AM_COND, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, loanAmErr, loanAmRows, qtyWord, readJson,
+import { IS_CLOSED, LOAN_AM_COND, auditStmt, batchGuarded, bump, closedErr, guardStmt, intIn, loanAmErr, loanAmRows, readJson,
   unitWord } from './helpers.js';
-import { EFF_SELECT, J, TU_DEM } from './counts.js';
+import { EFF_SELECT, J } from './counts.js';
 
 /* ========================= NHẬP KHO ========================= */
 
@@ -27,7 +27,7 @@ export function parseLines(b, ctx) {
 /* KHOÁ CHỐNG GHI TRÙNG (khoa): máy khách sinh một mã ngẫu nhiên 16 chữ hex cho mỗi phiếu người dùng đã xác nhận và gửi
    lại ĐÚNG mã đó khi bấm lưu lại cùng nội dung. Mã được dùng làm grp của phiếu. Mạng chậm làm mất câu trả lời thì
    người lập không biết phiếu đã vào hay chưa và bấm lại: không có khoá này là sinh hai phiếu giống hệt (và với phiếu
-   rút thép, lần bấm lại còn bị báo "khu chỉ còn…" vì chính phiếu đầu đang giữ chỗ). Có khoá thì lần gửi lại nhận
+   rút thép, bản trước v70 còn báo "khu chỉ còn…" vì chính phiếu đầu đang giữ chỗ). Có khoá thì lần gửi lại nhận
    về đúng phiếu đã ghi, không ghi thêm gì. Bản app cũ không gửi khoá vẫn chạy như trước. */
 const KHOA_RE = /^[a-f0-9]{16}$/;
 export async function receiptCtx(env, khuIds, khoa) {
@@ -59,56 +59,33 @@ function daGhi(ctx, user) {
   return json({ ok: true, grp: ctx.khoa, ids, id: ids[0], trung: true });
 }
 
-/* Tồn thực có của một khu theo từng phi, dùng để chặn chuyển quá số đang có.
-   Ba điểm phải đúng, mỗi điểm từng là một lỗi thật:
-
-   1. Số đếm lấy theo EFF (lần đếm ĐÃ DUYỆT gần nhất kể từ lần chốt trước), không phải counts của
-      riêng hôm nay. Bản cũ join 'c.day = hôm nay' nên gặp ngày quên chốt là tính sai: tồn chuẩn
-      ngày 1 có 100, khu đếm còn 60 ngày 2, ngày 3 chuyển đi thì chốt chặn thấy 100 và cho chuyển
-      cả 100 ra khỏi khu đang thực có 60.
-   2. Chỉ cộng phiếu ĐÃ DUYỆT, vì chỉ phiếu đã duyệt mới vào tồn.
-   3. Nhưng phải TRỪ cả phiếu chuyển đi ĐANG CHỜ DUYỆT (qty < 0). Không trừ thì hai phiếu chờ
-      duyệt cùng rút một lô thép đều qua được chốt chặn, duyệt cả hai là khu âm. */
 /* tonCells: tồn của một DANH SÁCH ô { khu, phi }, trả { 'khu|phi': số }. Đây là MỘT chỗ duy nhất
-   trên server trả lời "ô này đang có bao nhiêu thép", theo đúng quy tắc của cả hệ thống:
-     tồn = báo cáo ĐÃ DUYỆT gần nhất + phiếu được duyệt SAU lần duyệt báo cáo đó
-   (chưa có báo cáo đã duyệt nào kể từ lần chốt trước thì lấy tồn chuẩn + mọi phiếu đã duyệt).
-   choRut = true: trừ thêm phiếu rút đang chờ duyệt (điểm 3 ở trên), dùng cho chốt chặn rút thép.
-   choRut = false: đúng số đang có, dùng cho chỗ chỉ cần biết "còn thép hay không" (ẩn khu, ẩn phi).
+   trên server trả lời "ô này đang có bao nhiêu thép", theo đúng quy tắc của cả hệ thống (từ v70):
+     tồn = báo cáo đếm ĐÃ DUYỆT gần nhất của ô trong kỳ đang mở (EFF_SELECT)
+   chưa có báo cáo đã duyệt nào kể từ lần chốt trước thì = tồn chuẩn của lần chốt đó. HẾT — phiếu kho
+   (nhập, chuyển, xuất, điều chỉnh, vay) KHÔNG cộng / trừ vào tồn nữa. Lý do (chủ bãi chốt 10/2026):
+   phiếu được ghi thất thường, thường ghi muộn cả buổi, cả ngày, nên mốc giờ của phiếu không đáng tin để
+   biết "phiếu này đã nằm trong số đếm hay chưa" — mọi luật cộng phiếu sau lúc đếm (SAU_DEM, v69) đều
+   cộng hai lần hoặc bỏ sót khi phiếu ghi muộn. Số đếm do người ra bãi đếm và người duyệt nhìn là thứ
+   duy nhất đáng tin, nên tồn chỉ đi theo nó; phiếu kho còn lại làm THỐNG KÊ thép vào / ra.
+   Hệ quả: không còn chốt chặn "khu chỉ còn N cây" ở bất kỳ phiếu nào; tonCells chỉ còn dùng cho chỗ
+   cần biết "ô còn thép hay không" (ẩn khu, ẩn phi, đổi đơn vị) và cho bộ kiểm dữ liệu.
 
    Chú ý .replace(/\?1/g, ...): EFF_SELECT nhắc ?1 và ?2 HAI lần (câu ngoài và câu con). Bản trước
    dùng .replace('?1', ...) chỉ thay chỗ đầu, câu con giữ nguyên tham số cũ nên không bao giờ tìm
-   thấy báo cáo đã duyệt — chốt chặn lặng lẽ tính bằng tồn chuẩn hôm qua: khu báo còn 60 vẫn rút
-   được 500. */
-export async function tonCells(env, day, cells, choRut = true) {
+   thấy báo cáo đã duyệt — lặng lẽ tính bằng tồn chuẩn hôm qua. */
+export async function tonCells(env, day, cells) {
   if (!cells.length) return {};
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
   const K = J('khu'), P = J('phi');
   const { results } = await env.DB.prepare(
-    `SELECT ${K} khu, ${P} phi,
-       CASE WHEN e.v IS NOT NULL
-         /* phiếu chưa nằm trong số đếm (SAU_DEM ở counts.js): duyệt trong kỳ sau lúc duyệt số, hoặc lập sau lúc đếm —
-            kể cả phiếu của ngày đã chốt khi số đếm là số chưa duyệt được chuyển qua 0h. Cùng luật với MV_NEW. */
-         THEN e.v + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
-                               AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL AND rr.duyet_day <= ?1
-                               AND rr.duyet_day >= MIN(${LAST}, ${TU_DEM('e.cts')}) -- mốc dưới cho index, xem TU_DEM
-                               AND (rr.ts > e.cts OR (rr.duyet_day > ${LAST} AND rr.duyet_ts > e.ts))), 0)
-         ELSE COALESCE(b.v, 0) + COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.khu_id = ${K}
-                               AND rr.phi_id = ${P} AND rr.duyet_day IS NOT NULL
-                               AND rr.duyet_day <= ?1 AND rr.duyet_day > ${LAST}), 0)
-       END
-       + CASE WHEN ?3 = 1 THEN COALESCE((SELECT SUM(qty) FROM receipts rr WHERE rr.voided = 0 AND rr.duyet_day IS NULL
-                    AND rr.khu_id = ${K} AND rr.phi_id = ${P} AND rr.qty < 0), 0) ELSE 0 END have
+    `SELECT ${K} khu, ${P} phi, COALESCE(e.v, b.v, 0) have
      FROM json_each(?2) j
      LEFT JOIN (${EFF_SELECT.replace(/\?1/g, LAST).replace(/\?2/g, '?1')}) e
        ON e.khu_id = ${K} AND e.phi_id = ${P}
      LEFT JOIN baseline b ON b.day = ${LAST} AND b.khu_id = ${K} AND b.phi_id = ${P}`
-  ).bind(day, JSON.stringify(cells), choRut ? 1 : 0).all();
+  ).bind(day, JSON.stringify(cells)).all();
   return Object.fromEntries(results.map((r) => [r.khu + '|' + r.phi, r.have || 0]));
-}
-export async function stockOf(env, day, khuId, phis) {
-  const have = await tonCells(env, day, phis.map((p) => ({ khu: khuId, phi: p })));
-  return Object.fromEntries(phis.map((p) => [p, have[khuId + '|' + p] || 0]));
 }
 
 /* Ghi các dòng (đã có khu và qty có dấu) trong MỘT batch. Phiếu ra đời ở trạng thái CHỜ DUYỆT
@@ -144,68 +121,16 @@ export async function writeReceipt(env, user, ctx, rows, kind, note, audit) {
   ], closedErr()); }
 }
 
-/* Mọi phiếu RÚT THÉP KHỎI MỘT KHU (chuyển đi, điều chỉnh giảm) phải kiểm lại tồn khu nguồn
-   ĐÚNG LÚC DUYỆT. Lúc lập phiếu còn đủ thép không có nghĩa là lúc duyệt còn đủ — ở giữa khu có
-   thể đã đếm xuống, hoặc một phiếu rút khác đã được duyệt trước. Không kiểm lại thì số "đang có"
-   của khu nguồn thành âm.
-   Dùng CHUNG cho ba đường: duyệt riêng một phiếu, duyệt khu (gộp cả phiếu đang chờ của khu đó),
-   và lúc LẬP phiếu điều chỉnh giảm. Trước đây chỉ đường thứ nhất kiểm, nên cùng một việc mà hai
-   nút cho hai kết quả khác nhau — bấm "Duyệt khu" là lọt qua đúng cái chốt chặn mà "Duyệt phiếu"
-   dựng ra.
-   `lines`: các dòng của phiếu (rỗng = không có gì phải kiểm).
-   `opt.duyet === false`: đang LẬP phiếu, không phải duyệt — đổi lời báo lỗi cho khỏi nói "không
-   duyệt được" vào mặt người vừa bấm lưu.
-   `opt.ctx`: kết quả rutCtx đã đọc sẵn. "Duyệt tất cả" kiểm nhiều phiếu một lượt; để mỗi phiếu tự
-   đọc lại thì tốn 3 truy vấn mỗi phiếu, vài phiếu chờ là chạm hạn mức truy vấn của một request. */
-export async function rutCtx(env, day, lines, choRut = true) {
-  const out = lines.filter((x) => x.qty < 0);
-  const [phiR, khuR] = await env.DB.batch([
-    env.DB.prepare('SELECT id, bo_size, unit FROM phi'),
-    env.DB.prepare('SELECT id, name FROM khu'),
-  ]);
-  return {
-    phiBy: Object.fromEntries(phiR.results.map((x) => [x.id, x])),
-    nameOf: Object.fromEntries(khuR.results.map((x) => [x.id, x.name])),
-    have: await tonCells(env, day, out.map((x) => ({ khu: x.khu_id, phi: x.phi_id })), choRut),
-  };
-}
-export async function checkTransferStock(env, day, lines, opt) {
-  const out = lines.filter((x) => x.qty < 0);
-  if (!out.length) return;
-  const o = opt || {};
-  const dau = o.duyet === false ? '' : 'Không duyệt được: ';
-  const viec = { dc: 'điều chỉnh giảm', xuat: 'phiếu xuất', vay: 'phiếu vay mượn', huy: 'huỷ phiếu này cần rút' }[o.kind] || 'phiếu chuyển';
-  const byKhu = {};
-  out.forEach((x) => { (byKhu[x.khu_id] = byKhu[x.khu_id] || []).push(x); });
-  const { phiBy, nameOf, have: haveAll } = o.ctx || await rutCtx(env, day, out);
-  for (const khuId of Object.keys(byKhu)) {
-    const have = Object.fromEntries(byKhu[khuId].map((x) => [x.phi_id, haveAll[khuId + '|' + x.phi_id] || 0]));
-    for (const x of byKhu[khuId]) {
-      /* stockOf đã trừ MỌI phiếu rút đang chờ duyệt. Lúc DUYỆT thì phiếu đang xét nằm trong số
-         bị trừ đó, nên phải cộng ngược phần của chính nó vào trước khi so, không thì phiếu nào
-         cũng tự thấy thiếu.
-         Lúc LẬP thì ngược lại: phiếu chưa có trong database nên stockOf chưa trừ nó, cộng ngược
-         là cộng thêm một lượng chưa ai trừ — chốt chặn thành `|qty| > have + |qty|`, VĨNH VIỄN
-         SAI, tức là lập phiếu giảm bao nhiêu cũng qua. Vì vậy hai trường hợp phải tách. */
-      const self = o.duyet === false ? 0 : x.qty;
-      const h = (have[x.phi_id] || 0) - self;
-      if (-x.qty > h) {
-        throw bad(`${dau}${nameOf[khuId] || khuId} chỉ còn ${qtyWord(h, phiBy[x.phi_id])} ${x.phi_id}, ${viec} ${qtyWord(-x.qty, phiBy[x.phi_id])}`);
-      }
-    }
-  }
-}
+/* KHÔNG CÒN CHỐT CHẶN TỒN Ở PHIẾU (v70). Trước đây mọi phiếu rút thép (chuyển đi, xuất, điều chỉnh
+   giảm, cho vay) và việc huỷ phiếu nhập đã duyệt đều bị chặn "Khu A chỉ còn N cây D16 …" theo tồn
+   = số đếm + phiếu. Nay phiếu không đổi tồn (xem tonCells), nên chặn theo tồn là chặn một chứng từ
+   thống kê bằng một con số nó không hề đụng tới — và vì phiếu thường ghi muộn (thép đã đi từ sáng,
+   khu đã đếm xuống), chốt chặn đó chỉ làm người ta không ghi được phiếu đúng sự thật. */
 
-/* Duyệt một phiếu (cả grp). duyet_day là NGÀY HÔM NAY, không phải ngày nhập: phiếu vào tồn kể từ
-   lúc được duyệt, nên nó thuộc về ngày duyệt. Phiếu nhập chiều ngày 7 mà duyệt sáng ngày 8 sẽ
-   nằm trong số liệu ngày 8, còn chứng từ vẫn ghi đủ "nhập 07/10, duyệt 08/10". Nhờ vậy phiếu
-   treo qua đêm không cần chặn chốt ngày và không bao giờ phải ghi lùi vào ngày đã chốt. */
-/* Kiểm tồn rồi mới ghi là hai lượt: hai người cùng lúc (duyệt phiếu xuất + huỷ phiếu nhập cùng ô) đều thấy đủ thép, cùng ghi,
-   khu âm. Đọc số `rev` (tăng sau MỌI lần ghi) TRƯỚC khi kiểm tồn, và lúc ghi đòi rev chưa đổi: ai chen vào giữa thì lần ghi này
-   bị chặn, người dùng tải lại rồi thử lại (lúc đó kiểm tồn thấy đúng số mới). */
-const docRev = async (env) => { const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'rev'").first(); return r ? Number(r.value) : 0; };
-const REV_DOI = "(SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'rev') <> ?";
-const VUA_DOI = 'Số liệu vừa thay đổi (có người vừa duyệt hoặc huỷ phiếu), hãy tải lại rồi thử lại';
+/* Duyệt một phiếu (cả grp). duyet_day là NGÀY HÔM NAY, không phải ngày nhập: phiếu thuộc thống kê
+   của ngày duyệt. Phiếu nhập chiều ngày 7 mà duyệt sáng ngày 8 nằm trong cột nhập / đã dùng của
+   ngày 8, còn chứng từ vẫn ghi đủ "nhập 07/10, duyệt 08/10". Nhờ vậy phiếu treo qua đêm không cần
+   chặn chốt ngày và không bao giờ phải ghi lùi vào ngày đã chốt. Phiếu KHÔNG đổi tồn bãi. */
 export async function duyetReceipt(env, user, id) {
   const day = vnDay();
   const r = await env.DB.prepare('SELECT * FROM receipts WHERE id = ?').bind(id).first();
@@ -220,15 +145,14 @@ export async function duyetReceipt(env, user, id) {
   // khu vừa bị ẩn sau khi phiếu được lập: không đưa thép vào một khu không còn ai đếm
   const an = (await env.DB.prepare('SELECT name FROM khu WHERE active = 0 AND id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(list.map((x) => x.khu_id))).all()).results;
   if (an.length) throw bad(`Khu ${an.map((k) => k.name).join(', ')} đã ẩn: không duyệt được phiếu vào khu đó. Huỷ phiếu, hoặc hiện lại khu.`);
-  // chuyển khu và điều chỉnh giảm đều RÚT thép khỏi một khu, nên cùng phải kiểm lại tồn lúc duyệt
-  const rk = r.kind || 'nhap', rut = ['chuyen', 'dc', 'xuat', 'vay'].includes(rk), rev = rut ? await docRev(env) : 0;
-  await checkTransferStock(env, day, rut ? list : [], { kind: rk });
+  // phiếu rút thép không còn kiểm tồn lúc duyệt (xem KHÔNG CÒN CHỐT CHẶN TỒN ở trên): kind chỉ để ghi nhật ký
+  const rk = r.kind || 'nhap';
   const ts = Date.now();
   /* Còn chặn khi phiếu vừa được người khác duyệt hoặc huỷ giữa lúc đọc và lúc ghi: không thì hai người
-     duyệt cùng lúc ghi hai dòng nhật ký, và dòng vừa bị huỷ vẫn bị đóng dấu duyệt. */
+     duyệt cùng lúc ghi hai dòng nhật ký, và dòng vừa bị huỷ vẫn bị đóng dấu duyệt. (Chặn thêm "rev đổi" của bản cũ chỉ
+     để kiểm tồn khỏi bị chen ngang — nay không kiểm tồn nên bỏ, duyệt phiếu không còn hỏng vì ai đó vừa ghi số khác.) */
   const conCho = r.grp ? 'grp = ?' : 'id = ?';
-  const gd = rut ? guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL) OR ${REV_DOI}`, day, r.grp || id, rev)
-    : guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL)`, day, r.grp || id);
+  const gd = guardStmt(env, `${IS_CLOSED} OR NOT EXISTS (SELECT 1 FROM receipts WHERE ${conCho} AND voided = 0 AND duyet_day IS NULL)`, day, r.grp || id);
   await batchGuarded(env, gd, [
     r.grp
       ? env.DB.prepare('UPDATE receipts SET duyet_day = ?, duyet_ts = ?, duyet_by = ?, duyet_name = ? WHERE grp = ? AND voided = 0 AND duyet_day IS NULL')
@@ -243,7 +167,7 @@ export async function duyetReceipt(env, user, id) {
     bump(env),
   ], closedErr('Ngày hôm nay đã chốt, không duyệt được phiếu')).catch(async (e) => {
     if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(day).first()) throw e;
-    throw new HttpError(409, rut ? VUA_DOI : 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
+    throw new HttpError(409, 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
   });
   return json({ ok: true, duyet_day: day });
 }
@@ -258,8 +182,9 @@ export async function postReceipt(req, env, user) {
   return writeReceipt(env, user, ctx, lines.map((l) => ({ ...l, khu: khuId })), 'nhap', note, { khu: khuId, lines });
 }
 
-// Chuyển khu: một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng,
-// nhưng số "dự kiến" của từng khu và cảnh báo khu biến động đúng hơn.
+// Chuyển khu: một dòng âm ở khu đi, một dòng dương ở khu đến. Tổng toàn bãi không đổi nên lượng dùng không bị ảnh hưởng.
+// Phiếu chuyển là THỐNG KÊ (thép đi từ đâu tới đâu) và số tham chiếu "theo phiếu" ở thẻ Duyệt; nó không đổi tồn hai khu —
+// tồn theo số đếm đã duyệt — nên cũng không bị chặn vì khu đi "không đủ thép" (thép thường đã chuyển trước khi ai ghi phiếu).
 export async function postTransfer(req, env, user) {
   const b = await readJson(req);
   const from = String(b.from || ''), to = String(b.to || '');
@@ -268,14 +193,6 @@ export async function postTransfer(req, env, user) {
   if (ctx.daCo) return daGhi(ctx, user);
   const lines = parseLines(b, ctx);
   const note = String(b.note || '').trim().slice(0, 200);
-  // Chuyển quá số thực có làm tồn khu nguồn âm, số "dự kiến" khi đếm sai theo, và che lỗi gõ ngược chiều
-  const have = await stockOf(env, ctx.day, from, lines.map((l) => l.phi));
-  for (const l of lines) {
-    const h = have[l.phi] || 0;
-    if (l.qty > h) {
-      throw bad(`${ctx.khu[from].name} chỉ còn ${qtyWord(h, ctx.phiBy[l.phi])} ${l.phi}, không chuyển được ${qtyWord(l.qty, ctx.phiBy[l.phi])}`);
-    }
-  }
   const rows = [];
   lines.forEach((l) => { rows.push({ phi: l.phi, khu: from, qty: -l.qty }, { phi: l.phi, khu: to, qty: l.qty }); });
   return writeReceipt(env, user, ctx, rows, 'chuyen', note, { from, to, lines });
@@ -295,8 +212,10 @@ export async function postTransfer(req, env, user) {
    - Dòng receipts: inn giảm 50, khu đếm lại còn 50, tổng đếm giảm 50 → used = 0. Lượng dùng
      TRUNG TÍNH, đúng nghĩa "sửa sổ, không phải dùng thép". Và đẳng thức của báo cáo kỳ
      (Tồn đầu + Nhập − Dùng = Tồn cuối) vẫn khép kín, không phải sửa lại.
-   Thêm một cái được không mất công: dòng 'dc' làm `moved` ở putCounts khác 0, nên khu BỊ BẮT
-   đếm thật, không "giữ nguyên" được — hệ thống tự đòi xác minh thực địa sau mỗi lần điều chỉnh.
+   TỪ v70 phiếu điều chỉnh KHÔNG đổi tồn (tồn chỉ theo số đếm đã duyệt, xem tonCells): nó còn là chứng
+   từ "sổ sai bao nhiêu, vì sao" và vẫn nằm trong inn nên lượng dùng vẫn trung tính khi khu đếm lại
+   đúng phần đã sửa. Cũng không còn bắt khu đếm thật thay cho "giữ nguyên" sau điều chỉnh: phiếu không
+   đổi tồn thì "giữ nguyên" vẫn đúng là lấy lại số đã duyệt.
 
    Giá phải trả: 'dc' chảy vào `inn` nên nếu để nguyên thì báo cáo kỳ ghi một lần sửa sổ thành
    "nhập", và tính năng này thành chỗ GIẤU CHÊNH LỆCH. Vì vậy inn giữ nguyên tổng cho mọi phép
@@ -341,11 +260,8 @@ export async function postXuat(req, env, user) {
   if (!noi) throw bad('Phải ghi rõ xuất cho ai hoặc cho công trình nào');
   const free = String(b.note || '').trim().slice(0, 160);
   const rows = lines.map((l) => ({ phi: l.phi, khu: khuId, qty: -l.qty }));
-  /* Xuất quá số khu đang thực có thì tồn khu thành âm. Dùng CHUNG chốt chặn với chuyển khu và
-     điều chỉnh: stockOf đã trừ sẵn mọi phiếu âm đang chờ duyệt nên hai phiếu xuất cùng rút một
-     lô thép không lọt được cả hai. Kiểm lại lần nữa lúc duyệt, vì lúc lập còn đủ không có nghĩa
-     lúc duyệt còn đủ. */
-  await checkTransferStock(env, ctx.day, rows.map((r) => ({ phi_id: r.phi, khu_id: r.khu, qty: r.qty })), { kind: 'xuat', duyet: false });
+  /* Không kiểm "khu còn đủ thép": phiếu xuất không trừ tồn (tồn theo số đếm), thường ghi sau khi xe
+     đã đi và khu đã đếm xuống — chặn theo tồn là chặn đúng phiếu ghi thật. */
   const note = 'Xuất cho ' + noi + (free ? ': ' + free : '');
   /* Ghi chú rời để khoá riêng (ghi) chứ không phải note: writeReceipt luôn ghi đè note bằng nội
      dung của phiếu, mà nội dung đó đã chứa sẵn nơi đến — để nguyên thì dòng nhật ký nhắc nơi
@@ -373,14 +289,8 @@ export async function postAdjust(req, env, user) {
   const note = DC_REASONS[reason] + (free ? ': ' + free : '');
 
   const rows = lines.map((l) => ({ phi: l.phi, khu: khuId, qty: sign * l.qty }));
-  /* Giảm quá số khu đang thực có thì tồn khu thành âm. Dùng CHUNG chốt chặn với chuyển khu:
-     stockOf đã trừ sẵn mọi phiếu âm đang chờ duyệt, nên hai phiếu giảm cùng rút một lô thép
-     không lọt được cả hai. Kiểm lại lần nữa lúc duyệt (xem duyetReceipt/reviewDuyet), vì lúc
-     lập còn đủ không có nghĩa lúc duyệt còn đủ.
-     Kiểm TRƯỚC cổng "gõ xác nhận" bên dưới, dù cổng đó rẻ hơn: phiếu không thể nào lưu được thì
-     bắt người ta gõ DONG Y rồi mới nói "khu chỉ còn 40 cây" là bắt làm một việc vô ích, trong khi
-     câu cần nói ngay chính là khu còn bao nhiêu. */
-  await checkTransferStock(env, ctx.day, rows.map((r) => ({ phi_id: r.phi, khu_id: r.khu, qty: r.qty })), { kind: 'dc', duyet: false });
+  /* Không kiểm "khu còn đủ thép" (v70): điều chỉnh là chứng từ thống kê, không đổi tồn — tồn theo số
+     đếm đã duyệt. Muốn tồn đổi thì khu đếm lại và người duyệt duyệt số đó. */
 
   const kg = lines.reduce((a, l) => a + l.qty * ctx.phiBy[l.phi].kg_per_cay, 0);
   if (kg > DC_BIG_KG && String(b.confirm || '').trim().toUpperCase() !== DC_WORD) {
@@ -393,7 +303,7 @@ export async function postAdjust(req, env, user) {
    Cùng một đường dùng cho hai việc, phân biệt bằng nhật ký:
    - TỪ CHỐI phiếu đang chờ duyệt (admin). Phiếu chưa vào tồn nên không có gì phải lùi,
      và người lập cũng rút lại phiếu của mình bất cứ lúc nào trước khi được duyệt.
-   - HUỶ phiếu đã duyệt. Phiếu đã nằm trong tồn nên chỉ huỷ được khi NGÀY DUYỆT chưa chốt
+   - HUỶ phiếu đã duyệt. Phiếu đã nằm trong thống kê của ngày duyệt nên chỉ huỷ được khi NGÀY DUYỆT chưa chốt
      (không phải ngày nhập: phiếu nhập ngày 7 duyệt ngày 8 thì nó là số liệu của ngày 8). */
 export async function voidReceipt(env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM receipts WHERE id = ? AND voided = 0').bind(id).first();
@@ -405,7 +315,7 @@ export async function voidReceipt(env, user, id) {
     if (closed) throw new HttpError(409, 'Ngày duyệt phiếu đã chốt, không huỷ được', 'closed');
   }
   /* Phiếu chờ duyệt: người lập rút lại được không giới hạn thời gian, vì chưa ảnh hưởng số liệu.
-     Phiếu đã duyệt: người lập chỉ hoàn tác trong 10 phút kể từ LÚC DUYỆT (lúc nó vào tồn),
+     Phiếu đã duyệt: người lập chỉ hoàn tác trong 10 phút kể từ LÚC DUYỆT (lúc nó vào thống kê),
      sau đó phải nhờ admin. Mốc trước đây là lúc nhập, nay phiếu có thể được duyệt sau hàng giờ
      nên lấy mốc nhập sẽ làm người lập không bao giờ kịp hoàn tác. */
   // ai DUYỆT được phiếu kho (cấp chỉ huy) thì cũng từ chối / huỷ được nó
@@ -423,33 +333,16 @@ export async function voidReceipt(env, user, id) {
      vào câu chặn của batch để một lần trả được duyệt chen vào giữa cũng không lọt. */
   const vay = r.kind === 'vay' && r.grp && !pending;
   if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
-  /* Huỷ phiếu ĐÃ DUYỆT là rút lại phần thép nó đã đưa vào: các dòng dương phải còn đủ thép ở khu đó, không thì
-     huỷ phiếu nhập sau khi số thép ấy đã chuyển đi / xuất đi sẽ làm khu âm. Phiếu chờ duyệt chưa vào tồn nên khỏi kiểm. */
-  const kiemTon = !pending && rows.some((x) => x.qty > 0), rev = kiemTon ? await docRev(env) : 0;
-  if (!pending) {
-    /* So với tồn THỰC CÓ (không trừ phiếu rút đang chờ): phiếu rút chờ duyệt sẽ tự bị chặn lúc duyệt, nên huỷ phiếu nhập
-       trước đó vẫn được — chỉ chặn khi thép ấy đã THẬT SỰ đi mất (phiếu chuyển / xuất đã duyệt). */
-    /* Chỉ kiểm phần còn ĐANG NẰM TRONG TỒN. Khu đã đếm lại (số đếm đã duyệt) sau phiếu thì tồn là số đếm, phiếu đã "chìm" vào
-       số đó (SAU_DEM ở counts.js sai): huỷ không rút gì khỏi tồn, chỉ sửa cột nhập / đã dùng. Kiểm như phiếu còn sống thì phiếu
-       nhập sai (xe không về) bị chặn mãi: tồn 100, phiếu sai +50 đã duyệt, khu đếm thật còn 20 rồi duyệt -> "Khu A chỉ còn 20
-       cây D16" và không còn đường nào gỡ phiếu sai. Mọi dòng của phiếu cùng mốc lập (ts) và mốc duyệt (duyet_ts) với r. */
-    const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
-    const effR = (await env.DB.prepare(`SELECT khu_id, phi_id, ts, cts FROM (${EFF_SELECT.replace(/\?1/g, LAST).replace(/\?2/g, '?1')})`)
-      .bind(vnDay()).all()).results;
-    const effBy = Object.fromEntries(effR.map((e) => [e.khu_id + '|' + e.phi_id, e]));
-    const song = (x) => { const e = effBy[x.khu_id + '|' + x.phi_id]; return !e || r.duyet_ts > e.ts || r.ts > e.cts; };
-    const ra = rows.filter((x) => x.qty > 0 && song(x)).map((x) => ({ phi_id: x.phi_id, khu_id: x.khu_id, qty: -x.qty }));
-    if (ra.length) await checkTransferStock(env, vnDay(), ra, { kind: 'huy', duyet: false, ctx: await rutCtx(env, vnDay(), ra, false) });
-  }
+  /* Huỷ phiếu ĐÃ DUYỆT không còn kiểm "khu còn đủ thép để rút lại" (v70): phiếu chưa bao giờ đưa thép vào tồn (tồn theo số
+     đếm), huỷ chỉ sửa thống kê nhập / đã dùng của ngày duyệt. Phiếu nhập sai (xe không về) vì thế luôn gỡ được. */
   // còn chặn khi phiếu vừa bị người khác huỷ / duyệt giữa lúc đọc và lúc ghi
   const doiTT = `NOT EXISTS (SELECT 1 FROM receipts WHERE id = ? AND voided = 0 AND (duyet_day IS NULL) = ?)`;
-  const revDk = kiemTon ? ` OR ${REV_DOI}` : '', revTs = kiemTon ? [rev] : [];
-  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND} OR ${doiTT}${revDk}`, dayOf, r.grp, 0, id, pending ? 1 : 0, ...revTs)
-    : guardStmt(env, `${IS_CLOSED} OR ${doiTT}${revDk}`, dayOf, id, pending ? 1 : 0, ...revTs);
+  const chan = vay ? guardStmt(env, `${IS_CLOSED} OR ${LOAN_AM_COND} OR ${doiTT}`, dayOf, r.grp, 0, id, pending ? 1 : 0)
+    : guardStmt(env, `${IS_CLOSED} OR ${doiTT}`, dayOf, id, pending ? 1 : 0);
   const coAm = async (e) => {
     if (!(e instanceof HttpError) || e.code !== 'closed' || await env.DB.prepare('SELECT 1 x FROM day_close WHERE day = ?').bind(dayOf).first()) throw e;
     if (vay) { const am = await loanAmRows(env, r.grp, 0); if (am.length) throw loanAmErr(am); }
-    throw new HttpError(409, kiemTon ? VUA_DOI : 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
+    throw new HttpError(409, 'Phiếu vừa được duyệt hoặc huỷ bởi người khác, hãy tải lại', 'changed');
   };
   await batchGuarded(env, chan, [
     r.grp

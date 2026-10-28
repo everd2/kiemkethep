@@ -302,14 +302,14 @@ export async function khuUpdate(req, env, admin, id) {
   if (k.active && !active) {
     // khu ẩn thì không ai đếm được nữa: còn thép mà ẩn sẽ làm số tồn "đóng băng"
     const day = vnDay();
-    /* Đọc tồn qua tonCells như mọi chỗ khác (báo cáo đã duyệt + phiếu duyệt sau đó). Trước đây chỗ
-       này chỉ cộng số đếm, nên khu vừa nhận thép đã duyệt mà chưa đếm vẫn ẩn được. Hỏi MỌI phi, kể
+    /* Đọc tồn qua tonCells như mọi chỗ khác: số đếm đã duyệt gần nhất, chưa có thì tồn chuẩn (v70: phiếu
+       không vào tồn, nên phiếu nhập đã duyệt mà khu chưa đếm không giữ khu lại). Hỏi MỌI phi, kể
        cả phi đã tắt: chốt chặn phải thấy cả thép nằm ở ô đã bị ẩn. */
     const phis = (await env.DB.prepare('SELECT id FROM phi').all()).results;
-    const have = await tonCells(env, day, phis.map((p) => ({ khu: id, phi: p.id })), false);
+    const have = await tonCells(env, day, phis.map((p) => ({ khu: id, phi: p.id })));
     const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
-    if (st && st.n > 0) throw bad(`${k.name} còn ${st.n} cây. Hãy chuyển thép sang khu khác (Nhập → Chuyển khu) hoặc đếm về 0 trước khi ẩn`);
-    // phiếu kho còn chờ duyệt vào/ra khu này: duyệt xong thép nằm trong khu đã ẩn mà không ai đếm được
+    if (st && st.n > 0) throw bad(`${k.name} còn ${st.n} cây. Thép đã dọn đi thì khu báo số 0 và duyệt trước khi ẩn (phiếu chuyển khu không đổi tồn)`);
+    // phiếu kho còn chờ duyệt vào/ra khu này: khu ẩn rồi thì không duyệt được phiếu đó nữa (duyetReceipt), thống kê treo mãi
     const cho = await env.DB.prepare('SELECT COUNT(*) n FROM receipts WHERE khu_id = ? AND voided = 0 AND duyet_day IS NULL').bind(id).first();
     if (cho && cho.n > 0) throw bad(`${k.name} còn ${cho.n} dòng phiếu kho chờ duyệt. Duyệt hoặc huỷ các phiếu đó trước khi ẩn`);
   }
@@ -335,7 +335,7 @@ export async function phiUpdate(req, env, admin, id) {
   if (bo !== p.bo_size) {
     // đổi số cây mỗi bó khi phi còn thép: các số đã đếm (bó x cây + lẻ) không còn khớp, nên chỉ đổi lúc phi hết
     const ks = (await env.DB.prepare('SELECT id FROM khu').all()).results;
-    const co = await tonCells(env, vnDay(), ks.map((k) => ({ khu: k.id, phi: id })), false);
+    const co = await tonCells(env, vnDay(), ks.map((k) => ({ khu: k.id, phi: id })));
     if (Object.values(co).some((x) => x !== 0)) throw bad(`Phi ${id} còn thép trong bãi nên chưa đổi được số cây mỗi bó. Đếm về 0 hoặc dùng hết trước`);
   }
   if (p.active && !active) {
@@ -343,7 +343,7 @@ export async function phiUpdate(req, env, admin, id) {
     const day = vnDay();
     // như lúc ẩn khu: tồn đọc qua tonCells, hỏi MỌI khu kể cả khu đã ẩn
     const khus = (await env.DB.prepare('SELECT id FROM khu').all()).results;
-    const have = await tonCells(env, day, khus.map((k) => ({ khu: k.id, phi: id })), false);
+    const have = await tonCells(env, day, khus.map((k) => ({ khu: k.id, phi: id })));
     const st = { n: Object.values(have).reduce((a, x) => a + Math.max(0, x), 0) };
     if (st && st.n > 0) throw bad(`Phi ${id} còn ${qtyWord(st.n, p)} trong bãi. Hãy đếm về 0 hoặc dùng hết trước khi ẩn`);
     const cho = await env.DB.prepare('SELECT COUNT(*) n FROM receipts WHERE phi_id = ? AND voided = 0 AND duyet_day IS NULL').bind(id).first();
@@ -400,7 +400,7 @@ export async function phiBulk(req, env, admin) {
   if (doiBo.length) {
     // như phiUpdate: còn thép thì các số đã đếm (bó x cây + lẻ) không còn khớp, chỉ đổi khi phi hết
     const ks = (await env.DB.prepare('SELECT id FROM khu').all()).results;
-    const co = await tonCells(env, vnDay(), doiBo.flatMap((id) => ks.map((k) => ({ khu: k.id, phi: id }))), false);
+    const co = await tonCells(env, vnDay(), doiBo.flatMap((id) => ks.map((k) => ({ khu: k.id, phi: id }))));
     const con = doiBo.find((id) => ks.some((k) => (co[k.id + '|' + id] || 0) !== 0));
     if (con) throw bad(`Phi ${con} còn thép trong bãi nên chưa đổi được số cây mỗi bó. Đếm về 0 hoặc dùng hết trước`);
   }

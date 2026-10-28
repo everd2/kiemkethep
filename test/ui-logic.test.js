@@ -93,7 +93,9 @@ const boot = {
   reports: [], receipts: [],
   innKhu: [{ khu_id: 'A', phi_id: 'D8', q: 33 }],
   eff: [], // chưa khu nào đếm trong kỳ: mốc là tồn chuẩn
-  mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 33 }], // chưa đếm nên toàn bộ lượng nhập là "chưa được đếm"
+  /* bản server trước v70 gửi mvNew (phiếu duyệt sau lần đếm, cộng lên tồn). Để nguyên một dòng ở đây để kiểm bản v70 BỎ QUA nó:
+     tồn chỉ còn là số đếm / tồn chuẩn, phiếu 33 cây ở innKhu chỉ là thống kê. */
+  mvNew: [{ khu_id: 'A', phi_id: 'D8', q: 33 }],
   rates: [{ phi_id: 'D8', per_day: 33, days: 28 }],
   settings: { hide_after_zero_days: 3, max_keep_streak: 3, auto_close: 1, report_slots_per_day: 1 },
 };
@@ -134,10 +136,13 @@ const run = async () => {
 
   // ---- 1b. lệch trong bảng đếm hiện theo cuộn ----
   r(`S.khu = 'A'; loadDraft(true); S.sel = null;`);
-  r(`S.draft.cells['D8'] = { v: 220, kind: 'dem', bo: 20, le: 0 }; var H = demView();`);
+  // (v70) lệch so với số mốc 220 (tồn chuẩn; phiếu 33 cây đã duyệt không cộng vào số so lệch nữa)
+  r(`S.draft.cells['D8'] = { v: 187, kind: 'dem', bo: 17, le: 0 }; var H = demView();`);
   ok('D8 lệch −33 cây hiện "−3 cuộn"', /−3 cuộn/.test(r('H')), (r('H').match(/.{0,18}cuộn.{0,8}/) || [''])[0]);
   r(`S.draft.cells['D8'] = { v: 248, kind: 'dem', bo: 22, le: 6 }; var H2 = demView();`);
-  ok('lệch lẻ hiện theo cuộn thập phân', /−0,45 cuộn/.test(r('H2')), (r('H2').match(/<i>[^<]*<\/i>/) || [''])[0]);
+  ok('lệch lẻ hiện theo cuộn thập phân', /\+2,55 cuộn/.test(r('H2')), (r('H2').match(/<i>[^<]*<\/i>/) || [''])[0]);
+  r(`S.draft.cells['D8'] = { v: 220, kind: 'dem', bo: 20, le: 0 }; var H3 = demView();`);
+  ok('đếm đúng số mốc 220: không lệch dù có phiếu 33 đã duyệt', /đúng dự kiến/.test(r('H3')));
 
   /* ---- 1c. "Hết (0)" là ĐẾM THẬT, để trống mới là 'zero' ----
      Hai cái đều ra số 0 nhưng mang nghĩa trái nhau, và màn Duyệt dựa vào kind để nói
@@ -232,11 +237,9 @@ const run = async () => {
 
   // ---- keepBlock: phi giữ nguyên quá nhiều ngày ----
   ok('D12 giữ nguyên quá hạn -> chặn', /quá nhiều ngày/.test(r(`keepBlock('A', 'D12')`)), r(`keepBlock('A','D12')`));
-  /* Lời nhắc phải kể CẢ BA nguyên nhân (nhập, chuyển khu, điều chỉnh), vì phiếu điều chỉnh cũng
-     chặn "giữ nguyên" — mà bảo người đếm là "có thép chuyển đi" khi thực ra admin vừa sửa sổ thì
-     họ đi tìm một chuyến xe không tồn tại. */
-  ok('D8 có thay đổi tồn -> chặn giữ nguyên', /thay đổi tồn/.test(r(`keepBlock('A', 'D8')`)), r(`keepBlock('A','D8')`));
-  ok('lời nhắc kể cả điều chỉnh', /điều chỉnh/.test(r(`keepBlock('A', 'D8')`)), r(`keepBlock('A','D8')`));
+  /* (v70) phiếu không đổi tồn nên D8 có phiếu nhập 33 đã duyệt vẫn "giữ nguyên" được (lấy lại số đã duyệt 220), như server */
+  ok('D8 có phiếu nhập đã duyệt: vẫn giữ nguyên được', r(`keepBlock('A', 'D8')`) === '', r(`keepBlock('A','D8')`));
+  ok('không còn lời nhắc "thay đổi tồn"', !/thay đổi tồn/.test(r(`keepBlock('A', 'D8')`)));
 
   // ---- 2d. hàng chờ gửi khoá theo khu+ngày+giờ ----
   r(`writePending([
@@ -426,27 +429,26 @@ const run = async () => {
   ok('vẫn bày người đếm còn dùng', /data-a="kupick" data-v="2"/.test(r('HK')));
   r(`S.kuEdit = null; S.screen = 'home';`);
 
-  /* ---- 1h. Thép ĐANG CÓ phải gồm phiếu đã duyệt mà khu chưa kịp đếm ----
-     Quy tắc trung tâm của bản này là "chưa duyệt thì không vào tồn", tức đã duyệt là PHẢI vào.
-     Trước đây Tổng quan chỉ lấy số đếm, nên một khu vừa nhận thép đã duyệt mà chưa kịp đếm vẫn
-     hiện số cũ, trong khi màn Đếm lại ghi dự kiến đã gồm lượng đó — hai màn hình nói hai số cho
-     cùng một khu. Fixture: khu A có tồn chuẩn D8 = 220 và một phiếu 33 đã duyệt chưa ai đếm. */
+  /* ---- 1h. (v70) Thép ĐANG CÓ = số đếm đã duyệt, chưa có thì tồn chuẩn — phiếu KHÔNG cộng vào ----
+     Phiếu ở bãi ghi muộn, thất thường; luật "phiếu duyệt sau lần đếm cộng lên tồn" cứ gặp phiếu ghi muộn là cộng hai lần.
+     Chủ bãi chốt: tồn chỉ theo số đếm. Fixture: khu A có tồn chuẩn D8 = 220 và một phiếu 33 đã duyệt chưa ai đếm (kèm cả
+     mvNew kiểu cũ — app phải bỏ qua). */
   r(`S.boot = _boot(); indexBoot(S.boot); S.khuMo = {}; S.draft = { cells: {}, baseTs: 0 };`);
   ok('số ĐẾM của ô vẫn là 220 (chưa ai đếm lại)', r("valOf('A','D8')") === 220, r("valOf('A','D8')"));
-  ok('nhưng thép ĐANG CÓ là 253 (gồm phiếu đã duyệt)', r("tonOf('A','D8')") === 253, r("tonOf('A','D8')"));
-  ok('tổng theo phi ở Tổng quan lấy số đang có', r('totals().perPhi.D8') === 253, r('totals().perPhi.D8'));
-  ok('tổng của riêng khu A cũng vậy', r("Math.round(totals().perKhu.A.kg)") === Math.round(253 * 0.395 + 300 * 0.617 + 40 * 0.888),
+  ok('thép ĐANG CÓ cũng là 220: phiếu 33 đã duyệt không cộng vào tồn', r("tonOf('A','D8')") === 220, r("tonOf('A','D8')"));
+  ok('tổng theo phi ở Tổng quan lấy số đếm / tồn chuẩn', r('totals().perPhi.D8') === 220, r('totals().perPhi.D8'));
+  ok('tổng của riêng khu A cũng vậy', r("Math.round(totals().perKhu.A.kg)") === Math.round(220 * 0.395 + 300 * 0.617 + 40 * 0.888),
     r('totals().perKhu.A.kg'));
 
-  /* "Đã dùng" cũng tính trên thép ĐANG CÓ: 33 phần vừa về, chưa ai đếm lại, thì chưa có gì được
-     dùng. Trước đây vế cuối chỉ lấy số đếm nên 33 phần đó thành "đã dùng 33" — và lúc sổ tự chốt
-     nó rơi khỏi tồn chuẩn. Server tính y hệt, hai bên không được lệch nhau. */
-  ok('thép vừa về chưa ai đếm lại KHÔNG bị tính là đã dùng', r('totals().used.D8') === 0, r('totals().used.D8'));
+  /* "Đã dùng" = tồn chuẩn + nhập − tồn: 33 cây vừa về mà khu chưa đếm thì hôm nay thành "đã dùng 33" (hôm khu đếm lại thì âm
+     lại đúng phần đó) — cái giá của việc không tin giờ ghi phiếu. Server tính y hệt, hai bên không được lệch nhau. */
+  ok('thép vừa về chưa ai đếm: đã dùng = 220 + 33 − 220 = 33', r('totals().used.D8') === 33, r('totals().used.D8'));
 
-  // khu đã đếm SAU khi thép về: server không còn kể lượng đó nữa, nên không cộng trùng
+  // khu đếm 250 (đã duyệt): tồn = đúng số đếm, không cộng phiếu
   r(`S.boot.eff = [{ khu_id: 'A', phi_id: 'D8', v: 250 }]; S.boot.mvNew = []; indexBoot(S.boot);`);
   ok('khu đếm rồi thì đang có = đúng số vừa đếm', r("tonOf('A','D8')") === 250, r("tonOf('A','D8')"));
-  ok('và không cộng thêm phiếu một lần nữa', r('totals().perPhi.D8') === 250, r('totals().perPhi.D8'));
+  ok('và không cộng thêm phiếu', r('totals().perPhi.D8') === 250, r('totals().perPhi.D8'));
+  ok('đã dùng = 220 + 33 − 250 = 3', r('totals().used.D8') === 3, r('totals().used.D8'));
   r(`S.boot = _boot(); indexBoot(S.boot);`);
 
   /* ---- 1g. Chạm thẻ khu ở Tổng quan: mở chi tiết thép trong khu ----
@@ -514,13 +516,14 @@ const run = async () => {
   ok('cờ dc được đặt', r('G[0].dc') === true && r('G[1].dc') === true);
   ok('màn Nhập vẽ được danh sách có phiếu điều chỉnh', /Điều chỉnh Khu A/.test(r(`S.nhap.mode='nhap'; vNhap()`)));
 
-  // "đang có X → còn Y": chạy theo từng chữ số vừa gõ, nên phải đúng ở cả ba trạng thái
-  ok('chưa gõ số: chỉ nói đang có bao nhiêu',
-    /đang có/.test(r(`dcSauText(0, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(0, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
-  ok('giảm trong tầm: 40 → 10', /40 cây → 10 cây/.test(r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
-  ok('tăng: 40 → 70', /40 cây → 70 cây/.test(r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`));
-  ok('giảm quá số đang có: báo trước sẽ bị từ chối',
-    /bị từ chối/.test(r(`dcSauText(90, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(90, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
+  /* (v70) phiếu điều chỉnh / xuất không đổi tồn: dòng này chỉ nói khu đang có bao nhiêu theo số đếm, không còn "X → Y" và không
+     bao giờ doạ "bị từ chối" (server thôi chặn phiếu theo tồn) */
+  ok('chưa gõ số: chỉ nói đang có bao nhiêu theo số đếm đã duyệt',
+    /đang có 40 cây theo số đếm đã duyệt/.test(r(`dcSauText(0, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(0, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
+  ok('giảm: nói phiếu không đổi tồn, không có "→"', /không đổi tồn/.test(r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`)) && !/→/.test(r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(30, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
+  ok('tăng: cùng một câu, kèm +30', /\+30 cây/.test(r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`)) && /đang có 40 cây/.test(r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(30, 40, 'tang', S.boot.phiBy.D12, 'D12')`));
+  ok('giảm quá số đang có: KHÔNG còn báo sẽ bị từ chối',
+    !/bị từ chối/.test(r(`dcSauText(90, 40, 'giam', S.boot.phiBy.D12, 'D12')`)), r(`dcSauText(90, 40, 'giam', S.boot.phiBy.D12, 'D12')`));
 
   /* Ba chế độ dùng CHUNG N.lines, nên đổi chế độ phải xoá các dòng đã gõ: một dòng gõ cho phiếu
      nhập mang nghĩa trái ngược khi nó nằm trong phiếu điều chỉnh giảm. Giữ lại là người dùng bấm
@@ -681,9 +684,9 @@ const run = async () => {
   // tồn chuẩn A+B+Z của D10 = 300+100+70 = 470; báo cáo (duyệt SAU phiếu xuất) còn 250+100+70 = 420
   ok('đã dùng ở Tổng quan là TỔNG lượng dùng (50), không phải phần không rõ (0)',
     r('TT.used.D10') === 50, r('TT.used.D10'));
-  // phiếu xuất duyệt SAU báo cáo: thép đang có còn 200, tức dùng 50 (khu báo hụt) + 50 (xuất) = 100
+  /* (v70) mvNew kiểu cũ (phiếu xuất duyệt sau báo cáo) bị bỏ qua: tồn vẫn đúng số đếm 250, đã dùng vẫn 50 — phiếu không trừ tồn */
   r(`S.boot.mvNew = [{ khu_id: 'A', phi_id: 'D10', q: -50 }]; indexBoot(S.boot); TT = totals();`);
-  ok('phiếu xuất duyệt sau báo cáo: đã dùng cộng thêm phần xuất (100)', r('TT.used.D10') === 100 && r("tonOf('A','D10')") === 200, r('TT.used.D10'));
+  ok('phiếu xuất duyệt sau báo cáo: tồn vẫn 250, đã dùng vẫn 50', r('TT.used.D10') === 50 && r("tonOf('A','D10')") === 250, r('TT.used.D10'));
   ok('và "Nhập hôm nay" không bị phiếu xuất kéo xuống âm', r('TT.inKg') === 0, r('TT.inKg'));
   r(`S.boot = _boot(); indexBoot(S.boot);`);
 
@@ -799,7 +802,7 @@ const run = async () => {
   ok('vay mượn: một lần ghi hai phi gom thành MỘT dòng chờ duyệt', /Chờ duyệt \(1\)/.test(VM));
   ok('admin thấy nút duyệt', /data-a="lduyet"/.test(VM));
   ok('đối tác đã ẩn không có trong ô chọn để ghi', !/data-a="ldt" data-v="6"/.test(VM) && /data-a="ldt" data-v="5"/.test(VM));
-  ok('thủ kho/admin: chọn được "thép qua bãi" (lập phiếu kho)', /data-a="lkho" data-v="1"/.test(VM) && /không<\/b> tính là nhập hay dùng/.test(VM));
+  ok('thủ kho/admin: chọn được "thép qua bãi" (lập phiếu kho)', /data-a="lkho" data-v="1"/.test(VM) && /<b>không<\/b> đổi tồn khu/.test(VM) && /không tính là nhập hay dùng/.test(VM));
   r(`S.me = { id: 2, name: 'An', role: 'tieudoi' };`);
   const VM2 = r('vVayMuon()');
   ok('người đếm: không có nút duyệt', !/data-a="lduyet"/.test(VM2));
@@ -993,16 +996,17 @@ const run = async () => {
      S.review = { day: S.boot.today, last: null, span: 1, rev: 1, closed: false, rows: [], phieu: [], exceptions: [], pending: 2, loans: [], reports: [], khu: [], slot: { n: 1, defs: [] },
        khus: [{ khu: 'A', name: 'Khu A', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'a', duyet: null, slots: null, capBao: 0, capPhieu: 0 },
               { khu: 'B', name: 'Khu B', items: [], waiting: 1, blank: 0, rep: { uname: 'Cv', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'b', duyet: null, slots: null, capBao: 1, capPhieu: 0 },
-              { khu: 'C', name: 'Khu C', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: ['g9'], mark: 'c', duyet: null, slots: null, capBao: 0, capPhieu: 2 },
-              { khu: 'D', name: 'Khu D', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, recheck: false, phieu: [], mark: 'd', duyet: null, slots: null, capBao: 0, phieuSau: true, capPhieu: 2 }] };
+              { khu: 'C', name: 'Khu C', items: [], waiting: 1, blank: 0, rep: { uname: 'An', ts: Date.now(), day: S.boot.today }, phieu: ['g9'], mark: 'c', duyet: null, slots: null, capBao: 0 },
+              { khu: 'D', name: 'Khu D', items: [], waiting: 1, blank: 0, rep: { uname: 'Cv', ts: Date.now(), day: S.boot.today }, phieu: [], mark: 'd', duyet: null, slots: null, capBao: 0, nguoiBao: [8] }] };
      S.me = { id: 8, name: 'Cv', role: 'cvktht' }; var DC = vDuyet();`);
   ok('CVKTHT ở màn Duyệt: có nút duyệt khu của tiểu đội trưởng, không có nút cho khu CVKTHT báo',
     /data-a="khuduyet" data-k="A"/.test(r('DC')) && !/data-a="khuduyet" data-k="B"/.test(r('DC')) && /chờ Trung đội trưởng, Đại đội trưởng hoặc admin duyệt/.test(r('DC')));
-  ok('CVKTHT: khu còn phiếu kho chờ thì không có nút duyệt, nhưng huỷ được báo cáo của tiểu đội trưởng',
-    !/data-a="khuduyet" data-k="C"/.test(r('DC')) && /Khu còn phiếu kho chờ duyệt/.test(r('DC')) && /data-a="recount" data-k="C"/.test(r('DC')));
-  ok('CVKTHT: khu đếm trước lúc có phiếu kho mới thì không có nút duyệt, có lời nói phải đếm lại',
-    !/data-a="khuduyet" data-k="D"/.test(r('DC')) && /đếm TRƯỚC lúc có phiếu kho mới/.test(r('DC')));
-  ok('CVKTHT: không có nút "Duyệt tất cả" khi chỉ duyệt được một khu', !/data-a="khuduyetall"/.test(r('DC')));
+  // (v70) phiếu chờ của khu không còn chặn Duyệt khu: Duyệt khu chỉ duyệt số đếm, phiếu duyệt riêng
+  ok('CVKTHT: khu còn phiếu kho chờ vẫn có nút duyệt (số do tiểu đội trưởng báo) và nút huỷ báo cáo',
+    /data-a="khuduyet" data-k="C"/.test(r('DC')) && !/Khu còn phiếu kho chờ duyệt/.test(r('DC')) && /data-a="recount" data-k="C"/.test(r('DC')));
+  ok('CVKTHT: số do chính mình báo thì không có nút duyệt, nói rõ lý do; không còn lý do "đếm TRƯỚC lúc có phiếu"',
+    !/data-a="khuduyet" data-k="D"/.test(r('DC')) && /Số của khu do chính bạn báo/.test(r('DC')) && !/đếm TRƯỚC lúc có phiếu kho mới/.test(r('DC')));
+  ok('CVKTHT: "Duyệt tất cả" chỉ gồm 2 khu mình duyệt được (A và C)', /DUYỆT TẤT CẢ 2 KHU BẠN DUYỆT ĐƯỢC/.test(r('DC')));
   r(`S.me = { id: 9, name: 'Trung', role: 'trungdoi' }; var DT = vDuyet();`);
   ok('trung đội trưởng: duyệt được cả bốn khu và có "Duyệt tất cả"',
     /data-a="khuduyet" data-k="A"/.test(r('DT')) && /data-a="khuduyet" data-k="B"/.test(r('DT')) && /data-a="khuduyet" data-k="C"/.test(r('DT')) && /data-a="khuduyet" data-k="D"/.test(r('DT')) && /DUYỆT TẤT CẢ 4 KHU</.test(r('DT')));
@@ -1028,13 +1032,14 @@ const run = async () => {
   r(`S.me = { id: 9, name: 'Dai', role: 'daidoi' };`);
   ok('cấp chỉ huy không nhận lời nhắc khung đang diễn ra', !/chưa đếm buổi/.test(r('vHome()')), (r('vHome()').match(/chưa đếm.{0,60}/) || [''])[0]);
   r(`S.review = null; S.screen = 'home'; S.me = { id: 7, name: 'Kho 2', role: 'cvktht' };`);
-  // B6: "còn lấy được" trừ phiếu rút thép đang chờ; xuất cũng báo đỏ khi vượt
+  /* B6 (v70): phiếu chờ không còn "giữ chỗ" thép, phiếu không đổi tồn và server không chặn theo tồn — màn Xuất chỉ nói khu đang
+     có bao nhiêu theo số đếm (300), không trừ phiếu xuất 250 đang chờ, không báo đỏ "quá số" */
   r(`var RX = _boot(); RX.receipts = [${rc({ id: 4, phi_id: 'D10', qty: -250, kind: 'xuat' })}]; indexBoot(RX); S.boot = RX; S.me = { id: 1, name: 'A', role: 'admin' };
     S.nhap.mode = 'xuat'; S.nhap.khu = 'A'; S.nhap.phi = 'D10'; S.nhap.lines = []; S.nhap.qty = 60;`);
-  ok('còn lấy được = có 300 − 250 đang chờ xuất = 50', r("conLay('A', 'D10')") === 50, r("conLay('A', 'D10')"));
+  ok('không còn hàm conLay (tồn trừ phiếu rút đang chờ)', r("typeof conLay") === 'undefined');
   const VX = r('vNhap()');
-  ok('màn Xuất nói đã trừ phiếu khác đang chờ', /còn lấy được <b>50 cây<\/b>/.test(VX) && /đã trừ 250 cây phiếu khác đang chờ duyệt/.test(VX));
-  ok('xuất vượt số còn lấy được: báo đỏ trước khi lưu', /quá số đang có/.test(VX));
+  ok('màn Xuất nói đang có 300 theo số đếm, không trừ phiếu đang chờ', /đang có <b>300 cây<\/b>/.test(VX) && !/còn lấy được/.test(VX) && !/phiếu khác đang chờ duyệt/.test(VX));
+  ok('xuất nhiều hơn số đang có: không báo đỏ sẽ bị từ chối', !/quá số đang có|bị từ chối/.test(VX));
   r(`S.nhap.mode = 'nhap'; S.nhap.qty = 0; S.boot = _boot(); indexBoot(S.boot);`);
   // B4: hộp xác nhận ẩn khu nói đúng luật
   r(`ACTIONS.khide({ k: 'A', v: '0' })`);
@@ -1045,11 +1050,12 @@ const run = async () => {
 
   // ---- 1d5. Rà soát sau bản 1.3 ----
   r(`S.boot = _boot(); indexBoot(S.boot); S.me = { id: 1, name: 'A', role: 'admin' };`);
-  // A1: điều chỉnh TĂNG nói "đang có", giảm/xuất nói "còn lấy được"
+  // A1 (v70): điều chỉnh tăng hay giảm đều nói "đang có" (số đếm đã duyệt) và nói phiếu không đổi tồn
   r(`S.nhap.mode = 'dc'; S.nhap.dir = 'tang'; S.nhap.khu = 'A'; S.nhap.phi = 'D10'; S.nhap.lines = []; S.nhap.qty = 0;`);
   ok('điều chỉnh tăng: nói "đang có", không nói "còn lấy được"', /A đang có <b>|Khu A đang có <b>/.test(r('vNhap()')) && !/còn lấy được/.test(r('vNhap()')));
   r(`S.nhap.dir = 'giam';`);
-  ok('điều chỉnh giảm: "còn lấy được"', /còn lấy được/.test(r('vNhap()')));
+  ok('điều chỉnh giảm: cũng "đang có", không còn "còn lấy được"', /A đang có <b>/.test(r('vNhap()')) && !/còn lấy được/.test(r('vNhap()')));
+  ok('màn Điều chỉnh nói phiếu không đổi tồn', /không đổi tồn/.test(r('vNhap()')));
   r(`S.nhap.mode = 'nhap';`);
   // A3: nhật ký duyệt sổ vay nói của ai, bao nhiêu; dòng cũ (chưa có đối tác) vẫn đọc được
   ok('nhật ký duyệt sổ vay: có đối tác và dòng', /duyệt sổ vay mượn: Cho Cty A vay: D10/.test(r(`fmtAudit({ action: 'loan_duyet', detail: JSON.stringify({ kind: 'cho_vay', doitac: 'Cty A', lines: [{ phi: 'D10', qty: 20 }] }) }).text`)));
@@ -1117,7 +1123,8 @@ const run = async () => {
     S.loans = { doitac: [{ id: 5, name: 'Cty A', active: 1 }], items: [], agg: [] };`);
   const VK = r('vVayMuon()');
   ok('thủ kho: có lựa chọn thép qua bãi và chọn khu', /data-a="lkho"/.test(VK) && /data-a="lkhu" data-v="A"/.test(VK));
-  ok('cho vay qua bãi: nói còn lấy được bao nhiêu', /còn lấy được 300 cây D10/.test(VK), (VK.match(/còn lấy được.{0,30}/) || [''])[0]);
+  // (v70) không còn "còn lấy được" (trừ phiếu rút đang chờ): nói khu đang có bao nhiêu theo số đếm
+  ok('cho vay qua bãi: nói đang có bao nhiêu theo số đếm', /đang có 300 cây D10 theo số đếm/.test(VK) && !/còn lấy được/.test(VK), (VK.match(/đang có.{0,40}/) || [''])[0]);
   ctx._mk('lqty', '30'); ctx._mk('lnote', ''); ctx._mk('lsobb', 'BB-02');
   calls.length = 0;
   r(`ACTIONS.lsave()`);
@@ -1350,9 +1357,13 @@ const run = async () => {
     r(`S.me = { id: 11, name: 'Trung', role: 'trungdoi' };`);
     ok('trung đội trưởng: "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
 
-    // phiếu kho duyệt SAU lần báo: CVKTHT không duyệt được khu đó nên không bị nhắc
+    // (v70) phiếu kho duyệt SAU lần báo (kể cả phieuTs kiểu cũ) không làm CVKTHT mất quyền duyệt số: vẫn được nhắc
     r(`${nhacBoot(bao(0, 2) + ` NB.receipts = [${pk({ khu_id: 'A', duyet_day: today, duyet_ts: Date.now() })}]; NB.phieuTs = { A: Date.now() };`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
-    ok('CVKTHT: khu đếm trước lúc phiếu kho vào tồn → không nhắc duyệt', !/chờ bạn duyệt/.test(the()), the());
+    ok('CVKTHT: khu có phiếu kho duyệt sau lần báo vẫn "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
+    r(`${nhacBoot(bao(0, 2) + ` NB.receipts = [${pk({ khu_id: 'A' })}];`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);
+    ok('CVKTHT: khu còn phiếu kho chờ duyệt vẫn "chờ bạn duyệt"', /Khu A chờ bạn duyệt/.test(the()), the());
+    r(`S.me = { id: 9, name: 'Dai', role: 'daidoi' };`);
+    ok('cấp chỉ huy: không còn thẻ "cần xem lại"', !/cần xem lại/.test(the()), the());
 
     // phiếu kho chờ duyệt: cấp chỉ huy thấy tất cả, người lập chỉ thấy phiếu của mình
     r(`${nhacBoot(`NB.receipts = [${pk({ id: 21, user_id: 8 })}, ${pk({ id: 22, user_id: 7, grp: 'g2' })}];`)} S.me = { id: 8, name: 'Cv', role: 'cvktht' };`);

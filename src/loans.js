@@ -3,7 +3,7 @@ import { CAP_TREN, DAY_RE, HttpError, LAP_PHIEU, bad, capOf, daysBetween, duyetC
 import { CSV_HEAD, DUYET_JOIN_LOAN, DUYET_NAME_LOAN, IS_CLOSED, LOAN_AM_COND, UNAME, auditStmt, batchGuarded, bump, closedErr, csvDec, csvQty, csvRow, csvUnit, guardStmt, intIn,
   loanAmErr, loanAmRows, qtyWord, readJson, unitWord } from './helpers.js';
 import { J } from './counts.js';
-import { checkTransferStock, receiptCtx, rutCtx } from './phieu.js';
+import { receiptCtx } from './phieu.js';
 import { anhJson, docAnh } from './anh.js';
 
 /* ========================= VAY MƯỢN NGOÀI BÃI =========================
@@ -203,8 +203,8 @@ export async function postLoan(req, env, user) {
   const grp = rand(8);
   const ts = Date.now();
   const data = JSON.stringify(lines);
-  /* THÉP QUA BÃI (b.khu): lập kèm một phiếu kho loại 'vay' CÙNG grp với lần ghi sổ. Phiếu đó đổi tồn
-     khu như mọi phiếu, nhưng không tính là nhập cũng không tính là dùng (xem vc ở computeReview):
+  /* THÉP QUA BÃI (b.khu): lập kèm một phiếu kho loại 'vay' CÙNG grp với lần ghi sổ. Phiếu đó (từ v70)
+     không đổi tồn khu, như mọi phiếu kho — chỉ là thống kê thép ra / vào bãi; nó không tính là nhập cũng không tính là dùng (xem vc ở computeReview):
      cho đối tác mượn 30 cây rồi khu đếm hụt 30 cây thì "đã dùng" ra 0, không phải 30 — nếu không,
      mức dùng trung bình đội lên, dự báo "còn đủ dùng" nói thiếu, và có khi bật cảnh báo "dùng
      nhiều bất thường" chỉ vì cho mượn thép. Sổ và phiếu cùng grp nên duyệt hay huỷ bên nào cũng là
@@ -225,7 +225,7 @@ export async function postLoan(req, env, user) {
     day = ctx.day;
     const dau = LOAN_RA.includes(kind) ? -1 : 1;
     const rows = lines.map((l) => ({ phi: l.phi, khu: khuId, qty: dau * l.qty }));
-    if (dau < 0) await checkTransferStock(env, day, rows.map((r) => ({ phi_id: r.phi, khu_id: r.khu, qty: r.qty })), { kind: 'vay', duyet: false });
+    // cho vay / trả thép đi không còn bị chặn "khu chỉ còn…" (v70): phiếu kho chỉ là thống kê, tồn theo số đếm
     const ghi = 'Vay mượn · ' + loanTitle(kind, d.name) + ' · BB ' + soBB + (note ? ': ' + note : '');
     stmts.push(env.DB.prepare(
       `INSERT INTO receipts (day, phi_id, khu_id, qty, note, user_id, ts, kind, grp)
@@ -288,13 +288,12 @@ export async function duyetLoan(env, user, id) {
   if (!duyetCuaNguoi(user, r.cap, [r.user_id])) throw new HttpError(403, `Lần ghi do CVKTHT, cấp trên hoặc chính bạn ghi: cần ${CAP_TREN} duyệt.`, 'cap');
   const info = await loanGroupInfo(env, r);
   const ts = Date.now();
-  // phiếu kho đi kèm (thép qua bãi): vào tồn hôm nay, nên qua cùng chốt chặn với phiếu thường
+  // phiếu kho đi kèm (thép qua bãi): duyệt cùng lần ghi sổ, vào thống kê hôm nay (không đổi tồn, không kiểm tồn)
   const kho = r.grp ? (await env.DB.prepare("SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0 AND duyet_day IS NULL").bind(r.grp).all()).results : [];
   /* Lần ghi kèm phiếu kho: duyệt sổ là duyệt luôn phiếu, nên phải đúng luật của phiếu kho — chỉ cấp
      chỉ huy, ai ghi cũng vậy. Kiểm theo CHÍNH PHIẾU, không suy ra từ cấp của người ghi. */
   if (kho.length && !duyetPhieuDuoc(user.role)) throw new HttpError(403, `Lần ghi này kèm phiếu kho: cần ${CAP_TREN} duyệt.`, 'cap');
   const day = vnDay();
-  if (kho.length) await checkTransferStock(env, day, kho, { kind: 'vay' });
   const run = (stmts) => batchLoan(env, [
     ['NOT EXISTS (SELECT 1 FROM loans WHERE id = ? AND voided = 0 AND duyet_ts IS NULL)', id],
     ...(kho.length ? [[IS_CLOSED, day]] : []),
@@ -347,13 +346,8 @@ export async function voidLoan(req, env, user, id) {
   }
   /* Ba thứ phải còn đúng lúc ghi: lần ghi vẫn ở trạng thái vừa đọc (chưa ai duyệt / huỷ chen vào), ngày của
      phiếu kho đi kèm chưa chốt, và — với lần đã duyệt — huỷ không làm dư nợ thành âm (xem LOAN_AM_COND). */
-  /* Phiếu kho đi kèm ĐÃ DUYỆT: huỷ là rút lại phần thép nó đã đưa vào khu, nên thép ấy phải còn đủ ở khu (cùng luật
-     với huỷ phiếu kho: không để khu âm vì thép đã chuyển đi / xuất đi). */
-  if (!pending && r.grp) {
-    const vao = (await env.DB.prepare("SELECT phi_id, khu_id, qty FROM receipts WHERE grp = ? AND kind = 'vay' AND voided = 0 AND duyet_day IS NOT NULL AND qty > 0").bind(r.grp).all()).results
-      .map((x) => ({ phi_id: x.phi_id, khu_id: x.khu_id, qty: -x.qty }));
-    if (vao.length) await checkTransferStock(env, vnDay(), vao, { kind: 'huy', duyet: false, ctx: await rutCtx(env, vnDay(), vao, false) });
-  }
+  /* Phiếu kho đi kèm ĐÃ DUYỆT: không còn kiểm "thép còn đủ ở khu để rút lại" (v70) — phiếu không đưa thép vào tồn (tồn theo
+     số đếm), huỷ chỉ sửa thống kê. Dư nợ vẫn phải không âm (LOAN_AM_COND bên dưới): đó là sổ nợ, không phải tồn bãi. */
   const ngayKho = ngayDuyet || vnDay();
   const run = (stmts) => batchLoan(env, [
     ['NOT EXISTS (SELECT 1 FROM loans WHERE id = ? AND voided = 0 AND COALESCE(duyet_ts, 0) = ?)', id, r.duyet_ts || 0],

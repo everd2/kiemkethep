@@ -107,7 +107,10 @@ async function main() {
   const x1 = await S.call('POST', '/xuat', { khu, lines: [{ phi, qty: 100 }], noi: 'Công trình B', khoa: K2 }, 'Cv');
   const x2 = await S.call('POST', '/xuat', { khu, lines: [{ phi, qty: 100 }], noi: 'Công trình B', khoa: K2 }, 'Cv');
   eq('xuất hết tồn rồi gửi lại cùng khoá: vẫn là phiếu cũ, không bị báo "khu chỉ còn…"', [x1.status, x2.status, x2.data.id === x1.data.id], [200, 200, true]);
-  eq('…không có khoá thì lần hai bị chặn vì phiếu đầu đang giữ chỗ (như trước)', (await S.call('POST', '/xuat', { khu, lines: [{ phi, qty: 100 }], noi: 'Công trình B' }, 'Cv')).status, 400);
+  /* …không có khoá thì lần hai là một phiếu MỚI. Tới v69 nó bị chặn "khu chỉ còn…" vì phiếu đầu giữ chỗ; từ v70 phiếu không
+     đổi tồn nên không còn chốt chặn đó — chống ghi trùng chỉ còn nhờ khoá. */
+  const nx = soPhieu();
+  eq('…không có khoá thì lần hai được ghi thành phiếu thứ hai (v70: không chặn theo tồn)', [(await S.call('POST', '/xuat', { khu, lines: [{ phi, qty: 100 }], noi: 'Công trình B' }, 'Cv')).status, soPhieu() - nx], [200, 1]);
   const n0 = soPhieu();
   await S.call('POST', '/receipts', { khu, lines: [{ phi, qty: 5 }], khoa: 'khong-hop-le' }, 'Cv');
   await S.call('POST', '/receipts', { khu, lines: [{ phi, qty: 5 }], khoa: 'khong-hop-le' }, 'Cv');

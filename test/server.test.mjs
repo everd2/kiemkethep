@@ -47,7 +47,7 @@ const items = (vals, phis = PHI) => phis.map((phi) => {
   if (typeof x === 'number') return { phi, v: x, kind: 'dem', bo: 0, le: x };
   return { phi, kind: 'dem', bo: 0, le: x.v, ...x };
 });
-// duyệt báo cáo của một khu (và luôn cả phiếu đang chờ của khu đó)
+// duyệt báo cáo của một khu (v70: CHỈ số đếm — phiếu chờ của khu vẫn chờ, duyệt riêng bằng duyetP)
 const duyet = (S, khu, who) => S.call('POST', '/review/duyet', { khu }, who);
 const duyetAll = (S, who) => S.call('POST', '/review/duyet', { all: true }, who);
 // duyệt một phiếu nhập/chuyển theo id
@@ -78,8 +78,14 @@ const chotNgay = async (S) => {
   try { return { status: (await REV.closeDayAuto(S.env, vnDay())) ? 200 : 409 }; }
   catch (e) { return { status: e.status || 500, data: { code: e.code, error: e.message } }; }
 };
-// duyệt hết những gì còn chờ rồi mới chốt
-const chot = async (S) => { await duyetAll(S); return chotNgay(S); };
+/* duyệt hết những gì còn chờ rồi mới chốt: số đếm (Duyệt tất cả) và — vì từ v70 Duyệt khu không còn duyệt kèm phiếu — từng
+   phiếu kho còn chờ, mỗi phiếu (grp) một lần */
+const chot = async (S) => {
+  await duyetAll(S);
+  const ids = S.sql('SELECT MIN(id) id FROM receipts WHERE voided = 0 AND duyet_day IS NULL GROUP BY COALESCE(grp, id)');
+  for (const x of ids) await duyetP(S, x.id);
+  return chotNgay(S);
+};
 
 async function main() {
   /* ================= 1. Luồng cơ bản: nhập, đếm, chốt ================= */
@@ -196,12 +202,12 @@ async function main() {
     let r = await chuyen(S, { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 100 }] });
     eq('chuyển trong khả năng: ok', r.status, 200);
     eq('ghi 2 dòng ±', S.sql('SELECT khu_id, qty FROM receipts WHERE kind=? ORDER BY qty', 'chuyen').map((x) => [x.khu_id, x.qty]), [['A', -100], ['B', 100]]);
-    // vượt tồn
+    // v70: phiếu chuyển là thống kê, không đổi tồn — không còn bị chặn vì khu đi "không đủ thép"
     r = await chuyen(S, { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 9999 }] });
-    eq('chuyển vượt tồn: bị từ chối', r.status, 400);
-    ok('thông báo nói rõ số thực có', /220|chỉ còn|không đủ/i.test(JSON.stringify(r.data)), JSON.stringify(r.data));
+    eq('chuyển vượt tồn: vẫn ghi được (phiếu không đổi tồn)', r.status, 200);
+    ok('không còn lời "chỉ còn"', !/chỉ còn|không đủ/i.test(JSON.stringify(r.data)), JSON.stringify(r.data));
     r = await chuyen(S, { from: 'C', to: 'B', lines: [{ phi: 'D12', qty: 1 }] });
-    eq('chuyển từ khu rỗng: bị từ chối', r.status, 400);
+    eq('chuyển từ khu rỗng: vẫn ghi được', r.status, 200);
     // tổng bãi không đổi -> dùng không bị ảnh hưởng
     await bao(S, { khu: 'A', day, items: items({ D12: 220 }) }, 'An');
     await bao(S, { khu: 'B', day, items: items({ D12: 100 }) }, 'Binh');
@@ -325,9 +331,9 @@ async function main() {
   }
 
   /* ================= 7c. Duyệt báo cáo = tồn của khu lấy theo báo cáo, ở MỌI chỗ đọc tồn =================
-     Tồn = báo cáo đã duyệt gần nhất + phiếu được duyệt SAU lần duyệt đó. Phiếu duyệt trước hoặc cùng
-     lúc với báo cáo coi như đã nằm trong số báo cáo. Kiểm cùng một ô (A/D16) qua từng cửa: bootstrap
-     (Tổng quan, Tồn bãi), màn Duyệt, chốt chặn rút thép, và tồn chuẩn sau khi sổ tự chốt. */
+     v70: tồn = báo cáo đã duyệt gần nhất, chưa có thì tồn chuẩn — phiếu KHÔNG cộng / trừ gì (phiếu ghi muộn, thất thường).
+     Phiếu chỉ vào thống kê nhập / đã dùng. Kiểm cùng một ô (A/D16) qua từng cửa: bootstrap (Tổng quan, Tồn bãi), màn Duyệt,
+     tonCells (ẩn khu / ẩn phi), và tồn chuẩn sau khi sổ tự chốt. */
   {
     const PH = await import(pathToFileURL(path.resolve(ROOT, 'src/phieu.js')).href);
     const mk = async () => {
@@ -340,14 +346,14 @@ async function main() {
       return S;
     };
     const gui = (S, v) => S.call('PUT', '/counts', { khu: 'A', day: vnDay(), items: items({ D16: v }) }, 'An');
-    // [tồn app hiện, tồn ở màn Duyệt, đã dùng, tồn theo chốt chặn rút thép]
+    // [tồn app hiện, tồn ở màn Duyệt, đã dùng, tồn theo tonCells]
     const cua = async (S) => {
       const bs = (await S.call('GET', '/bootstrap')).data;
       const f = (arr, fld) => (arr.find((c) => c.khu_id === 'A' && c.phi_id === 'D16') || {})[fld];
       const eff = f(bs.eff, 'v');
       const row = (await S.call('GET', '/review')).data.rows.find((x) => x.phi === 'D16');
       return [(eff === undefined ? f(bs.baseline, 'v') || 0 : eff) + (f(bs.mvNew, 'q') || 0), row.cnt, row.used,
-        (await PH.stockOf(S.env, vnDay(), 'A', ['D16'])).D16];
+        (await PH.tonCells(S.env, vnDay(), [{ khu: 'A', phi: 'D16' }]))['A|D16']];
     };
     // tồn chuẩn + sổ của ngày vừa qua, sau khi sổ tự chốt
     const quaDem = async (S) => {
@@ -359,9 +365,10 @@ async function main() {
 
     let S = await mk();
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
-    eq('phiếu +180 đã duyệt, khu chưa báo: mọi cửa đều 1080, chưa dùng gì', await cua(S), [1080, 1080, 0, 1080]);
+    // v70: phiếu không vào tồn — tồn vẫn tồn chuẩn 900, phần thép về thành "đã dùng" cho tới khi khu đếm lại
+    eq('phiếu +180 đã duyệt, khu chưa báo: mọi cửa đều 900 (phiếu không đổi tồn), đã dùng tạm 180', await cua(S), [900, 900, 180, 900]);
     await gui(S, 950); advance(60e3);
-    eq('khu báo 950 chưa duyệt: tồn vẫn 1080', await cua(S), [1080, 1080, 0, 1080]);
+    eq('khu báo 950 chưa duyệt: tồn vẫn 900', await cua(S), [900, 900, 180, 900]);
     await duyet(S, 'A'); advance(60e3);
     eq('duyệt báo cáo 950: mọi cửa đều lấy theo báo cáo', await cua(S), [950, 950, 130, 950]);
     eq('qua 0h: tồn chuẩn 950, sổ ghi nhập 180 dùng 130', await quaDem(S), [950, 950, 180, 130]);
@@ -370,48 +377,57 @@ async function main() {
     await gui(S, 950); advance(60e3);
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }, 'Kho'); advance(60e3);
     await duyet(S, 'A'); advance(60e3);
-    /* phiếu LẬP SAU lúc khu báo: số báo cáo không thể gồm nó, nên duyệt chung một lần bấm vẫn cộng lên trên (luật SAU_DEM ở
-       counts.js; bản cũ coi là "nằm trong báo cáo" và thép tự sinh / tự mất) */
-    eq('duyệt khu kèm phiếu lập sau lúc báo: cộng lên báo cáo', await cua(S), [1130, 1130, -50, 1130]);
+    /* v70: Duyệt khu chỉ duyệt số đếm — phiếu lập sau lúc báo vẫn chờ, và có duyệt thì cũng không cộng lên số đếm */
+    eq('duyệt khu: tồn = đúng số khu báo, phiếu không cộng lên', await cua(S), [950, 950, -50, 950]);
+    eq('phiếu lập sau lúc báo vẫn chờ duyệt riêng', S.sql('SELECT 1 x FROM receipts WHERE duyet_day IS NULL AND voided = 0').length, 1);
 
     S = await mk();
     await gui(S, 950); advance(60e3); await duyet(S, 'A'); advance(60e3);
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
-    eq('phiếu duyệt SAU báo cáo: cộng thêm ở mọi cửa, không tính là dùng', await cua(S), [1130, 1130, -50, 1130]);
-    eq('qua 0h: thép đó KHÔNG rơi khỏi tồn chuẩn', await quaDem(S), [1130, 1130, 180, -50]);
-    eq('sang ngày sau: tồn vẫn 1130, không dùng gì', await cua(S), [1130, 1130, 0, 1130]);
+    // v70: phiếu duyệt sau báo cáo chỉ vào cột nhập; tồn vẫn đúng số đếm 950
+    eq('phiếu duyệt SAU báo cáo: tồn vẫn 950 ở mọi cửa, phiếu chỉ vào nhập', await cua(S), [950, 950, 130, 950]);
+    eq('qua 0h: tồn chuẩn = số đếm 950, sổ ghi nhập 180 dùng 130', await quaDem(S), [950, 950, 180, 130]);
+    eq('sang ngày sau: tồn vẫn 950, không dùng gì', await cua(S), [950, 950, 0, 950]);
 
     S = await mk();
     await gui(S, 950); advance(60e3); await duyet(S, 'A'); advance(60e3);
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
-    await duyet(S, 'A'); advance(60e3);
-    eq('admin bấm duyệt lại khu: phiếu lập sau lúc báo vẫn trong tồn', await cua(S), [1130, 1130, -50, 1130]);
+    // v70: không còn "duyệt lại" (recheck) — khu không có số chờ thì Duyệt khu từ chối, tồn không đổi
+    eq('khu không còn số chờ: Duyệt khu từ chối', (await duyet(S, 'A')).status, 400); advance(60e3);
+    eq('tồn vẫn đúng số đếm 950', await cua(S), [950, 950, 130, 950]);
 
     S = await mk();
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] }); advance(60e3);
-    eq('khu KHÔNG báo cả ngày: qua 0h thép vừa về vẫn nằm trong tồn chuẩn, dùng 0', await quaDem(S), [1080, 1080, 180, 0]);
-    eq('mức dùng trung bình không dính cú dùng giả', (S.one("SELECT per_day FROM phi_rate WHERE phi_id = 'D16'") || {}).per_day, 0);
+    /* v70: khu không đếm thì tồn chuẩn giữ số cũ 900, phiếu +180 thành "đã dùng" 180 của ngày đó (cái giá đã chấp nhận:
+       tồn chỉ theo số đếm). Hôm khu đếm lại thì "đã dùng" âm lại đúng phần đó. */
+    eq('khu KHÔNG báo cả ngày: qua 0h tồn chuẩn giữ 900, thép về tính tạm là dùng 180', await quaDem(S), [900, 900, 180, 180]);
+    ok('mức dùng trung bình có tính ngày đó (không còn phiếu nào cộng vào tồn)', ((S.one("SELECT per_day FROM phi_rate WHERE phi_id = 'D16'") || {}).per_day || 0) > 0);
 
-    // chốt chặn rút thép phải theo báo cáo đã duyệt, không theo tồn chuẩn hôm qua
+    // v70: không còn chốt chặn rút thép theo tồn — phiếu là thống kê, thường ghi sau khi thép đã đi và khu đã đếm xuống
     S = await mk();
     await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 60 }) }, 'An'); advance(60e3);
     const rut = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D16', qty: 500 }] });
-    eq('khu báo còn 60 (đã duyệt): không chuyển đi 500 được', rut.status, 400);
-    ok('lời báo nói đúng số đang có', /chỉ còn 60/.test(rut.data.error || ''), rut.data.error);
-    eq('xuất 300 cũng bị chặn', (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 300 }], noi: 'CT1' })).status, 400);
+    eq('khu báo còn 60 (đã duyệt): phiếu chuyển 500 vẫn ghi được', rut.status, 200);
+    ok('không còn lời "chỉ còn"', !/chỉ còn/.test(rut.data.error || ''), rut.data.error);
+    eq('xuất 300 cũng ghi được', (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 300 }], noi: 'CT1' })).status, 200);
     eq('chuyển 60 thì được', (await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D16', qty: 60 }] })).status, 200);
+    eq('tồn A vẫn 60 dù các phiếu rút đang chờ', (await cua(S))[3], 60);
     S = await mk();
     await bao(S, { khu: 'A', day: vnDay(), items: items({ D16: 1500 }) }, 'An'); advance(60e3);
     eq('khu báo 1500 (đã duyệt): xuất 1200 được, không bị chặn theo tồn chuẩn 900',
       (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 1200 }], noi: 'CT1' })).status, 200);
 
-    // ẩn khu / ẩn phi: thép đã duyệt mà khu chưa đếm vẫn là thép
+    // ẩn khu / ẩn phi: theo tồn = số đếm đã duyệt (v70) — khu đếm ra thép thì không ẩn được
     S = await mk();
-    await nhap(S, { khu: 'C', lines: [{ phi: 'D20', qty: 114 }] }); advance(60e3);
+    await bao(S, { khu: 'C', day: vnDay(), items: items({ D20: 114 }) }, 'An'); advance(60e3);
     const an = await S.call('PATCH', '/khu/C', { active: 0 });
-    eq('khu vừa nhận thép đã duyệt (chưa đếm): không ẩn được', an.status, 400);
+    eq('khu đếm còn 114 (đã duyệt): không ẩn được', an.status, 400);
     ok('lời báo nói số cây còn lại', /còn 114/.test(an.data.error || ''), an.data.error);
     eq('phi đó cũng không ẩn được', (await S.call('PATCH', '/phi/D20', { active: 0 })).status, 400);
+    // phiếu nhập đã duyệt mà khu chưa đếm: phiếu không vào tồn nên không giữ khu lại
+    S = await mk();
+    await nhap(S, { khu: 'C', lines: [{ phi: 'D20', qty: 114 }] }); advance(60e3);
+    eq('khu chỉ có phiếu nhập (chưa đếm): ẩn được', (await S.call('PATCH', '/khu/C', { active: 0 })).status, 200);
   }
 
   /* ================= 8. Chuỗi "giữ nguyên" không bị cộng hai lần ================= */
@@ -775,8 +791,7 @@ async function main() {
     await chot(S, { note: '' });
     addDays(1); day = vnDay();
     // khu A: D22 dư 20 cây và D18 hụt sạch 100 cây; khu B: D22 hụt 20 cây
-    // phiếu chờ duyệt của khu A: vẫn chỉ là một việc, vì nút "Duyệt khu A" xử lý luôn cả nó. Lập TRƯỚC lúc khu đếm (thép về
-    // rồi mới đếm, số 120 đã gồm nó), không thì duyệt chung vẫn cộng 50 lên số đếm (SAU_DEM) và D22 thành dùng âm
+    // phiếu chờ duyệt của khu A: một việc riêng (v70: Duyệt khu không duyệt kèm phiếu, phiếu không đổi tồn)
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D22', qty: 50 }] });
     advance(1000);
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D22: 120, D18: 0 }) }, 'An');
@@ -791,15 +806,17 @@ async function main() {
     eq('khu B lệch nhỏ: không tô đậm', rv.khus.find((k) => k.khu === 'B').items.filter((x) => x.big).length, 0);
     ok('nhưng khu B vẫn duyệt được như mọi khu', rv.khus.find((k) => k.khu === 'B').waiting > 0);
 
-    // duyệt khu A: một lần bấm xử lý cả số lệch lẫn phiếu chờ của khu đó
+    // duyệt khu A: v70 chỉ duyệt số đếm, phiếu chờ của khu A vẫn chờ — duyệt riêng
     const dA = await S.call('POST', '/review/duyet', { khu: 'A' });
-    eq('duyệt khu A gộp cả phiếu của khu A', [dA.data.khu, dA.data.phieu], [1, 1]);
+    eq('duyệt khu A: chỉ số đếm, không kèm phiếu', [dA.data.khu, dA.data.phieu], [1, undefined]);
+    eq('phiếu của khu A vẫn chờ', S.one("SELECT duyet_day FROM receipts WHERE khu_id='A' AND phi_id='D22' AND qty=50").duyet_day, null);
+    await duyetP(S, S.one("SELECT id FROM receipts WHERE khu_id='A' AND phi_id='D22' AND qty=50").id);
     rv = (await S.call('GET', '/review')).data;
     eq('còn đúng một việc: khu B', rv.pending, 1);
     eq('việc còn lại là khu B', rv.exceptions.map((e) => e.type + ':' + e.khu), ['khu_pending:B']);
     eq('duyệt khu A không chạm gì khu B',
       S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'B', 'D22').duyet_v, null);
-    eq('duyệt rồi thì phiếu của khu A vào tồn theo ngày duyệt',
+    eq('duyệt riêng rồi thì phiếu của khu A vào thống kê theo ngày duyệt',
       S.one("SELECT duyet_day FROM receipts WHERE khu_id='A' AND phi_id='D22' AND qty=50").duyet_day, day);
   }
 
@@ -926,23 +943,23 @@ async function main() {
 
     // phiếu chuyển khu nằm ở CẢ HAI khu, vì nó là một chứng từ của hai khu — không phải lỗi đếm trùng
     await duyetAll(S);
+    await duyetP(S, r.data.id); // v70: Duyệt tất cả không duyệt kèm phiếu
     const t = await S.call('POST', '/transfers', { from: 'B', to: 'C', lines: [{ phi: 'D10', qty: 100 }, { phi: 'D12', qty: 50 }] });
     eq('ghi được phiếu chuyển hai phi', t.status, 200);
     rv = (await S.call('GET', '/review')).data;
     eq('phiếu chuyển: một phiếu', rv.phieu.length, 1);
     eq('nhưng hiện ở cả khu đi và khu đến, mỗi khu một lần',
       [rv.khus.find((k) => k.khu === 'B').phieu.length, rv.khus.find((k) => k.khu === 'C').phieu.length], [1, 1]);
-    // duyệt từ phía khu đi là duyệt cả phiếu
-    const dB = await S.call('POST', '/review/duyet', { khu: 'B' });
-    eq('duyệt khu đi là duyệt cả phiếu chuyển', dB.data.phieu, 1);
+    // v70: Duyệt khu không duyệt phiếu — phiếu chuyển duyệt riêng, một lần cho cả hai khu
+    await S.call('POST', '/review/duyet', { khu: 'B' });
+    eq('duyệt khu đi không duyệt kèm phiếu chuyển', (await S.call('GET', '/review')).data.phieu.length, 1);
+    eq('duyệt riêng phiếu chuyển', (await duyetP(S, t.data.id)).status, 200);
     eq('không còn phiếu nào chờ', (await S.call('GET', '/review')).data.phieu.length, 0);
   }
 
   /* ================= 33. Huỷ phiếu ĐÃ DUYỆT sau khi số của khu đã duyệt =================
-     Huỷ một phiếu đã duyệt làm số dự kiến của khu đổi y như duyệt thêm một phiếu, nên phải nhắc
-     xem lại khu y như vậy. Bản 1.2 bắt được chuyện này (exception 'late' với q < 0, dựa vào
-     voided_ts). Nếu chỉ so "lần duyệt phiếu gần nhất" thì huỷ phiếu lại LÀM GIẢM mốc đó, cảnh
-     báo im lặng, và khu vẫn mang nhãn "Đã duyệt" trong khi số đã duyệt không còn khớp dự kiến. */
+     Huỷ một phiếu đã duyệt làm số tham chiếu theo phiếu của khu đổi. Tới v69 việc đó nhắc "xem lại khu" (recheck) vì phiếu
+     đổi tồn; từ v70 phiếu không đổi tồn nên số đã duyệt vẫn đúng — chỉ cột lệch theo phiếu đổi, không có việc treo nào. */
   {
     const S = await setup();
     let day = vnDay();
@@ -966,16 +983,15 @@ async function main() {
     const kA = rv.khus.find((k) => k.khu === 'A');
     eq('dự kiến tụt đúng 180', kA.items.find((x) => x.phi === 'D16').exp, 1800);
     eq('và lệch hiện ra +180', kA.items.find((x) => x.phi === 'D16').d, 180);
-    ok('huỷ phiếu sau khi khu đã duyệt: nhắc xem lại khu', kA.recheck, JSON.stringify(kA));
-    ok('và nó là một việc chặn chốt', rv.exceptions.some((e) => e.type === 'recheck' && e.khu === 'A'),
+    /* v70: phiếu không đổi tồn, nên huỷ phiếu sau khi số của khu đã duyệt không làm số đó sai đi — không còn nhắc "xem lại"
+       (recheck), lệch chỉ hiện ở cột tham chiếu theo phiếu. */
+    ok('huỷ phiếu sau khi khu đã duyệt: không nhắc xem lại khu', !kA.recheck, JSON.stringify(kA));
+    ok('và không có việc "recheck" nào', !rv.exceptions.some((e) => e.type === 'recheck'),
       JSON.stringify(rv.exceptions.map((e) => e.type + ':' + (e.khu || e.phi))));
-    /* Gỡ được bằng cách admin DUYỆT LẠI, không cần khu đếm lại: người duyệt xem bảng lệch mới
-       rồi chấp nhận. Đây là đường gỡ chính, vì thường huỷ phiếu chính là để sửa cho đúng số khu
-       đã đếm. Khu lúc này KHÔNG có gì "chờ duyệt" (mọi ô đã duyệt), nên nếu reviewDuyet chỉ nhận
-       khu đang chờ thì nút DUYỆT LẠI bị từ chối và cảnh báo treo vĩnh viễn. */
+    eq('tồn khu A vẫn đúng số đã duyệt 1980', S.one("SELECT duyet_v FROM counts WHERE day=? AND khu_id='A' AND phi_id='D16'", day).duyet_v, 1980);
     advance(1000);
     const dl = await duyet(S, 'A');
-    eq('duyệt lại được dù khu không có gì đang chờ', dl.status, 200);
+    eq('không có số chờ thì không có gì để "duyệt lại"', dl.status, 400);
     rv = (await S.call('GET', '/review')).data;
     ok('duyệt lại là hết nhắc', !rv.khus.find((k) => k.khu === 'A').recheck, JSON.stringify(rv.khus.find((k) => k.khu === 'A')));
     /* Nhưng CHƯA phải hết việc: admin chấp nhận số của khu, mà cả bãi vẫn đang thừa 180 cây so
@@ -1032,17 +1048,15 @@ async function main() {
     eq('D16 vẫn được bày ra màn Duyệt vì còn số liệu', !!rv.rows.find((r) => r.phi === 'D16'), true);
   }
 
-  /* ================= 35. Chốt chặn chuyển quá tồn: hai đường duyệt phải giống nhau =================
-     "Duyệt phiếu" và "Duyệt khu" (gộp cả phiếu đang chờ của khu) làm cùng một việc nên phải cùng
-     một chốt chặn, nếu không thì bấm nút này được mà nút kia không — và thép chuyển đi nhiều hơn
-     số khu thực có.
-
-     Cảnh dựng ra đây là cảnh xảy ra thật: nhập sai một xe, đã lập phiếu chuyển dựa trên số đó,
-     rồi mới huỷ phiếu nhập. Lúc lập phiếu chuyển thì còn đủ thép, lúc duyệt thì không. */
+  /* ================= 35. Phiếu chuyển "quá tồn": v70 không còn chốt chặn ở đường nào =================
+     Tới v69 "Duyệt phiếu" và "Duyệt khu" (gộp phiếu) cùng chặn phiếu chuyển quá số khu thực có. Từ v70 phiếu không đổi tồn
+     và Duyệt khu không gộp phiếu: cảnh cũ (nhập sai một xe, đã lập phiếu chuyển dựa trên số đó, rồi mới huỷ phiếu nhập) nay
+     duyệt được cả hai đường, tồn vẫn theo số đếm. */
   {
     const S = await setup();
     const day = vnDay();
-    // nhập 440 vào khu A và duyệt, rồi lập phiếu chuyển 400 sang B (hợp lệ vì A đang có 440)
+    const PH = await import(pathToFileURL(path.resolve(ROOT, 'src/phieu.js')).href);
+    // nhập 440 vào khu A và duyệt, rồi lập phiếu chuyển 400 sang B
     const rin = await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 440 }] });
     const t = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D10', qty: 400 }] });
     eq('lập phiếu chuyển 400/440: được', t.status, 200);
@@ -1052,35 +1066,25 @@ async function main() {
     eq('huỷ phiếu nhập đã duyệt', (await S.call('DELETE', '/receipts/' + rin.data.id)).status, 200);
 
     const d1 = await S.call('POST', '/receipts/' + t.data.id + '/duyet', {});
-    eq('ĐƯỜNG 1 — duyệt riêng phiếu: bị từ chối', d1.status, 400);
-    ok('nói rõ khu nào còn bao nhiêu', /Khu A/.test(JSON.stringify(d1.data)), JSON.stringify(d1.data));
+    eq('ĐƯỜNG 1 — duyệt riêng phiếu: được (không kiểm tồn)', d1.status, 200);
+    ok('không còn lời "chỉ còn"', !/chỉ còn/.test(JSON.stringify(d1.data)), JSON.stringify(d1.data));
 
-    // ĐƯỜNG 2 — duyệt khu A, phiếu bị gộp theo: phải bị từ chối y như vậy
+    // ĐƯỜNG 2 — duyệt khu A: chỉ duyệt số đếm, không đụng phiếu nào
     advance(1000);
+    const t3 = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D10', qty: 400 }] });
     await S.call('PUT', '/counts', { khu: 'A', day, items: items({}) }, 'An');
     const d2 = await S.call('POST', '/review/duyet', { khu: 'A' });
-    eq('ĐƯỜNG 2 — duyệt khu (gộp phiếu): cũng bị từ chối', d2.status, 400);
-    /* Và không được duyệt nửa vời: phép kiểm chạy TRƯỚC khi dựng batch, nên số của khu vẫn đang
-       chờ. Nếu kiểm sau thì admin không biết nửa nào đã vào tồn. */
-    eq('số của khu vẫn đang chờ duyệt',
-      S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D10').duyet_v, null);
-    eq('phiếu chuyển cũng vẫn đang chờ', S.one('SELECT duyet_day FROM receipts WHERE id=?', t.data.id).duyet_day, null);
-
-    // từ chối phiếu chuyển rồi thì duyệt khu được bình thường
-    eq('từ chối phiếu chuyển', (await S.call('DELETE', '/receipts/' + t.data.id)).status, 200);
-    const d3 = await duyet(S, 'A');
-    eq('giờ duyệt khu A được', d3.status, 200);
+    eq('ĐƯỜNG 2 — duyệt khu: được', d2.status, 200);
     eq('số của khu đã vào tồn',
       S.one('SELECT duyet_v FROM counts WHERE day=? AND khu_id=? AND phi_id=?', day, 'A', 'D10').duyet_v, 0);
+    eq('phiếu chuyển thứ hai vẫn chờ (Duyệt khu không gộp phiếu)', S.one('SELECT duyet_day FROM receipts WHERE id=?', t3.data.id).duyet_day, null);
+    eq('tồn A, B theo số đếm: 0 và 0', [
+      (await PH.tonCells(S.env, day, [{ khu: 'A', phi: 'D10' }]))['A|D10'],
+      (await PH.tonCells(S.env, day, [{ khu: 'B', phi: 'D10' }]))['B|D10']], [0, 0]);
 
-    // chuyển trong khả năng thì đường 2 duyệt được cả phiếu
-    advance(1000);
-    await nhap(S, { khu: 'A', lines: [{ phi: 'D10', qty: 100 }] });
-    const t2 = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D10', qty: 60 }] });
-    eq('chuyển 60/100: lập được', t2.status, 200);
-    const d4 = await S.call('POST', '/review/duyet', { khu: 'A' });
-    eq('duyệt khu gộp phiếu trong khả năng: được', [d4.status, d4.data.phieu], [200, 1]);
-    eq('phiếu vào tồn theo ngày duyệt', S.one('SELECT duyet_day FROM receipts WHERE id=?', t2.data.id).duyet_day, day);
+    // huỷ phiếu chuyển đã duyệt: được, không có gì để "rút lại" khỏi tồn
+    eq('huỷ phiếu chuyển đã duyệt', (await S.call('DELETE', '/receipts/' + t.data.id)).status, 200);
+    eq('không còn số chờ thì Duyệt khu từ chối', (await duyet(S, 'A')).status, 400);
   }
 
   /* ================= 36. Xoá / sửa tên tài khoản: hoạt động phải GIỮ NGUYÊN TÊN =================
@@ -1391,9 +1395,10 @@ async function main() {
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 180 }] });
     const rv = (await S.call('GET', '/review')).data;
     const exp = rv.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp;
-    eq('màn Duyệt nói dự kiến của khu là 1980', exp, 1980);
-    eq('và tệp xuất nói đúng con số đó, không phải 1800',
-      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1980);
+    // v70: 1980 chỉ là số tham chiếu theo phiếu ở màn Duyệt; tồn (và tệp xuất) vẫn là số đếm / tồn chuẩn 1800
+    eq('màn Duyệt nói số tham chiếu theo phiếu của khu là 1980', exp, 1980);
+    eq('nhưng tệp xuất nói tồn = 1800 (phiếu không đổi tồn)',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1800);
 
     // đếm lại rồi thì phiếu đã nằm trong số đếm: không được cộng thêm lần nữa
     await bao(S, { khu: 'A', day, items: items({ D16: 1950 }) }, 'An');
@@ -1414,15 +1419,13 @@ async function main() {
       cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1950);
 
     /* Màn "Xem lại ngày cũ" là đường đọc tồn thứ ba, và nó chọn được CHÍNH HÔM NAY (ô ngày có
-       max = hôm nay). Ngày chưa chốt thì nó cũng phải cộng phần thép đã duyệt chưa ai đếm, không
-       thì ba màn hình của cùng một app nói ba con số khác nhau về cùng một ngày. */
+       max = hôm nay). v70: cả ba đường đều chỉ theo số đếm / tồn chuẩn — phiếu đã duyệt mà chưa ai đếm KHÔNG cộng vào. */
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 300 }] });
     const dv = (await S.call('GET', '/day?date=' + day)).data;
-    const mvA = (dv.mvNew || []).find((x) => x.khu_id === 'A' && x.phi_id === 'D16');
-    eq('màn Xem lại ngày nhận được phần thép chưa ai đếm', mvA && mvA.q, 300);
-    eq('và tệp xuất cùng ngày nói đúng con số đó',
-      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 2250);
-    eq('màn Duyệt cũng vậy',
+    eq('màn Xem lại ngày không còn phần "thép chưa ai đếm" (mvNew rỗng)', (dv.mvNew || []).length, 0);
+    eq('và tệp xuất cùng ngày vẫn bằng tồn chuẩn 1950',
+      cotD16(String((await S.call('GET', '/export?date=' + day)).data)), 1950);
+    eq('màn Duyệt: số tham chiếu theo phiếu = 1950 + 300 (phiếu chờ không tính)',
       (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').items.find((x) => x.phi === 'D16').exp, 2250);
 
     // ngày ĐÃ CHỐT thì tồn chuẩn là số chính thức, không cộng thêm gì
@@ -1529,8 +1532,10 @@ async function main() {
       (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 100 }], noi: 'CT X' }, 'An')).status, 403);
     eq('không ghi nơi đến: từ chối',
       (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] })).status, 400);
-    eq('xuất quá số đang có: từ chối',
-      (await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 5000 }], noi: 'CT X' })).status, 400);
+    // v70: phiếu xuất không trừ tồn nên không còn bị chặn "quá số đang có" (rút lại ngay phiếu thử này)
+    const xq = await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 5000 }], noi: 'CT X' });
+    eq('xuất quá số đang có: vẫn ghi được', xq.status, 200);
+    eq('rút lại phiếu thử', (await S.call('DELETE', '/receipts/' + xq.data.id)).status, 200);
 
     const px = await S.call('POST', '/xuat', { khu: 'A', lines: [{ phi: 'D16', qty: 1100 }], noi: 'Công trình Nam Hà', note: 'xe 29C' });
     eq('lập phiếu xuất được', px.status, 200);
@@ -1686,13 +1691,13 @@ async function main() {
     const d3 = vnDay();
     const keep = await bao(S, { khu: 'A', day: d3, items: items({ D20: { v: 228, kind: 'giu' } }) }, 'An');
     eq('giữ nguyên được vì thép về trước lần đếm', keep.status, 200);
-    // còn thép về SAU lần đếm thì phải đếm thực tế
+    // v70: phiếu về SAU lần đếm không đổi tồn, nên "giữ nguyên" vẫn đúng là lấy lại số đã duyệt — không còn bị chặn
     advance(5000);
     const rc3 = await nhap(S, { khu: 'A', lines: [{ phi: 'D20', qty: 114 }] });
     eq('ghi được phiếu nhập sau lần đếm', rc3.status, 200);
     const keep2 = await bao(S, { khu: 'A', day: d3, items: items({ D20: { v: 228, kind: 'giu' } }) }, 'An');
-    eq('thép về sau lần đếm: chặn giữ nguyên', keep2.status, 400);
-    ok('nói rõ lý do', /nhập\/chuyển|đếm thực tế/.test(JSON.stringify(keep2.data)), JSON.stringify(keep2.data));
+    eq('thép về sau lần đếm: vẫn giữ nguyên được (phiếu không đổi tồn)', keep2.status, 200);
+    ok('không còn lời "thay đổi tồn"', !/thay đổi tồn/.test(JSON.stringify(keep2.data)), JSON.stringify(keep2.data));
   }
 
   /* ================= 22. Khu đếm ra thép "từ không mà có" =================
@@ -1735,10 +1740,8 @@ async function main() {
   }
 
   /* ================= 23. Phiếu được duyệt SAU khi số của khu đã duyệt =================
-     Số đếm của khu không gồm lô thép đó, nên dự kiến vừa đổi mà số đã duyệt thì không: phải nhắc
-     admin xem lại khu. Bản cũ tính theo giờ NHẬP và giờ HUỶ phiếu so với giờ khu báo, và cảnh báo
-     đó không có đường nào xoá — ngày đó bắt buộc chốt kèm ghi chú. Nay chỉ là so hai mốc DUYỆT,
-     và admin duyệt lại khu là hết. */
+     v70: phiếu không đổi tồn, nên duyệt phiếu sau số của khu chỉ đổi số tham chiếu theo phiếu, không nhắc "xem lại khu" và
+     không treo việc gì; tồn vẫn là số đã duyệt. */
   {
     const S = await setup();
     let day = vnDay();
@@ -1764,9 +1767,10 @@ async function main() {
     eq('duyệt phiếu thứ hai', (await duyetP(S, rc2.data.id)).status, 200);
     rv = (await S.call('GET', '/review')).data;
     const kA = rv.khus.find((k) => k.khu === 'A');
-    ok('duyệt phiếu sau số của khu: nhắc xem lại khu đó', kA.recheck, JSON.stringify(kA));
-    eq('dự kiến đã cộng lô mới', kA.items.find((x) => x.phi === 'D16').exp, 2160);
-    ok('và nó là một việc chặn chốt', rv.exceptions.some((e) => e.type === 'recheck' && e.khu === 'A'));
+    // v70: phiếu không đổi tồn — duyệt phiếu sau số của khu không làm số đó sai, không nhắc xem lại
+    ok('duyệt phiếu sau số của khu: không nhắc xem lại', !kA.recheck, JSON.stringify(kA));
+    eq('số tham chiếu theo phiếu đã cộng lô mới', kA.items.find((x) => x.phi === 'D16').exp, 2160);
+    ok('và không có việc "recheck" nào', !rv.exceptions.some((e) => e.type === 'recheck'));
 
     /* Gỡ được: admin xem lại rồi duyệt lại khu là xong. Đây là điểm khác hẳn bản cũ. */
     advance(1000);
@@ -1776,7 +1780,7 @@ async function main() {
     ok('duyệt lại khu là hết nhắc', !rv.khus.find((k) => k.khu === 'A').recheck, JSON.stringify(rv.khus.find((k) => k.khu === 'A')));
     eq('hết việc chờ', rv.pending, 0);
 
-    // huỷ phiếu đã duyệt thì lượng đó rút khỏi tồn ngay
+    // huỷ phiếu đã duyệt thì lượng đó rút khỏi số tham chiếu ngay (tồn vẫn theo số đếm)
     advance(1000);
     eq('huỷ phiếu đã duyệt được', (await S.call('DELETE', '/receipts/' + rc.data.id)).status, 200);
     ok('ghi lại mốc huỷ', S.one('SELECT voided, voided_ts FROM receipts WHERE id=?', rc.data.id).voided_ts > 0);
@@ -2120,22 +2124,19 @@ async function main() {
     eq('"Lý do khác" có ghi rõ: nhận',
       (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 1 }], reason: 'khac', note: 'kiểm kê đột xuất' })).status, 200);
 
-    /* Giảm quá số đang có: chặn NGAY LÚC LẬP. Chốt chặn này từng sai hướng vì cộng ngược phần của
-       chính phiếu vào số đang có, làm phép so thành "|qty| > have + |qty|" — vĩnh viễn sai, tức
-       lập phiếu giảm bao nhiêu cũng qua.
-       Dùng 500 cây (9,2 tấn) chứ không phải số thật to: phải ở DƯỚI ngưỡng "điều chỉnh rất lớn",
-       không thì bài này đo mất cái cổng gõ xác nhận thay vì đo chốt chặn tồn. */
+    /* v70: phiếu điều chỉnh là chứng từ, không đổi tồn (tồn theo số đếm) — giảm "quá số đang có" không còn bị chặn lúc lập.
+       Dùng 500 cây (9,2 tấn): dưới ngưỡng "điều chỉnh rất lớn", để bài này không đo cái cổng gõ xác nhận. */
     const qua = await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 500 }], reason: 'dem_sai' });
-    eq('giảm quá số đang có: chặn ngay lúc lập', qua.status, 400);
-    ok('và nói rõ khu còn bao nhiêu', /chỉ còn/.test(qua.data.error || ''), qua.data.error);
-    ok('lời báo lỗi không nói "không duyệt được" vào mặt người vừa bấm lưu', !/duyệt/.test(qua.data.error || ''), qua.data.error);
-    eq('và không ghi dòng nào vào database', S.sql("SELECT 1 FROM receipts WHERE kind = 'dc' AND qty = -500").length, 0);
+    eq('giảm quá số đang có: vẫn lập được (phiếu không đổi tồn)', qua.status, 200);
+    ok('không còn lời "chỉ còn"', !/chỉ còn/.test(qua.data.error || ''), qua.data.error);
+    eq('và ghi đúng một dòng chờ duyệt', S.sql("SELECT 1 FROM receipts WHERE kind = 'dc' AND qty = -500 AND duyet_day IS NULL").length, 1);
+    eq('rút lại phiếu thử', (await S.call('DELETE', '/receipts/' + qua.data.id)).status, 200);
 
-    /* Hai phiếu giảm cùng rút một lô thép: phiếu thứ hai bị chặn NGAY LÚC LẬP, vì stockOf đã trừ
-       sẵn mọi phiếu giảm đang chờ duyệt. Nếu chỗ này cho qua thì duyệt cả hai là khu âm. */
+    // phiếu chờ duyệt không còn "giữ chỗ" thép: hai phiếu giảm cùng lô đều lập được
     const a = (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 60 }], reason: 'dem_sai' })).data.id;
-    eq('phiếu giảm thứ hai bị chặn, vì phiếu thứ nhất đang chờ duyệt đã giữ phần thép đó',
-      (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 60 }], reason: 'dem_sai' })).status, 400);
+    const a2 = await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 60 }], reason: 'dem_sai' });
+    eq('phiếu giảm thứ hai vẫn lập được (phiếu chờ không giữ chỗ thép)', a2.status, 200);
+    eq('rút lại phiếu thứ hai', (await S.call('DELETE', '/receipts/' + a2.data.id)).status, 200);
     eq('phiếu giảm thứ nhất duyệt được', (await duyetP(S, a)).status, 200);
 
     // điều chỉnh rất lớn: phải gõ tay đúng chữ xác nhận
@@ -2160,15 +2161,12 @@ async function main() {
       (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 1 }], reason: 'dem_sai' })).status, 409);
   }
 
-  /* ================= 45b. Chốt chặn lúc DUYỆT, khi trạng thái đã bị vượt cam kết =================
-     Chốt chặn lúc lập không thay được chốt chặn lúc duyệt. Bình thường hai phiếu giảm không cùng
-     tồn tại được (lúc lập, stockOf đã trừ phiếu giảm đang chờ), nhưng HAI YÊU CẦU GẦN NHƯ CÙNG LÚC
-     thì cả hai đều đọc tồn trước khi phiếu kia kịp ghi, và cả hai được tạo. Ghi thẳng dòng thứ hai
-     vào database là cách dựng lại đúng kết cục đó một cách tất định.
-     Điều phải bảo đảm: khi tổng các phiếu giảm đang chờ VƯỢT số thực có, KHÔNG phiếu nào duyệt
-     được — qua cả hai đường (duyệt riêng phiếu, và "Duyệt khu" gộp phiếu của khu đó) — nên tồn
-     không bao giờ âm. Thiếu một đường là nút này lọt qua đúng cái chốt chặn mà nút kia dựng ra. */
+  /* ================= 45b. Hai phiếu giảm vượt số thực có: v70 duyệt được, tồn không âm =================
+     Tới v69 khi tổng phiếu giảm chờ VƯỢT số thực có thì không phiếu nào duyệt được (cả đường duyệt riêng lẫn "Duyệt khu" gộp
+     phiếu). Từ v70 phiếu không đổi tồn nên duyệt được; tồn vẫn đúng số đếm (không âm), chỉ số tham chiếu theo phiếu âm — và
+     "Duyệt khu" không đụng phiếu nào. Dòng thứ hai ghi thẳng vào database như kết cục của hai yêu cầu song song. */
   {
+    const PH = await import(pathToFileURL(path.resolve(ROOT, 'src/phieu.js')).href);
     for (const qua of ['phieu', 'khu']) {
       const S = await setup();
       const day = vnDay();
@@ -2182,17 +2180,18 @@ async function main() {
       const id2 = S.one("SELECT id FROM receipts WHERE grp = 'race1'").id;
 
       const r = qua === 'phieu' ? await duyetP(S, p.id) : await duyet(S, 'A');
-      eq('vượt số thực có: không duyệt được (' + qua + ')', r.status, 400);
-      ok('và nói rõ khu còn bao nhiêu (' + qua + ')', /chỉ còn/.test(r.data.error || ''), r.data.error);
-      eq('phiếu vẫn chưa vào tồn (' + qua + ')', S.one('SELECT duyet_day FROM receipts WHERE id=?', p.id).duyet_day, null);
-      eq('phiếu kia cũng vậy (' + qua + ')', S.one('SELECT duyet_day FROM receipts WHERE id=?', id2).duyet_day, null);
+      // đường phiếu: duyệt được; đường khu: không có số chờ nên từ chối, và không đụng phiếu nào
+      eq('vượt số thực có: đường phiếu duyệt được, Duyệt khu không gộp phiếu (' + qua + ')', r.status, qua === 'phieu' ? 200 : 400);
+      ok('không còn lời "chỉ còn" (' + qua + ')', !/chỉ còn/.test(r.data.error || ''), r.data.error);
+      eq('phiếu thứ nhất (' + qua + ')', S.one('SELECT duyet_day FROM receipts WHERE id=?', p.id).duyet_day, qua === 'phieu' ? day : null);
+      eq('phiếu kia vẫn chờ (' + qua + ')', S.one('SELECT duyet_day FROM receipts WHERE id=?', id2).duyet_day, null);
 
-      // bỏ một phiếu đi thì phần còn lại duyệt được bình thường — chốt chặn không khoá cứng khu
-      eq('từ chối phiếu dư (' + qua + ')', (await S.call('DELETE', '/receipts/' + id2)).status, 200);
-      eq('rồi phiếu còn lại duyệt được (' + qua + ')', (await duyetP(S, p.id)).status, 200);
+      eq('phiếu dư cũng duyệt được (' + qua + ')', (await duyetP(S, id2)).status, 200);
+      if (qua === 'khu') eq('rồi phiếu còn lại duyệt được (' + qua + ')', (await duyetP(S, p.id)).status, 200);
       const rv = (await S.call('GET', '/review')).data;
       const exp = rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp;
-      eq('tồn còn đúng 30, không âm (' + qua + ')', exp, 30);
+      eq('số tham chiếu theo phiếu = 100 − 140 (' + qua + ')', exp, -40);
+      eq('nhưng tồn vẫn đúng số đếm 100, không âm (' + qua + ')', (await PH.tonCells(S.env, day, [{ khu: 'A', phi: 'D16' }]))['A|D16'], 100);
     }
   }
 
@@ -2213,13 +2212,14 @@ async function main() {
 
     const p = (await S.call('POST', '/adjust', { khu: 'A', dir: 'giam', lines: [{ phi: 'D16', qty: 100 }], reason: 'hao_hut' })).data.id;
     await duyetP(S, p);
+    // v70: phiếu điều chỉnh không đổi tồn, nên "giữ nguyên" (lấy lại số đã duyệt 900) vẫn hợp lệ — không còn bắt đếm lại
     const giu = await S.call('PUT', '/counts', { khu: 'A', day, items: items({ D16: { v: 900, kind: 'giu' } }) }, 'An');
-    eq('điều chỉnh rồi thì KHÔNG giữ nguyên được nữa, phải đếm thật', giu.status, 400);
-    ok('và lời nhắc không bịa ra chuyến xe nào', /thay đổi tồn/.test(giu.data.error || ''), giu.data.error);
+    eq('điều chỉnh rồi vẫn giữ nguyên được (phiếu không đổi tồn)', giu.status, 200);
+    ok('không còn lời "thay đổi tồn"', !/thay đổi tồn/.test(giu.data.error || ''), giu.data.error);
 
-    // huỷ phiếu đã duyệt: thép quay lại tồn
+    // huỷ phiếu đã duyệt: số tham chiếu quay lại
     let rv = (await S.call('GET', '/review')).data;
-    eq('đang là 800 sau điều chỉnh', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 800);
+    eq('số tham chiếu là 800 sau điều chỉnh', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 800);
     eq('huỷ phiếu điều chỉnh đã duyệt', (await S.call('DELETE', '/receipts/' + p)).status, 200);
     rv = (await S.call('GET', '/review')).data;
     eq('huỷ xong dự kiến trở lại 900', rv.khus.find((k) => k.khu === 'A').items.find((i) => i.phi === 'D16').exp, 900);
@@ -2586,7 +2586,7 @@ async function main() {
     eq('ngày chốt sau khi sửa: theo kg mới', S.one('SELECT kg FROM daily_summary WHERE day=? AND phi_id=?', day, 'D16').kg, 20);
   }
 
-  /* ================= 53. Sổ vay mượn kèm phiếu kho: đổi tồn, KHÔNG tính là nhập hay dùng ================= */
+  /* ================= 53. Sổ vay mượn kèm phiếu kho: thống kê (v70 không đổi tồn), KHÔNG tính là nhập hay dùng ================= */
   {
     const S = await setup();
     let day = vnDay();
@@ -2597,15 +2597,18 @@ async function main() {
     const dt = (await S.call('POST', '/doitac', { name: 'Cty Đông Á' })).data.id;
 
     eq('người đếm không lập phiếu kho kèm sổ vay', (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 300 }] }, 'An')).status, 403);
-    eq('cho vay quá số khu đang có: từ chối', (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 5000 }] }, 'Kho')).status, 400);
+    // v70: phiếu kho không đổi tồn nên cho vay quá số khu đang có KHÔNG bị chặn (rút lại ngay lần ghi thử này)
+    const qua = await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-00', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 5000 }] }, 'Kho');
+    eq('cho vay quá số khu đang có: vẫn ghi được', qua.status, 200);
+    eq('rút lại lần ghi thử', (await S.call('DELETE', '/loans/' + qua.data.ids[0], {}, 'Kho')).status, 200);
     const g = (await S.call('POST', '/loans', { bienban: true, zalo: true, so_bb: 'BB-01', doitac: dt, kind: 'cho_vay', khu: 'A', lines: [{ phi: 'D16', qty: 300 }], note: 'xe 29C' }, 'Kho')).data;
     const ph = S.sql("SELECT kind, khu_id, qty, duyet_day FROM receipts WHERE grp = ?", g.grp);
     eq('lập kèm phiếu kho cùng nhóm, dòng âm, chờ duyệt', ph, [{ kind: 'vay', khu_id: 'A', qty: -300, duyet_day: null }]);
     let rv = (await S.call('GET', '/review')).data;
     ok('phiếu kho của sổ vay nằm trong phiếu chờ duyệt', rv.phieu.some((v) => v.kind === 'vay'));
     eq('và KHÔNG lặp lại ở mục sổ vay chờ duyệt', rv.loans.length, 0);
-    // giữ chỗ: phiếu cho vay đang chờ đã giữ 300, nên chuyển đi 1600 không lọt
-    eq('phiếu cho vay chờ duyệt đã giữ chỗ thép', (await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D16', qty: 1600 }] })).status, 400);
+    // v70: phiếu chờ không còn "giữ chỗ" thép nào — không có chốt chặn tồn ở phiếu
+    eq('phiếu cho vay chờ duyệt không giữ chỗ: chuyển 1600 vẫn ghi được', (await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D16', qty: 1600 }] })).status, 200);
 
     eq('duyệt sổ là duyệt luôn phiếu kho', (await S.call('POST', '/loans/' + g.ids[0] + '/duyet', {})).status, 200);
     eq('phiếu kho đã duyệt hôm nay', S.one('SELECT duyet_day d FROM receipts WHERE grp = ?', g.grp).d, day);
@@ -2677,10 +2680,11 @@ async function main() {
     const mk2 = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').mark;
     eq('dấu mới: duyệt được', (await S.call('POST', '/review/duyet', { khu: 'A', marks: { A: mk2 } })).status, 200);
     eq('số được duyệt đúng số admin vừa thấy', S.one("SELECT duyet_v FROM counts WHERE khu_id='A' AND phi_id='D16'").duyet_v, 50);
-    // phiếu mới của khu cũng là "thứ chưa xem": duyệt khu là duyệt luôn phiếu
+    // v70: Duyệt khu không duyệt phiếu, nên phiếu mới không làm dấu của khu đổi (không phải "thứ chưa xem" của nút này)
     const mk3 = (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').mark;
     await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 10 }] }, 'Kho');
-    eq('phiếu mới sau lúc tải màn: từ chối', (await S.call('POST', '/review/duyet', { khu: 'A', marks: { A: mk3 } })).status, 409);
+    eq('phiếu mới sau lúc tải màn: dấu của khu không đổi', (await S.call('GET', '/review')).data.khus.find((k) => k.khu === 'A').mark, mk3);
+    eq('và khu không có số chờ thì Duyệt khu từ chối (không duyệt kèm phiếu)', (await S.call('POST', '/review/duyet', { khu: 'A', marks: { A: mk3 } })).status, 400);
     // duyệt tất cả mà có khu mới thành chờ duyệt (không có trong marks)
     const all = Object.fromEntries((await S.call('GET', '/review')).data.khus.map((k) => [k.khu, k.mark]));
     await S.call('PUT', '/counts', { khu: 'B', day, items: items({ D18: 5 }) }, 'Binh');
@@ -3248,15 +3252,16 @@ async function main() {
     eq('CVKTHT không huỷ được phiếu đã duyệt của người khác', (await S.call('DELETE', '/receipts/' + pK.data.id, undefined, 'Cv')).status, 403);
     const pC = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D18', qty: 20 }] }, 'Cv');
     eq('CVKTHT khác không từ chối được phiếu chờ', (await S.call('DELETE', '/receipts/' + pC.data.id, undefined, 'Cv2')).status, 403);
-    // khu A có báo cáo của tiểu đội trưởng NHƯNG còn phiếu kho chờ: CVKTHT không duyệt nửa khu
+    /* khu A có báo cáo của tiểu đội trưởng và còn phiếu kho chờ: v70 Duyệt khu chỉ duyệt số đếm, nên phiếu chờ không còn nâng
+       cấp duyệt khu (capPhieu bỏ) — CVKTHT duyệt được số, phiếu vẫn chờ cấp chỉ huy */
     await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 90, D18: 10 }) }, 'An');
     const kA = await khuOf('A');
-    eq('khu A: số của cấp 0, còn phiếu kho (cần cấp 2)', [kA.capBao, kA.capPhieu], [0, 2]);
-    eq('CVKTHT không duyệt được khu còn phiếu kho chờ', (await duyet(S, 'A', 'Cv2')).status, 403);
-    eq('số của khu vẫn chờ, không vào tồn nửa chừng', await ton('A', 'D16'), 100);
+    eq('khu A: số của cấp 0, phiếu chờ không nâng cấp duyệt', [kA.capBao, kA.capPhieu], [0, undefined]);
+    eq('số của khu đang chờ thì chưa vào tồn', await ton('A', 'D16'), 100);
     eq('CVKTHT vẫn huỷ được báo cáo của tiểu đội trưởng ở khu đó', (await S.call('POST', '/recount', { khu: 'A', ly_do: 'D16 đếm thiếu' }, 'Cv2')).status, 200);
     await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 95, D18: 30 }) }, 'An');
-    eq('đại đội trưởng duyệt cả khu: số và phiếu kho', (await duyet(S, 'A', 'Dai')).data.phieu, 1);
+    eq('CVKTHT duyệt được khu dù còn phiếu kho chờ', (await duyet(S, 'A', 'Cv2')).status, 200);
+    eq('phiếu kho chờ vẫn chờ cấp chỉ huy', S.one('SELECT duyet_day FROM receipts WHERE id=?', pC.data.id).duyet_day, null);
     eq('tồn lấy theo báo cáo vừa duyệt', [await ton('A', 'D16'), await ton('A', 'D18')], [95, 30]);
     // phiếu của cấp chỉ huy: tự duyệt được (như admin trước đây), CVKTHT thì không
     const pD = await S.call('POST', '/receipts', { khu: 'C', lines: [{ phi: 'D10', qty: 5 }] }, 'Dai');
@@ -3358,10 +3363,10 @@ async function main() {
     eq('đổi vai trò người không phụ trách khu nào: không phải hỏi', (await S.call('POST', `/users/${idOf('Cv')}/role`, { role: 'cvktht' })).status, 200);
   }
 
-  /* ================= 64. CVKTHT không quyết thay phiếu kho qua đường duyệt báo cáo =================
-     Duyệt báo cáo là lấy tồn theo báo cáo. Số đếm TRƯỚC lúc một phiếu kho được duyệt (hoặc huỷ) mà
-     được duyệt là phiếu đó bị coi như đã nằm sẵn trong số đếm — một quyết định về phiếu kho, nên
-     chỉ cấp chỉ huy làm được. */
+  /* ================= 64. Phiếu kho không còn dính vào việc duyệt báo cáo (v70) =================
+     Tới v69 số đếm TRƯỚC lúc một phiếu kho được duyệt / huỷ thì chỉ cấp chỉ huy duyệt (phieuSau, capPhieu) và có "cần xem
+     lại" (recheck). Từ v70 phiếu không đổi tồn: CVKTHT duyệt số của cấp dưới như thường, tồn = số đếm, không có gì để "duyệt
+     lại". */
   {
     const S = await setup();
     await nhap(S, { khu: 'A', lines: [{ phi: 'D16', qty: 100 }] });
@@ -3374,22 +3379,26 @@ async function main() {
     const p = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 50 }] }, 'Kho');
     await duyetP(S, p.data.id);
     const k = (await S.call('GET', '/review')).data.khus.find((x) => x.khu === 'A');
-    eq('khu A: số đếm trước lúc phiếu vào tồn', [k.phieuSau, k.capPhieu], [true, 2]);
-    eq('CVKTHT không duyệt được (sẽ xoá mất 50 cây vừa nhập khỏi tồn)', (await duyet(S, 'A', 'Kho')).status, 403);
-    const ton = async () => ((await S.call('GET', '/bootstrap')).data.mvNew.find((x) => x.khu_id === 'A' && x.phi_id === 'D16') || {}).q;
-    eq('phiếu vẫn được cộng vào tồn', await ton(), 50);
+    eq('khu A: không còn phieuSau / capPhieu', [k.phieuSau, k.capPhieu], [undefined, undefined]);
+    eq('CVKTHT duyệt được (phiếu không đổi tồn)', (await duyet(S, 'A', 'Kho')).status, 200);
+    const ton = async () => {
+      const bs = (await S.call('GET', '/bootstrap')).data;
+      return [bs.mvNew.length, (bs.eff.find((x) => x.khu_id === 'A' && x.phi_id === 'D16') || {}).v];
+    };
+    eq('phiếu không cộng vào tồn: tồn = số đếm 100', await ton(), [0, 100]);
     // khu đếm lại sau phiếu: CVKTHT duyệt được
     advance(1000);
     await S.call('PUT', '/counts', { khu: 'A', items: items({ D16: 150 }) }, 'An');
     eq('đếm lại sau phiếu: CVKTHT duyệt được', (await duyet(S, 'A', 'Kho')).status, 200);
-    // "cần xem lại" (phiếu duyệt sau khi khu đã duyệt) cũng vậy: chỉ cấp chỉ huy duyệt lại
+    // phiếu duyệt sau khi khu đã duyệt: không còn "cần xem lại", không có gì để duyệt lại
     advance(1000);
     const p2 = await S.call('POST', '/receipts', { khu: 'A', lines: [{ phi: 'D16', qty: 10 }] }, 'Kho');
     await duyetP(S, p2.data.id);
     const k2 = (await S.call('GET', '/review')).data.khus.find((x) => x.khu === 'A');
-    eq('khu cần xem lại', [k2.recheck, k2.capPhieu], [true, 2]);
-    eq('CVKTHT không duyệt lại được', (await duyet(S, 'A', 'Kho')).status, 403);
-    eq('cấp chỉ huy duyệt lại được', (await duyet(S, 'A')).status, 200);
+    eq('khu không bị nhắc xem lại', [k2.recheck, k2.capPhieu], [undefined, undefined]);
+    eq('CVKTHT: không có số chờ thì không duyệt gì', (await duyet(S, 'A', 'Kho')).status, 400);
+    eq('cấp chỉ huy cũng vậy', (await duyet(S, 'A')).status, 400);
+    eq('tồn vẫn 150 theo số đếm', (await ton())[1], 150);
   }
 
   /* ================= 65. Sổ xuất sắt vụn =================

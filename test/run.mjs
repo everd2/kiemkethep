@@ -22,16 +22,17 @@ const SUITES = [
   ['Ảnh biên bản: tải lên, xem, xoá, quyền, R2 lỗi', 'anh.test.mjs'],
   ['Vá bảo mật: CSV công thức, đổi PIN, ảnh gửi dồn', 'baomat.test.mjs'],
   ['Rà soát: LIMIT âm, ngày không có thật', 'roasoat.test.mjs'],
-  ['Rà soát kho: duyệt lúc nửa đêm không cộng phiếu hai lần, Duyệt tất cả không làm mất phiếu, đổi PIN không tự khoá, phi tên lạ', 'khoroasoat.test.mjs'],
-  ['Lõi tính tồn: phiếu lập sau lúc đếm vẫn cộng lên số đếm, số đếm chuyển qua 0h, huỷ phiếu sai sau khi đếm lại, phi_rate cũ', 'kho3.test.mjs'],
+  ['Rà soát kho: duyệt lúc nửa đêm tồn đúng số đếm, phiếu duyệt sau lần đếm không sinh việc xem lại, đổi PIN không tự khoá, phi tên lạ', 'khoroasoat.test.mjs'],
+  ['Lõi tính tồn (v70): phiếu không cộng lên số đếm, số đếm chuyển qua 0h, huỷ phiếu luôn được, thẻ Duyệt tham chiếu, phi_rate cũ', 'kho3.test.mjs'],
   ['Báo cáo sản lượng: quyền, quân số lấy từ báo cáo ca, (công x 158 x tỷ lệ gia công) / tỷ lệ giá, bản chữ', 'sanluong.test.mjs'],
   ['Bấm loạn: mọi nút trên mọi màn, hai lượt (Quay lại / Đồng ý), không lỗi JavaScript, không bị khoá ngoài', 'bam.test.mjs'],
   ['Chuyển màn không chờ trắng: mở lại mọi màn hiện ngay, tải sẵn màn hay dùng, mỗi lần mở <= 3 lượt gọi', 'chuyenman.test.mjs'],
   ['Sổ thép về công trình: quyền giao bởi admin đầu tiên, chuyến về, đơn hàng, nhập Excel, thống kê', 'thepve.test.mjs'],
   ['Sao lưu tự động hằng tuần lên R2: lịch 2h sáng, giữ 8 bản, nạp lại được, một lượt gọi D1, chỉ admin đầu tiên', 'saoluu.test.mjs'],
-  ['Sửa lỗi sau rà soát: đăng nhập song song, huỷ phiếu âm tồn, gửi trùng, ngày vay mượn', 'suaroi.test.mjs'],
+  ['Sửa lỗi sau rà soát: đăng nhập song song, huỷ phiếu không chặn tồn, gửi trùng, ngày vay mượn', 'suaroi.test.mjs'],
   ['Vá bảo mật đợt 2: trần sai PIN / token theo mạng khi gửi song song, nạp bản sao không lùi PIN / khoá / xoá, sao lưu tay tách bản tuần', 'baomat2.test.mjs'],
   ['Sửa đợt 4: huỷ sắt vụn khi lên chức, quân số mất sóng bị từ chối, ô số "1.500", số thiết lập ca đã qua', 'sua4.test.mjs'],
+  ['Tách tồn khỏi phiếu (v70): tồn = số đếm đã duyệt, phiếu chỉ thống kê, không chặn, Duyệt khu chỉ duyệt số đếm', 'tachton.test.mjs'],
 ];
 
 const run = (file) =>

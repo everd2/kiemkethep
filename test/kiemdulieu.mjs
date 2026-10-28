@@ -1,7 +1,8 @@
 /* KIỂM DỮ LIỆU: soát một bản sao cơ sở dữ liệu (tệp .sql xuất bằng `wrangler d1 export`, hoặc tệp SQLite) — CHỈ ĐỌC, không ghi gì.
    node test/kiemdulieu.mjs <tệp.sql | tệp.sqlite> [đường-dẫn-repo]
    In ra: LỖI (dữ liệu sai thật, cần sửa), CẢNH BÁO (đáng xem lại), và số liệu tổng quan. Thoát mã 1 nếu có LỖI.
-   Tồn kho tính bằng ĐÚNG hàm của app (tonCells ở src/phieu.js), nên "tồn âm" ở đây là tồn âm mà app đang thấy. */
+   Tồn kho tính bằng ĐÚNG hàm của app (tonCells ở src/phieu.js), nên "tồn âm" ở đây là tồn âm mà app đang thấy. Từ v70 tồn chỉ
+   là số đếm đã duyệt / tồn chuẩn (phiếu không cộng trừ), nên tồn âm chỉ còn có thể đến từ dữ liệu ghi tay hoặc tệp nạp sai. */
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
@@ -95,14 +96,14 @@ if (ok('day_close')) {
 }
 
 /* ---------- 6. Tồn kho theo đúng hàm của app ---------- */
-if (ok('khu') && ok('phi') && ok('receipts') && ok('counts')) {
+if (ok('khu') && ok('phi') && ok('baseline') && ok('counts')) {
   // shim D1 tối giản trên node:sqlite (như test/harness.mjs), chỉ đọc
   const st = (sql, p = []) => ({ bind: (...a) => st(sql, a), all: async () => ({ results: raw.prepare(sql).all(...p) }), first: async () => raw.prepare(sql).get(...p) || null });
   const env = { DB: { prepare: (sql) => st(sql), batch: async (ss) => Promise.all(ss.map((x) => x.all())) } };
   const { tonCells } = await import(pathToFileURL(path.join(ROOT, 'src/phieu.js')).href);
   const khu = q('SELECT id, name FROM khu'), phi = q('SELECT id, kg_per_cay FROM phi');
   const cells = khu.flatMap((k) => phi.map((p) => ({ khu: k.id, phi: p.id })));
-  const ton = await tonCells(env, today, cells, false);
+  const ton = await tonCells(env, today, cells); // v70: số đếm đã duyệt, chưa có thì tồn chuẩn
   const am = Object.entries(ton).filter(([, v]) => v < 0).map(([k, v]) => ({ o: k, ton: v }));
   loi('TỒN ÂM (khu|phi) theo cách app tính', am);
   const kgTong = Object.entries(ton).reduce((a, [k, v]) => a + Math.max(0, v) * (phi.find((p) => p.id === k.split('|')[1]) || { kg_per_cay: 0 }).kg_per_cay, 0);

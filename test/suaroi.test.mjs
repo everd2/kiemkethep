@@ -1,4 +1,4 @@
-/* Hồi quy đợt sửa lỗi sau rà soát toàn diện: đăng nhập song song, cookie đổi PIN, huỷ phiếu gây âm tồn, phiếu gửi trùng,
+/* Hồi quy đợt sửa lỗi sau rà soát toàn diện: đăng nhập song song, cookie đổi PIN, huỷ phiếu (v70: không còn chặn tồn), phiếu gửi trùng,
    tên phi/khu trùng thuộc tính Object, ngày vay mượn không có thật, mở khoá, khu có người bị khoá, ẩn khu còn phiếu chờ.
    node suaroi.test.mjs <đường-dẫn-repo> */
 import { advance, boot, vnDay } from './harness.mjs';
@@ -61,14 +61,19 @@ async function main() {
   ok('gửi trùng khoá: không lần nào lỗi', song.every((r) => r.status === 200), song.map((r) => r.status).join(','));
   eq('chỉ một dòng phiếu cho khoá đó', S.sql('SELECT 1 FROM receipts WHERE grp = ?', khoa1).length, 1);
 
-  // 6. huỷ phiếu nhập đã duyệt khi thép đã chuyển đi: khu không được âm
+  /* 6. huỷ phiếu nhập đã duyệt khi đã có phiếu chuyển thép đó đi. Tới v69 bị chặn "khu chỉ còn…" để khu không âm; từ v70 phiếu
+     không đổi tồn (tồn theo số đếm), nên huỷ được và tồn không đổi. */
+  const { tonCells } = await import((await import('node:url')).pathToFileURL((await import('node:path')).default.join(ROOT, 'src/phieu.js')).href);
+  const tonAB = async () => Object.values(await tonCells(S.env, vnDay(), [{ khu: 'A', phi: 'D12' }, { khu: 'B', phi: 'D12' }]));
   const r1 = await nhap({ khu: 'A', lines: [{ phi: 'D12', qty: 100 }] });
   const tr = await S.call('POST', '/transfers', { from: 'A', to: 'B', lines: [{ phi: 'D12', qty: 100 }] });
+  eq('chuyển 100 khi khu A chưa có số đếm nào: không chặn', tr.status, 200);
   await duyet(tr.data.id);
   const v1 = await S.call('DELETE', '/receipts/' + r1.data.id);
-  eq('huỷ phiếu nhập khi thép đã chuyển đi bị chặn', v1.status, 400);
-  ok('và nói rõ khu nào còn bao nhiêu', /chỉ còn/.test(JSON.stringify(v1.data)), JSON.stringify(v1.data));
-  eq('phiếu nhập vẫn còn hiệu lực', S.one('SELECT voided FROM receipts WHERE id = ?', r1.data.id).voided, 0);
+  eq('huỷ phiếu nhập khi thép đã chuyển đi: được (phiếu không đổi tồn)', v1.status, 200);
+  ok('không còn lời "chỉ còn"', !/chỉ còn/.test(JSON.stringify(v1.data)), JSON.stringify(v1.data));
+  eq('phiếu nhập đã huỷ', S.one('SELECT voided FROM receipts WHERE id = ?', r1.data.id).voided, 1);
+  eq('tồn A / B vẫn 0 (không có số đếm, phiếu không cộng trừ)', await tonAB(), [0, 0]);
   const r2 = await nhap({ khu: 'B', lines: [{ phi: 'D14', qty: 30 }] });
   eq('huỷ phiếu nhập còn nguyên thép vẫn được', (await S.call('DELETE', '/receipts/' + r2.data.id)).status, 200);
 
@@ -171,7 +176,10 @@ async function main() {
   const ban = /const BAN = '([^']+)'/.exec(readFileSync(path.join(ROOT, 'public/app.js'), 'utf8')), cache = /const CACHE = '([^']+)'/.exec(readFileSync(path.join(ROOT, 'public/sw.js'), 'utf8'));
   eq('BAN trong app.js trùng CACHE trong sw.js', ban && ban[1], cache && cache[1]);
 
-  // 20. Duyệt khu thiếu dấu số liệu (bản app cũ): báo cập nhật app, không duyệt
+  // 20. Duyệt khu thiếu dấu số liệu (bản app cũ): báo cập nhật app, không duyệt. Phải có số đếm chờ duyệt (v70: phiếu chờ không
+  // còn làm khu "chờ duyệt"), không thì server trả 400 "không còn khu nào chờ" trước khi tới chỗ kiểm dấu
+  const phiAct = S.sql('SELECT id FROM phi WHERE active = 1').map((x) => x.id);
+  eq('admin báo số khu A (chờ duyệt)', (await S.call('PUT', '/counts', { khu: 'A', items: phiAct.map((phi) => ({ phi, v: phi === 'D10' ? 5 : 0, kind: phi === 'D10' ? 'dem' : 'zero' })) })).status, 200);
   const dkMiss = await S.call('POST', '/review/duyet', { all: true, marks: null });
   eq('duyệt thiếu dấu số liệu: 409 old_app (máy khách bật dải có bản mới)', [dkMiss.status, dkMiss.data && dkMiss.data.code], [409, 'old_app']);
 

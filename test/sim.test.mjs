@@ -72,7 +72,7 @@ async function sim(seed) {
   const get = (k, p) => real[key(k, p)] || 0;
   /* dirty: ô mà lượng thép đã đổi SAU lần báo gần nhất của khu đó. Hệ thống không có cách nào
      biết số mới (thép xuất dùng không có phiếu, hoặc thép về sau khi đã đếm), nên chỉ được đối
-     chiếu sổ bóng ở những ô KHÔNG dirty. Đây là giới hạn của bài toán, không phải lỗi của app. */
+     chiếu sổ bóng ở những ô KHÔNG dirty. (v70: kể cả thép về / chuyển CÓ phiếu — phiếu không đổi tồn, tồn chỉ theo số đếm đã duyệt.) Đây là giới hạn của bài toán, không phải lỗi của app. */
   const dirty = new Set();
   const add = (k, p, q) => { real[key(k, p)] = get(k, p) + q; dirty.add(key(k, p)); };
   const clean = (k, phis) => phis.forEach((p) => dirty.delete(key(k, p)));
@@ -104,7 +104,7 @@ async function sim(seed) {
       }
     }
 
-    // ---- chuyển khu (chỉ chuyển trong khả năng) ----
+    // ---- chuyển khu (chỉ chuyển trong khả năng THẬT của sổ bóng; v70 app không còn chặn theo tồn, phiếu không đổi tồn) ----
     for (let i = int(2); i > 0; i--) {
       const from = pick(KHU), to = pick(KHU.filter((x) => x !== from)), p = pick(PHI);
       const have = get(from, p);
