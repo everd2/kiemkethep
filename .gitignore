@@ -5,3 +5,4 @@ node_modules/
 backup*.sql
 # thư mục làm việc của Claude Code (worktree, cấu hình máy) — không thuộc mã nguồn
 .claude/
+.kt-tmp/

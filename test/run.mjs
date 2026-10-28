@@ -3,6 +3,11 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { donRac, baoDon, envTam } from '../scripts/donrac.mjs';
+
+// dọn rác cũ trước, rồi cho mọi bộ test ghi tệp tạm vào .kt-tmp/ trong repo (ổ D) thay vì ổ C
+baoDon(donRac());
+const ENV = envTam();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -37,7 +42,7 @@ const SUITES = [
 
 const run = (file) =>
   new Promise((resolve) => {
-    const p = spawn(process.execPath, ['--no-warnings', path.join(here, file), root], { cwd: root });
+    const p = spawn(process.execPath, ['--no-warnings', path.join(here, file), root], { cwd: root, env: ENV });
     let out = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (out += d));

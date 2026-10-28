@@ -482,6 +482,8 @@ npm run dev
 ```
 Mở http://localhost:8787/setup để tạo admin thử.
 
+`npm test` / `npm run dev` / `npm run deploy` tự dọn rác cũ hơn 1 ngày trước khi chạy. Rác gồm `.kt-tmp/`, `%TEMP%\miniflare-*` và `.wrangler/tmp/`, cùng worktree trong `.claude/worktrees/` đã gộp vào main, không sửa gì và 2 ngày không đụng tới. Tệp tạm được ghi vào `.kt-tmp/` trong repo, không ghi vào ổ C. Muốn dọn hết cả rác mới thì chạy `npm run donrac`. Mã nằm ở `scripts/donrac.mjs`.
+
 ## Hạn mức gói miễn phí (50 người dùng vẫn đủ)
 
 | Hạng mục | Miễn phí | Ứng dụng này dùng |

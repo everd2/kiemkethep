@@ -3,11 +3,12 @@
   "version": "1.3.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "node scripts/donrac.mjs wrangler dev",
+    "deploy": "node scripts/donrac.mjs wrangler deploy",
     "db:local": "wrangler d1 execute kho-thep --local --file=schema.sql",
     "db:remote": "wrangler d1 execute kho-thep --remote --file=schema.sql",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs",
+    "donrac": "node scripts/donrac.mjs --het"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
