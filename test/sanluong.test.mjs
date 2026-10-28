@@ -5,7 +5,7 @@
    3. Thiết lập: công chuẩn (158), tỷ lệ giá CHUNG (0,2-1, mặc định 0,2), tỷ lệ gia công RIÊNG TỪNG TỔ (0,5-1, mặc định 0,70-0,80).
    4. Sản lượng tổ = (công x công chuẩn x tỷ lệ gia công của tổ) / tỷ lệ giá, tự tính theo thiết lập; ngày đã lưu giữ thiết lập lúc lưu.
    5. Bản chữ đúng khuôn báo cáo quân số: phần đầu giữ nguyên, mục 2 quân số + công gia công thép, mục 3 sản lượng. */
-import { boot, vnDay } from './harness.mjs';
+import { advance, boot, vnDay } from './harness.mjs';
 
 const ROOT = process.argv[2] || '.';
 const T = [];
@@ -13,6 +13,10 @@ const ok = (name, cond, extra) => { T.push([cond ? 'PASS' : 'FAIL', name, extra 
 const eq = (name, a, b) => ok(name + ' = ' + JSON.stringify(b), JSON.stringify(a) === JSON.stringify(b), 'thực tế: ' + JSON.stringify(a));
 
 async function main() {
+  /* 9h sáng: ca ngày hôm nay ĐANG chạy (Hoàng theo số thiết lập hiện tại), ca đêm hôm qua ĐÃ hết (Sơn theo bản chép lúc hết ca,
+     xem bên dưới). Không ghim giờ thì kết quả tuỳ lúc chạy test: chạy sau 18h30 ca ngày đã hết, chạy trước 6h30 ca đêm chưa hết. */
+  const cur = ((Date.now() + 7 * 3600e3) % 864e5) / 60e3;
+  advance(((9 * 60 - cur + 1440) % 1440 || 1440) * 60e3);
   const S = await boot(ROOT);
   await S.call('POST', '/setup', { token: 'setup-tok', name: 'Admin', phone: '0900000001', pin: '2468' });
   await S.login('Admin', '0900000001', '2468');
@@ -40,7 +44,13 @@ async function main() {
   // Hoàng và Sơn KHÔNG báo gì, chỉ có "Thiết lập quân số" do CVKTHT đặt: Hoàng làm ca ngày 12/15, Sơn làm ca đêm 17/19
   const tlq = (b) => S.call('PUT', '/quanso/thietlap', b, CV);
   eq('đặt thiết lập quân số cho Hoàng (ca ngày)', (await tlq({ user: U['Nguyễn Văn Hoàng'], tong: 15, s1: 12, s2: 0, ts: 0 })).status, 200);
-  eq('đặt thiết lập quân số cho Sơn (ca đêm)', (await tlq({ user: U['Nguyễn Đức Sơn'], tong: 19, s1: 0, s2: 17, ts: 0 })).status, 200);
+  /* Ca đêm hôm qua ĐÃ HẾT: theo README (Thống kê quân số: "sửa số thiết lập sau đó không đổi số của ca đã qua"), báo cáo ca và
+     sản lượng của ca đã qua lấy số thiết lập ĐÃ CHÉP LÚC HẾT CA (quan_so_tl, lịch mỗi giờ ghi), không lấy số đang đặt. Trước đây
+     test này chỉ có số đang đặt và mong báo cáo hôm qua đọc thẳng số đó — đúng cái lỗi đã sửa (CVKTHT sửa số hôm nay là báo cáo
+     hôm qua đổi theo, lệch với Thống kê). Nay dựng đúng như thật: lúc hết ca đêm Sơn có số 17/19 và lịch đã chép dòng này; sáng
+     nay CVKTHT sửa số đang đặt thành 16 (cho các ca sau) — báo cáo hôm qua vẫn phải là 17/19. */
+  eq('đặt thiết lập quân số cho Sơn (ca đêm), sửa sau giờ hết ca', (await tlq({ user: U['Nguyễn Đức Sơn'], tong: 19, s1: 0, s2: 16, ts: 0 })).status, 200);
+  S.raw.prepare('INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?, 2, ?, 19, 17, ?, NULL, ?)').run(hom, U['Nguyễn Đức Sơn'], '{}', Date.now());
 
   /* ===== 1. Quyền ===== */
   eq('Tiểu đội trưởng không mở được báo cáo sản lượng', (await S.call('GET', '/sanluong', undefined, 'Phạm Văn Khoa')).status, 403);

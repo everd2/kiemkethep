@@ -394,7 +394,7 @@ export function qsBoot(rows, st, user, mine = [], bcDa = [], cfgRow = null) {
    % nghỉ = công nghỉ ÷ (công đi làm + công nghỉ); của toàn bộ thì cộng công mọi tổ rồi mới chia. */
 export const QS_NGUONG_MAC = 15;
 const TK_NGAY_MAX = 124;
-const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: congNgay(c.ngay, -1), ca: 2 });
+export const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: congNgay(c.ngay, -1), ca: 2 });
 
 /* LƯU SỐ CỦA CA TỔ KHÔNG BÁO, chạy theo lịch mỗi giờ. Số thiết lập và lịch ca chỉ có một bản, sửa là mất số cũ, nên
    hết ca nào chép lại ngay ca đó: tổ LÀM ca đó (theo lịch ca; chưa đặt lịch thì theo số thiết lập có người ca đó) mà
@@ -414,6 +414,19 @@ function soTlCa(cfg, id, c, het) {
      động (lịch chạy mỗi giờ): CVKTHT sửa số ngay sau giờ hết ca, trước lượt chép, thì ca đó vẫn có số thay vì thành "thiếu số". */
   if ((L ? cfg.lich[id].ts : tl.ts) > het + TL_DEM_MS) return null;
   return { tong: co ? tl.tong : null, lam: co ? s : null, nghi: co ? nghi : {}, ghi_chu: (co && nghi.khac && tl['gc' + c.ca]) || null };
+}
+/* SỐ THIẾT LẬP CỦA MỘT CA ĐÃ HẾT, cho báo cáo ca và báo cáo sản lượng (bcView). Số thiết lập chỉ có một bản, sửa là mất số cũ;
+   README hứa "sửa số thiết lập sau đó không đổi số của ca đã qua". Trước đây báo cáo ca / sản lượng xem lại ca cũ vẫn đọc số
+   thiết lập HIỆN TẠI: CVKTHT sửa số hôm nay là báo cáo hôm qua (và sản lượng hôm qua) đổi theo, lệch với Thống kê vốn đọc bản
+   đã chép. Nay tổ nào CÓ bản chép lúc hết ca (quan_so_tl, lịch mỗi giờ chỉ chép ca ĐÃ HẾT) thì dùng bản đó, kể cả lam null =
+   ca thiếu số (lúc hết ca tổ chưa có số thiết lập: KHÔNG lấy số đặt sau đó bù vào, như Thống kê). Tổ không có bản chép (ca còn
+   đang chạy, ca vừa hết mà lịch chưa kịp chép, ca hết trước lúc đặt lịch / số) thì máy khách vẫn dùng số đang đặt như trước:
+   số đó là số CVKTHT vừa điền cho ca chưa có số nào, bỏ đi thì báo cáo ca đó trống trơn.
+   rows: dòng quan_so_tl; kết quả của ca c: { "<id tổ>": { tong, lam, nghi, ghi_chu, uname } }. */
+export function tlCaDaQua(c, rows) {
+  const out = {};
+  for (const r of rows) if (r.ngay === c.ngay && r.ca === c.ca) out[r.user_id] = { tong: r.tong, lam: r.lam, nghi: docNghi(r.nghi), ghi_chu: r.ghi_chu, uname: r.uname };
+  return out;
 }
 export async function qsChotCa(env, now = Date.now()) {
   const cas = [];

@@ -1,7 +1,7 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
 import { HttpError, bad, json, vnDay } from './core.js';
 import { SETTINGS_SQL, auditStmt, batchGuarded, bump, guardStmt, parseSettings, readJson } from './helpers.js';
-import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, docCfg } from './quanso.js';
+import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, caTruoc, docCfg, tlCaDaQua } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
    Người soạn: CVKTHT trở lên. Server chỉ GOM SỐ LIỆU và LƯU; việc ghép chữ theo mẫu nằm ở máy khách (app.js,
@@ -107,7 +107,7 @@ async function caiDatNhanh(env, rev) {
 export async function bcView(env, url, user) {
   const st = await caiDatNhanh(env, user && user.rev);
   const c = docCa(url.searchParams, st), gio = caGio(st, c), hien = caLuc(st);
-  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr] = await env.DB.batch([
+  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr, tlR] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),
     env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id WHERE q.ngay = ?`).bind(c.ngay),
@@ -133,14 +133,21 @@ export async function bcView(env, url, user) {
        lâu không kéo chữ của nửa tháng trước về. */
     env.DB.prepare('SELECT ngay, data FROM bao_cao_ca WHERE ca = ?2 AND ngay < ?1 AND ngay >= ?3 ORDER BY ngay DESC LIMIT 1')
       .bind(c.ngay, c.ca, new Date(Date.parse(c.ngay) - BC_MANG_NGAY * 864e5).toISOString().slice(0, 10)),
+    // số thiết lập đã chép lúc hết ca (quan_so_tl) của ca này và ca liền trước: xem tlCaDaQua
+    env.DB.prepare(`SELECT t.ngay, t.ca, t.user_id, t.tong, t.lam, t.nghi, t.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
+                    FROM quan_so_tl t LEFT JOIN users u ON u.id = t.user_id WHERE t.ngay = ?1 OR (t.ngay = ?2 AND t.ca = 2)`)
+      .bind(c.ngay, new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
   ]);
-  const r = bc.results[0], H = homTruoc(bcTr.results[0]);
+  const r = bc.results[0], H = homTruoc(bcTr.results[0]), cfg = docCfg(mau.results[0]);
+  /* tlCa[số ca]: bản chép lúc hết ca của ca này và ca liền trước — đúng hai ca bcQuanSo đọc số thiết lập. Tổ có bản chép thì
+     dùng bản đó chứ không dùng số đang đặt (tl); tổ không có thì vẫn tl, như trước (xem tlCaDaQua). */
+  const tlCa = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, tlCaDaQua(x, tlR.results)]));
   return json({
     ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, han: caHan(st, c), lyDo: QS_LY_DO,
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
     // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
-    lich: docCfg(mau.results[0]).lich, tl: docCfg(mau.results[0]).tl,
+    lich: cfg.lich, tl: cfg.tl, tlCa,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     ck: ck.results.map((x) => x.ten),
     homTruoc: H, viecTruoc: viecTruoc(H),

@@ -300,7 +300,7 @@ Cùng khuôn với báo cáo ca nhưng là **một báo cáo gộp ca ngày và 
 
   | Mục | Lấy từ |
   |---|---|
-  | 3. Quân số | Quân số đầu ca. **Tổ làm ca đang báo cáo đứng trước**, mỗi tổ ghi đi làm / tổng và nghỉ theo lý do. **Tổ làm cả 2 ca ghi thêm ca liền trước** (báo cáo ca ngày kèm ca đêm hôm trước; báo cáo ca đêm kèm ca ngày cùng ngày). **Tổ làm ca kia** dồn xuống cuối, chỉ ghi *(làm ca đêm)*. Tổ chưa báo thì lấy **số thiết lập**, viết như dòng thường. Có nút chọn nguồn: *Theo tổ báo* hoặc *Chỉ số thiết lập* |
+  | 3. Quân số | Quân số đầu ca. **Tổ làm ca đang báo cáo đứng trước**, mỗi tổ ghi đi làm / tổng và nghỉ theo lý do. **Tổ làm cả 2 ca ghi thêm ca liền trước** (báo cáo ca ngày kèm ca đêm hôm trước; báo cáo ca đêm kèm ca ngày cùng ngày). **Tổ làm ca kia** dồn xuống cuối, chỉ ghi *(làm ca đêm)*. Tổ chưa báo thì lấy **số thiết lập**, viết như dòng thường; **ca đã hết thì là số thiết lập đã chép lúc hết ca** (như Thống kê và báo cáo sản lượng; lúc hết ca tổ chưa có số thì ghi chưa báo), sửa số thiết lập sau đó không đổi báo cáo của ca đã qua. Tổ không có bản chép (ca đang chạy, lịch chưa kịp chép) thì dùng số đang đặt. Có nút chọn nguồn: *Theo tổ báo* hoặc *Chỉ số thiết lập* |
   | 4. Công việc trong ngày | Đơn gia công đang làm (*đang gia công 80%*) và đơn xác nhận xong trong giờ ca (*hoàn thành*) |
   | 5. MMTB | Lần chép trước |
   | 6. Kiểm tra, giám sát | Chữ của cùng ca hôm trước; chưa có thì năm dòng mặc định của mẫu |

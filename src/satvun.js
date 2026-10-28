@@ -1,5 +1,5 @@
 // Sổ xuất sắt vụn ra ngoài bãi: ghi nhớ, thống kê, đối chiếu (không tính vào tồn).
-import { CAP_TREN, DAY_RE, HttpError, bad, capOf, daysBetween, duyetCap, duyetCuaNguoi, fmtDay, json, vnDay } from './core.js';
+import { CAP_TREN, DAY_RE, HttpError, bad, capOf, daysBetween, duyetCuaNguoi, fmtDay, json, vnDay } from './core.js';
 import { CSV_HEAD, UNAME, auditStmt, batchGuarded, bump, csvDec, csvRow, guardStmt, readJson } from './helpers.js';
 import { bbKhoa } from './loans.js';
 import { anhJson, docAnh } from './anh.js';
@@ -121,7 +121,8 @@ export async function voidSv(req, env, user, id) {
   const r = await env.DB.prepare('SELECT * FROM satvun WHERE id = ? AND voided = 0').bind(id).first();
   if (!r) throw new HttpError(404, 'Không tìm thấy lần xuất sắt vụn');
   const pending = !r.duyet_ts;
-  const quyen = duyetCap(user.role, r.cap);
+  // như duyetSv / voidLoan: người ghi được lên chức sau đó vẫn không tự huỷ lần ghi của mình ngoài cửa sổ 10 phút
+  const quyen = duyetCuaNguoi(user, r.cap, [r.user_id]);
   if (!quyen) {
     if (r.user_id !== user.id) throw new HttpError(403, 'Chỉ người ghi hoặc cấp duyệt được lần ghi này mới huỷ được');
     if (!pending && Date.now() - r.duyet_ts > 10 * 60e3) throw new HttpError(403, 'Đã duyệt quá 10 phút, nhờ cấp trên huỷ');

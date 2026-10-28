@@ -31,6 +31,7 @@ const SUITES = [
   ['Sao lưu tự động hằng tuần lên R2: lịch 2h sáng, giữ 8 bản, nạp lại được, một lượt gọi D1, chỉ admin đầu tiên', 'saoluu.test.mjs'],
   ['Sửa lỗi sau rà soát: đăng nhập song song, huỷ phiếu âm tồn, gửi trùng, ngày vay mượn', 'suaroi.test.mjs'],
   ['Vá bảo mật đợt 2: trần sai PIN / token theo mạng khi gửi song song, nạp bản sao không lùi PIN / khoá / xoá, sao lưu tay tách bản tuần', 'baomat2.test.mjs'],
+  ['Sửa đợt 4: huỷ sắt vụn khi lên chức, quân số mất sóng bị từ chối, ô số "1.500", số thiết lập ca đã qua', 'sua4.test.mjs'],
 ];
 
 const run = (file) =>

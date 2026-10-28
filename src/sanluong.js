@@ -73,8 +73,11 @@ const docChup = (c, ids) => {
 export async function slView(env, url) {
   const ngay = docNgay(url.searchParams.get('ngay')), hom = congNgay(ngay, -1);
   const [tdt, mau, bc] = await env.DB.batch([
-    // tổ đang dùng app, cộng tổ đã xoá mà còn số báo trong hai ca của báo cáo này
-    env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE ((u.role = 'tieudoi' AND u.deleted = 0) OR EXISTS (SELECT 1 FROM quan_so q WHERE q.user_id = u.id AND ((q.ngay = ?1 AND q.ca = 1) OR (q.ngay = ?2 AND q.ca = 2)))) ORDER BY ${TO_SX}`).bind(ngay, hom),
+    /* tổ đang dùng app, cộng tổ đã xoá mà còn số báo — hoặc số thiết lập đã chép lúc hết ca (quan_so_tl, xem tlCaDaQua) — trong hai
+       ca của báo cáo này: báo cáo ca có dòng của tổ đó thì sản lượng cũng phải có */
+    env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE ((u.role = 'tieudoi' AND u.deleted = 0)
+                      OR EXISTS (SELECT 1 FROM quan_so q WHERE q.user_id = u.id AND ((q.ngay = ?1 AND q.ca = 1) OR (q.ngay = ?2 AND q.ca = 2)))
+                      OR EXISTS (SELECT 1 FROM quan_so_tl t WHERE t.user_id = u.id AND t.lam IS NOT NULL AND ((t.ngay = ?1 AND t.ca = 1) OR (t.ngay = ?2 AND t.ca = 2)))) ORDER BY ${TO_SX}`).bind(ngay, hom),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare("SELECT s.data, s.ts, s.by_id, COALESCE(u.name, '(đã xoá)') by_name FROM san_luong s LEFT JOIN users u ON u.id = s.by_id WHERE s.ngay = ?").bind(ngay),
   ]);

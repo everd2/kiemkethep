@@ -3659,27 +3659,52 @@ const QS_Q = 'kt:qsq';
 const qsHangDoi = () => { try { const q = JSON.parse(localStorage.getItem(QS_Q) || '[]'); return Array.isArray(q) ? q : []; } catch (e) { return []; } };
 const qsGhiHang = (q) => { try { localStorage.setItem(QS_Q, JSON.stringify(q)); } catch (e) { /* đầy bộ nhớ */ } };
 let qsDangGui = false;
+/* Server TỪ CHỐI lần báo (khác mất sóng / 401) thì KHÔNG xoá: gắn lỗi (j.err, j.ma = mã lỗi) và giữ lại, như báo
+   cáo đếm (flushPending). Hay gặp nhất: báo lúc mất sóng, có sóng lại thì ca đã qua (409 'qua') — trước đây lần báo
+   bị xoá chỉ kèm một dòng báo thoáng qua, số người đi làm của ca đó mất hẳn mà không ai biết phải nhờ CVKTHT ghi.
+   Lần có lỗi hiện thành thẻ đỏ trên Tổng quan (qsLoiHtml) cho tổ tự quyết: gửi lại hoặc bỏ. */
 async function qsFlush() {
   if (qsDangGui || !S.me) return;
-  const toi = qsHangDoi().filter((j) => j.uid === S.me.id);
+  const toi = qsHangDoi().filter((j) => j.uid === S.me.id && !j.err);
   if (!toi.length) return;
   qsDangGui = true;
-  let doi = false;
+  let doi = false, loi = 0;
   try {
     for (const j of toi) {
-      try { await api('PUT', '/quanso', j.body); doi = true; }
-      // 401 (hết phiên) cũng dừng và GIỮ hàng chờ: không xoá lần báo chỉ vì phải đăng nhập lại
-      catch (e) { if (e.net || e.retry || e.status === 401) break; say('Lần báo quân số lúc mất sóng không gửi được: ' + e.message, true); doi = true; }
-      qsGhiHang(qsHangDoi().filter((x) => x.id !== j.id));
+      // lần báo mới hơn (qhgui) đã thay / gỡ lần này trong lúc vòng đang chạy: gửi nữa là số cũ đè số mới
+      if (!qsHangDoi().some((x) => x.id === j.id)) continue;
+      try { await api('PUT', '/quanso', j.body); doi = true; qsGhiHang(qsHangDoi().filter((x) => x.id !== j.id)); }
+      catch (e) {
+        // 401 (hết phiên) cũng dừng và GIỮ hàng chờ: không xoá lần báo chỉ vì phải đăng nhập lại
+        if (e.net || e.retry || e.status === 401) break;
+        qsGhiHang(qsHangDoi().map((x) => (x.id === j.id ? { ...x, err: e.message, ma: e.code || '' } : x)));
+        doi = true; loi++;
+      }
     }
   } finally { qsDangGui = false; }
+  if (loi) say('Có lần báo quân số lưu lúc mất sóng không gửi được, xem ở Tổng quan.', true);
   if (doi) { try { await loadBoot(); } catch (e) { /* vòng sau */ } render(); }
+}
+/* Thẻ đỏ cho từng lần báo quân số bị server từ chối (xem qsFlush). Hiện MỌI ca, cả ca đã qua: qhCas chỉ bày ca đang
+   diễn ra và ca kế, lần báo của ca đã qua nằm ngoài thẻ báo ca nên không có thẻ này thì không ai thấy. Ca đã qua thì
+   gửi lại cũng bị từ chối y như vậy: chỉ nói rõ phải nhờ CVKTHT ghi ngay, kèm nút Bỏ khi đã nhờ xong. */
+function qsLoiHtml() {
+  if (!S.me) return '';
+  return qsHangDoi().filter((j) => j.uid === S.me.id && j.err).map((j) => {
+    const c = { ngay: j.body.ngay, ca: j.body.ca }, qua = j.ma === 'qua';
+    const lyDo = (S.boot && S.boot.qs && S.boot.qs.lyDo) || QS_LY_DO, n = qsSoNghi(j.body.nghi || {});
+    const so = `Đi làm ${j.body.lam}/${j.body.tong}${n ? ` · nghỉ ${n}: ${qsLyDoTxt(j.body.nghi, lyDo)}` : ''}`;
+    return `<div class="card bad col gap8"><b style="font-size:18px">Quân số ${esc(caGoi(c))} chưa gửi được</b>
+      <span class="sm" style="line-height:1.4">${esc(so)}<br>${esc(qua ? 'Lúc có sóng lại thì ca đã qua, tổ không tự báo được nữa. Nhờ CVKTHT ghi ngay quân số này cho tổ, xong thì bấm Bỏ.' : j.err)}</span>
+      <div class="row gap6">${qua ? '' : `<button class="btn s f1" data-a="qsloigui" data-v="${esc(j.id)}">Gửi lại</button>`}<button class="btn s bad f1" data-a="qsloibo" data-v="${esc(j.id)}">Bỏ</button></div></div>`;
+  }).join('');
 }
 /* Các ca báo được lúc này (ca tới trước đứng trước), kèm dòng đã báo, lần đang chờ gửi (mất sóng), hạn, và lần báo
    trước của ca đó. Qua giờ giao ca mà bản đang có chưa kịp tải lại thì chỉ còn ca kế. */
 function qhCas() {
   const q = S.boot.qs, t = q.toi, now = Date.now() + (S.boot.skew || 0), qua = now >= q.den;
-  const hang = qsHangDoi().filter((j) => j.uid === S.me.id);
+  // lần báo bị từ chối (j.err) không còn "chờ gửi": thẻ báo ca mở lại cho tổ báo lần mới; lỗi hiện ở qsLoiHtml
+  const hang = qsHangDoi().filter((j) => j.uid === S.me.id && !j.err);
   const cho = (x) => { const j = hang.find((h) => h.body.ngay === x.c.ngay && h.body.ca === x.c.ca); return j ? { ...x, cho: j.body } : x; };
   // sap: ca kế mới mở báo từ một tiếng trước giờ vào ca (qua giờ giao ca thì nó chính là ca đang diễn ra)
   const ke = { c: q.ke, row: t.ke, han: q.hanKe, truoc: t.truocKe, ke: !qua, mo: qua || now >= q.den - 3600e3, tu: q.den - 3600e3 };
@@ -3729,9 +3754,9 @@ function qsTheHome() {
   if (!q || !q.toi || S.me.role !== 'tieudoi') return '';
   const H = qhState(), lyDo = q.lyDo || QS_LY_DO, qc = qsCaNay(), toi = q.toi, L = qhLich();
   const to = q.to.find((t) => t.id === S.me.id) || { ca: [] };
-  const cas = qhCas();
+  const cas = qhCas(), loi = qsLoiHtml();
   // chưa đặt lịch ca, lịch hết hạn, hoặc đang đổi ca: chỉ hỏi ca
-  if (!L || H.doiCa) return `<div class="card ${!L ? 'warn' : ''} col gap8">${qhLichHtml(!!(toi.lich && toi.lich.het))}</div>`;
+  if (!L || H.doiCa) return loi + `<div class="card ${!L ? 'warn' : ''} col gap8">${qhLichHtml(!!(toi.lich && toi.lich.het))}</div>`;
   // việc phải làm ngay: ca tổ đang làm mà chưa báo (ca đang diễn ra, hoặc ca kế trong một tiếng trước giờ vào ca)
   const can = [qc, qc.sap].filter((k) => k && qsLamCa(to, k.ca.ca) && !k.da(to) && !cas.some((x) => x.cho && caKhoa(x.c) === caKhoa(k.ca)));
   const tre = can.some((k) => k.tre);
@@ -3753,7 +3778,7 @@ function qsTheHome() {
     const sau = cuaToi.find((y) => !y.row && !y.cho && !y.mo);
     const cho = sau ? `<div class="row gap8"><span class="f1 sm muted">${esc(hoa(caGoi(sau.c)))}: mở báo từ ${hhmm(sau.tu)}</span><button class="chip s" style="flex:none" data-a="qhsom">Báo sớm</button></div>` : '';
     // đã báo xong, không còn gì phải làm: lối sang thống kê của tổ (thay cho màn "Quân số tổ đã báo" lặp đúng thẻ này)
-    return `<div class="card col gap8">${dau}${lichO}${daBao}${cho}<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="nav" data-s="qstk">Xem thống kê nghỉ của tổ ›</button></div>`;
+    return loi + `<div class="card col gap8">${dau}${lichO}${daBao}${cho}<button class="sm" style="border:0;background:transparent;color:var(--pri);text-decoration:underline;padding:0;text-align:left" data-a="nav" data-s="qstk">Xem thống kê nghỉ của tổ ›</button></div>`;
   }
   const T = qhTinh();
   const oSo = (id, v, ph) => `<input class="inp s" style="width:76px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="${ph || ''}" data-model="${id}" value="${esc(v)}">`;
@@ -3777,7 +3802,7 @@ function qsTheHome() {
         ${H.nghi[ma] ? `<input class="inp s" style="width:48px;flex:none;text-align:center;padding:0 4px;font-weight:700" id="qhn_${ma}" inputmode="numeric" maxlength="3" autocomplete="off" data-model="qhn_${ma}" aria-label="Số người ${esc(ten)}" value="${H.nghi[ma]}">` : ''}</div>`).join('')}</div>
       <span class="sm muted">Chạm lý do để thêm 1 người, hoặc gõ số vào ô bên cạnh. Gõ 0 là bỏ.</span>
       <input class="inp s" id="qhnote" maxlength="200" autocomplete="off" placeholder="${H.nghi.khac ? 'Ghi rõ lý do khác (bắt buộc)' : 'Ghi chú, ví dụ: 1 người chăm bố ốm'}" data-model="qhnote" value="${esc(S.form.qhnote || '')}">`;
-  return `<div class="card ${tre ? 'bad' : can.length ? 'warn' : ''} col gap8">${dau}${H.sua ? '' : lichO}${daBao}
+  return loi + `<div class="card ${tre ? 'bad' : can.length ? 'warn' : ''} col gap8">${dau}${H.sua ? '' : lichO}${daBao}
     ${tongO}${bcO}${nghiO}${mo}
     ${canTom ? `<b id="qhprev" style="font-size:17px${qhLoiDo(T) ? ';color:var(--bad)' : T.loi ? ';font-weight:400' : ''}">${esc(qhPrevTxt(T))}</b>` : ''}
     <div class="row gap6"><button class="btn pri" style="flex:3;min-width:0;padding:8px 6px;line-height:1.2" data-a="qhgui" data-v="${caKhoa(x.c)}">${x.row ? 'GỬI LẠI ' : 'BÁO '}${esc(caGoi(x.c).toUpperCase())}</button>${H.sua || H.som ? '<button class="btn" style="flex:1;min-width:0;padding:8px 6px" data-a="qhthoi">Thôi</button>' : ''}</div>
@@ -4027,7 +4052,13 @@ function bcLyDo(r, lyDo) {
    Tổng quân số tính mọi tổ, kể cả tổ làm ca kia và tổ chưa báo. */
 function bcQuanSo(B, nguon = S.bcNguon) {
   const ca = B.ca, kia = ca === 1 ? 2 : 1, caNay = CA_TEN[ca], caKia = CA_TEN[kia], chiTl = nguon === 'tl';
-  const ds = B.tdt.concat(B.qs.filter((x) => !B.tdt.some((u) => u.id === x.user_id)).map((x) => ({ id: x.user_id, name: x.uname })))
+  /* tlCa[số ca][id tổ] (xem tlCaDaQua ở src/quanso.js): bản chép lúc hết ca. Tổ có bản chép thì số thiết lập của ca đó là bản
+     chép, không phải số đang đặt — sửa số thiết lập hôm nay không được đổi báo cáo ca / sản lượng hôm qua, và hai báo cáo đó
+     khớp với Thống kê. Tổ không có bản chép (ca đang chạy, lịch chưa kịp chép) thì dùng B.tl (số đang đặt) như trước. */
+  const tlCa = B.tlCa || {};
+  // tổ đã xoá mà ca này còn số thiết lập đã chép (Thống kê vẫn đếm tổ đó): cũng có dòng
+  const tlXoa = Object.entries(tlCa[ca] || {}).filter(([, x]) => x.lam != null && x.uname).map(([id, x]) => ({ id: Number(id), name: x.uname }));
+  const ds = B.tdt.concat(B.qs.filter((x) => !B.tdt.some((u) => u.id === x.user_id)).map((x) => ({ id: x.user_id, name: x.uname })), tlXoa)
     .filter((u, i, a) => a.findIndex((v) => v.id === u.id) === i);
   // ca liền trước của ca đang báo cáo
   const truocDs = ca === 1 ? (B.qsDemTruoc || []) : B.qs.filter((x) => x.ca === 1);
@@ -4044,7 +4075,14 @@ function bcQuanSo(B, nguon = S.bcNguon) {
     // dòng theo số thiết lập: ô Ngày / Đêm là SỐ ĐI LÀM, người nghỉ CVKTHT ghi (theo lý do) nằm ngoài số đó
     /* số thiết lập không có số nào cho ca c (tổ trưởng vừa tự đổi ca mà CVKTHT chưa đặt lại số): coi như chưa có số, như
        thống kê / chép lúc hết ca (soTlCa ở src/quanso.js), không ghi "0/N cn" như thể cả tổ nghỉ không lý do */
-    const tlDong = (c) => { if (!tl) return null; const ng = tl['n' + c] || {}; if (!tl['s' + c] && !qsSoNghi(ng)) return null; return { ca: c, tong: tl.tong, lam: c === 1 ? tl.s1 : tl.s2, ca_kia: 0, nghi: ng, ghi_chu: (ng.khac && tl['gc' + c]) || null, tl: true }; };
+    const tlDong = (c) => {
+      // có bản chép lúc hết ca: chỉ bản chép (lam null = lúc hết ca tổ chưa có số, ca thiếu số: không lấy số đặt sau đó bù vào)
+      const x = (tlCa[c] || {})[u.id];
+      if (x) return x.lam != null ? { ca: c, tong: x.tong, lam: x.lam, ca_kia: 0, nghi: x.nghi || {}, ghi_chu: x.ghi_chu || null, tl: true } : null;
+      if (!tl) return null; const ng = tl['n' + c] || {}; if (!tl['s' + c] && !qsSoNghi(ng)) return null; return { ca: c, tong: tl.tong, lam: c === 1 ? tl.s1 : tl.s2, ca_kia: 0, nghi: ng, ghi_chu: (ng.khac && tl['gc' + c]) || null, tl: true };
+    };
+    // tổng quân số theo số thiết lập: của bản chép ca này nếu có, không thì số đang đặt (tổng là của tổ, không riêng ca nào)
+    const cp = tlCa[ca] && tlCa[ca][u.id], tlT = cp && cp.tong != null ? cp : tl;
     const chon = (row, c) => (chiTl ? tlDong(c) || row : row || tlDong(c));
     let L = qsLichCa(B.lich, u.id, B.ngay);
     if (!L) { const th = qsCaCua(r0 ? [r0] : p0 ? [p0] : tr ? [tr] : []); L = th.length === 2 ? 3 : th[0] || ca; }
@@ -4054,7 +4092,7 @@ function bcQuanSo(B, nguon = S.bcNguon) {
     if (L === kia && r0 && r0.lam > 0) L = ca;
     /* tổng quân số của tổ, cùng nguồn với dòng của tổ: chọn "Chỉ số thiết lập" thì số thiết lập; theo tổ báo thì lần tổ
        báo CA NÀY, rồi số thiết lập (CVKTHT vừa sửa thì tổng đổi theo), rồi lần báo ca liền trước, rồi số tổ tự khai */
-    const tongTo = ((chiTl && tl) || r0 || tl || p0 || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
+    const tongTo = ((chiTl && tlT) || r0 || tlT || p0 || { tong: toTongKhai(B.lich, tr, u.id) }).tong;
     tong += tongTo;
     if (L === kia) { sauNhom.push(`Tổ ${u.name} (làm ${caKia})`); sauHang.push('kia'); kiaTen.push(u.name); kiaSo += tongTo; rows.push({ u, trang: 'kia', lam: null, tong: tongTo }); return; }
     if (!r0) chua.push(u.name);
@@ -5230,7 +5268,16 @@ function bcLuu(van_ban, them, okMsg) {
 }
 
 /* --- Cài đặt (admin) --- */
-const numIn = (s) => { const x = parseFloat(String(s).trim().replace(',', '.')); return Number.isFinite(x) ? x : NaN; };
+/* Số gõ kiểu Việt, cùng luật với tvKgSo (sổ thép về): "." chia nhóm ĐÚNG 3 chữ số là dấu nghìn ("1.500" = 1500,
+   "1.500,5" = 1500,5), "," là dấu thập phân. Trước đây chỉ đổi "," thành "." rồi parseFloat: admin gõ cuộn
+   "1.500" kg thì lưu 1,5 kg, tấn của cả phi thấp đi 1000 lần. "1.5" / "0.5" (không phải nhóm 3 số) vẫn là số lẻ.
+   Number thay parseFloat: "12abc" là số sai chứ không lặng lẽ thành 12; ô trống vẫn là NaN như trước. */
+const numIn = (s) => {
+  let t = String(s == null ? '' : s).trim().replace(/\s/g, '');
+  if (t === '') return NaN;
+  t = /^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t) ? t.replace(/\./g, '').replace(',', '.') : t.replace(',', '.');
+  const x = Number(t); return Number.isFinite(x) ? x : NaN;
+};
 // số của một phi theo đơn vị người dùng hiểu: thép cây theo bó/cây/kg, thép cuộn theo kg mỗi cuộn
 function phiForm(p) {
   const mn = String(Math.round((p.min_stock / p.bo_size) * 10) / 10).replace('.', ','); // 29/57 bó hiện 0,5 thay vì 0,51
@@ -7469,11 +7516,23 @@ const ACTIONS = {
         say('Mất sóng: đã lưu quân số trên máy, app tự gửi khi có mạng.');
         return;
       }
-      // đã ghi: bỏ thẻ đang gõ TRƯỚC, tải lại SAU và bỏ qua lỗi mạng lúc tải lại
+      // đã ghi: lần báo cũ bị từ chối của cùng ca (thẻ đỏ) thành thừa; bỏ thẻ đang gõ TRƯỚC, tải lại SAU và bỏ qua lỗi mạng lúc tải lại
+      qsGhiHang(qsHangDoi().filter((j) => !(j.uid === S.me.id && j.body.ngay === body.ngay && j.body.ca === body.ca)));
       qhBo();
       say(`Đã báo quân số ${caGoi(x.c)}: đi làm ${T.lam}/${T.tong}${T.nghi ? ', nghỉ ' + T.nghi : ''}.`);
       try { await loadBoot(); } catch (e) { /* vòng tự làm mới sẽ tải lại */ }
     });
+  },
+  // thẻ đỏ lần báo quân số bị từ chối (qsLoiHtml): Gửi lại = gỡ dấu lỗi để qsFlush gửi lần nữa
+  qsloigui(d) {
+    if (!qsHangDoi().some((j) => j.id === d.v && j.uid === S.me.id)) return say('Lần báo này không còn trên máy.', true), render();
+    qsGhiHang(qsHangDoi().map((j) => (j.id === d.v && j.uid === S.me.id ? { id: j.id, uid: j.uid, body: j.body, at: j.at } : j)));
+    qsFlush(); render();
+  },
+  async qsloibo(d) {
+    if (!qsHangDoi().some((j) => j.id === d.v && j.uid === S.me.id)) return say('Lần báo này không còn trên máy.', true), render();
+    if (!(await ask('Bỏ lần báo quân số này?\nSố đã gõ trên máy sẽ mất.', 'BỎ LẦN BÁO', true))) return;
+    qsGhiHang(qsHangDoi().filter((j) => !(j.id === d.v && j.uid === S.me.id))); render();
   },
   qshan() {
     const Q = S.qs; if (!Q) return;
