@@ -298,6 +298,30 @@ async function main() {
   await R('refresh()'); await cho();
   ok('người khác vừa lưu: màn lấy bản đó và nói rõ', R('S.sl.luu.cong[' + khoa.id + ']') === 3 && /Admin vừa lưu báo cáo sản lượng/.test(R('S.toast')), R('S.toast'));
 
+  /* Mục 3 của báo cáo ca SỬA TAY: sản lượng theo chữ đã sửa. Chưa sửa thì theo số app tính (như trên). Nháp trên máy đang soạn
+     thắng (thấy ngay), máy khác thấy khi bản sửa đã chép lên máy chủ. Tổ không có dòng trong chữ đã sửa vẫn theo số app. */
+  const s3Nhap = (s3) => R(`localStorage.setItem(bcKey(S.sl.bc[0]), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3 }, dau: {}, ts: Date.now() + 1 }))})`);
+  s3Nhap('Quân số đi làm trong ca 1 là: 9 công nhân / (tổng quân số 30)\n• Tổ Nguyễn Văn Hoàng: ca ngày 9/15 cn, nghỉ 6 cn\n• Tổ Phạm Văn Khoa: chưa báo quân số ca ngày');
+  R('slGan()');
+  eq('nháp sửa tay trên máy: Hoàng theo chữ đã sửa 9/15', [uOf(hoang).lam, uOf(hoang).tong, uOf(hoang).ngay.nguon], [9, 15, 'tay']);
+  eq('dòng "chưa báo" đã sửa tay: Khoa không có số ca ngày', uOf(khoa).ngay, null);
+  eq('tổ không có dòng trong chữ đã sửa (Trường): vẫn theo số app', [uOf(truong).ngay.lam, uOf(truong).ngay.nguon], [7, 'bao']);
+  ok('bản chữ sản lượng mang số đã sửa', R('slTao()').includes('Tổ Nguyễn Văn Hoàng: ca ngày 9/15 cn'), R('slTao()'));
+  ok('màn hình nói rõ mục quân số đã sửa tay', /đã sửa tay: sản lượng theo số đã sửa/.test(R('vSanLuong()')) && R('vSanLuong()').includes('(đã sửa tay ở báo cáo ca)'));
+  R(`localStorage.removeItem(bcKey(S.sl.bc[0])); slGan()`);
+  eq('bỏ nháp: Hoàng về số app 14', uOf(hoang).lam, 14);
+  // máy KHÁC (Admin) chép báo cáo ca có mục 3 sửa tay: màn sản lượng đang mở tự lấy số đó
+  const bcH = (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'Admin')).data;
+  eq('Admin chép báo cáo ca, mục 3 sửa tay Hoàng 11/15', (await S.call('PUT', '/baocao', { ngay: D, ca: 1, ts: bcH.bao ? bcH.bao.ts : 0, van_ban: 'x', muc: { s3: 'Quân số\nTổ Nguyễn Văn Hoàng: ca ngày 11/15 cn' } }, 'Admin')).status, 200);
+  await R('refresh()'); await cho();
+  eq('đã chép ở máy khác: sản lượng tự cập nhật theo số sửa tay', [uOf(hoang).lam, uOf(hoang).ngay.nguon], [11, 'tay']);
+  // máy này bấm "Lấy lại số từ app" (nháp: s3 = null) thì về số app dù bản đã chép có sửa tay
+  s3Nhap(null); R('slGan()');
+  eq('nháp "lấy lại số từ app": Hoàng về số app 14', [uOf(hoang).lam, uOf(hoang).ngay.nguon], [14, 'bao']);
+  R(`localStorage.removeItem(bcKey(S.sl.bc[0])); slGan()`);
+  // đọc tên tổ đúng dòng: "Tổ Nam" không ăn nhầm dòng "Tổ Nam Anh"; dòng không ghi ca coi là số ca đó
+  eq('tên tổ là đầu của tên khác: lấy đúng dòng', R(`JSON.stringify([bcS3Cua('Tổ Nam Anh: ca ngày 5/9 cn\\nTổ Nam: ca đêm 3/4 cn', 'Nam', 2), bcS3Cua('Tổ Nam Anh: ca ngày 5/9 cn\\nTổ Nam: ca đêm 3/4 cn', 'Nam', 1), bcS3Cua('- tổ  nam:  12 / 20 cn', 'Nam', 1), bcS3Cua('Tổ Khác: 1/2', 'Nam', 1)])`), JSON.stringify([{ lam: 3, tong: 4 }, 'khong', { lam: 12, tong: 20 }, null]));
+
   // tự dùng bản mới nhất: có bản mới mà không làm dở việc gì thì tải lại; đang làm dở thì chờ
   R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = []; S.screen = 'sanluong';`);
   eq('ô sửa của màn báo cáo ca còn mở nhưng đã rời màn đó: không coi là việc dở', R(`S.bcMo = 'dau'; coViecDo()`), false);

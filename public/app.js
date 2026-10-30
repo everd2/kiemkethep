@@ -4376,14 +4376,44 @@ async function slTai(ngay, giu) {
   if (cu && (S.screen !== 'sanluong' || !S.sl || S.sl.ngay !== q)) return;
   slDung(L, giu || !!cu);
 }
+/* Mục 3 của báo cáo ca đã SỬA TAY (người soạn gõ đè chữ app ghép): báo cáo sản lượng theo đúng chữ đó. Nháp chưa chép trên máy này
+   thắng (người đang soạn sửa xong mở sản lượng là thấy ngay, như bcDung ghép nháp), không thì bản đã chép của ca. null = chưa sửa tay. */
+function bcS3Tay(B) {
+  if (!B) return null;
+  let n = null;
+  try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
+  const thua = n && B.bao && n.ts < B.bao.ts && B.bao.by_id === S.me.id;
+  if (n && n.v === 2 && !thua && n.muc && 's3' in n.muc) return typeof n.muc.s3 === 'string' ? n.muc.s3 : null;
+  const g = bcMGoc(B).s3;
+  return typeof g === 'string' ? g : null;
+}
+const bcChuTen = (t) => String(t || '').normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
+/* Số của một tổ cho ca c trong mục 3 đã sửa tay. Dòng "Tổ <tên>: ca ngày 12/21 cn, ..." -> { lam: 12, tong: 21 }; dòng không ghi ca
+   ("Tổ A: 12/21 cn") thì coi là số của ca này; dòng có mà không có số ca c ("chưa báo", "(làm ca đêm)") -> 'khong'; không có dòng
+   của tổ -> null (sản lượng lấy số app tính cho tổ đó). */
+function bcS3Cua(txt, ten, c) {
+  const k = bcChuTen('Tổ ' + ten);
+  const l = bcDong(txt).map(bcChuTen).find((x) => x.startsWith(k) && /^(\s*[:(–-]|$)/.test(x.slice(k.length)));
+  if (l == null) return null;
+  const sau = l.slice(k.length);
+  const m = new RegExp(CA_TEN[c] + '\\s*:?\\s*(\\d+)\\s*/\\s*(\\d+)').exec(sau);
+  if (m) return { lam: Number(m[1]), tong: Number(m[2]) };
+  const m2 = !/ca (ngày|đêm)/.test(sau) && /(\d+)\s*\/\s*(\d+)/.exec(sau);
+  return m2 ? { lam: Number(m2[1]), tong: Number(m2[2]) } : 'khong';
+}
 /* Quân số của từng tổ trong báo cáo sản lượng = quân số của báo cáo ca, tính bằng đúng bcQuanSo: u.ngay là số ca ngày của ngày
    báo cáo, u.dem là số ca đêm hôm trước (tổ làm đêm). Nguồn "Theo tổ báo" / "Chỉ số thiết lập" cùng nghĩa với báo cáo ca: mặc định
    theo nguồn đã chọn trong báo cáo ca của từng ca, đổi ngay trên màn này thì áp cho cả hai ca. */
 function slGan() {
   const L = S.sl, nguon = (B) => S.slNguon || bcNGoc(B);
   const r1 = bcQuanSo(L.bc[0], nguon(L.bc[0])).rows, r2 = bcQuanSo(L.bc[1], nguon(L.bc[1])).rows;
+  // mục 3 của ca đã sửa tay thì chữ đã sửa thắng số app tính (bcS3Tay); tổ không có dòng trong chữ đó vẫn theo số app
+  L.tay = [bcS3Tay(L.bc[0]), bcS3Tay(L.bc[1])];
   L.to.forEach((u) => {
     const mot = (rows, ngay) => {
+      const i = rows === r1 ? 0 : 1, t = L.tay[i] == null ? null : bcS3Cua(L.tay[i], u.name, L.bc[i].ca);
+      if (t === 'khong') return null;
+      if (t) return { ngay, tong: t.tong, lam: t.lam, nguon: 'tay' };
       const r = rows.find((x) => x.u.id === u.id);
       return r && (r.trang === 'da' || r.trang === 'tl' || r.trang === 'tlda') ? { ngay, tong: r.tong, lam: r.lam, nguon: r.trang === 'da' ? 'bao' : 'tl' } : null;
     };
@@ -4447,7 +4477,7 @@ function vSanLuong() {
   const oSo = (id, v) => `<input class="inp s" style="width:64px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="0" data-model="${id}" value="${esc(v)}" aria-label="Công gia công thép">`;
   const oTy = (id, v, nhan, ghi) => `<label class="col gap6 f1 sm" style="min-width:0">${nhan}<input class="inp s" style="text-align:center;font-weight:700" id="${id}" inputmode="decimal" maxlength="6" autocomplete="off" data-model="${id}" value="${esc(v)}"><span class="muted" style="font-size:12px">${ghi}</span></label>`;
   const hang = T.dong.map((r) => `<div class="card col gap6"><div class="row gap8"><b class="f1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(r.u.name)}</b><span class="sm muted" style="flex:none">tỷ lệ gia công ${slFmt(r.gc)}</span></div>
-      <div class="row gap8"><span class="sm f1" style="min-width:0;line-height:1.35">${slNguon(r.u) ? 'Đi làm: ' + slNguon(r.u) + (r.u.ngay && r.u.ngay.nguon === 'tl' || r.u.dem && r.u.dem.nguon === 'tl' ? ' (số thiết lập)' : '') : '<span class="muted">Chưa báo quân số</span>'}</span>
+      <div class="row gap8"><span class="sm f1" style="min-width:0;line-height:1.35">${slNguon(r.u) ? 'Đi làm: ' + slNguon(r.u) + (r.u.ngay && r.u.ngay.nguon === 'tay' || r.u.dem && r.u.dem.nguon === 'tay' ? ' (đã sửa tay ở báo cáo ca)' : r.u.ngay && r.u.ngay.nguon === 'tl' || r.u.dem && r.u.dem.nguon === 'tl' ? ' (số thiết lập)' : '') : '<span class="muted">Chưa báo quân số</span>'}</span>
         <div class="col gap6" style="align-items:center;flex:none"><span class="muted" style="font-size:12px">công gia công thép</span>${oSo(`slc_${r.u.id}`, r.raw)}</div></div>
       <div class="row gap8"><span class="sm muted f1">Sản lượng</span><b>${fmtInt(r.kg)} kg</b></div></div>`).join('');
   const mui = (ngay, chu, ten, bat) => `<button class="chip s" style="flex:none;width:44px;padding:6px 0${bat ? '' : ';opacity:.35'}" ${bat ? `data-a="slngay" data-v="${ngay}"` : 'disabled'} aria-label="${ten}">${chu}</button>`;
@@ -4469,6 +4499,7 @@ function vSanLuong() {
         <button class="sm" style="border:0;background:transparent;color:var(--pri);text-align:left;padding:4px 0;text-decoration:underline" data-a="nav" data-s="baocaoca">Sửa phần đầu ở Báo cáo ca</button></div>
       <b>2. Quân số và công gia công thép</b>
       <span class="sm muted" style="line-height:1.4">Quân số lấy từ chính <b>Báo cáo ca</b> (cùng một cách tính): ca ngày ${fmtDay(L.ngay).slice(0, 5)} và ca đêm ${fmtDay(L.hom).slice(0, 5)} (tổ làm đêm). Công gia công thép mặc định bằng số đi làm, sửa được.</span>
+      ${L.tay && (L.tay[0] != null || L.tay[1] != null) ? `<div class="card warn sm" style="line-height:1.4">Mục quân số của báo cáo ${[L.tay[0] != null && 'ca ngày ' + fmtDay(L.ngay).slice(0, 5), L.tay[1] != null && 'ca đêm ' + fmtDay(L.hom).slice(0, 5)].filter(Boolean).join(' và ')} đã sửa tay: sản lượng theo số đã sửa. Muốn theo số app tính thì bấm "Lấy lại số từ app" ở Báo cáo ca.</div>` : ''}
       <div class="row gap6">${[['to', 'Theo tổ báo'], ['tl', 'Chỉ số thiết lập']].map(([v, n]) => `<button class="chip s f1 ${nguonHien === v ? 'on' : ''}" style="min-width:0;white-space:nowrap" data-a="slnguon" data-v="${v}">${n}</button>`).join('')}</div>
       ${hang || '<div class="card muted">Chưa có tổ nào.</div>'}
       <div class="card col gap6"><div class="row gap8"><span class="f1">Công đi làm (cả hai ca) · Quân số</span><b>${T.lam} công · ${T.tong} người</b></div>
