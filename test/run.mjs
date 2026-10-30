@@ -51,8 +51,10 @@ const run = (file) =>
 
 let bad = 0;
 for (const [name, file] of SUITES) {
-  const { code, out } = await run(file);
+  let { code, out } = await run(file);
   const tail = out.trim().split('\n').slice(-1)[0];
+  // bộ nào cũng kết thúc bằng "=== N kiểm tra, M lỗi ===": thiếu dòng đó (treo ở một lời gọi rồi Node tự thoát mã 0) là chưa chạy hết
+  if (!code && !/^=== .* ===$/.test(tail.trim())) { code = 1; out += '\nCRASH bộ test dừng giữa chừng, không in dòng tổng kết'; }
   console.log((code ? '✗' : '✓') + ' ' + name + '\n  ' + tail.replace(/^=== | ===$/g, ''));
   if (code) {
     bad++;

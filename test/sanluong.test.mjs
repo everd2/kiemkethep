@@ -12,6 +12,11 @@ const T = [];
 const ok = (name, cond, extra) => { T.push([cond ? 'PASS' : 'FAIL', name, extra === undefined ? '' : String(extra)]); };
 const eq = (name, a, b) => ok(name + ' = ' + JSON.stringify(b), JSON.stringify(a) === JSON.stringify(b), 'thực tế: ' + JSON.stringify(a));
 
+/* Một lời gọi treo mãi (fetch giả trả Promise không bao giờ xong) làm Node thoát mã 0 mà không in gì — run.mjs sẽ tưởng là qua.
+   Chưa tới dòng tổng kết mà tiến trình sắp thoát thì báo hỏng. */
+let xong = false;
+process.on('beforeExit', () => { if (!xong) { console.log('CRASH test dừng giữa chừng (chờ một lời gọi không bao giờ trả về)'); process.exit(2); } });
+
 async function main() {
   /* 9h sáng: ca ngày hôm nay ĐANG chạy (Hoàng theo số thiết lập hiện tại), ca đêm hôm qua ĐÃ hết (Sơn theo bản chép lúc hết ca,
      xem bên dưới). Không ghim giờ thì kết quả tuỳ lúc chạy test: chạy sau 18h30 ca ngày đã hết, chạy trước 6h30 ca đêm chưa hết. */
@@ -134,7 +139,7 @@ async function main() {
     document: { activeElement: null, hidden: false, body: { appendChild() {}, removeChild() {} }, createElement: el, getElementById: (id) => (id === 'bcprev' ? prev : el()), querySelectorAll: () => [], addEventListener(t, fn) { (nghe[t] = nghe[t] || []).push(fn); }, execCommand: () => false },
     window: { addEventListener() {} },
     fetch: async (url, o = {}) => {
-      if (!/^\/api\/(baocao|sanluong|bootstrap|quanso)/.test(String(url))) return new Promise(() => {});
+      if (!/^\/api\/(baocao|sanluong|bootstrap|quanso|rev)/.test(String(url))) return new Promise(() => {});
       const r = await S.call(o.method || 'GET', String(url).replace(/^\/api/, ''), o.body ? JSON.parse(o.body) : undefined, who);
       return { ok: r.status < 400, status: r.status, json: async () => r.data, headers: { get: () => null } };
     },
@@ -269,6 +274,30 @@ async function main() {
   await cho();
   eq('báo cáo ca sau khi bản mới về vẫn đúng ca', [R('S.bcc.ngay'), R('S.bcc.ca')], [D, 1]);
 
+  /* Màn sản lượng đang mở mà tổ báo thêm / người khác lưu: vòng tự làm mới phải theo số mới như màn báo cáo ca (trước đây màn
+     này không nằm trong vòng làm mới: đứng yên số cũ tới khi mở lại màn). */
+  R(`S.sl = null; ACTIONS.slmo()`); await cho();
+  R(`ACTIONS.slnguon({ v: 'to' })`);
+  eq('trước khi Hoàng báo: Hoàng theo số thiết lập 12', [uOf(hoang).lam, uOf(hoang).ngay.nguon], [12, 'tl']);
+  R(`S.form['slc_' + ${khoa.id}] = '20'`);
+  await q(CV, { ngay: D, ca: 1, user: hoang.id, tong: 15, lam: 13 });
+  await R('refresh()'); await cho();
+  eq('Hoàng vừa báo 13/15: màn sản lượng tự cập nhật, không cần mở lại', [uOf(hoang).lam, uOf(hoang).tong, uOf(hoang).ngay.nguon], [13, 15, 'bao']);
+  eq('ô công đang gõ của Khoa giữ nguyên, nguồn đang chọn giữ nguyên', [R(`S.form['slc_' + ${khoa.id}]`), R('S.slNguon')], ['20', 'to']);
+  eq('khớp với báo cáo ca ngay lúc đó', R(`bcQuanSo(S.sl.bc[0], 'to').rows.find((r) => r.u.id === ${hoang.id}).lam`), 13);
+  R(`S.slTlMo = true`);
+  await q(CV, { ngay: D, ca: 1, user: hoang.id, tong: 15, lam: 14 });
+  await R('refresh()'); await cho();
+  eq('đang mở bảng thiết lập: chưa vẽ lại (giữ số cũ)', uOf(hoang).lam, 13);
+  R(`S.slTlMo = false`);
+  await R('refresh()'); await cho();
+  eq('đóng bảng thiết lập: vòng sau lấy số mới', uOf(hoang).lam, 14);
+  // người khác lưu báo cáo sản lượng: chưa gõ gì thì lấy hẳn bản đó và nói rõ
+  R(`delete S.form['slc_' + ${khoa.id}]; S.toast = ''`);
+  eq('Admin lưu báo cáo sản lượng hôm nay', (await S.call('PUT', '/sanluong', { ngay: D, cong: { [khoa.id]: 3 }, chup: { chuan: 158, gia: 0.4, gc: {} }, nguon: 'to' }, 'Admin')).status, 200);
+  await R('refresh()'); await cho();
+  ok('người khác vừa lưu: màn lấy bản đó và nói rõ', R('S.sl.luu.cong[' + khoa.id + ']') === 3 && /Admin vừa lưu báo cáo sản lượng/.test(R('S.toast')), R('S.toast'));
+
   // tự dùng bản mới nhất: có bản mới mà không làm dở việc gì thì tải lại; đang làm dở thì chờ
   R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = []; S.screen = 'sanluong';`);
   eq('ô sửa của màn báo cáo ca còn mở nhưng đã rời màn đó: không coi là việc dở', R(`S.bcMo = 'dau'; coViecDo()`), false);
@@ -286,6 +315,7 @@ async function main() {
   ok('bản sao lưu có báo cáo sản lượng', Array.isArray(bk.bang.san_luong) && bk.bang.san_luong.length === 1, bk.bang.san_luong && bk.bang.san_luong.length);
   ok('thiết lập sản lượng nằm trong mẫu (bc_mau) nên cũng được sao lưu', JSON.parse(bk.bang.bc_mau[0].data).sl.gia === 0.4);
 
+  xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

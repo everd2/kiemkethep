@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v70';
+const BAN = 'kho-thep-v71';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -7726,7 +7726,7 @@ async function refreshInner() {
     }
     /* Đang xem số liệu cũ (mất mạng lúc mở app) ở một màn không nằm trong danh sách làm mới: có mạng lại thì kéo số mới về,
        không thì dải "Mất kết nối" nằm mãi và admin sửa Cài đặt trên số cũ. Đang gõ dở thì để yên, vòng sau thử lại. */
-    if (S.stale && S.boot && S.screen !== 'baocaoca' && !manLamMoi.includes(S.screen) && !S.busy && !S.ask
+    if (S.stale && S.boot && S.screen !== 'baocaoca' && S.screen !== 'sanluong' && !manLamMoi.includes(S.screen) && !S.busy && !S.ask
       && !(document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))) {
       await loadBoot(); render();
     }
@@ -7742,6 +7742,22 @@ async function refreshInner() {
         bcGhep(M, K); bcNhap();
         if (moi) say(`${M.bao.by_name} vừa chép báo cáo ca này. Màn hình đã lấy bản đó${bcCoKhac(K) ? ', phần bạn đang sửa vẫn giữ' : ''}.`);
         if (!S.bcMo) render();
+      }
+    }
+    /* Màn sản lượng: quân số lấy từ báo cáo ca (slGan), nên tổ báo thêm, sửa thiết lập quân số hay ai đó chép báo cáo ca thì
+       cũng phải theo số mới như màn báo cáo ca. Ô công đang gõ (slc_) giữ nguyên. Đang mở bảng thiết lập / hộp hỏi thì để yên:
+       chưa nạp rev mới nên vòng sau vẫn còn "changed" và hỏi lại. */
+    else if (changed && S.screen === 'sanluong' && S.sl && !S.busy && !S.ask && !S.slTlMo) {
+      await loadBoot();
+      const L = S.sl, M = await slLay(L.ngay);
+      datNho('sl:' + L.ngay, M);
+      if (S.sl === L && S.screen === 'sanluong' && !S.slTlMo) {
+        // người khác vừa lưu báo cáo sản lượng này: chưa gõ gì thì lấy hẳn bản đó (cả nguồn số), đang gõ thì giữ phần mình gõ
+        const khac = M.luu && (!L.luu || M.luu.ts !== L.luu.ts) && M.luu.by_id !== S.me.id;
+        const coSua = Object.keys(S.form).some((k) => /^slc_/.test(k));
+        slDung(M, !(khac && !coSua));
+        if (khac) say(`${M.luu.by_name} vừa lưu báo cáo sản lượng này. Màn hình đã lấy bản đó${coSua ? ', số công bạn đang sửa vẫn giữ' : ''}.`);
+        render();
       }
     }
     /* Chỉ có tin nhắn gia công mới (rev không đổi): hỏi lại tin chưa đọc của mình và đơn / bảng đang mở, không tải lại cả
