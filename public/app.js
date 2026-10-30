@@ -4064,16 +4064,22 @@ function bcQuanSo(B, nguon = S.bcNguon) {
     if (!r) { truocNhom.push(`Tổ ${u.name}: chưa báo quân số ${caNay}`); truocHang.push('chua'); chuaSo += tongTo; rows.push({ u, trang: 'chua', lam: null, tong: tongTo }); return; }
     if (r.tl) dung.push(u.name);
     truocHang.push(r.tl ? (r0 ? 'tlda' : 'tl') : 'da');
-    rows.push({ u, trang: r.tl ? (r0 ? 'tlda' : 'tl') : 'da', lam: r.lam, tong: r.tong });
+    const dongSo = { u, trang: r.tl ? (r0 ? 'tlda' : 'tl') : 'da', lam: r.lam, tong: r.tong };
+    rows.push(dongSo);
     lam += r.lam;
     const p = [`${caNay} ${r.lam}/${r.tong} cn`], n1 = qsSoNghi(r.nghi), ly1 = bcLyDo(r, B.lyDo);
     nghi += n1; kiaSo += Math.max(0, tongTo - r.lam - n1);
     let n2 = 0, ly2 = '';
     if (L === 3) {
       const k = chon(p0, kia);
-      if (k) { p.push(`${caKia} ${k.lam}/${r.tong} cn`); n2 = qsSoNghi(k.nghi); ly2 = bcLyDo(k, B.lyDo); }
+      // truoc: số ca liền trước đúng như dòng này ghi, cho sản lượng (slGan) khi báo cáo của ca đó không có số
+      if (k) { p.push(`${caKia} ${k.lam}/${r.tong} cn`); n2 = qsSoNghi(k.nghi); ly2 = bcLyDo(k, B.lyDo); dongSo.truoc = { lam: k.lam, tong: r.tong, nguon: k.tl ? 'tl' : 'bao' }; }
       // chưa có số của ca liền trước: lấy số "người thuộc ca kia" tổ đã khai khi báo ca này, để dòng vẫn đủ hai ca
-      else if (r.ca_kia > 0) p.push(`${caKia} ${r.ca_kia}/${r.tong} cn`);
+      else if (r.ca_kia > 0) {
+        p.push(`${caKia} ${r.ca_kia}/${r.tong} cn`);
+        // chỉ tổ ĐẶT LỊCH hai ca mới tính công: tổ một ca báo thiếu lý do nghỉ thì phần còn lại cũng rơi vào ca_kia, không phải người đi làm
+        if (qsLichCa(B.lich, u.id, B.ngay) === 3) dongSo.truoc = { lam: r.ca_kia, tong: r.tong, nguon: 'bao' };
+      }
     }
     if (n1 + n2) p.push(`nghỉ ${n1 + n2} cn`);
     const ly = ly1 && ly2 ? `${caNay}: ${ly1}; ${caKia}: ${ly2}` : ly2 ? `${caKia}: ${ly2}` : ly1;
@@ -4391,14 +4397,14 @@ const bcChuTen = (t) => String(t || '').normalize('NFC').toLowerCase().replace(/
 /* Số của một tổ cho ca c trong mục 3 đã sửa tay. Dòng "Tổ <tên>: ca ngày 12/21 cn, ..." -> { lam: 12, tong: 21 }; dòng không ghi ca
    ("Tổ A: 12/21 cn") thì coi là số của ca này; dòng có mà không có số ca c ("chưa báo", "(làm ca đêm)") -> 'khong'; không có dòng
    của tổ -> null (sản lượng lấy số app tính cho tổ đó). */
-function bcS3Cua(txt, ten, c) {
+function bcS3Cua(txt, ten, c, phaiGhiCa) {
   const k = bcChuTen('Tổ ' + ten);
   const l = bcDong(txt).map(bcChuTen).find((x) => x.startsWith(k) && /^(\s*[:(–-]|$)/.test(x.slice(k.length)));
   if (l == null) return null;
   const sau = l.slice(k.length);
   const m = new RegExp(CA_TEN[c] + '\\s*:?\\s*(\\d+)\\s*/\\s*(\\d+)').exec(sau);
   if (m) return { lam: Number(m[1]), tong: Number(m[2]) };
-  const m2 = !/ca (ngày|đêm)/.test(sau) && /(\d+)\s*\/\s*(\d+)/.exec(sau);
+  const m2 = !phaiGhiCa && !/ca (ngày|đêm)/.test(sau) && /(\d+)\s*\/\s*(\d+)/.exec(sau);
   return m2 ? { lam: Number(m2[1]), tong: Number(m2[2]) } : 'khong';
 }
 /* Quân số của từng tổ trong báo cáo sản lượng = quân số của báo cáo ca, tính bằng đúng bcQuanSo: u.ngay là số ca ngày của ngày
@@ -4418,6 +4424,14 @@ function slGan() {
       return r && (r.trang === 'da' || r.trang === 'tl' || r.trang === 'tlda') ? { ngay, tong: r.tong, lam: r.lam, nguon: r.trang === 'da' ? 'bao' : 'tl' } : null;
     };
     u.ngay = mot(r1, L.ngay); u.dem = mot(r2, L.hom);
+    /* Dòng tổ làm hai ca trong báo cáo CA NGÀY cũng ghi số ca đêm hôm trước. Báo cáo ca đêm không có dòng sửa tay của tổ thì lấy số
+       ca đêm đã sửa tay trên dòng đó; vẫn chưa có số thì lấy đúng số dòng đó đang ghi (tổ chưa báo ca đêm, chỉ khai người thuộc ca
+       kia), để sản lượng không thiếu ca đêm so với báo cáo ca. */
+    if (L.tay[1] == null || bcS3Cua(L.tay[1], u.name, 2) == null) {
+      const k = L.tay[0] == null ? null : bcS3Cua(L.tay[0], u.name, 2, true), x = r1.find((y) => y.u.id === u.id);
+      if (k && k !== 'khong') u.dem = { ngay: L.hom, tong: k.tong, lam: k.lam, nguon: 'tay' };
+      else if (!u.dem && x && x.truoc) u.dem = { ngay: L.hom, ...x.truoc };
+    }
     const cs = [u.ngay, u.dem].filter(Boolean);
     u.lam = cs.reduce((a, x) => a + x.lam, 0); u.tong = cs.reduce((a, x) => Math.max(a, x.tong || 0), 0);
   });

@@ -15,6 +15,8 @@ const datGio = (h, m = 0) => {
   let d = h * 60 + m - cur;
   if (d <= 0) d += 1440;
   advance(d * 60e3);
+  // các ngày trong test (hôm nay, hôm qua, tuần trước) phải cùng tháng: chạy vào đầu tháng thì "xem tháng này" không thấy số của hôm qua
+  while (Number(vnDay().slice(8)) < 9) advance(864e5);
 };
 
 async function main() {

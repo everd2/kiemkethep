@@ -30,6 +30,7 @@ const SUITES = [
   ['Rà soát kho: duyệt lúc nửa đêm tồn đúng số đếm, phiếu duyệt sau lần đếm không sinh việc xem lại, đổi PIN không tự khoá, phi tên lạ', 'khoroasoat.test.mjs'],
   ['Lõi tính tồn (v70): phiếu không cộng lên số đếm, số đếm chuyển qua 0h, huỷ phiếu luôn được, thẻ Duyệt tham chiếu, phi_rate cũ', 'kho3.test.mjs'],
   ['Báo cáo sản lượng: quyền, quân số lấy từ báo cáo ca, (công x 158 x tỷ lệ gia công) / tỷ lệ giá, bản chữ', 'sanluong.test.mjs'],
+  ['Một bảng thiết lập quân số chung cho báo cáo ca đêm, ca ngày, sản lượng: sản lượng = ca đêm hôm trước + ca ngày hôm nay, khớp từng tổ', 'slchung.test.mjs'],
   ['Bấm loạn: mọi nút trên mọi màn, hai lượt (Quay lại / Đồng ý), không lỗi JavaScript, không bị khoá ngoài', 'bam.test.mjs'],
   ['Chuyển màn không chờ trắng: mở lại mọi màn hiện ngay, tải sẵn màn hay dùng, mỗi lần mở <= 3 lượt gọi', 'chuyenman.test.mjs'],
   ['Sổ thép về công trình: quyền giao bởi admin đầu tiên, chuyến về, đơn hàng, nhập Excel, thống kê', 'thepve.test.mjs'],
