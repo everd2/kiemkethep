@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v71';
+const BAN = 'kho-thep-v72';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -5257,6 +5257,7 @@ async function bcChepChu(t) {
 /* Gửi kèm ts của bản đã lưu mà mình đang nhìn: người khác đã chép sau đó thì server từ chối, app tải bản đó về, ghép
    phần mình đang sửa lên rồi để người soạn soát và chép lại. Phần đầu chỉ gửi các ô đã sửa, máy móc chỉ gửi khi mục 5
    vừa được sửa: không đè lại mẫu người khác vừa đổi (xem bcPut ở src/baocao.js). */
+const CHEP_CU = 'Số vừa đổi ngay lúc chép: bản vừa chép là số cũ. Màn hình đã lấy số mới, hãy bấm Chép lại rồi mới dán.';
 function bcLuu(van_ban, them, okMsg) {
   const B = S.bcc, K = bcKhac(), mmtb = typeof K.muc.s5 === 'string' ? bcDong(K.muc.s5).join(' – ') : undefined;
   return act(async () => {
@@ -5274,7 +5275,17 @@ function bcLuu(van_ban, them, okMsg) {
     B.bao = { muc: { ...S.bcM }, viec: JSON.parse(JSON.stringify(S.bcV)), nguon: S.bcNguon, van_ban, ts: r.ts, ...giu };
     B.mau = { ...B.mau, dau: { ...S.bcDau }, ...(mmtb != null ? { mmtb } : {}) };
     if (them && them.kt_mau) B.mau.kt = bcDong(S.bcM.s6);
-  }, okMsg);
+    /* Chữ phải chép ngay lúc bấm nên không kịp hỏi máy chủ trước: máy khác vừa sửa thiết lập / tổ vừa báo mà máy này chưa tới vòng tự
+       làm mới thì chữ đã chép mang số cũ. Lưu xong tải lại ngay, chữ mới khác chữ đã chép thì nói rõ để chép lại. */
+    let doi = false;
+    if (!them) {
+      try {
+        const M = await api('GET', `/baocao?ngay=${B.ngay}&ca=${B.ca}`);
+        if (S.bcc === B) { bcGhep(M, bcKhac()); bcNhap(); doi = bcChuan(bcTao()) !== bcChuan(van_ban); }
+      } catch (e) { /* đã lưu xong; vòng tự làm mới sẽ tải lại */ }
+    }
+    say(doi ? CHEP_CU : okMsg, doi);
+  });
 }
 
 /* --- Cài đặt (admin) --- */
@@ -7426,7 +7437,10 @@ const ACTIONS = {
       catch (e) { if (e.code === 'changed') { try { await slTai(L.ngay, true); } catch (er) { /* vòng làm mới sẽ tải lại */ } } throw e; }
       S.slLai = false;
       await slTai(L.ngay, true);
-    }, ok ? 'Đã chép báo cáo sản lượng và lưu lại.' : 'Đã lưu, nhưng máy không cho chép tự động: hãy chép tay.');
+      // như bcLuu: chữ đã chép có thể mang số cũ, so với số vừa tải
+      const doi = slTao() !== chu;
+      say(doi ? CHEP_CU : ok ? 'Đã chép báo cáo sản lượng và lưu lại.' : 'Đã lưu, nhưng máy không cho chép tự động: hãy chép tay.', doi);
+    });
   },
   bcca(d) { const [ngay, ca] = String(d.v).split(':'); S.bcCa = { ngay, ca: Number(ca) }; S.bcc = null; go('baocaoca', true); },
   // từ báo cáo ca sang bảng thiết lập (ca và số quân từng tổ); nút quay lại ở đó về đúng báo cáo đang soạn

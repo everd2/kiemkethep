@@ -39,12 +39,13 @@ async function main() {
   eq('Khai báo ca ngày 10/20, còn lại 10 người thuộc ca đêm', (await S.call('PUT', '/quanso', { ngay: D, ca: 1, user: U['Khai'], tong: 20, lam: 10 }, 'CV')).status, 200);
 
   const store = {};
+  let chep = '';
   const el = () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, appendChild() {}, remove() {}, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} });
   const ctx = {
     console, Date, Math, JSON, String, Number, Object, Array, Set, Map, parseInt, parseFloat, isNaN, Promise, RegExp, Error, TypeError, encodeURIComponent,
     setTimeout: () => 0, clearTimeout: () => {},
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; }, key: (n) => Object.keys(store)[n] || null, get length() { return Object.keys(store).length; } },
-    navigator: { onLine: true, clipboard: { writeText: async () => {} } },
+    navigator: { onLine: true, clipboard: { writeText: async (x) => { chep = x; } } },
     history: { state: null, pushState() {}, replaceState() {} },
     document: { activeElement: null, hidden: false, body: { appendChild() {}, removeChild() {} }, createElement: el, getElementById: () => el(), querySelectorAll: () => [], addEventListener() {}, execCommand: () => false },
     window: { addEventListener() {} },
@@ -97,6 +98,44 @@ async function main() {
   eq('sửa tay ca đêm trong báo cáo ca ngày: sản lượng theo', so('Hai'), [3, 6, 9]);
   nhap(1, 'Quân số\nTổ Hai: ca đêm 2/20 cn');
   eq('báo cáo ca đêm cũng sửa tay: chính báo cáo ca đêm thắng', so('Hai'), [2, 6, 8]);
+
+  /* NÚT CHÉP: chữ chép ra phải theo thiết lập hiện tại. Máy khác vừa sửa mà máy này chưa làm mới thì chữ chép là số cũ (chép phải chạy ngay
+     lúc bấm, không kịp hỏi máy chủ): lưu xong tải lại, báo đỏ để chép lại, lần chép sau đúng số mới. */
+  const doiXong = async () => { for (let k = 0; k < 3000; k++) { await new Promise((r) => setImmediate(r)); if (!R('S.busy') && k > 40) return; } };
+  R(`localStorage.removeItem(bcKey(S.sl.bc[0])); localStorage.removeItem(bcKey(S.sl.bc[1]))`);
+  await tai();
+  const dat = (s1) => S.call('PUT', '/quanso/thietlap', { user: U['Ngày'], ts: tsOf('Ngày'), tong: 20, s1, s2: 0 }, 'CV');
+  // cùng máy, số đã tải: chép đúng số đang đặt
+  R('ACTIONS.slchep()'); await doiXong();
+  ok('sản lượng: chép đúng thiết lập hiện tại, báo đã chép', chep.includes('• Tổ Ngày: ca ngày 12/20 cn') && /Đã chép báo cáo sản lượng/.test(R('S.toast')), R('S.toast'));
+  eq('máy khác sửa thiết lập tổ Ngày thành 13', (await dat(13)).status, 200);
+  R('ACTIONS.slchep()'); await doiXong();
+  ok('sản lượng: chép lúc chưa làm mới là số cũ, nhưng báo đỏ', chep.includes('ca ngày 12/20 cn') && /Số vừa đổi/.test(R('S.toast')) && R('S.toastErr'), R('S.toast'));
+  eq('màn hình đã lấy số mới', so('Ngày'), [null, 13, 13]);
+  R('ACTIONS.slchep()'); await doiXong();
+  ok('sản lượng: chép lại đúng số mới', chep.includes('• Tổ Ngày: ca ngày 13/20 cn') && /Đã chép báo cáo sản lượng/.test(R('S.toast')), R('S.toast'));
+  // báo cáo ca: y như vậy
+  R(`S.screen = 'baocaoca'; S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null;`);
+  await R('bcTai()');
+  R('ACTIONS.bcchep({})'); await doiXong();
+  ok('báo cáo ca: chép đúng thiết lập hiện tại', chep.includes('Tổ Ngày: ca ngày 13/20 cn') && /Đã chép cả báo cáo/.test(R('S.toast')), R('S.toast'));
+  eq('máy khác sửa thiết lập tổ Ngày thành 14', (await dat(14)).status, 200);
+  R('ACTIONS.bcchep({})'); await doiXong();
+  ok('báo cáo ca: chép lúc chưa làm mới là số cũ, nhưng báo đỏ', chep.includes('ca ngày 13/20 cn') && /Số vừa đổi/.test(R('S.toast')), R('S.toast'));
+  R('ACTIONS.bcchep({})'); await doiXong();
+  ok('báo cáo ca: chép lại đúng số mới, hết báo', chep.includes('Tổ Ngày: ca ngày 14/20 cn') && /Đã chép cả báo cáo/.test(R('S.toast')), R('S.toast'));
+  R('ACTIONS.bcchep({ k: "s3" })'); await doiXong();
+  ok('báo cáo ca: chép riêng mục quân số cũng đúng số mới', chep.startsWith('3. ') && chep.includes('ca ngày 14/20 cn'), chep);
+  // ngày đã lưu giữ thiết lập sản lượng lúc lưu: màn và chữ cùng số cũ, có nhắc; bấm Tính lại thì theo thiết lập hiện tại
+  R(`S.screen = 'sanluong'`); await tai();
+  const kg = (t) => Number(/Tổ Ngày: ca ngày \d+\/20 cn gia công thép (\d+) kg/.exec(t)[1]);
+  const kg0 = kg(R('slTao()'));
+  eq('đổi tỷ lệ giá sang 0,5', (await S.call('PUT', '/sanluong/thietlap', { gia: 0.5 }, 'CV')).status, 200);
+  await tai();
+  eq('đã lưu: bản chữ giữ thiết lập lúc lưu', kg(R('slTao()')), kg0);
+  ok('màn hình nhắc khác thiết lập hiện tại', R('vSanLuong()').includes('Tính lại theo thiết lập hiện tại'));
+  R('ACTIONS.slai()');
+  eq('bấm Tính lại: bản chữ theo tỷ lệ giá 0,5', kg(R('slTao()')), Math.round(14 * 158 * R('S.sl.tl.gc[' + U['Ngày'] + ']') / 0.5));
 
   xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');
