@@ -82,7 +82,7 @@ export function baoDon(r) {
 }
 
 // node scripts/donrac.mjs [--het]            -> chỉ dọn
-// node scripts/donrac.mjs wrangler deploy     -> dọn rồi chạy lệnh với thư mục tạm ở .kt-tmp
+// node scripts/donrac.mjs npx -y wrangler deploy     -> dọn rồi chạy lệnh với thư mục tạm ở .kt-tmp
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const het = args[0] === '--het';
