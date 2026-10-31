@@ -230,10 +230,10 @@ async function main() {
   eq('sau khi lưu không còn nút tính lại', R('vSanLuong()').includes('data-a="slai"'), false);
   // thiết lập ngay trên màn hình
   R(`ACTIONS.sltlmo()`);
-  ok('mở bảng thiết lập: công chuẩn, tỷ lệ giá và từng tổ', ['slt_chuan', 'slt_gia', `slt_gc_${khoa.id}`, `slt_gc_${nam.id}`].every((id) => R('vSanLuong()').includes('id="' + id + '"')));
+  ok('mở bảng thiết lập: công chuẩn, tỷ lệ giá và từng tổ', ['slt_chuan', 'slt_gia', `slt_tu_${khoa.id}`, `slt_den_${nam.id}`].every((id) => R('vSanLuong()').includes('id="' + id + '"')));
   R(`S.form.slt_gia = '0,1'`); R(`ACTIONS.sltl()`); await cho();
   eq('tỷ lệ giá ngoài khoảng: không gửi, thiết lập giữ nguyên', R('S.sl.tl.gia'), 0.5);
-  R(`S.form.slt_gia = '0,4'; S.form['slt_gc_${nam.id}'] = '0,9'`); R(`ACTIONS.sltl()`); await cho();
+  R(`S.form.slt_gia = '0,4'; S.form['slt_tu_${nam.id}'] = '0,9'; S.form['slt_den_${nam.id}'] = '0,9'`); R(`ACTIONS.sltl()`); await cho();
   eq('lưu thiết lập từ màn hình: tỷ lệ giá 0,4, Nam 0,9', [R('S.sl.tl.gia'), R('S.sl.tl.gc[' + nam.id + ']')], [0.4, 0.9]);
   eq('Khoa không bị đổi', R('S.sl.tl.gc[' + khoa.id + ']'), 0.8);
   eq('bảng thiết lập đóng sau khi lưu', R('S.slTlMo'), false);
@@ -321,6 +321,44 @@ async function main() {
   R(`localStorage.removeItem(bcKey(S.sl.bc[0])); slGan()`);
   // đọc tên tổ đúng dòng: "Tổ Nam" không ăn nhầm dòng "Tổ Nam Anh"; dòng không ghi ca coi là số ca đó
   eq('tên tổ là đầu của tên khác: lấy đúng dòng', R(`JSON.stringify([bcS3Cua('Tổ Nam Anh: ca ngày 5/9 cn\\nTổ Nam: ca đêm 3/4 cn', 'Nam', 2), bcS3Cua('Tổ Nam Anh: ca ngày 5/9 cn\\nTổ Nam: ca đêm 3/4 cn', 'Nam', 1), bcS3Cua('- tổ  nam:  12 / 20 cn', 'Nam', 1), bcS3Cua('Tổ Khác: 1/2', 'Nam', 1)])`), JSON.stringify([{ lam: 3, tong: 4 }, 'khong', { lam: 12, tong: 20 }, null]));
+
+  /* Tỷ lệ gia công linh hoạt theo từng tổ: khoảng riêng 2 số, hai số bằng nhau là cố định, Làm mới cho MỖI TỔ một số riêng trong khoảng của
+     tổ đó, mọi máy cùng bộ số; báo cáo đã lưu chỉ đổi khi Chép. */
+  eq('Tiểu đội trưởng không bốc được', (await tlap({ ngau: true }, 'Phạm Văn Khoa')).status, 403);
+  eq('khoảng ngược: từ chối', (await tlap({ khoang: { [khoa.id]: { tu: 0.9, den: 0.7 } } })).status, 400);
+  eq('khoảng ngoài 0,5 - 1: từ chối', (await tlap({ khoang: { [khoa.id]: { tu: 0.4, den: 0.7 } } })).status, 400);
+  eq('khoảng của người không phải tổ: từ chối', (await tlap({ khoang: { [U[CV]]: { tu: 0.6, den: 0.7 } } })).status, 400);
+  R(`S.screen = 'sanluong'; S.toast = ''; S.form = {}; S.slTlMo = true`); await R('slTai()'); await cho();
+  eq('tổ chưa đặt: mặc định 0,7 - 0,8', R(`JSON.stringify(S.sl.tl.khoang[${hoang.id}])`), JSON.stringify({ tu: 0.7, den: 0.8 }));
+  R(`S.form.slt_chung_tu = '0,5'; S.form.slt_chung_den = '1'; ACTIONS.slapchung()`);
+  eq('ô chung điền vào mọi tổ', [R(`S.form['slt_tu_${son.id}']`), R(`S.form['slt_den_${coi.id}']`)], ['0,5', '1']);
+  R(`S.form['slt_tu_${khoa.id}'] = '0,6'; S.form['slt_den_${khoa.id}'] = '0,65'; S.form['slt_tu_${nam.id}'] = '0,9'; S.form['slt_den_${nam.id}'] = '0,9'; ACTIONS.sltl()`); await cho();
+  eq('mỗi tổ một khoảng riêng', [khoa, nam, son].map((u) => JSON.stringify(R(`JSON.stringify(S.sl.tl.khoang[${u.id}])`))).join(), [{ tu: 0.6, den: 0.65 }, { tu: 0.9, den: 0.9 }, { tu: 0.5, den: 1 }].map((x) => JSON.stringify(JSON.stringify(x))).join());
+  eq('tỷ lệ ngoài khoảng mới được bốc lại ngay: Nam 0,9', R(`S.sl.tl.gc[${nam.id}]`), 0.9);
+  ok('Khoa nằm trong khoảng mới', R(`S.sl.tl.gc[${khoa.id}]`) >= 0.6 && R(`S.sl.tl.gc[${khoa.id}]`) <= 0.65);
+  R(`S.slTlMo = false`);
+  ok('màn sản lượng có nút Làm mới', R('vSanLuong()').includes('data-a="slrnd"'));
+  const gcOf = (u) => R(`S.sl.tl.gc[${u.id}]`), boc = new Set(); let khacNhau = false, dungKhoang = true;
+  for (let i = 0; i < 12; i++) {
+    R('ACTIONS.slrnd()'); await cho();
+    const a = gcOf(khoa), b = gcOf(nam), c = gcOf(son), d = gcOf(coi);
+    dungKhoang = dungKhoang && a >= 0.6 && a <= 0.65 && b === 0.9 && c >= 0.5 && c <= 1 && d >= 0.5 && d <= 1 && Math.round(c * 100) / 100 === c;
+    if (c !== d) khacNhau = true;
+    boc.add([a, c, d].join());
+  }
+  ok('12 lần bốc: mọi tổ đúng khoảng của mình, tổ cố định giữ nguyên', dungKhoang);
+  ok('hai tổ cùng khoảng vẫn mỗi tổ một số riêng', khacNhau);
+  ok('mỗi lần bốc ra bộ số khác', boc.size > 5, boc.size);
+  const vMay = (await S.call('GET', '/sanluong?ngay=' + D, undefined, 'Admin')).data;
+  eq('máy khác thấy đúng bộ số vừa bốc', [khoa, son, coi].map((u) => vMay.tl.gc[u.id]), [khoa, son, coi].map(gcOf));
+  ok('báo cáo đang xem dùng ngay bộ số mới, kể cả ngày đã lưu', R('slCS() === S.sl.tl'));
+  eq('kg theo tỷ lệ mới của tổ', R(`slTinh().dong.find((r) => r.u.id === ${son.id}).gc`), gcOf(son));
+  const chupGc = () => JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).chup.gc[son.id];
+  R(`S.toast = ''`);
+  R('ACTIONS.slchep()'); await cho();
+  eq('Chép: báo cáo lưu bộ số mới', chupGc(), gcOf(son));
+  R(`S.form.slt_chuan = '150'; ACTIONS.slrnd(); delete S.form.slt_chuan`); await cho();
+  ok('đang sửa thiết lập dở: chưa bốc, nhắc lưu trước', /Hãy lưu thiết lập/.test(R('S.toast')), R('S.toast'));
 
   // tự dùng bản mới nhất: có bản mới mà không làm dở việc gì thì tải lại; đang làm dở thì chờ
   R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = []; S.screen = 'sanluong';`);

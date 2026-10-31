@@ -21,6 +21,8 @@ import { MAU_CO, QS_TONG_MAX, TO_SX } from './quanso.js';
 export const SL_CHUAN = { min: 1, max: 1000, mac_dinh: 158 };
 export const SL_GIA = { min: 0.2, max: 1, mac_dinh: 0.2 };
 export const SL_GC = { min: 0.5, max: 1 };
+// khoảng bốc ngẫu nhiên tỷ lệ gia công của tổ chưa đặt khoảng riêng (sl.kh[id tổ] = { tu, den }; tu = den là tỷ lệ cố định)
+export const SL_KHOANG = { tu: 0.7, den: 0.8 };
 const SL_SUA_NGAY = 31;
 
 // tỷ lệ gia công mặc định của một tổ: 0,70 – 0,80, cố định theo tổ
@@ -29,6 +31,8 @@ export function glMacDinh(uid) {
   for (const c of 'to' + uid) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return (70 + (h % 11)) / 100;
 }
+// một số ngẫu nhiên trong [tu, den], bước 0,01, lấy được cả hai đầu
+const bocGc = (tu, den) => { const a = Math.round(tu * 100), b = Math.round(den * 100); return (a + Math.floor(Math.random() * (b - a + 1))) / 100; };
 export const sanLuongKg = (cong, chuan, gc, gia) => Math.round((cong * chuan * gc) / gia);
 
 const docJ = (s) => { try { const o = JSON.parse(s || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (e) { return {}; } };
@@ -57,7 +61,9 @@ function docCong(v) {
 function docSl(row) {
   const m = docJ(row && row.data), s = m.sl && typeof m.sl === 'object' ? m.sl : {}, gc = {};
   for (const [k, v] of Object.entries(s.gc && typeof s.gc === 'object' ? s.gc : {})) if (/^\d+$/.test(k) && trong(Number(v), SL_GC)) gc[k] = Number(v);
-  return { chuan: trong(Number(s.chuan), SL_CHUAN) ? Number(s.chuan) : SL_CHUAN.mac_dinh, gia: trong(Number(s.gia), SL_GIA) ? Number(s.gia) : SL_GIA.mac_dinh, gc, dau: m.dau && typeof m.dau === 'object' ? m.dau : {} };
+  const kh = {};
+  for (const [k, v] of Object.entries(s.kh && typeof s.kh === 'object' ? s.kh : {})) if (/^\d+$/.test(k) && v && trong(Number(v.tu), SL_GC) && trong(Number(v.den), SL_GC) && Number(v.tu) <= Number(v.den)) kh[k] = { tu: Number(v.tu), den: Number(v.den) };
+  return { chuan: trong(Number(s.chuan), SL_CHUAN) ? Number(s.chuan) : SL_CHUAN.mac_dinh, gia: trong(Number(s.gia), SL_GIA) ? Number(s.gia) : SL_GIA.mac_dinh, gc, kh, dau: m.dau && typeof m.dau === 'object' ? m.dau : {} };
 }
 // thiết lập đầy đủ cho các tổ (tổ chưa đặt thì mặc định)
 const slDayDu = (sl, ids) => ({ chuan: sl.chuan, gia: sl.gia, gc: Object.fromEntries(ids.map((id) => [id, sl.gc[id] !== undefined ? sl.gc[id] : glMacDinh(id)])) });
@@ -87,7 +93,7 @@ export async function slView(env, url) {
   return json({
     ngay, hom, to,
     gioi_han: { chuan: SL_CHUAN, gia: SL_GIA, gc: SL_GC },
-    tl: { ...slDayDu(sl, ids), da_dat: Object.keys(sl.gc).map(Number) },
+    tl: { ...slDayDu(sl, ids), da_dat: Object.keys(sl.gc).map(Number), khoang: Object.fromEntries(ids.map((id) => [id, sl.kh[id] || SL_KHOANG])) },
     dau: Object.fromEntries(['don_vi', 'ddt', 'tdtr', 'cbpt', 'du_an', 'khu_vuc'].map((k) => [k, String(sl.dau[k] || '')])),
     luu: r ? { cong: docCong(d.cong), chup: docChup(d.chup, ids), nguon: d.nguon === 'tl' || d.nguon === 'to' ? d.nguon : null, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
   });
@@ -156,6 +162,28 @@ export async function slThietLap(req, env, user) {
         sets.push(`'$.sl.gc.${k}', ?`); args.push(v); log.gc[k] = v;
       }
     }
+  }
+  /* khoang: { id tổ: { tu, den } } = khoảng riêng từng tổ (tu = den là tỷ lệ cố định); tỷ lệ đang dùng rơi ra ngoài khoảng mới thì bốc lại
+     cho tổ đó. ngau: true = nút Làm mới, MỖI TỔ bốc một số riêng trong khoảng của tổ đó. Bốc ở server để mọi máy thấy cùng một bộ số.
+     Ghi bằng json_patch: chỉ đổi các tổ được gửi, cả bộ là MỘT tham số vì D1 giới hạn số tham số mỗi câu. */
+  if (b.khoang !== undefined || b.ngau === true) {
+    if (b.khoang !== undefined && (!b.khoang || typeof b.khoang !== 'object' || Array.isArray(b.khoang))) throw bad('Khoảng tỷ lệ gia công không hợp lệ');
+    const [toR, mauR] = await env.DB.batch([env.DB.prepare("SELECT id FROM users WHERE role = 'tieudoi'"), env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1')]);
+    const co = new Set(toR.results.map((r) => String(r.id))), sl = docSl(mauR.results[0]), kh = { ...sl.kh }, khMoi = {}, gcMoi = {};
+    const ids = Object.keys(b.khoang || {});
+    if (ids.length > 300) throw bad('Khoảng tỷ lệ gia công không hợp lệ');
+    for (const k of ids) {
+      if (!co.has(k)) throw bad('Không phải tổ (Tiểu đội trưởng)');
+      const x = b.khoang[k] && typeof b.khoang[k] === 'object' ? b.khoang[k] : {}, tu = lam2(x.tu), den = lam2(x.den);
+      if (!trong(tu, SL_GC) || !trong(den, SL_GC)) throw bad('Khoảng tỷ lệ gia công phải từ ' + SL_GC.min + ' đến ' + SL_GC.max);
+      if (tu > den) throw bad('Khoảng tỷ lệ gia công: số đầu phải nhỏ hơn hoặc bằng số sau');
+      kh[k] = khMoi[k] = { tu, den };
+      const cu = sl.gc[k] !== undefined ? sl.gc[k] : glMacDinh(Number(k));
+      if (cu < tu || cu > den) gcMoi[k] = bocGc(tu, den);
+    }
+    if (b.ngau === true) for (const k of co) { const r = kh[k] || SL_KHOANG; gcMoi[k] = bocGc(r.tu, r.den); }
+    if (ids.length) { sets.push("'$.sl.kh', json_patch(COALESCE(json_extract(data, '$.sl.kh'), '{}'), ?)"); args.push(JSON.stringify(khMoi)); log.khoang = khMoi; }
+    if (Object.keys(gcMoi).length) { sets.push("'$.sl.gc', json_patch(COALESCE(json_extract(data, '$.sl.gc'), '{}'), ?)"); args.push(JSON.stringify(gcMoi)); log.ngau = gcMoi; }
   }
   if (sets.length === 1) throw bad('Chưa có thiết lập nào để lưu');
   const ts = Date.now();
