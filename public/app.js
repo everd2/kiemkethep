@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v73';
+const BAN = 'kho-thep-v74';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4393,18 +4393,19 @@ function bcS3Tay(B) {
   const g = bcMGoc(B).s3;
   return typeof g === 'string' ? g : null;
 }
-const bcChuTen = (t) => String(t || '').normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
+// so chữ không phân biệt hoa thường, không dấu: người soạn hay gõ "To Khoa: ca ngay 12/21" trên điện thoại
+const bcChuTen = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
 /* Số của một tổ cho ca c trong mục 3 đã sửa tay. Dòng "Tổ <tên>: ca ngày 12/21 cn, ..." -> { lam: 12, tong: 21 }; dòng không ghi ca
    ("Tổ A: 12/21 cn") thì coi là số của ca này; dòng có mà không có số ca c ("chưa báo", "(làm ca đêm)") -> 'khong'; không có dòng
    của tổ -> null (sản lượng lấy số app tính cho tổ đó). */
 function bcS3Cua(txt, ten, c, phaiGhiCa) {
   const k = bcChuTen('Tổ ' + ten);
-  const l = bcDong(txt).map(bcChuTen).find((x) => x.startsWith(k) && /^(\s*[:(–-]|$)/.test(x.slice(k.length)));
+  const l = bcDong(txt).map(bcChuTen).find((x) => x.startsWith(k) && /^(\s*[:(,.;–-]|\s*\d|\s+ca\b|$)/.test(x.slice(k.length)));
   if (l == null) return null;
   const sau = l.slice(k.length);
-  const m = new RegExp(CA_TEN[c] + '\\s*:?\\s*(\\d+)\\s*/\\s*(\\d+)').exec(sau);
+  const m = new RegExp(bcChuTen(CA_TEN[c]) + '\\s*:?\\s*(\\d+)\\s*/\\s*(\\d+)').exec(sau);
   if (m) return { lam: Number(m[1]), tong: Number(m[2]) };
-  const m2 = !phaiGhiCa && !/ca (ngày|đêm)/.test(sau) && /(\d+)\s*\/\s*(\d+)/.exec(sau);
+  const m2 = !phaiGhiCa && !/ca (ngay|dem)/.test(sau) && /(\d+)\s*\/\s*(\d+)/.exec(sau);
   return m2 ? { lam: Number(m2[1]), tong: Number(m2[2]) } : 'khong';
 }
 /* Quân số của từng tổ trong báo cáo sản lượng = quân số của báo cáo ca, tính bằng đúng bcQuanSo: u.ngay là số ca ngày của ngày
@@ -4486,7 +4487,8 @@ function slTao() {
 function vSanLuong() {
   const L = S.sl, top = head('Báo cáo sản lượng', L ? fmtDay(L.ngay) : '', 'more');
   if (!L) return `${top}${panelWait('sanluong')}`;
-  const nguonHien = S.slNguon || bcNGoc(L.bc[0]);
+  // hai ca đang theo hai nguồn khác nhau (mỗi báo cáo ca chọn một kiểu) thì không nút nào sáng
+  const nguonHien = S.slNguon || (bcNGoc(L.bc[0]) === bcNGoc(L.bc[1]) ? bcNGoc(L.bc[0]) : '');
   const T = slTinh(), cs = T.cs, G = L.gioi_han, homNay = S.boot.today, truoc = congNgay(L.ngay, -1), sau = congNgay(L.ngay, 1);
   const khac = L.luu && L.luu.chup && !S.slLai && (L.luu.chup.chuan !== L.tl.chuan || L.luu.chup.gia !== L.tl.gia || L.to.some((u) => slGcCua(L.luu.chup, u.id) !== L.tl.gc[u.id]));
   const luu = L.luu ? `Đã lưu lúc ${dmy(L.luu.ts)} (${esc(L.luu.by_name)})` : 'Chưa lưu lần nào';

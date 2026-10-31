@@ -360,6 +360,13 @@ async function main() {
   R(`S.form.slt_chuan = '150'; ACTIONS.slrnd(); delete S.form.slt_chuan`); await cho();
   ok('đang sửa thiết lập dở: chưa bốc, nhắc lưu trước', /Hãy lưu thiết lập/.test(R('S.toast')), R('S.toast'));
 
+  // chữ sửa tay gõ kiểu nào cũng phải đọc được: không dấu, thiếu dấu hai chấm, chữ hoa; đọc không ra thì sản lượng âm thầm bỏ qua số đã sửa
+  const doc = (s, c) => R(`JSON.stringify(bcS3Cua(${JSON.stringify(s)}, 'Khoa', ${c}))`), g = (lam) => JSON.stringify({ lam, tong: 21 });
+  eq('không dấu, hai ca: đúng số từng ca', [doc('To Khoa: ca ngay 12/21, ca dem 8/21', 1), doc('To Khoa: ca ngay 12/21, ca dem 8/21', 2)], [g(12), g(8)]);
+  eq('thiếu dấu hai chấm', [doc('Tổ Khoa ca ngày 12/21', 1), doc('Tổ Khoa, ca ngày 12/21', 1), doc('Tổ Khoa 12/21 cn', 1), doc('TỔ KHOA: CA NGÀY 12/21 CN', 1)], [g(12), g(12), g(12), g(12)]);
+  eq('tên tổ dài hơn không ăn nhầm khi thiếu dấu hai chấm', doc('Tổ Khoa Anh ca ngày 3/21', 1), 'null');
+  eq('không dấu, tổ làm ca kia: không có số ca này', R(`bcS3Cua('To Khoa (lam ca dem)', 'Khoa', 1)`), 'khong');
+
   // tự dùng bản mới nhất: có bản mới mà không làm dở việc gì thì tải lại; đang làm dở thì chờ
   R(`globalThis.__tai = 0; globalThis.location = { reload() { globalThis.__tai++; } }; S.newVer = true; S.sel = null; S.ask = null; S.busy = false; S.slTlMo = false; S.nhap.lines = []; S.screen = 'sanluong';`);
   eq('ô sửa của màn báo cáo ca còn mở nhưng đã rời màn đó: không coi là việc dở', R(`S.bcMo = 'dau'; coViecDo()`), false);
