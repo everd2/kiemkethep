@@ -138,6 +138,17 @@ async function main() {
   R('ACTIONS.slai()');
   eq('bấm Tính lại: bản chữ theo tỷ lệ giá 0,5', kg(R('slTao()')), Math.round(14 * 158 * R('S.sl.tl.gc[' + U['Ngày'] + ']') / 0.5));
 
+  /* Báo cáo sản lượng ĐÃ LƯU chỉ giữ thiết lập SẢN LƯỢNG (công chuẩn, tỷ lệ); quân số vẫn theo bảng thiết lập quân số chung. */
+  ok('báo cáo sản lượng hôm nay đã lưu', !!S.one('SELECT ts FROM san_luong WHERE ngay = ?', D));
+  eq('sửa thiết lập quân số tổ Ngày thành 15', (await dat(15)).status, 200);
+  await tai();
+  eq('đã lưu: quân số vẫn theo bảng thiết lập', so('Ngày'), [null, 15, 15]);
+  eq('đã lưu: công mặc định cũng theo', R(`slTinh().dong.find((r) => r.u.id === ${U['Ngày']}).cong`), 15);
+  const bcNgay = (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'CV')).data, bcDem = (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, 'CV')).data;
+  eq('cả hai báo cáo ca cùng đọc một bảng', JSON.stringify(bcDem.tl), JSON.stringify(bcNgay.tl));
+  // ca đêm TỐI NAY: báo cáo ca đêm hôm nay đọc bảng chung, và sẽ là phần ca đêm của sản lượng ngày MAI
+  eq('tổ Đêm: ca đêm tối nay dùng số thiết lập 17', R(`bcQuanSo(${JSON.stringify(bcDem)}, 'to').rows.find((r) => r.u.id === ${U['Đêm']}).lam`), 17);
+
   xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
