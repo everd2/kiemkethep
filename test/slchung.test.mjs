@@ -128,6 +128,7 @@ async function main() {
   ok('báo cáo ca: chép riêng mục quân số cũng đúng số mới', chep.startsWith('3. ') && chep.includes('ca ngày 14/20 cn'), chep);
   // ngày đã lưu giữ thiết lập sản lượng lúc lưu: màn và chữ cùng số cũ, có nhắc; bấm Tính lại thì theo thiết lập hiện tại
   R(`S.screen = 'sanluong'`); await tai();
+  R('ACTIONS.slrnd()'); await doiXong();
   const kg = (t) => Number(/Tổ Ngày: ca ngày \d+\/20 cn gia công thép (\d+) kg/.exec(t)[1]);
   const kg0 = kg(R('slTao()'));
   eq('đổi tỷ lệ giá sang 0,5', (await S.call('PUT', '/sanluong/thietlap', { gia: 0.5 }, 'CV')).status, 200);

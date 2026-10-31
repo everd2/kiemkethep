@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v74';
+const BAN = 'kho-thep-v75';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4353,7 +4353,29 @@ function bcDung(B) {
    gộp lại, mỗi tổ một dòng: quân số lấy ca ngày của ngày báo cáo và/hoặc ca đêm hôm trước (tổ làm đêm).
    Sản lượng của tổ (kg) = (công gia công thép × công chuẩn × tỷ lệ gia công của tổ) ÷ tỷ lệ giá (chung). Công mặc định = số ĐI LÀM
    của tổ, sửa được từng tổ. Công chuẩn, tỷ lệ giá, tỷ lệ gia công từng tổ là THIẾT LẬP (nút bánh răng); ngày đã lưu thì giữ thiết lập
-   lúc lưu (chup), muốn áp thiết lập hiện tại bấm "Tính lại". Ô công đã gõ nằm trong S.form (slc_<id tổ>); chỉ ô khác số đi làm được lưu. */
+   lúc lưu (chup), muốn áp thiết lập hiện tại bấm Làm mới (tự lưu luôn). Nút Chép chỉ chép chữ, không lưu. Ô công đã gõ nằm trong S.form (slc_<id tổ>); chỉ ô khác số đi làm được lưu. */
+const SL_SUA_NGAY = 31; // như src/sanluong.js
+/* LƯU báo cáo của một ngày: công đã sửa, nguồn số, ảnh chụp thiết lập đang dùng. Không gắn với nút Chép: bấm Làm mới thì lưu (slrnd), sửa ô công
+   hay đổi nguồn thì tự lưu ngầm (slLuuNgam) để không mất. slHang: các lần lưu chạy nối đuôi, lần sau dùng ts của lần trước. */
+async function slGhi(L) {
+  const T = slTinh();
+  if (T.loi) throw new Error(T.loi);
+  const chup = { chuan: T.cs.chuan, gia: T.cs.gia, gc: Object.fromEntries(L.to.map((u) => [u.id, slGcCua(T.cs, u.id)])) };
+  let r;
+  try { r = await api('PUT', '/sanluong', { ngay: L.ngay, cong: T.sua, chup, nguon: S.slNguon || undefined, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
+  catch (e) { if (e.code === 'changed') { try { await slTai(L.ngay, true); } catch (er) { /* vòng làm mới sẽ tải lại */ } } throw e; }
+  L.luu = { cong: T.sua, chup, nguon: S.slNguon || null, ts: r.ts, by_id: S.me.id, by_name: S.me.name };
+  S.slLai = false;
+}
+let slHang = Promise.resolve();
+function slLuuNgam() {
+  slHang = slHang.then(async () => {
+    const L = S.sl;
+    if (!L || slTinh().loi || L.ngay < congNgay(S.boot.today, -SL_SUA_NGAY)) return;
+    try { await slGhi(L); } catch (e) { say(e.message, true); render(); }
+  });
+  return slHang;
+}
 const slSo = (s) => { const t = String(s == null ? '' : s).trim().replace(',', '.'); return t === '' ? NaN : Number(t); };
 const slFmt = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
 async function slLay(q) {
@@ -4492,7 +4514,7 @@ function vSanLuong() {
   const T = slTinh(), cs = T.cs, G = L.gioi_han, homNay = S.boot.today, truoc = congNgay(L.ngay, -1), sau = congNgay(L.ngay, 1);
   const khac = L.luu && L.luu.chup && !S.slLai && (L.luu.chup.chuan !== L.tl.chuan || L.luu.chup.gia !== L.tl.gia || L.to.some((u) => slGcCua(L.luu.chup, u.id) !== L.tl.gc[u.id]));
   const luu = L.luu ? `Đã lưu lúc ${dmy(L.luu.ts)} (${esc(L.luu.by_name)})` : 'Chưa lưu lần nào';
-  const oSo = (id, v) => `<input class="inp s" style="width:64px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="0" data-model="${id}" value="${esc(v)}" aria-label="Công gia công thép">`;
+  const oSo = (id, v) => `<input class="inp s" style="width:64px;flex:none;text-align:center;font-weight:700" id="${id}" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="0" data-model="${id}" data-change="slcong" value="${esc(v)}" aria-label="Công gia công thép">`;
   const oTy = (id, v, nhan, ghi) => `<label class="col gap6 f1 sm" style="min-width:0">${nhan}<input class="inp s" style="text-align:center;font-weight:700" id="${id}" inputmode="decimal" maxlength="6" autocomplete="off" data-model="${id}" value="${esc(v)}"><span class="muted" style="font-size:12px">${ghi}</span></label>`;
   const hang = T.dong.map((r) => `<div class="card col gap6"><div class="row gap8"><b class="f1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(r.u.name)}</b><span class="sm muted" style="flex:none">tỷ lệ gia công ${slFmt(r.gc)}</span></div>
       <div class="row gap8"><span class="sm f1" style="min-width:0;line-height:1.35">${slNguon(r.u) ? 'Đi làm: ' + slNguon(r.u) + (r.u.ngay && r.u.ngay.nguon === 'tay' || r.u.dem && r.u.dem.nguon === 'tay' ? ' (đã sửa tay ở báo cáo ca)' : r.u.ngay && r.u.ngay.nguon === 'tl' || r.u.dem && r.u.dem.nguon === 'tl' ? ' (số thiết lập)' : '') : '<span class="muted">Chưa báo quân số</span>'}</span>
@@ -4507,7 +4529,7 @@ function vSanLuong() {
       <span class="sm muted" style="line-height:1.4">Mỗi tổ bốc ngẫu nhiên trong khoảng của tổ đó khi bấm Làm mới. Hai số bằng nhau là tỷ lệ cố định.</span>
       <div class="row gap8"><span class="f1 sm" style="min-width:0">Chung mọi tổ</span>${oKh('slt_chung_tu', fv('slt_chung_tu', ''), 'Từ, chung mọi tổ')}${oKh('slt_chung_den', fv('slt_chung_den', ''), 'Đến, chung mọi tổ')}<button class="chip s" style="flex:none;white-space:nowrap" data-a="slapchung">Áp</button></div>
       ${L.to.map((u) => `<div class="row gap8"><span class="f1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(u.name)} <span class="muted sm">(${slFmt(L.tl.gc[u.id])})</span></span>${oKh('slt_tu_' + u.id, fv('slt_tu_' + u.id, slFmt(slKh(L, u.id).tu)), 'Từ, tổ ' + u.name)}${oKh('slt_den_' + u.id, fv('slt_den_' + u.id, slFmt(slKh(L, u.id).den)), 'Đến, tổ ' + u.name)}</div>`).join('')}
-      <span class="sm muted" style="line-height:1.4">Đổi thiết lập chỉ áp cho báo cáo chưa lưu; báo cáo đã lưu giữ số cũ cho tới khi bấm "Tính lại".</span>
+      <span class="sm muted" style="line-height:1.4">Đổi thiết lập chỉ áp cho báo cáo chưa lưu; báo cáo đã lưu giữ số cũ cho tới khi bấm Làm mới.</span>
       <button class="btn pri full" data-a="sltl">LƯU THIẾT LẬP</button></div>` : '';
   return `${top}<div class="col gap6 tbar" style="padding:6px 16px"><div class="row gap6">${mui(truoc, '‹', 'Hôm trước', true)}
       <input type="date" class="inp s f1" style="min-width:0;text-align:center" value="${L.ngay}" max="${homNay}" data-change="sldate" aria-label="Chọn ngày">${mui(sau, '›', 'Hôm sau', sau <= homNay)}</div>
@@ -7401,8 +7423,8 @@ const ACTIONS = {
   },
   sltlmo() { S.slTlMo = !S.slTlMo; render(); },
   // đổi nguồn quân số (như nút cùng tên ở báo cáo ca): số công đã sửa tay giữ nguyên, ô chưa sửa theo số quân số mới
-  slnguon(d) { if (!S.sl) return; S.slNguon = d.v === 'tl' ? 'tl' : 'to'; slGan(); render(); },
-  slai() { S.slLai = true; render(); },
+  slnguon(d) { if (!S.sl) return; S.slNguon = d.v === 'tl' ? 'tl' : 'to'; slGan(); render(); slLuuNgam(); },
+  slai() { S.slLai = true; render(); slLuuNgam(); },
   // lưu thiết lập: chỉ gửi các ô đã gõ
   sltl() {
     const L = S.sl; if (!L) return;
@@ -7445,33 +7467,32 @@ const ACTIONS = {
     L.to.forEach((u) => { S.form['slt_tu_' + u.id] = S.form.slt_chung_tu; S.form['slt_den_' + u.id] = S.form.slt_chung_den; });
     render();
   },
-  /* Làm mới: MỖI TỔ bốc một tỷ lệ riêng trong khoảng của tổ đó (server bốc, xem slThietLap). Báo cáo đang xem dùng ngay bộ số mới
-     (S.slLai), kể cả ngày đã lưu; bấm Chép báo cáo thì bộ số đó mới được lưu vào báo cáo của ngày này. */
+  /* Làm mới: MỖI TỔ bốc một tỷ lệ riêng trong khoảng của tổ đó (server bốc, xem slThietLap), rồi LƯU LUÔN báo cáo của ngày đang xem theo
+     thiết lập hiện tại (công chuẩn, tỷ lệ giá, bộ tỷ lệ vừa bốc). Đây là cách báo cáo đã lưu cập nhật thiết lập; nút Chép không lưu gì. */
   slrnd() {
     const L = S.sl; if (!L) return;
     if (Object.keys(S.form).some((k) => k.startsWith('slt_'))) return say('Hãy lưu thiết lập đang sửa trước khi làm mới.', true), render();
+    if (L.ngay < congNgay(S.boot.today, -SL_SUA_NGAY)) return say(`Chỉ cập nhật được báo cáo sản lượng trong ${SL_SUA_NGAY} ngày gần đây.`, true), render();
     act(async () => {
+      await slHang;
       await api('PUT', '/sanluong/thietlap', { ngau: true }, 0, false);
       delete NHO['sl:' + L.ngay];
       await slTai(L.ngay, true);
       S.slLai = true;
-    }, 'Đã bốc lại tỷ lệ gia công cho từng tổ. Bấm Chép báo cáo để lưu vào báo cáo này.');
+      await slGhi(S.sl);
+    }, 'Đã cập nhật tỷ lệ gia công và lưu báo cáo.');
   },
   async slchep() {
     const L = S.sl; if (!L) return;
     const T = slTinh();
     if (T.loi) return say(T.loi, true), render();
     const chu = slTao(), ok = await bcChepChu(chu);
-    const chup = { chuan: T.cs.chuan, gia: T.cs.gia, gc: Object.fromEntries(L.to.map((u) => [u.id, slGcCua(T.cs, u.id)])) };
+    // Chép chỉ là chép chữ, không lưu gì. Vẫn tải lại để so: như bcLuu, chữ đã chép có thể mang số cũ
     act(async () => {
-      try { await api('PUT', '/sanluong', { ngay: L.ngay, cong: T.sua, chup, nguon: S.slNguon || undefined, ts: L.luu ? L.luu.ts : 0 }, 0, false); }
-      catch (e) { if (e.code === 'changed') { try { await slTai(L.ngay, true); } catch (er) { /* vòng làm mới sẽ tải lại */ } } throw e; }
-      S.slLai = false;
-      await slTai(L.ngay, true);
-      // như bcLuu: chữ đã chép có thể mang số cũ, so với số vừa tải
-      const doi = slTao() !== chu;
-      say(doi ? CHEP_CU : ok ? 'Đã chép báo cáo sản lượng và lưu lại.' : 'Đã lưu, nhưng máy không cho chép tự động: hãy chép tay.', doi);
-    });
+      let doi = false;
+      try { await slTai(L.ngay, true); doi = slTao() !== chu; } catch (e) { /* mất mạng: chữ đã chép xong, vòng làm mới sẽ tải lại */ }
+      say(doi ? CHEP_CU : ok ? 'Đã chép báo cáo sản lượng.' : 'Máy không cho chép tự động: hãy chạm giữ để chép tay.', doi);
+    }, null, 'Đang kiểm tra số mới...');
   },
   bcca(d) { const [ngay, ca] = String(d.v).split(':'); S.bcCa = { ngay, ca: Number(ca) }; S.bcc = null; go('baocaoca', true); },
   // từ báo cáo ca sang bảng thiết lập (ca và số quân từng tổ); nút quay lại ở đó về đúng báo cáo đang soạn
@@ -7708,6 +7729,7 @@ document.addEventListener('change', async (e) => {
   if (t.dataset && t.dataset.change === 'tkngaychon') { if (t.value) { S.tkNgay = t.value > S.boot.today ? S.boot.today : t.value; S.tkChe = 'ngay'; tkDam(); } return; }
   if (t.dataset && t.dataset.change === 'gchan') { S.form.gchan = t.value || ''; render(); return; }
   if (t.dataset && t.dataset.change === 'logday') { S.auditF.ngay = t.value || ''; go('nhatky', true); return; }
+  if (t.dataset && t.dataset.change === 'slcong') { slLuuNgam(); return; }
   if (t.dataset && t.dataset.change === 'sldate') { if (t.value) ACTIONS.slngay({ v: t.value > S.boot.today ? S.boot.today : t.value }); return; }
   // sổ thép về: chọn phi của một dòng thì kg tự tính chạy theo ngay
   if (t.dataset && t.dataset.change === 'tvphi') { S.form[t.dataset.model] = t.value; render(); return; }

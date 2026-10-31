@@ -222,9 +222,18 @@ async function main() {
   ok('tổ ca ngày xếp trước, tổ chỉ làm đêm sau, tổ chưa báo cuối', tu.findIndex((l) => l.includes('(làm ca đêm)')) > tu.findIndex((l) => l.includes('Trường')) && tu.findIndex((l) => l.includes('chưa báo')) === tu.length - 1, tu.join(' | '));
   ok('không còn chữ nghỉ hay lý do nghỉ ở dòng nào', !/nghỉ|ốm|lý do/i.test(chu), chu);
   ok('kg là số nguyên trơn (không dấu chấm nghìn)', tu.every((l) => /\d+ kg$/.test(l) && !/\d\.\d{3} kg$/.test(l)), tu.join(' | '));
-  // chép: lưu ảnh chụp thiết lập hiện tại (đã bấm tính lại) + các ô công đã sửa
+  // chép chỉ chép chữ; rời ô công thì tự lưu ảnh chụp thiết lập hiện tại (đã bấm tính lại) + các ô công đã sửa
+  const tsLuu = () => S.one('SELECT ts FROM san_luong WHERE ngay = ?', D).ts, ts0 = tsLuu();
+  await R('slHang');
+  const ts1 = tsLuu();
   R(`ACTIONS.slchep()`); await cho();
   ok('đã chép vào bộ nhớ tạm đúng bản chữ', chep === chu, chep && chep.slice(0, 60));
+  eq('nút Chép không ghi gì vào báo cáo', tsLuu(), ts1);
+  eq('bấm Tính lại đã tự lưu theo thiết lập hiện tại, không cần Chép', JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).chup.gia, 0.5);
+  ok('lần lưu đó đổi ts của báo cáo', ts1 >= ts0);
+  // rời ô công (sự kiện change): tự lưu số công đã sửa
+  for (const fn of nghe.change) await fn({ target: { dataset: { change: 'slcong', model: 'slc_' + nam.id } } });
+  await R('slHang');
   const luuRow = JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data);
   eq('lưu: tỷ lệ giá mới, các ô công đã sửa', [luuRow.chup.gia, luuRow.chup.chuan, luuRow.cong], [0.5, 158, { [khoa.id]: 15, [nam.id]: 5 }]);
   eq('sau khi lưu không còn nút tính lại', R('vSanLuong()').includes('data-a="slai"'), false);
@@ -248,8 +257,8 @@ async function main() {
   eq('Hoàng, Sơn vẫn đúng số thiết lập', [uOf(hoang).lam, uOf(son).lam], [12, 17]);
   const congKhoa = cua(R('slTinh()'), khoa);
   eq('công gia công thép của Khoa theo số mới (10), công đã sửa tay 15 thì giữ 15', congKhoa.cong, 15);
-  R(`ACTIONS.slchep()`); await cho();
-  eq('lưu kèm nguồn quân số đã chọn', JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).nguon, 'tl');
+  await R('slHang');
+  eq('đổi nguồn: tự lưu kèm nguồn đã chọn, không cần Chép', JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).nguon, 'tl');
   await R('slTai()'); await cho();
   eq('mở lại: nhớ nguồn đã chọn', [R('S.slNguon'), uOf(khoa).lam], ['tl', 10]);
   R(`ACTIONS.slnguon({ v: 'to' })`);
@@ -351,12 +360,12 @@ async function main() {
   ok('mỗi lần bốc ra bộ số khác', boc.size > 5, boc.size);
   const vMay = (await S.call('GET', '/sanluong?ngay=' + D, undefined, 'Admin')).data;
   eq('máy khác thấy đúng bộ số vừa bốc', [khoa, son, coi].map((u) => vMay.tl.gc[u.id]), [khoa, son, coi].map(gcOf));
-  ok('báo cáo đang xem dùng ngay bộ số mới, kể cả ngày đã lưu', R('slCS() === S.sl.tl'));
+  eq('Làm mới tự lưu: báo cáo mang bộ số mới và thiết lập hiện tại', [R('S.sl.luu.chup.gc[' + son.id + ']'), R('S.sl.luu.chup.gia'), R('!!S.slLai')], [gcOf(son), R('S.sl.tl.gia'), false]);
   eq('kg theo tỷ lệ mới của tổ', R(`slTinh().dong.find((r) => r.u.id === ${son.id}).gc`), gcOf(son));
   const chupGc = () => JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).chup.gc[son.id];
   R(`S.toast = ''`);
-  R('ACTIONS.slchep()'); await cho();
-  eq('Chép: báo cáo lưu bộ số mới', chupGc(), gcOf(son));
+  eq('đã ghi xuống máy chủ, chưa cần Chép', chupGc(), gcOf(son));
+  eq('xem lại từ máy chủ vẫn đúng', (await S.call('GET', '/sanluong?ngay=' + D, undefined, 'Admin')).data.luu.chup.gc[son.id], gcOf(son));
   R(`S.form.slt_chuan = '150'; ACTIONS.slrnd(); delete S.form.slt_chuan`); await cho();
   ok('đang sửa thiết lập dở: chưa bốc, nhắc lưu trước', /Hãy lưu thiết lập/.test(R('S.toast')), R('S.toast'));
 
