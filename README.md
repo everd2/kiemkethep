@@ -290,6 +290,7 @@ Cùng khuôn với báo cáo ca nhưng là **một báo cáo gộp ca ngày và 
 - **Đếm theo công** (một người trong một ca). **OFF luân phiên tính là nghỉ.** *% nghỉ = công nghỉ ÷ (công đi làm + công nghỉ)*; % của toàn bộ thì cộng công mọi tổ rồi mới chia.
 - **Tiểu đội trưởng** vào là thấy thẳng tổ mình, gọn: % nghỉ tháng và tăng / giảm so tháng trước, lịch tháng tô màu, nghỉ theo lý do. Không có bảng so sánh, ngưỡng, nguồn số.
 - **Ngưỡng tô đỏ** (mặc định 15%): CVKTHT trở lên đổi được (dòng *Tô đỏ khi nghỉ từ …*). Nút **Chép tóm tắt** ra chữ để dán Zalo.
+- **Ô Đêm hôm trước** (Thiết lập quân số): số của ca đêm đã hết, riêng với ô Đêm của ca đêm đang chạy / sắp tới. Báo cáo ca ngày và báo cáo sản lượng lấy đúng số này khi tổ chưa báo ca đêm đó; tổ đã tự báo thì ô khoá. Ca đã hết không có số thì ghi chưa báo, không đọc ô Đêm.
 - **Số của ca tổ không báo**: hết ca nào, app (lịch chạy mỗi giờ) tự chép ca đó cho tổ làm ca đó mà không báo — có số thiết lập thì lấy số đó (kèm người nghỉ theo lý do), không có thì ghi là **ca thiếu số** (bảng `quan_so_tl`, bản cấu trúc 39). Sửa số thiết lập sau đó không đổi số của ca đã qua. Ca đã qua trước khi có tính năng này, hoặc hết ca trước lúc tổ đặt lịch ca, thì không chép được: các tháng cũ chỉ có số tổ tự báo.
 
 ### Báo cáo ca gửi cấp trên

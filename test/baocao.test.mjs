@@ -116,6 +116,8 @@ async function main() {
     fetch: async (url, o = {}) => {
       if (!/^\/api\/(baocao|bootstrap|quanso)/.test(String(url))) return new Promise(() => {});
       const r = await S.call(o.method || 'GET', String(url).replace(/^\/api/, ''), o.body ? JSON.parse(o.body) : undefined, who);
+      // bộ này soát cách ghép chữ của ca đang soạn nhưng dùng ca đã qua cho đủ số liệu: bỏ mốc ca đã hết (ca đã hết không đọc số đặt sau đó: xem slchung.test.mjs)
+      if (r.data && r.data.tlMoc) delete r.data.tlMoc;
       return { ok: r.status < 400, status: r.status, json: async () => r.data, headers: { get: () => null } };
     },
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },

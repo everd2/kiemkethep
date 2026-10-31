@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v75';
+const BAN = 'kho-thep-v76';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -3818,6 +3818,14 @@ function vQuanSo() {
     /* THIẾT LẬP dạng BẢNG GỌN: mỗi tổ một dòng (tên, ca, tổng, ca ngày, ca đêm), MỘT nút "Lưu tất cả" ở đáy —
        9 tổ vừa một màn, không phải cuộn qua 9 thẻ với 9 nút Lưu. Số XÁM là số gợi ý theo lần tổ báo gần nhất, CHƯA
        lưu (báo cáo ca chưa dùng); bấm Lưu tất cả là nhận luôn các gợi ý đó. Ô của ca tổ không làm thì khoá. */
+    // ô Đêm hôm trước (xem caDemTruoc ở src/quanso.js): riêng với ô Đêm của đêm tới; tổ đã tự báo ca đó thì chỉ hiện số báo
+    const dT = Q.demTr, demO = (u, L) => {
+      if (!dT) return '';
+      const k = 'tl_' + u.id + '_d', bao = dT.bao[u.id], so = dT.so[u.id], ten = 'Đêm ' + fmtDay(dT.ngay).slice(0, 5) + ' (hôm trước)';
+      if (bao) return `<span class="sm muted" style="grid-column:1 / -1">${ten}: tổ đã báo ${bao.lam}/${bao.tong}</span>`;
+      if (L === 1 && !(so && so.lam != null)) return '';
+      return `<div class="row gap6" style="grid-column:1 / -1"><label class="sm muted f1" for="${k}">${ten}${so ? '' : ', chưa có số'}</label><input class="inp s" style="width:64px;flex:none;text-align:center;padding:0 4px;font-weight:700" id="${k}" inputmode="numeric" maxlength="3" autocomplete="off" data-model="${k}" value="${esc(fv(k, so && so.lam != null ? so.lam : ''))}" aria-label="Số đi làm ${esc(ten)} tổ ${esc(u.name)}"></div>`;
+    };
     const tieuDe = Q.tdt.length ? `<div style="display:grid;grid-template-columns:minmax(0,1fr) 74px 50px 50px 50px;gap:6px;align-items:center" class="sm muted"><span>Tổ</span><span>Ca</span><span style="text-align:center">Tổng</span><span style="text-align:center;line-height:1.15">Làm<br>ngày</span><span style="text-align:center;line-height:1.15">Làm<br>đêm</span></div>` : '';
     if (S.qsSx) ds.sort((a, z) => S.qsSx.indexOf(a.id) - S.qsSx.indexOf(z.id));
     const cuaTdt = ds;
@@ -3845,7 +3853,7 @@ function vQuanSo() {
       return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 74px 50px 50px 50px;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
         <b style="min-width:0;font-size:15px;line-height:1.25;overflow-wrap:anywhere">${esc(u.name)}</b>
         <select class="inp s" style="padding:0 2px;font-size:15px;min-width:0;width:100%" id="${k}c" data-model="${k}c" data-change="tlca" aria-label="Ca của tổ ${esc(u.name)}">${[[0, '—'], [1, 'Ngày'], [2, 'Đêm'], [3, '2 ca']].filter(([c]) => c || !L).map(([c, t]) => `<option value="${c}"${L === c ? ' selected' : ''}>${t}</option>`).join('')}</select>
-        ${o(k + 't', fv(k + 't', d.tong), gy('t'))}${o(k + '1', L === 2 ? '' : fv(k + '1', d.s1), gy('1'), L === 2)}${o(k + '2', L === 1 ? '' : fv(k + '2', d.s2), gy('2'), L === 1)}${nghiO}</div>`;
+        ${o(k + 't', fv(k + 't', d.tong), gy('t'))}${o(k + '1', L === 2 ? '' : fv(k + '1', d.s1), gy('1'), L === 2)}${o(k + '2', L === 1 ? '' : fv(k + '2', d.s2), gy('2'), L === 1)}${demO(u, L)}${nghiO}</div>`;
     }).join('');
     const moi = Object.entries(Q.tl || {}).sort((a, z) => z[1].ts - a[1].ts)[0];
     const tenTo = (id) => (Q.tdt.find((u) => u.id === Number(id)) || {}).name || '';
@@ -3855,7 +3863,7 @@ function vQuanSo() {
     const tongDong = S.qsSx || cuaTdt.length < 2 ? '' : `<div style="display:grid;grid-template-columns:minmax(0,1fr) 74px 50px 50px 50px;gap:6px;align-items:center;padding:8px 0 2px"><b style="grid-column:1 / 3">Tổng ${cuaTdt.length} tổ</b>${oT('tlS_t', tg.tong)}${oT('tlS_1', tg.s1)}${oT('tlS_2', tg.s2)}</div>`;
     return `${top}<div class="f1 scroll pad col gap8" id="body">
       ${S.qsSx ? '<div class="card warn col gap6"><b>Đang xếp thứ tự tổ</b><span class="sm">Thứ tự này dùng cho bảng quân số và báo cáo ca.</span><div class="row gap6"><button class="btn s pri f1" data-a="qssxluu">Lưu thứ tự</button><button class="btn s f1" data-a="qssxthoi">Thôi</button></div></div>'
-        : '<span class="sm muted" style="line-height:1.4">Ca của từng tổ, và số quân CVKTHT đặt: báo cáo ca dùng số này khi tổ <b>chưa báo</b>. Làm ngày / làm đêm là <b>số đi làm</b>, người nghỉ ghi riêng ở dòng Nghỉ dưới mỗi tổ.</span>'}
+        : '<span class="sm muted" style="line-height:1.4">Ca của từng tổ, và số quân CVKTHT đặt: báo cáo ca dùng số này khi tổ <b>chưa báo</b>. Làm ngày / làm đêm là <b>số đi làm</b> của ca đang chạy hoặc sắp tới, người nghỉ ghi riêng ở dòng Nghỉ dưới mỗi tổ. Ô <b>Đêm hôm trước</b> là số của ca đêm đã hết, riêng với ô Đêm: báo cáo ca ngày và sản lượng lấy đúng số đó.</span>'}
       ${Q.tdt.length ? `<div class="card col" style="gap:0;padding:8px 12px">${S.qsSx ? '' : tieuDe}${dong}${tongDong}</div>` : '<div class="muted">Chưa có tài khoản Tiểu đội trưởng nào. Admin tạo ở Thêm → Người dùng và PIN.</div>'}
       ${coGoiY ? '<span class="sm muted" style="line-height:1.4">Số <span style="color:var(--mut)">xám</span> là gợi ý theo số tổ tự khai hoặc lần tổ báo gần nhất, <b>chưa lưu</b>. Bấm Lưu tất cả để dùng.</span>' : ''}
       ${moi && !S.qsSx ? `<span class="sm muted" style="line-height:1.4">Sửa gần nhất: ${esc(moi[1].by_name || '')} · tổ ${esc(tenTo(moi[0]))} · ${dmy(moi[1].ts)}</span>` : ''}
@@ -4041,6 +4049,9 @@ function bcQuanSo(B, nguon = S.bcNguon) {
       // có bản chép lúc hết ca: chỉ bản chép (lam null = lúc hết ca tổ chưa có số, ca thiếu số: không lấy số đặt sau đó bù vào)
       const x = (tlCa[c] || {})[u.id];
       if (x) return x.lam != null ? { ca: c, tong: x.tong, lam: x.lam, ca_kia: 0, nghi: x.nghi || {}, ghi_chu: x.ghi_chu || null, tl: true } : null;
+      // ca đã hết, không có bản chép: tổ đã báo thì dùng số báo; số đang đặt sửa sau lúc hết ca là số của ca tới, không đọc (đêm nay không đè lên đêm qua)
+      const moc = (B.tlMoc || {})[c];
+      if (moc && ((c === ca ? r0 : p0) || (tl && tl.ts > moc))) return null;
       if (!tl) return null; const ng = tl['n' + c] || {}; if (!tl['s' + c] && !qsSoNghi(ng)) return null; return { ca: c, tong: tl.tong, lam: c === 1 ? tl.s1 : tl.s2, ca_kia: 0, nghi: ng, ghi_chu: (ng.khac && tl['gc' + c]) || null, tl: true };
     };
     // tổng quân số theo số thiết lập: của bản chép ca này nếu có, không thì số đang đặt (tổng là của tổ, không riêng ca nào)
@@ -7128,9 +7139,16 @@ const ACTIONS = {
      (không ghi dở), app tải số mới và nói rõ tổ nào, ai sửa. */
   qstlluu() {
     const Q = S.qs; if (!Q) return;
-    const ds = [];
+    const ds = [], dem = [];
     for (const u of Q.tdt) {
       const k = 'tl_' + u.id + '_', tl = (Q.tl || {})[u.id], d = qsTlMacDinh(u.id);
+      // ô Đêm hôm trước đã gõ: lưu riêng, không dính vào số của đêm tới. Bỏ trống thì giữ nguyên
+      const gd = String(S.form[k + 'd'] == null ? '' : S.form[k + 'd']).trim();
+      if (gd !== '' && Q.demTr && !Q.demTr.bao[u.id]) {
+        const v = soTu(gd);
+        if (v == null || Number.isNaN(v)) { say(`Tổ ${u.name}: số đêm hôm trước không hợp lệ.`, true); render(); return gcFocus(k + 'd'); }
+        if (!Q.demTr.so[u.id] || Q.demTr.so[u.id].lam !== v) dem.push({ user: u.id, lam: v });
+      }
       const Lcu = qsLichCa(Q.lich, u.id, Q.hien.ngay), L = Number(fv(k + 'c', Lcu)) || 0;
       if (L && L !== Lcu) ds.push({ user: u.id, ca: L });
       const so = (hau, mac) => { const v = String(fv(k + hau, mac)).trim(); return v === '' ? null : soTu(v); };
@@ -7158,16 +7176,16 @@ const ACTIONS = {
       }
       ds.push({ user: u.id, tong, s1, s2, n1: N[0].nghi, n2: N[1].nghi, gc1: N[0].gc, gc2: N[1].gc, ts: tl ? tl.ts : 0 });
     }
-    if (!ds.length) return say('Không có gì thay đổi.'), render();
+    if (!ds.length && !dem.length) return say('Không có gì thay đổi.'), render();
     const xoa = () => Object.keys(S.form).filter((x) => /^tl_/.test(x)).forEach((x) => delete S.form[x]);
     act(async () => {
       /* MỘT request cho cả bảng (xem qsThietLap ở src/quanso.js), kèm luôn phần tải lại (sauGhi: /bootstrap và /quanso):
          lưu mười tổ cũng chỉ một vòng mạng. Có tổ bị người khác sửa trước thì server từ chối CẢ lần lưu và nói rõ tổ nào. */
-      try { await api('PUT', '/quanso/thietlap', { ds }); }
+      try { await api('PUT', '/quanso/thietlap', { ds, ...(dem.length ? { dem_truoc: { ngay: Q.demTr.ngay, ds: dem } } : {}) }); }
       catch (e) { xoa(); try { await qsTai(); } catch (e2) { /* giữ bản đang có */ } throw e; }
       xoa();
       try { await Promise.all([qsTai(), loadBoot()]); } catch (e) { /* đã lưu */ }
-    }, `Đã lưu ${ds.length} thay đổi.`);
+    }, `Đã lưu ${ds.length + dem.length} thay đổi.`);
   },
   // bảng thiết lập: mở / đóng ô ghi người nghỉ của một tổ; chạm một lý do là thêm 1 người (chưa lưu, chờ Lưu tất cả)
   tlnghimo(d) { const id = Number(d.id); S.tlMo = S.tlMo === id ? null : id; render(); },

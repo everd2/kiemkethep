@@ -36,6 +36,8 @@ async function main() {
   eq('đặt thiết lập: Hai', (await tl('Hai', { ca: 3, tong: 20, s1: 8, s2: 9 })).status, 200);
   eq('đặt thiết lập: Mới (chưa đặt lịch)', (await tl('Mới', { tong: 20, s1: 5, s2: 6 })).status, 200);
   eq('đặt ca: Khai làm hai ca', (await S.call('PUT', '/quanso/lich', { user: U['Khai'], ca: 3 }, 'CV')).status, 200);
+  // 9h sáng: số đêm qua đặt ở ô Đêm hôm trước, ô Đêm là số của đêm nay
+  eq('đặt ô Đêm hôm trước: Đêm 17, Hai 9, Mới 6', (await S.call('PUT', '/quanso/thietlap', { ds: [], dem_truoc: { ngay: hom, ds: [{ user: U['Đêm'], lam: 17 }, { user: U['Hai'], lam: 9 }, { user: U['Mới'], lam: 6 }] } }, 'CV')).status, 200);
   eq('Khai báo ca ngày 10/20, còn lại 10 người thuộc ca đêm', (await S.call('PUT', '/quanso', { ngay: D, ca: 1, user: U['Khai'], tong: 20, lam: 10 }, 'CV')).status, 200);
 
   const store = {};
@@ -85,7 +87,6 @@ async function main() {
   ok('sửa một chỗ: báo cáo ca ngày theo ngay', /ca ngày 7\/20 cn/.test(dong(0, 'Hai')), dong(0, 'Hai'));
 
   // ca đêm đã chép lúc hết ca: sửa số đặt sau đó không đổi ca đêm hôm trước ở cả hai báo cáo, ca ngày vẫn theo số mới
-  S.raw.prepare('INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?, 2, ?, 20, 9, ?, NULL, ?)').run(hom, U['Hai'], '{}', Date.now());
   eq('sửa thiết lập tổ Hai sau khi ca đêm đã chép: đêm 4, ngày 6', (await S.call('PUT', '/quanso/thietlap', { user: U['Hai'], ts: tsOf('Hai'), tong: 20, s1: 6, s2: 4 }, 'CV')).status, 200);
   await tai();
   eq('ca đêm hôm trước giữ 9, ca ngày hôm nay 6', so('Hai'), [9, 6, 15]);
@@ -148,6 +149,37 @@ async function main() {
   eq('cả hai báo cáo ca cùng đọc một bảng', JSON.stringify(bcDem.tl), JSON.stringify(bcNgay.tl));
   // ca đêm TỐI NAY: báo cáo ca đêm hôm nay đọc bảng chung, và sẽ là phần ca đêm của sản lượng ngày MAI
   eq('tổ Đêm: ca đêm tối nay dùng số thiết lập 17', R(`bcQuanSo(${JSON.stringify(bcDem)}, 'to').rows.find((r) => r.u.id === ${U['Đêm']}).lam`), 17);
+
+  /* HAI CA ĐÊM TÁCH RIÊNG: ô Đêm là đêm nay, ô Đêm hôm trước là đêm qua, sửa ô này không đổi ô kia. */
+  const datDem = (ten, s2) => S.call('PUT', '/quanso/thietlap', { user: U[ten], ts: tsOf(ten), tong: 20, s1: 0, s2 }, 'CV');
+  const demTr = (ds, ngay = hom) => S.call('PUT', '/quanso/thietlap', { ds: [], dem_truoc: { ngay, ds } }, 'CV');
+  const dTon = async () => (await S.call('GET', `/baocao?ngay=${D}&ca=2`, undefined, 'CV')).data;
+  const demNay = async (ten) => R(`bcQuanSo(${JSON.stringify(await dTon())}, 'to').rows.find((r) => r.u.id === ${U[ten]}).lam`);
+  R(`S.slNguon = null`);
+  eq('sửa ô Đêm thành 4 cho đêm nay', (await datDem('Đêm', 4)).status, 200);
+  await tai();
+  eq('đêm qua giữ 17', so('Đêm'), [17, null, 17]);
+  eq('báo cáo ca đêm hôm nay dùng 4', await demNay('Đêm'), 4);
+  eq('sửa ô Đêm hôm trước thành 16', (await demTr([{ user: U['Đêm'], lam: 16 }])).status, 200);
+  await tai();
+  eq('đêm qua theo ô Đêm hôm trước 16', so('Đêm'), [16, null, 16]);
+  eq('đêm nay vẫn 4', await demNay('Đêm'), 4);
+  eq('trang cũ từ hôm trước: từ chối', (await demTr([{ user: U['Đêm'], lam: 5 }], D)).status, 409);
+  eq('nhiều hơn tổng: từ chối', (await demTr([{ user: U['Đêm'], lam: 21 }])).status, 400);
+  ok('màn thiết lập có ngày đêm hôm trước và số đã đặt', (await S.call('GET', '/quanso', undefined, 'CV')).data.demTr.so[U['Đêm']].lam === 16);
+  // không có bản chép: đêm qua ghi chưa báo, không lấy ô Đêm của đêm nay đè lên
+  S.raw.prepare('DELETE FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?').run(hom, U['Mới']);
+  await tai();
+  eq('không có số đêm qua: không đọc ô Đêm', so('Mới')[0], null);
+  // tổ đã tự báo đêm qua: ô khoá, chọn nguồn Chỉ số thiết lập cũng không lấy ô Đêm của đêm nay
+  eq('Đêm tự báo đêm qua 8', (await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Đêm'], tong: 20, lam: 8 }, 'CV')).status, 200);
+  eq('tổ đã báo: ô Đêm hôm trước bị từ chối', (await demTr([{ user: U['Đêm'], lam: 5 }])).status, 400);
+  S.raw.prepare('DELETE FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?').run(hom, U['Đêm']);
+  await tai(); R(`S.slNguon = 'tl'; slGan()`);
+  eq('nguồn thiết lập: tổ đã báo vẫn đúng số báo', so('Đêm'), [8, null, 8]);
+  eq('sửa ô Đêm thành 3', (await datDem('Đêm', 3)).status, 200);
+  await tai(); R(`S.slNguon = 'tl'; slGan()`);
+  eq('nguồn thiết lập: sửa đêm nay không đổi đêm qua', so('Đêm'), [8, null, 8]);
 
   xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');

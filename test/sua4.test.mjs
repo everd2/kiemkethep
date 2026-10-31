@@ -98,8 +98,8 @@ async function main() {
   const h2 = hang(B2), cua = (h, n) => h.find((x) => x[0] === n);
   eq('báo cáo ca đã qua: An theo bản chép 17/20 (không phải số đang đặt 15)', cua(h2, 'An'), ['An', 'tl', 17, 20]);
   eq('Binh: lúc hết ca thiếu số -> chưa báo (không lấy số đặt sau đó bù vào)', cua(h2, 'Binh').slice(1, 3), ['chua', null]);
-  // không có bản chép: như trước, số đang đặt (số CVKTHT điền cho ca chưa có số nào)
-  eq('Cuong: không có bản chép -> số đang đặt 11/12 như trước', cua(h2, 'Cuong'), ['Cuong', 'tl', 11, 12]);
+  // không có bản chép, số đang đặt sửa sau lúc hết ca: đó là số của ca tới, không đè lên ca đã qua (ca đêm đã qua đặt ở ô Đêm hôm trước)
+  eq('Cuong: số đặt sau lúc hết ca không đọc vào ca đã qua', cua(h2, 'Cuong').slice(1, 3), ['chua', null]);
   eq('tổ đã thôi (Xoa) có bản chép: vẫn có dòng 6/8', cua(h2, 'Xoa'), ['Xoa', 'tl', 6, 8]);
   ok('chữ mục 3 ghi nghỉ theo bản chép (3 ốm)', R(`bcQuanSo(${JSON.stringify(B2)}, 'to').dong.join('|')`).includes('Tổ An: ca ngày 17/20 cn, nghỉ 3 cn — 3 ốm'), R(`bcQuanSo(${JSON.stringify(B2)}, 'to').dong.join('|')`));
   eq('ca đang diễn ra: An vẫn theo số đang đặt 15/20', cua(hang(B0), 'An'), ['An', 'tl', 15, 20]);

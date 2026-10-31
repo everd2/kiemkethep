@@ -23,7 +23,7 @@ export const CA_TEN = { 1: 'ca ngày', 2: 'ca đêm' };
 // trần cho một tổ: cao hơn hẳn thực tế (tổ vài chục người), chỉ để chặn gõ thừa số
 export const QS_TONG_MAX = 500;
 const QS_SUA_NGAY = 7;
-const TL_DEM_MS = 65 * 60e3; // đệm sau giờ hết ca cho số thiết lập (xem soTlCa)
+export const TL_DEM_MS = 65 * 60e3; // đệm sau giờ hết ca cho số thiết lập (xem soTlCa)
 const PHUT = 60e3, NGAY = 864e5;
 
 const congNgay = (d, n) => new Date(Date.parse(d) + n * NGAY).toISOString().slice(0, 10);
@@ -40,6 +40,9 @@ export const caKe = (c) => (c.ca === 1 ? { ngay: c.ngay, ca: 2 } : { ngay: congN
 // so sánh chuỗi này là so thứ tự thời gian của hai ca
 export const caKhoa = (c) => c.ngay + ':' + c.ca;
 // giờ bắt đầu và kết thúc thật của một ca (ms)
+/* CA ĐÊM HÔM TRƯỚC của màn Thiết lập quân số: ca đêm gần nhất ĐÃ HẾT. Ô Đêm của bảng thiết lập là ca đêm đang tới / đang chạy, ô Đêm hôm
+   trước ghi thẳng vào số của ca đã hết (quan_so_tl): hai ca đêm tách riêng, sửa ô này không đổi ca kia. */
+export const caDemTruoc = (st, now = Date.now()) => { const c = caTruoc(caLuc(st, now)); return c.ca === 2 ? c : caTruoc(c); };
 export function caGio(st, c) {
   const [a, b] = caMoc(st), d0 = Date.parse(c.ngay + 'T00:00:00+07:00');
   return c.ca === 1 ? { tu: d0 + a * PHUT, den: d0 + b * PHUT } : { tu: d0 + b * PHUT, den: d0 + NGAY + a * PHUT };
@@ -101,7 +104,8 @@ export async function qsView(env, user, url) {
   const ql = capOf(user.role) >= 1;
   // Tiểu đội trưởng: mọi câu chỉ lấy tổ mình
   const rieng = (n) => (ql ? '' : ` AND u.id = ?${n}`), kem = ql ? [] : [user.id];
-  const [tdt, rows, truoc, cuaToi, cfgR, tenR] = await env.DB.batch([
+  const demC = caDemTruoc(st);
+  const [tdt, rows, truoc, cuaToi, cfgR, tenR, demTl, demBao] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0${rieng(1)} ORDER BY ${TO_SX}`).bind(...kem),
     env.DB.prepare(`SELECT q.ngay, q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, q.ts, q.by_id,
                       COALESCE(u.name, '(đã xoá)') uname, COALESCE(b.name, '(đã xoá)') by_name
@@ -116,6 +120,8 @@ export async function qsView(env, user, url) {
       .bind(user.id, hien.ngay, hien.ca, ke.ngay, ke.ca),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare('SELECT id, name FROM users'),
+    env.DB.prepare('SELECT user_id, tong, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(demC.ngay),
+    env.DB.prepare('SELECT user_id, tong, lam FROM quan_so WHERE ngay = ? AND ca = 2').bind(demC.ngay),
   ]);
   const cfg = docCfg(cfgR.results[0]), ten = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
   const loc = (o) => Object.fromEntries(Object.entries(o).filter(([id]) => ql || Number(id) === user.id).map(([id, v]) => [id, { ...v, by_name: ten[v.by] || '' }]));
@@ -129,6 +135,8 @@ export async function qsView(env, user, url) {
     }),
     tdt: tdt.results, rows: rows.results.map((r) => ({ ...r, nghi: docNghi(r.nghi) })), truoc: truoc.results,
     lich: loc(cfg.lich), tl: ql ? loc(cfg.tl) : {},
+    // ô Đêm hôm trước: so = số thiết lập của ca đó, bao = tổ đã tự báo ca đó (ô khoá, số tổ báo là số dùng)
+    demTr: ql ? { ngay: demC.ngay, so: Object.fromEntries(demTl.results.map((r) => [r.user_id, r])), bao: Object.fromEntries(demBao.results.map((r) => [r.user_id, r])) } : null,
   });
 }
 
@@ -238,9 +246,13 @@ export async function qsLich(req, env, user) {
    mới là gì. Cả lần lưu là một batch (một giao dịch): hoặc ghi hết, hoặc không ghi gì. D1: một lượt đọc, một lượt ghi. */
 export async function qsThietLap(req, env, user) {
   const b = await readJson(req);
-  const ds = Array.isArray(b.ds) ? b.ds : [b];
-  if (!ds.length || ds.length > 200) throw bad('Không có gì để lưu');
+  const ds = Array.isArray(b.ds) ? b.ds : [b], dt = b.dem_truoc;
+  if (dt !== undefined && (!dt || typeof dt !== 'object' || !Array.isArray(dt.ds) || dt.ds.length > 200)) throw bad('Số đêm hôm trước không hợp lệ');
+  if ((!ds.length && !(dt && dt.ds.length)) || ds.length > 200) throw bad('Không có gì để lưu');
   for (const x of ds) if (!x || !Number.isInteger(Number(x.user))) throw bad('Cần chọn tổ');
+  /* Chép số của ca vừa hết TRƯỚC khi đổi bảng thiết lập, không chờ lượt chép mỗi giờ: sửa ô Đêm cho đêm nay không được đổi số đêm qua. Tổ chưa
+     có số thì chưa chép (ghi "thiếu số" ở đây sẽ chặn số CVKTHT vừa đặt trong khoảng đệm, xem soTlCa). */
+  if (ds.some((x) => x.tong != null && x.tong !== '')) await qsChotCa(env, Date.now(), true);
   const [toR, mauR] = await env.DB.batch([
     env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0"),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
@@ -275,8 +287,32 @@ export async function qsThietLap(req, env, user) {
     ghi.push(dat(path, v), auditStmt(env, user, 'qs_thietlap', { to: t.name, tong, s1, s2, n1: v.n1, n2: v.n2 }));
     if (!dau) dau = { user: uid, ...v };
   }
-  if (!ghi.length) throw bad('Không có gì để lưu');
-  const sau = [env.DB.prepare(MAU_CO), ...ghi, bump(env)];
+  /* Ô ĐÊM HÔM TRƯỚC: ghi thẳng số của ca đêm đã hết. Trang cũ từ hôm trước gửi lên thì từ chối (ngày đã khác). Tổ đã tự báo ca đó thì khoá,
+     không để một ca có hai số. */
+  const dem = [];
+  if (dt && dt.ds.length) {
+    const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results), c = caDemTruoc(st);
+    if (dt.ngay !== c.ngay) throw new HttpError(409, 'Đã sang ngày khác, hãy mở lại màn Thiết lập quân số.', 'changed');
+    const [baoR, chepR] = await env.DB.batch([
+      env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2').bind(c.ngay),
+      env.DB.prepare('SELECT user_id, tong FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(c.ngay),
+    ]);
+    const daBao = new Set(baoR.results.map((r) => r.user_id)), chep = new Map(chepR.results.map((r) => [r.user_id, r.tong])), now = Date.now();
+    for (const x of dt.ds) {
+      const uid = Number(x && x.user), t = to.get(uid);
+      if (!t) throw bad('Chỉ thiết lập cho tổ của một Tiểu đội trưởng đang dùng app');
+      if (daBao.has(uid)) throw bad(`Tổ ${t.name} đã tự báo ca đêm ${fmtDay(c.ngay)}: sửa số tổ báo, không đặt số thiết lập cho ca đó`);
+      const lam = intIn(x.lam, 0, QS_TONG_MAX, 'Số đi làm đêm hôm trước');
+      const moi = ds.find((y) => Number(y.user) === uid && y.tong != null && y.tong !== ''), tong = Number(moi ? moi.tong : chep.get(uid) || (cfg.tl[uid] || {}).tong) || 0;
+      if (!tong) throw bad(`Tổ ${t.name}: cần tổng quân số trước khi ghi số đêm hôm trước`);
+      if (lam > tong) throw bad(`Tổ ${t.name}: đêm hôm trước ${lam} nhiều hơn tổng ${tong}`);
+      dem.push(env.DB.prepare(`INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?, 2, ?, ?, ?, '{}', NULL, ?)
+                               ON CONFLICT(ngay, ca, user_id) DO UPDATE SET tong = excluded.tong, lam = excluded.lam, ts = excluded.ts`).bind(c.ngay, uid, tong, lam, now),
+        auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam }));
+    }
+  }
+  if (!ghi.length && !dem.length) throw bad('Không có gì để lưu');
+  const sau = [env.DB.prepare(MAU_CO), ...ghi, ...dem, bump(env)];
   if (!chan.length) await env.DB.batch(sau);
   else {
     try { await batchGuarded(env, chan[0][0], [...chan.slice(1).map((c) => c[0]), ...sau], new HttpError(409, 'doi', 'doi')); }
@@ -428,7 +464,7 @@ export function tlCaDaQua(c, rows) {
   for (const r of rows) if (r.ngay === c.ngay && r.ca === c.ca) out[r.user_id] = { tong: r.tong, lam: r.lam, nghi: docNghi(r.nghi), ghi_chu: r.ghi_chu, uname: r.uname };
   return out;
 }
-export async function qsChotCa(env, now = Date.now()) {
+export async function qsChotCa(env, now = Date.now(), chiCoSo = false) {
   const cas = [];
   const [stR, toR, cfgR] = await env.DB.batch([
     env.DB.prepare(SETTINGS_SQL),
@@ -450,7 +486,7 @@ export async function qsChotCa(env, now = Date.now()) {
       if (co.has(caKhoa(c) + ':' + id)) continue;
       // tổ không làm ca này, chưa biết làm ca nào, hoặc lịch ca đặt sau lúc hết ca (không chép ngược)
       const x = soTlCa(cfg, id, c, caGio(st, c).den);
-      if (!x) continue;
+      if (!x || (chiCoSo && x.lam == null)) continue;
       ghi.push(env.DB.prepare('INSERT OR IGNORE INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?,?,?,?,?,?,?,?)')
         .bind(c.ngay, c.ca, id, x.tong, x.lam, JSON.stringify(x.nghi), x.ghi_chu, now));
     }

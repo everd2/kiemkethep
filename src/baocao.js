@@ -1,7 +1,7 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
 import { HttpError, bad, json, vnDay } from './core.js';
 import { SETTINGS_SQL, auditStmt, batchGuarded, bump, guardStmt, parseSettings, readJson } from './helpers.js';
-import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, caTruoc, docCfg, tlCaDaQua } from './quanso.js';
+import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, caTruoc, docCfg, tlCaDaQua, TL_DEM_MS } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
    Người soạn: CVKTHT trở lên. Server chỉ GOM SỐ LIỆU và LƯU; việc ghép chữ theo mẫu nằm ở máy khách (app.js,
@@ -142,12 +142,15 @@ export async function bcView(env, url, user) {
   /* tlCa[số ca]: bản chép lúc hết ca của ca này và ca liền trước — đúng hai ca bcQuanSo đọc số thiết lập. Tổ có bản chép thì
      dùng bản đó chứ không dùng số đang đặt (tl); tổ không có thì vẫn tl, như trước (xem tlCaDaQua). */
   const tlCa = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, tlCaDaQua(x, tlR.results)]));
+  /* tlMoc[số ca]: ca đã hết thì là giờ hết ca + khoảng đệm, chưa hết là 0. Số đang đặt sửa sau mốc đó là số của ca TỚI (ô Đêm đang là đêm nay):
+     ca đã hết không được đọc, không thì đêm nay đè lên đêm qua. Cùng mốc với soTlCa (xem bcQuanSo). */
+  const nowHet = Date.now(), tlMoc = Object.fromEntries([c, caTruoc(c)].map((x) => { const den = caGio(st, x).den; return [x.ca, nowHet >= den ? den + TL_DEM_MS : 0]; }));
   return json({
     ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, han: caHan(st, c), lyDo: QS_LY_DO,
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
     // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
-    lich: cfg.lich, tl: cfg.tl, tlCa,
+    lich: cfg.lich, tl: cfg.tl, tlCa, tlMoc,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     ck: ck.results.map((x) => x.ten),
     homTruoc: H, viecTruoc: viecTruoc(H),
