@@ -120,7 +120,7 @@ export async function qsView(env, user, url) {
       .bind(user.id, hien.ngay, hien.ca, ke.ngay, ke.ca),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare('SELECT id, name FROM users'),
-    env.DB.prepare('SELECT user_id, tong, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(demC.ngay),
+    env.DB.prepare('SELECT user_id, tong, lam, ts FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(demC.ngay),
     env.DB.prepare('SELECT user_id, tong, lam FROM quan_so WHERE ngay = ? AND ca = 2').bind(demC.ngay),
   ]);
   const cfg = docCfg(cfgR.results[0]), ten = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
@@ -290,6 +290,7 @@ export async function qsThietLap(req, env, user) {
   /* Ô ĐÊM HÔM TRƯỚC: ghi thẳng số của ca đêm đã hết. Trang cũ từ hôm trước gửi lên thì từ chối (ngày đã khác). Tổ đã tự báo ca đó thì khoá,
      không để một ca có hai số. */
   const dem = [];
+  let demChan = null; // chặn lần nữa ngay trong batch: tổ tự báo ca đêm đó giữa lượt đọc daBao và lượt ghi thì không ghi số thiết lập chồng lên
   if (dt && dt.ds.length) {
     const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results), c = caDemTruoc(st);
     if (dt.ngay !== c.ngay) throw new HttpError(409, 'Đã sang ngày khác, hãy mở lại màn Thiết lập quân số.', 'changed');
@@ -315,14 +316,31 @@ export async function qsThietLap(req, env, user) {
                                  nghi = CASE WHEN ?6 THEN nghi ELSE '{}' END, ghi_chu = CASE WHEN ?6 THEN ghi_chu ELSE NULL END`).bind(c.ngay, uid, tong, lam, now, giuNghi ? 1 : 0),
         auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam }));
     }
+    const uids = dt.ds.map((x) => Number(x && x.user));
+    /* Hai người cùng sửa ô này: máy gửi kèm ts của dòng nó đang thấy (0 = chưa có dòng); dòng đã đổi từ đó thì từ chối, không để người lưu
+       sau âm thầm đè số người kia vừa ghi. Bản app cũ không gửi ts thì không so. */
+    const tsMay = JSON.stringify(dt.ds.filter((x) => x && Number.isFinite(Number(x.ts)) && x.ts !== null && x.ts !== '').map((x) => ({ u: Number(x.user), ts: Number(x.ts) })));
+    demChan = { ngay: c.ngay, uids, tsMay, stmt: guardStmt(env, `EXISTS (SELECT 1 FROM quan_so WHERE ngay = ?1 AND ca = 2 AND user_id IN (SELECT value FROM json_each(?2)))
+      OR EXISTS (SELECT 1 FROM json_each(?3) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u') WHERE q.ts <> json_extract(j.value, '$.ts'))`, c.ngay, JSON.stringify(uids), tsMay) };
   }
   if (!ghi.length && !dem.length) throw bad('Không có gì để lưu');
   const sau = [env.DB.prepare(MAU_CO), ...ghi, ...dem, bump(env)];
-  if (!chan.length) await env.DB.batch(sau);
+  const chot = [...chan.map((c) => c[0]), ...(demChan ? [demChan.stmt] : [])];
+  if (!chot.length) await env.DB.batch(sau);
   else {
-    try { await batchGuarded(env, chan[0][0], [...chan.slice(1).map((c) => c[0]), ...sau], new HttpError(409, 'doi', 'doi')); }
+    try { await batchGuarded(env, chot[0], [...chot.slice(1), ...sau], new HttpError(409, 'doi', 'doi')); }
     catch (e) {
       if (!(e instanceof HttpError) || e.code !== 'doi') throw e;
+      if (demChan) {
+        const bao = (await env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2 AND user_id IN (SELECT value FROM json_each(?))').bind(demChan.ngay, JSON.stringify(demChan.uids)).all()).results;
+        const t = bao.length && to.get(bao[0].user_id);
+        if (t) throw new HttpError(409, `Tổ ${t.name} vừa tự báo ca đêm ${fmtDay(demChan.ngay)}: sửa số tổ báo, không đặt số thiết lập cho ca đó`, 'changed');
+        const doi = (await env.DB.prepare(`SELECT q.user_id FROM json_each(?2) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u')
+                                           WHERE q.ts <> json_extract(j.value, '$.ts') LIMIT 1`).bind(demChan.ngay, demChan.tsMay).first());
+        const t2 = doi && to.get(doi.user_id);
+        if (t2) throw new HttpError(409, `Tổ ${t2.name}: số đêm hôm trước vừa được người khác sửa. Màn đã tải lại, xem rồi lưu lại.`, 'changed');
+      }
+      if (!chan.length) throw new HttpError(409, 'Số quân số vừa đổi, hãy mở lại màn Thiết lập quân số.', 'changed');
       // tìm tổ vừa bị người khác sửa để nói cho đúng
       const moi = docCfg(await env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1').first());
       const c = chan.find(([, , , uid, cu]) => ((moi.tl[uid] || {}).ts || 0) !== cu) || chan[0];

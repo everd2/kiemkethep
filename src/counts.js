@@ -65,15 +65,16 @@ export const dayStart = (day) => Date.parse(day + 'T00:00:00+07:00');
 export async function putCounts(req, env, user) {
   const b = await readJson(req);
   const day = vnDay();
-  if (b.day !== undefined && String(b.day) !== day) {
-    throw new HttpError(409, `Báo cáo này đếm ngày ${fmtDay(b.day)}, nay đã sang ngày mới nên không ghi vào ngày cũ được`, 'stale_day');
-  }
   const khuId = String(b.khu || '');
   const items = Array.isArray(b.items) ? b.items : [];
   if (!items.length) throw bad('Chưa có số liệu nào');
   if (items.length > 100) throw bad('Quá nhiều dòng số liệu');
+  /* KHOÁ CHỐNG GỬI TRÙNG: máy đặt một khoá cho mỗi lần bấm GỬI. Lời gọi hết giờ chờ (sóng yếu) mà máy chủ đã ghi thì máy xếp hàng gửi lại:
+     không có khoá là thêm một lần báo cùng số — khu vừa được duyệt quay về "Chờ duyệt", nhật ký có dòng trùng. Cùng khoá đã ghi thì trả lại
+     như đã gửi. Kiểm TRƯỚC "đã sang ngày mới": lần gửi lại sau nửa đêm của báo cáo hôm qua đã vào sổ thì không được báo "chưa gửi được". */
+  const khoa = /^[a-f0-9]{16}$/.test(String(b.khoa || '')) ? String(b.khoa) : null;
 
-  const [closedR, khuR, setR, phiR, kpR, prevR, asgR, refR] = await env.DB.batch([
+  const [closedR, khuR, setR, phiR, kpR, prevR, asgR, refR, daR] = await env.DB.batch([
     env.DB.prepare('SELECT kind FROM day_close WHERE day = ?').bind(day),
     env.DB.prepare('SELECT id, name, active FROM khu WHERE id = ?').bind(khuId),
     env.DB.prepare(SETTINGS_SQL),
@@ -95,7 +96,12 @@ export async function putCounts(req, env, user) {
        SELECT b.phi_id, b.v, 0 eff FROM baseline b
        WHERE b.khu_id = ?1 AND b.day = (SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?2)`
     ).bind(khuId, day),
+    env.DB.prepare('SELECT 1 x FROM khu_report_log WHERE khoa = ? AND user_id = ? AND khu_id = ? LIMIT 1').bind(khoa || '-', user.id, khuId),
   ]);
+  if (khoa && daR.results.length) return json({ ok: true, conflict: false, da_gui: true });
+  if (b.day !== undefined && String(b.day) !== day) {
+    throw new HttpError(409, `Báo cáo này đếm ngày ${fmtDay(b.day)}, nay đã sang ngày mới nên không ghi vào ngày cũ được`, 'stale_day');
+  }
   const refBy = {};
   refR.results.forEach((r) => { if (r.eff || !(r.phi_id in refBy)) refBy[r.phi_id] = r.v; });
   /* Sổ ngày tự chốt sau nửa đêm, nên ngày HÔM NAY chỉ bị khoá khi admin vừa đặt lại số liệu (mốc
@@ -206,7 +212,7 @@ export async function putCounts(req, env, user) {
     if (p && p.ts >= tXd && p.user_id !== user.id && p.v !== it.v) conflict = 1;
     if (!p || p.v !== it.v) changes.push({ phi: it.phi, from: p ? p.v : null, to: it.v });
     const keep = it.kind === 'giu' ? keep0 + 1 : 0;
-    return { ...it, prev: p ? p.v : null, keep };
+    return { ...it, prev: p ? p.v : null, keep, goc: keep0 };
   });
   const data = JSON.stringify(rows);
 
@@ -235,12 +241,12 @@ export async function putCounts(req, env, user) {
        SELECT ?1, ?2, ${J('phi')}, ${J('prev')}, ${J('v')}, ${J('kind')}, ?3, ?4, ?6 FROM json_each(?5) j`
     ).bind(day, khuId, user.id, ts, data, capOf(user.role)),
     // một dòng cho mỗi lần GỬI: dùng để biết khu đã đếm khung giờ nào (xem migration 15)
-    env.DB.prepare('INSERT INTO khu_report_log (day, khu_id, ts, at, user_id) VALUES (?,?,?,?,?)').bind(day, khuId, ts, at, user.id),
+    env.DB.prepare('INSERT INTO khu_report_log (day, khu_id, ts, at, user_id, khoa) VALUES (?,?,?,?,?,?)').bind(day, khuId, ts, at, user.id, khoa),
     env.DB.prepare(
-      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak)
-       SELECT ?1, ${J('phi')}, 1, 0, ${J('keep')} FROM json_each(?2) j WHERE 1
-       ON CONFLICT(khu_id, phi_id) DO UPDATE SET keep_streak = excluded.keep_streak`
-    ).bind(khuId, data),
+      `INSERT INTO khu_phi (khu_id, phi_id, active, zero_days, keep_streak, keep_goc, keep_ngay)
+       SELECT ?1, ${J('phi')}, 1, 0, ${J('keep')}, ${J('goc')}, ?3 FROM json_each(?2) j WHERE 1
+       ON CONFLICT(khu_id, phi_id) DO UPDATE SET keep_streak = excluded.keep_streak, keep_goc = excluded.keep_goc, keep_ngay = excluded.keep_ngay`
+    ).bind(khuId, data, day),
     auditStmt(env, user, 'count', { khu: khuId, n: clean.length, changes: changes.slice(0, 30), conflict: !!conflict }),
     bump(env),
   ], closedErr());
@@ -254,7 +260,9 @@ export async function putCounts(req, env, user) {
 // Mọi lần báo của một khu trong hôm nay, lấy từ lịch sử đếm, gom theo (người báo, lúc báo)
 async function lanBao(env, khu) {
   const { results } = await env.DB.prepare(
-    `SELECT l.phi_id, l.v, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ? ORDER BY l.id`
+    // bỏ các dòng số 0 của lần đặt lại số liệu đã hoàn tác (meta 'reset_bo', xem reopenDay)
+    `SELECT l.phi_id, l.v, l.user_id, l.ts, ${UNAME} FROM counts_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.day = ? AND l.khu_id = ?
+       AND l.ts NOT IN (SELECT value FROM json_each(COALESCE((SELECT value FROM meta WHERE key = 'reset_bo'), '[]'))) ORDER BY l.id`
   ).bind(vnDay(), khu).all();
   const subs = [];
   for (const r of results) {
@@ -426,7 +434,7 @@ export async function huyBaoCao(req, env, user) {
          cũng là "giữ nguyên" của hôm nay (chuỗi hôm nay vốn đã tính một lần cho lần đó). */
       env.DB.prepare(
         `UPDATE khu_phi SET keep_streak = MAX(0, keep_streak - 1)
-         WHERE khu_id = ?1 AND phi_id IN (SELECT phi_id FROM counts WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND ${CHO}
+         WHERE khu_id = ?1 AND (keep_ngay IS NULL OR keep_ngay <> ?3) AND phi_id IN (SELECT phi_id FROM counts WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND ${CHO}
            AND kind = 'giu' AND ts >= ?4 AND NOT (duyet_v IS NOT NULL AND duyet_kind = 'giu' AND duyet_ts >= ?4))`
       ).bind(khu, last, day, t0),
       env.DB.prepare('DELETE FROM khu_report_log WHERE day = ?1 AND khu_id = ?2 AND ts IN (SELECT value FROM json_each(?3))').bind(day, khu, tsList),
@@ -441,6 +449,16 @@ export async function huyBaoCao(req, env, user) {
       ).bind(khu, last, day),
       // ô chưa từng được duyệt: sau câu trên, mọi ô còn duyet_v NULL đều là ô đang chờ
       env.DB.prepare('DELETE FROM counts WHERE khu_id = ?1 AND day > ?2 AND day <= ?3 AND duyet_v IS NULL').bind(khu, last, day),
+      /* Ô báo hôm nay (có keep_goc): tính lại chuỗi theo ô SAU KHI quay về. Câu trừ 1 ở trên không đủ: sáng "giữ nguyên" được duyệt (chuỗi
+         s+1), chiều đếm (chuỗi về 0), chiều bị huỷ thì ô quay về lần "giữ nguyên" mà chuỗi vẫn 0 — người đếm được giữ nguyên thêm ngày.
+         Quay về "giữ nguyên" của hôm nay: keep_goc + 1; về số đếm của hôm nay: 0; không còn số hôm nay: chuỗi trước hôm nay (keep_goc). */
+      env.DB.prepare(
+        `UPDATE khu_phi SET keep_streak = CASE
+           WHEN EXISTS (SELECT 1 FROM counts c WHERE c.khu_id = khu_phi.khu_id AND c.phi_id = khu_phi.phi_id AND c.day = ?2 AND c.ts >= ?3 AND c.kind = 'giu') THEN keep_goc + 1
+           WHEN EXISTS (SELECT 1 FROM counts c WHERE c.khu_id = khu_phi.khu_id AND c.phi_id = khu_phi.phi_id AND c.day = ?2 AND c.ts >= ?3) THEN 0
+           ELSE keep_goc END
+         WHERE khu_id = ?1 AND keep_ngay = ?2 AND keep_goc IS NOT NULL AND phi_id IN (SELECT value FROM json_each(?4))`
+      ).bind(khu, day, t0, JSON.stringify([...new Set(cho.map((r) => r.phi_id))])),
       // dấu "khu đã báo": không còn ô nào thì khu là CHƯA BÁO; còn (lần đã duyệt) thì trỏ lại lần đó
       env.DB.prepare(
         `DELETE FROM khu_report WHERE khu_id = ?1 AND day > ?2 AND day <= ?3

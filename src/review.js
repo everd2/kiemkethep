@@ -340,7 +340,8 @@ export async function computeReview(env, day, opt = {}) {
      không ai hiểu còn lại là gì. */
   const pending = new Set(exceptions.map((e) => {
     if (e.type === 'receipt_pending') return 'phieu|' + e.key;
-    // xung đột hai người báo là việc riêng: admin phải chọn số trước, rồi mới duyệt được
+    /* xung đột hai người báo là việc RIÊNG, không gộp vào "Duyệt khu": duyệt khu (kể cả "Duyệt tất cả") nhận số đang hiện nhưng không đóng
+       việc này — duyệt số chưa phải là đã soát số của người kia. Việc còn đó tới khi chọn số / "Dùng số báo sau" (chọn rồi thì duyệt lại). */
     if (e.type === 'khu_pending') return 'khu|' + e.khu;
     return e.type + '|' + (e.khu || e.phi);
   })).size;
@@ -425,7 +426,7 @@ export async function reopenDay(req, env, user) {
   const day = vnDay();
   const note = String(b.note || '').trim().slice(0, 500);
   if (!note) throw bad('Cần ghi lý do hoàn tác');
-  const c = await env.DB.prepare('SELECT kind, undo_json FROM day_close WHERE day = ?').bind(day).first();
+  const c = await env.DB.prepare('SELECT kind, undo_json, ts, closed_by FROM day_close WHERE day = ?').bind(day).first();
   if (!c || c.kind !== 'reset') throw bad('Hôm nay không có lần đặt lại số liệu nào để hoàn tác');
   let snap = { counts: [], reports: [] };
   if (c.undo_json) { try { snap = JSON.parse(c.undo_json); } catch (e) { /* ảnh chụp lỗi: coi như rỗng */ } }
@@ -438,7 +439,12 @@ export async function reopenDay(req, env, user) {
     env.DB.prepare('DELETE FROM daily_summary WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM counts WHERE day = ?').bind(day),
     env.DB.prepare('DELETE FROM khu_report WHERE day = ?').bind(day),
-    env.DB.prepare('UPDATE khu_phi SET keep_streak = 0'),
+    /* Dòng lịch sử đếm toàn số 0 do lần đặt lại ghi (mốc ts của lần đó) không xoá được (counts_log chỉ ghi thêm) mà để vậy thì màn so
+       hai số của ngày hiện chúng như một "lần báo" của admin: ghi mốc vào meta 'reset_bo' (giữ 20 mốc gần nhất), lanBao bỏ qua.
+       Lần đặt lại không đổi chuỗi "giữ nguyên" (khu_phi) nên hoàn tác cũng không đụng tới — bản trước đưa chuỗi của cả bãi về 0,
+       người đếm được giữ nguyên thêm ngày. */
+    env.DB.prepare(`INSERT INTO meta (key, value) VALUES ('reset_bo', json_array(?1)) ON CONFLICT(key) DO UPDATE SET value =
+                      (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_insert(meta.value, '$[#]', ?1)) ORDER BY value DESC LIMIT 20))`).bind(c.ts),
   ];
   if (snap.counts && snap.counts.length) {
     stmts.push(env.DB.prepare(

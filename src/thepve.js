@@ -252,7 +252,7 @@ export async function tvDon(req, env, user) {
   if (new Set(lines.map((l) => l.phi)).size !== lines.length) throw bad('Mỗi phi chỉ một dòng trong đơn');
   const nccM = await nccMap(env), ncc = nccTen(nccM, chu(b.ncc, 80)), nccIds = (nccM.get(tenKhoa(ncc)) || { ids: [] }).ids;
   const trung = !nccIds.length ? 0 : (await env.DB.prepare("SELECT so_don FROM thep_don WHERE tt <> 'huy' AND ncc_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(nccIds)).all())
-    .results.filter((x) => tenKhoa(x.so_don) === tenKhoa(soDon)).length;
+    .results.filter((x) => bbKhoa(x.so_don) === bbKhoa(soDon)).length; // so như lúc nhập Excel gắn chuyến vào đơn (bbKhoa): "PO-01" và "PO 01" là một đơn
   if (trung) throw bad(`Đơn số ${soDon} của ${ncc} đã có`);
   const ts = Date.now(), khoaDon = 'd' + rand(8);
   // kg đặt của dòng = kg gõ tay, không thì kg tự tính từ bó / cây
@@ -308,6 +308,16 @@ export async function tvNhap(req, env, user) {
   const rows = Array.isArray(b.rows) ? b.rows : [];
   if (!rows.length) throw bad('Không có dòng nào để nhập');
   if (rows.length > 3000) throw bad('Mỗi lần nhập tối đa 3.000 dòng — chia file làm nhiều lần');
+  /* KHOÁ CHỐNG GHI ĐÔI của cả lần nhập (máy gửi theo nội dung bảng dán, như khoá của một chuyến): 3.000 dòng mà máy hết giờ chờ trong
+     khi máy chủ đã ghi xong, người dùng bấm Nhập lại thì mọi dòng không số phiếu bị ghi hai lần. Cùng khoá đã có chuyến thì trả lại lần
+     đã ghi; hai lần gửi song song thì lần sau vấp khoa UNIQUE của thep_ve (bắt ở dưới). */
+  const lo = b.thu !== true && /^[a-f0-9]{16}$/.test(String(b.khoa || '')) ? 'n' + String(b.khoa).slice(0, 12) : 'n' + Date.now().toString(36);
+  const daNhap = async () => {
+    const r = await env.DB.prepare(`SELECT COUNT(DISTINCT v.id) chuyen, COUNT(DISTINCT v.ncc_id) ncc, SUM(COALESCE(d.kg, d.kg_tinh, 0)) kg, MIN(v.ngay) tu, MAX(v.ngay) den
+                                    FROM thep_ve v JOIN thep_ve_dong d ON d.ve_id = v.id WHERE v.khoa LIKE ? AND v.nguon = 'excel'`).bind(lo + '-%').first();
+    return r && r.chuyen ? json({ ok: true, da_nhap: true, dong: rows.length, chuyen: r.chuyen, ncc: r.ncc, kg: r.kg || 0, tu: r.tu, den: r.den, gan_don: 0, so_canh: 0, so_trung: 0 }) : null;
+  };
+  if (b.thu !== true && b.khoa) { const da = await daNhap(); if (da) return da; }
   const [phiR, donR, coR, nccR] = await env.DB.batch([
     env.DB.prepare('SELECT id, bo_size, kg_per_cay FROM phi'),
     env.DB.prepare("SELECT d.id, d.so_don, n.name ncc FROM thep_don d JOIN thep_ncc n ON n.id = d.ncc_id WHERE d.tt <> 'huy'"),
@@ -357,7 +367,7 @@ export async function tvNhap(req, env, user) {
   const tomTat = { dong: rows.length, chuyen: ds.length, kg: tongKg, ncc: [...new Set(ds.map((c) => c.ncc))].length, gan_don: ds.filter((c) => c.don_id).length,
     tu: ngays[0] || null, den: ngays[ngays.length - 1] || null, canh: canh.slice(0, 50), so_canh: canh.length, trung: trung.slice(0, 50), so_trung: trung.length };
   if (b.thu === true || loi.length) return json({ ok: !loi.length, thu: true, loi: loi.slice(0, 200), so_loi: loi.length, ...tomTat });
-  const ts = Date.now(), lo = 'n' + ts.toString(36); // khoá tạm cho lần nhập này: nối dòng vào đúng chuyến vừa chèn
+  const ts = Date.now(); // lo (khoá của lần nhập, ở trên): nối dòng vào đúng chuyến vừa chèn, và để huỷ cả lần nhập
   ds.forEach((c, i) => { c.khoa = lo + '-' + i; });
   const ncc = [...new Set(ds.map((c) => c.ncc))];
   const ve = JSON.stringify(ds.map((c) => ({ ngay: c.ngay, ncc: c.ncc, don_id: c.don_id, so_don: c.so_don, so_phieu: c.so_phieu, bien_so: c.bien_so, ghi_chu: c.ghi_chu, khoa: c.khoa })));
@@ -365,16 +375,22 @@ export async function tvNhap(req, env, user) {
   const J = (f) => `json_extract(j.value, '$.${f}')`;
   // đơn được gắn phải còn chưa huỷ lúc ghi (người khác huỷ đơn giữa lúc Kiểm tra và lúc Nhập)
   const donIds = JSON.stringify([...new Set(ds.map((c) => c.don_id).filter(Boolean))]);
-  await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM json_each(?) j JOIN thep_don d ON d.id = j.value WHERE d.tt = 'huy')", donIds), [
-    env.DB.prepare(`INSERT OR IGNORE INTO thep_ncc (name, active, ts) SELECT value, 1, ? FROM json_each(?)`).bind(ts, JSON.stringify(ncc)),
-    env.DB.prepare(`INSERT INTO thep_ve (ngay, ncc_id, don_id, so_don, so_phieu, bien_so, ghi_chu, nguon, user_id, ts, khoa)
-                    SELECT ${J('ngay')}, (SELECT id FROM thep_ncc WHERE name = ${J('ncc')} COLLATE NOCASE), ${J('don_id')}, ${J('so_don')}, ${J('so_phieu')}, ${J('bien_so')}, ${J('ghi_chu')},
-                           'excel', ?1, ?2, ${J('khoa')} FROM json_each(?3) j`).bind(user.id, ts, ve),
-    env.DB.prepare(`INSERT INTO thep_ve_dong (ve_id, phi_id, bo, cay, kg, kg_tinh)
-                    SELECT (SELECT id FROM thep_ve WHERE khoa = ${J('khoa')}), ${J('phi')}, ${J('bo')}, ${J('cay')}, ${J('kg')}, ${J('kg_tinh')} FROM json_each(?) j`).bind(dong),
-    auditStmt(env, user, 'tv_nhap', tomTat),
-    bump(env),
-  ], new HttpError(409, 'Có đơn hàng vừa bị huỷ — bấm Kiểm tra lại rồi nhập', 'changed'));
+  try {
+    await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM json_each(?) j JOIN thep_don d ON d.id = j.value WHERE d.tt = 'huy')", donIds), [
+      env.DB.prepare(`INSERT OR IGNORE INTO thep_ncc (name, active, ts) SELECT value, 1, ? FROM json_each(?)`).bind(ts, JSON.stringify(ncc)),
+      env.DB.prepare(`INSERT INTO thep_ve (ngay, ncc_id, don_id, so_don, so_phieu, bien_so, ghi_chu, nguon, user_id, ts, khoa)
+                      SELECT ${J('ngay')}, (SELECT id FROM thep_ncc WHERE name = ${J('ncc')} COLLATE NOCASE), ${J('don_id')}, ${J('so_don')}, ${J('so_phieu')}, ${J('bien_so')}, ${J('ghi_chu')},
+                             'excel', ?1, ?2, ${J('khoa')} FROM json_each(?3) j`).bind(user.id, ts, ve),
+      env.DB.prepare(`INSERT INTO thep_ve_dong (ve_id, phi_id, bo, cay, kg, kg_tinh)
+                      SELECT (SELECT id FROM thep_ve WHERE khoa = ${J('khoa')}), ${J('phi')}, ${J('bo')}, ${J('cay')}, ${J('kg')}, ${J('kg_tinh')} FROM json_each(?) j`).bind(dong),
+      auditStmt(env, user, 'tv_nhap', tomTat),
+      bump(env),
+    ], new HttpError(409, 'Có đơn hàng vừa bị huỷ — bấm Kiểm tra lại rồi nhập', 'changed'));
+  } catch (e) {
+    // cùng khoá gửi song song: lần kia đã ghi (khoa UNIQUE), trả lại lần đó thay vì báo lỗi máy chủ
+    if (!(e instanceof HttpError) && /UNIQUE/i.test(String(e && e.message))) { const da = await daNhap(); if (da) return da; }
+    throw e;
+  }
   return json({ ok: true, ...tomTat });
 }
 

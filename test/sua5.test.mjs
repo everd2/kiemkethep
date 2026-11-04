@@ -110,6 +110,54 @@ async function main() {
   eq('"Tổ 12" không bị nhận là tổ "1"; "Tổ 1 5/6" (không dấu hai chấm) vẫn đọc được', ctx.f(txt, '1', 1), { lam: 5, tong: 6 });
   eq('tổ "12"', ctx.f(txt, '12', 1), { lam: 7, tong: 9 });
 
+  // các ngày bị bỏ qua lúc tua đồng hồ ở trên: chốt bù cho sổ khỏi kẹt
+  datGio(0, 30); for (let h = 0; h < 30; h++) { await S.cron(); advance(60e3); }
+  const nay = vnDay();
+
+  /* ===== 8. Báo số đếm có khoá chống gửi trùng: gửi lại sau khi hết giờ chờ (máy chủ đã ghi) không thành lần báo mới ===== */
+  const K = 'aaaaaaaaaaaaaaaa';
+  eq('An báo khu B (có khoá)', (await S.call('PUT', '/counts', { khu: 'B', day: nay, items: items({ D10: 5 }), khoa: K }, 'An')).status, 200);
+  eq('admin duyệt khu B', (await S.call('POST', '/review/duyet', { khu: 'B' }, 'Admin')).status, 200);
+  const lai = await S.call('PUT', '/counts', { khu: 'B', day: nay, items: items({ D10: 5 }), khoa: K }, 'An');
+  eq('gửi lại cùng khoá: trả như đã gửi', [lai.status, lai.data.da_gui], [200, true]);
+  const b10 = S.one("SELECT duyet_ts = ts ok FROM counts WHERE day = ? AND khu_id = 'B' AND phi_id = 'D10'", nay);
+  eq('khu B vẫn đã duyệt (không quay về Chờ duyệt)', b10.ok, 1);
+  eq('lịch sử đếm không có dòng trùng', S.sql("SELECT 1 FROM counts_log WHERE day = ? AND khu_id = 'B' AND phi_id = 'D10'", nay).length, 1);
+  eq('gửi lại cùng khoá sau nửa đêm (đã vào sổ hôm qua): không báo "chưa gửi được"', (await S.call('PUT', '/counts', { khu: 'B', day: vnDay(Date.now() - 864e5), items: items({ D10: 5 }), khoa: K }, 'An')).status, 200);
+  eq('khoá khác vẫn là lần báo mới', (await S.call('PUT', '/counts', { khu: 'B', day: nay, items: items({ D10: 6 }), khoa: 'bbbbbbbbbbbbbbbb' }, 'An')).status, 200);
+  eq('khoá của người khác không được tính là của mình', (await S.call('PUT', '/counts', { khu: 'B', day: nay, items: items({ D10: 7 }), khoa: K }, 'Kho')).data.da_gui, undefined);
+
+  /* ===== 9. Nhập Excel có khoá chống ghi đôi ===== */
+  const KX = '0123456789abcdef', dongX = [{ ngay: nay, ncc: 'Khoá Thử', phi: 'D12', kg: '500' }];
+  eq('nhập Excel lần đầu', (await S.call('POST', '/thepve/nhap', { rows: dongX, khoa: KX }, 'Admin')).data.chuyen, 1);
+  const nx = await S.call('POST', '/thepve/nhap', { rows: dongX, khoa: KX }, 'Admin');
+  eq('bấm Nhập lại cùng khoá: trả lần đã nhập, không ghi thêm', [nx.status, nx.data.da_nhap, nx.data.chuyen], [200, true, 1]);
+  eq('sổ chỉ có một chuyến', S.sql("SELECT 1 FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE n.name = 'Khoá Thử'").length, 1);
+  const lo = S.one("SELECT substr(v.khoa, 1, instr(v.khoa, '-') - 1) lo FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE n.name = 'Khoá Thử'").lo;
+  eq('lần nhập có khoá vẫn huỷ cả lần được', (await S.call('POST', `/thepve/nhap/${lo}/huy`, { ly_do: 'thử' }, 'Admin')).status, 200);
+
+  /* ===== 10. Số đơn "PO-01" và "PO 01" của cùng NCC là một đơn ===== */
+  const donX = (so) => S.call('POST', '/thepve/don', { ncc: 'Việt Úc', so_don: so, ngay_dat: nay, lines: [{ phi: 'D16', kg: '1000' }] }, 'Admin');
+  eq('lập đơn PO-01', (await donX('PO-01')).status, 200);
+  eq('lập đơn "PO 01": báo đã có', (await donX('PO 01')).status, 400);
+
+  /* ===== 11. Huỷ báo cáo trả lại đúng chuỗi "giữ nguyên" ===== */
+  const giu = (v) => PHI.map((phi) => (phi === 'D16' ? { phi, v, kind: 'giu' } : { phi, v: 0, kind: 'zero' }));
+  const chuoi = () => S.one("SELECT keep_streak FROM khu_phi WHERE khu_id = 'C' AND phi_id = 'D16'").keep_streak;
+  await S.call('PUT', '/counts', { khu: 'C', day: nay, items: items({ D16: 10 }) }, 'An');
+  await S.call('POST', '/review/duyet', { khu: 'C' }, 'Admin');
+  eq('"giữ nguyên" D16, được duyệt: chuỗi 1', [(await S.call('PUT', '/counts', { khu: 'C', day: nay, items: giu(10) }, 'An')).status, (await S.call('POST', '/review/duyet', { khu: 'C' }, 'Admin')).status, chuoi()], [200, 200, 1]);
+  eq('báo lại bằng số đếm: chuỗi 0', [(await S.call('PUT', '/counts', { khu: 'C', day: nay, items: items({ D16: 12 }) }, 'An')).status, chuoi()], [200, 0]);
+  eq('huỷ báo cáo đó: ô quay về "giữ nguyên" đã duyệt, chuỗi về 1', [(await S.call('POST', '/recount', { khu: 'C', ly_do: 'đếm sai' }, 'Admin')).status, chuoi()], [200, 1]);
+
+  /* ===== 12. Hoàn tác đặt lại số liệu: không để lại "lần báo" toàn số 0 của admin, không xoá chuỗi "giữ nguyên" ===== */
+  const rs = await S.call('POST', '/reset', { mode: 'zero' }, 'Admin');
+  eq('đặt tồn về 0', [rs.status, rs.data.error], [200, undefined]);
+  eq('hoàn tác', (await S.call('POST', '/reopen', { note: 'bấm nhầm' }, 'Admin')).status, 200);
+  const subs = (await S.call('GET', '/submissions?khu=C', undefined, 'Admin')).data.subs;
+  ok('lịch sử báo của khu C không có lần báo toàn số 0 của lần đặt lại', subs.length && subs.every((x) => x.uname !== 'Admin'), JSON.stringify(subs.map((x) => x.uname)));
+  eq('chuỗi "giữ nguyên" giữ nguyên sau hoàn tác', chuoi(), 1);
+
   const fail = T.filter((x) => x[0] === 'FAIL');
   console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[2] && x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
   console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

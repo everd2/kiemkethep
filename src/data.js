@@ -63,7 +63,7 @@ export async function resetData(req, env, user) {
       env.DB.prepare('DELETE FROM daily_summary'),
       env.DB.prepare('DELETE FROM phi_rate'),
       // chuỗi "giữ nguyên" cũng phải về 0, không thì người đếm bị bắt đếm thật vì chuỗi của bãi cũ
-      env.DB.prepare('UPDATE khu_phi SET keep_streak = 0, zero_days = 0, active = 1'),
+      env.DB.prepare('UPDATE khu_phi SET keep_streak = 0, keep_goc = NULL, keep_ngay = NULL, zero_days = 0, active = 1'),
       auditStmt(env, user, 'reset_wipe', { day, tan: tanTruoc, truoc }),
       bump(env),
     ]);
@@ -223,7 +223,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 45 thêm các bảng sổ thép về và cột users.thep_ve (bản sao cũ thiếu thì để 0 = chưa giao quyền)
   45: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44],
   // bản 46 không đổi bảng, chỉ sửa kg phiếu 0 của sổ thép về (nạp tệp cũ thì sửa y như vậy, xem scTep bên dưới)
-  46: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45] };
+  46: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45],
+  // bản 47 chỉ thêm cột khu_report_log.khoa, khu_phi.keep_goc / keep_ngay (tệp cũ thiếu thì để trống)
+  47: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
@@ -334,7 +336,8 @@ export async function restoreData(req, env, user) {
   else if (fileUsers[toi].role !== 'admin') fileUsers[toi] = { ...fileUsers[toi], role: 'admin' };
   f.bang.users = fileUsers;
   const NAP = "(SELECT value FROM meta WHERE key = 'nap_users')";
-  const BM = ['pin_salt', 'pin_hash', 'must_change', 'locked', 'deleted', 'fail_count', 'locked_until', 'lock_level'];
+  /* thep_ve (quyền ghi Sổ thép về, do admin đầu tiên giao) cũng theo HIỆN TẠI: lấy theo tệp thì quyền đã thu hồi sau ngày sao lưu sống lại */
+  const BM = ['pin_salt', 'pin_hash', 'must_change', 'locked', 'deleted', 'fail_count', 'locked_until', 'lock_level', 'thep_ve'];
   const stmts = [env.DB.prepare(`INSERT OR REPLACE INTO meta (key, value) SELECT 'nap_users', json_group_array(json_object('id', id, 'role', role, 'phone', phone, ${BM.map((c) => `'${c}', ${c}`).join(', ')})) FROM users`)];
   const dem = {}, giu = [];
   for (const t of BK_STATE) {

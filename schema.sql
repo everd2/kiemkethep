@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS khu_phi (
   active INTEGER NOT NULL DEFAULT 1,
   zero_days INTEGER NOT NULL DEFAULT 0,
   keep_streak INTEGER NOT NULL DEFAULT 0,
+  keep_goc INTEGER,
+  keep_ngay TEXT,
   PRIMARY KEY (khu_id, phi_id)
 );
 
@@ -167,9 +169,11 @@ CREATE TABLE IF NOT EXISTS khu_report_log (
   khu_id TEXT NOT NULL,
   ts INTEGER NOT NULL,
   at INTEGER NOT NULL,
-  user_id INTEGER
+  user_id INTEGER,
+  khoa TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_khu_report_log_dk ON khu_report_log(day, khu_id);
+CREATE INDEX IF NOT EXISTS idx_khu_report_log_khoa ON khu_report_log(khoa);
 
 -- kind:      'nhap' thép về, 'chuyen' chuyển khu (dòng âm ở khu đi, dương ở khu đến),
 --            'dc' điều chỉnh tồn do admin khai — MỘT dòng có dấu, KHÔNG có dòng đối ứng.
@@ -644,7 +648,7 @@ CREATE TABLE IF NOT EXISTS anh_bb (
 );
 CREATE INDEX IF NOT EXISTS idx_anh_bb_entity ON anh_bb(loai, entity_id);
 
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 46);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', 47);
 
 -- Dữ liệu mặc định, giữ khớp với PHI_DEFAULTS trong src/worker.js
 -- Thép cây: kg/cây 11,7 m = 0,00617 x D x D x 11,7; cây/bó theo bó Hòa Phát

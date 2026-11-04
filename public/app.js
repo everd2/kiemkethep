@@ -808,12 +808,17 @@ function luuODangGo() {
     S.draft.cells[p] = { v: boN * size + leN, kind: 'dem', bo: boN, le: leN }; saveDraft();
   }
 }
-let flushing = false;
+/* Mọi lần PUT /counts đi LẦN LƯỢT: vòng gửi bù (flushPending) và lần bấm GỬI (sendCounts) / "Gửi làm số hôm nay" chạy chồng nhau
+   thì lệnh nào tới máy chủ sau thắng — mạng chậm làm số cũ trong hàng chờ đè số vừa sửa. guiDem: đang gửi trực tiếp, vòng gửi bù
+   không bắt đầu; flushXong: vòng gửi bù đang chạy, lần gửi trực tiếp chờ nó xong rồi mới gửi (số mới gửi sau cùng). */
+let flushing = false, guiDem = false, flushXong = null;
 async function flushPending() {
-  if (flushing || !S.me || S.me.must_change) return;
+  if (flushing || guiDem || !S.me || S.me.must_change) return;
   const q = readPending();
   if (!q.some((j) => !j.err && ofMe(j))) return;
   flushing = true;
+  let xong = null;
+  flushXong = new Promise((r) => { xong = r; });
   const rest = [];
   let sent = 0, failed = 0;
   try {
@@ -826,14 +831,15 @@ async function flushPending() {
       /* tuoi = đã trôi bao lâu từ lúc bấm gửi lần đầu, để khung giờ tính theo buổi khu ra bãi đếm chứ
          không theo lúc có mạng lại. Gửi THỜI GIAN ĐÃ TRÔI chứ không gửi giờ máy: máy để sai giờ thì
          hiệu hai mốc vẫn đúng, server tự lấy giờ của nó trừ đi. */
-      try { await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items, tuoi: Math.max(0, Date.now() - job.ts) }); sent++; boNhapDaGui(job); }
+      try { await api('PUT', '/counts', { khu: job.khu, day: job.day, items: job.items, tuoi: Math.max(0, Date.now() - job.ts), ...(job.k ? { khoa: job.k } : {}) }); sent++; boNhapDaGui(job); }
       /* 401 = hết phiên, không phải báo cáo sai: giữ nguyên để gửi lại sau khi đăng nhập, đừng gắn lỗi vĩnh viễn */
       catch (e) { if (e.retry || e.status === 401) rest.push(job); else { rest.push({ ...job, err: e.message }); failed++; } }
     }
   } finally {
-    // giữ các báo cáo mới được thêm trong lúc đang gửi
-    writePending(rest.concat(readPending().filter((x) => !q.some((j) => sameJob(j, x)))));
-    flushing = false;
+    // giữ các báo cáo mới được thêm trong lúc đang gửi; báo cáo đã bị gỡ khỏi hàng chờ trong lúc đó (Bỏ, gửi lại) thì không đưa lại
+    const nay = readPending();
+    writePending(rest.filter((j) => nay.some((x) => sameJob(x, j))).concat(nay.filter((x) => !q.some((j) => sameJob(j, x)))));
+    flushing = false; flushXong = null; xong();
   }
   if (sent || failed) {
     try { await loadBoot(); } catch (e) { /* bỏ qua */ }
@@ -845,7 +851,8 @@ async function flushPending() {
 async function sendCounts() {
   if (S.busy) return;
   S.busy = true; render();
-  try { await sendCountsInner(); } finally { S.busy = false; }
+  guiDem = true;
+  try { if (flushXong) await flushXong; await sendCountsInner(); } finally { S.busy = false; guiDem = false; }
   render();
 }
 async function sendCountsInner() {
@@ -861,9 +868,10 @@ async function sendCountsInner() {
     return c ? { phi: p.id, v: c.v, kind: c.kind, bo: c.bo, le: c.le } : { phi: p.id, v: 0, kind: 'zero', bo: 0, le: 0 };
   });
   const khuName = S.boot.khuBy[S.khu].name;
-  const job = { khu: S.khu, day: S.boot.today, items, ts: Date.now(), uid: S.me.id, uname: S.me.name };
+  // k: khoá chống gửi trùng của lần bấm này (gửi lại từ hàng chờ dùng đúng khoá đó, xem putCounts)
+  const job = { khu: S.khu, day: S.boot.today, items, ts: Date.now(), uid: S.me.id, uname: S.me.name, k: khoaMoi() };
   try {
-    const r = await api('PUT', '/counts', { khu: job.khu, day: job.day, items, tuoi: Math.max(0, Date.now() - job.ts) });
+    const r = await api('PUT', '/counts', { khu: job.khu, day: job.day, items, tuoi: Math.max(0, Date.now() - job.ts), khoa: job.k });
     try { localStorage.removeItem(draftKey()); } catch (e) { /* bỏ qua */ }
     /* Lần gửi này là số mới nhất của mình cho khu + ngày đó: bản cũ còn nằm trong hàng chờ (lần
        trước gửi lỗi) phải bỏ đi, không thì lát nữa nó tự gửi lại và ĐÈ số cũ lên số vừa gửi. */
@@ -4722,7 +4730,9 @@ function tvDocDan(text, chon) {
   const phis = (S.tv ? S.tv.phi : S.boot.phi).map((p) => p.id);
   const phiCua = (v) => { const t = String(v || '').trim().toUpperCase(); if (phis.includes(t)) return t; const m = /(\d+)/.exec(t); return m && phis.includes('D' + m[1]) ? 'D' + m[1] : t; };
   const RE_DMY = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/;
-  const cotNgay = dong.slice(1).map((l) => String(tach(l)[cot.ngay] || '').trim()).map((t) => RE_DMY.exec(t)).filter(Boolean);
+  // ô ngày có kèm giờ ("15/03/2026 00:00", "2026-03-15T00:00:00", "3/15/2026 12:00 AM"): bỏ phần giờ
+  const boGio = (v) => String(v || '').trim().replace(/(?:[T\s]+\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s*[AP]M)?)$/i, '');
+  const cotNgay = dong.slice(1).map((l) => boGio(tach(l)[cot.ngay])).map((t) => RE_DMY.exec(t)).filter(Boolean);
   // Excel cài kiểu Mỹ ghi tháng/ngày: có ô mà số thứ HAI > 12 (không thể là tháng) và không ô nào số thứ nhất > 12 -> cả cột là m/d/y
   const coMy = cotNgay.some((m) => Number(m[2]) > 12), coVn = cotNgay.some((m) => Number(m[1]) > 12);
   /* KHÔNG ô nào tự phân định mà có ngày hai số đều ≤ 12 và khác nhau (03/04: 3 tháng 4 hay 4 tháng 3?): không đoán im lặng — báo mơ hồ để
@@ -4730,7 +4740,9 @@ function tvDocDan(text, chon) {
   const moHo = !coMy && !coVn && cotNgay.some((m) => Number(m[1]) !== Number(m[2]) && Number(m[1]) <= 12 && Number(m[2]) <= 12);
   const kieuMy = coMy && !coVn ? true : moHo ? chon === 'my' : false;
   const ngayCua = (v) => {
-    const t = String(v || '').trim();
+    const t = boGio(v);
+    // ô ngày định dạng Số trong Excel chép ra số ngày kể từ 30/12/1899 ("45930" = 30/09/2025); chỉ nhận khoảng năm 1954–2119
+    if (/^\d{5}(\.\d+)?$/.test(t) && Number(t) >= 20000 && Number(t) <= 80000) return new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(t)) * 864e5).toISOString().slice(0, 10);
     let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
     if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
     m = RE_DMY.exec(t);
@@ -6165,10 +6177,13 @@ const ACTIONS = {
     const j = readPending().find((x) => pendKey(x) === d.j && ofMe(x));
     if (!j) return gone();
     if (!(await ask('Gửi báo cáo này làm số đếm của HÔM NAY?\nChỉ chọn khi số liệu vẫn đúng với thực tế hôm nay.', 'GỬI LÀM SỐ HÔM NAY'))) return;
-    const q = readPending(), i = q.findIndex((x) => pendKey(x) === d.j && ofMe(x));
-    if (i < 0) return gone();
-    q[i] = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now(), uid: S.me.id, uname: S.me.name };
-    writePending(q); flushPending(); render();
+    // vòng gửi bù đang chạy thì chờ nó xong: nó ghi lại hàng chờ lúc kết thúc, sửa giữa chừng là bản lỗi cũ hiện lại và lần gửi bị bỏ qua
+    while (flushXong) await flushXong;
+    if (!readPending().some((x) => pendKey(x) === d.j && ofMe(x))) return gone();
+    /* như queuePending: báo cáo hôm nay đang chờ của cùng khu (của mình) bị thay, không để hai báo cáo cùng khu cùng ngày tự gửi đè nhau */
+    const moi = { khu: j.khu, items: j.items, day: S.boot.today, ts: Date.now(), uid: S.me.id, uname: S.me.name, k: khoaMoi() };
+    writePending(readPending().filter((x) => !(pendKey(x) === d.j && ofMe(x)) && !(x.khu === moi.khu && x.day === moi.day && x.uid === moi.uid)).concat([moi]));
+    flushPending(); render();
   },
   async pendrm(d) {
     if (!readPending().some((x) => pendKey(x) === d.j && ofMe(x))) return say('Báo cáo này không còn trong hàng chờ.', true), render();
@@ -7154,7 +7169,8 @@ const ACTIONS = {
       if (gd !== '' && Q.demTr && !Q.demTr.bao[u.id]) {
         const v = soTu(gd);
         if (v == null || Number.isNaN(v)) { say(`Tổ ${u.name}: số đêm hôm trước không hợp lệ.`, true); render(); return gcFocus(k + 'd'); }
-        if (!Q.demTr.so[u.id] || Q.demTr.so[u.id].lam !== v) dem.push({ user: u.id, lam: v });
+        // ts của dòng đang thấy (0 = chưa có): người khác sửa trước thì máy chủ từ chối thay vì đè
+        if (!Q.demTr.so[u.id] || Q.demTr.so[u.id].lam !== v) dem.push({ user: u.id, lam: v, ts: Q.demTr.so[u.id] ? Q.demTr.so[u.id].ts || 0 : 0 });
       }
       const Lcu = qsLichCa(Q.lich, u.id, Q.hien.ngay), L = Number(fv(k + 'c', Lcu)) || 0;
       if (L && L !== Lcu) ds.push({ user: u.id, ca: L });
@@ -7426,8 +7442,13 @@ const ACTIONS = {
     if (D.loi) { S.tvNhapKq = null; return say(D.loi, true), render(); }
     S.tvKieuMy = !!D.kieuMy;
     const thu = d.v === 'thu', them = { dongGoc: D.dongGoc, moHo: D.moHo };
+    /* khoá chống ghi đôi theo NỘI DUNG bảng + người nhập (như tvluu): lần trước hết giờ chờ mà máy chủ đã ghi thì bấm Nhập lại không ghi
+       thêm lần nữa, máy chủ trả lại lần đã nhập. Dán bảng khác / người khác là khoá mới. */
+    const dau = JSON.stringify([S.me && S.me.id, D.rows]);
+    if (!thu && (!S.tvNhapKhoa || S.tvNhapKhoa.dau !== dau)) S.tvNhapKhoa = { dau, k: khoaMoi() };
     act(async () => {
-      const r = await api('POST', '/thepve/nhap', { rows: D.rows, thu }, 60e3);
+      const r = await api('POST', '/thepve/nhap', { rows: D.rows, thu, ...(thu ? {} : { khoa: S.tvNhapKhoa.k }) }, 60e3);
+      if (!thu && r.ok) S.tvNhapKhoa = null;
       S.tvNhapKq = { ...r, ...them };
       if (!thu && r.ok) { delete S.form.tvdan; S.tvNgayChon = null; S.tvNhapKq = { ...r, thu: false }; Object.keys(NHO).filter((k) => k.startsWith('tv:')).forEach((k) => delete NHO[k]); await tvTai(); }
     }, thu ? '' : 'Đã nhập số liệu từ Excel.');

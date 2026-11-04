@@ -222,6 +222,8 @@ async function main() {
   R(`ACTIONS.tvnhap({ v: 'ghi' })`); await cho();
   eq('nhập thật từ màn hình', S.sql("SELECT 1 FROM thep_ve WHERE so_phieu = 'HP-300'").length, 1);
   eq('bảng dán thiếu cột bắt buộc: báo lỗi, không gửi', R(`tvDocDan('Ngày\\tPhi\\n01/01/2026\\tD16').loi.length > 0`), true);
+  // ô ngày định dạng Số của Excel (số serial) và ô ngày kèm giờ
+  eq('ngày dạng số serial 45930 = 30/09/2025, ngày kèm giờ bỏ phần giờ', R(`tvDocDan('Ngày\\tNCC\\tPhi\\tKg\\n45930\\tA\\tD16\\t1\\n15/03/2026 00:00\\tA\\tD16\\t1\\n2026-03-16T00:00:00\\tA\\tD16\\t1').rows.map((r) => r.ngay)`), ['2025-09-30', '2026-03-15', '2026-03-16']);
   // đơn hàng
   R(`ACTIONS.tvtab({ v: 'don' })`);
   ok('đơn hàng: mỗi đơn một thẻ, bảng nhỏ Đặt / Đã về / Còn thiếu, nút ghi chuyến theo đơn', ['<table class="bang nho"', 'Đặt (tấn)', 'Đã về', 'Còn thiếu', 'thiếu', 'data-a="tvghidon"'].every((x) => R('vThepVe()').includes(x)));
