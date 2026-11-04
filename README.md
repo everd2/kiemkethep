@@ -234,7 +234,7 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - **Hạn báo**: ca ngày trước **7h00**, ca đêm trước **19h15**. Còn trong hạn thì thẻ nhắc màu vàng, quá hạn chuyển **đỏ** (*Quá hạn báo quân số…*). Hạn chỉ để nhắc, báo muộn vẫn ghi được. **CVKTHT trở lên đổi hạn** ở dòng *Hạn báo* cuối bảng quân số (thu gọn, bấm **Đổi** mới hiện ô giờ); hạn ca ngày phải nằm trong ca ngày, hạn ca đêm từ giờ vào ca đêm tới trước nửa đêm.
 - **Tổ đang làm ca nào thì chỉ bị nhắc ca đó**, theo **lịch ca** tổ đã đặt. Tổ ca đêm không bị nhắc báo ca ngày, và trên bảng ca ngày mang nhãn *Làm ca đêm* chứ không phải *Chưa báo*. Tổ chưa đặt lịch thì app tạm đoán theo lần báo gần nhất.
 - **Một lần báo gồm**: tổng quân số của tổ (điền sẵn theo lần báo trước), số nghỉ **theo từng lý do** (ốm, nghỉ phép năm, về quê, việc gia đình, OFF luân phiên, lý do khác — bấm + / −), số đi làm ca này, ghi chú. **OFF luân phiên nằm trong số nghỉ.** Có *lý do khác* thì bắt buộc ghi rõ ở ô ghi chú.
-- **Số luôn khớp nhau**: số nghỉ là tổng các lý do; số đi làm app tự tính bằng tổng trừ số nghỉ. **Tổ chia hai ca** thì gõ lại số đi làm ca này, phần còn lại app tính là người của ca kia; tới đầu ca kia, ô ghi điền sẵn đúng số người đó. Đi làm cộng nghỉ nhiều hơn tổng thì app không nhận.
+- **Số luôn khớp nhau**: số nghỉ là tổng các lý do; số đi làm app tự tính bằng tổng trừ số nghỉ. **Tổ chia hai ca** thì gõ lại số đi làm ca này, phần còn lại app tính là người của ca kia; tới đầu ca kia, ô ghi điền sẵn đúng số người đó. Đi làm cộng nghỉ nhiều hơn tổng thì app không nhận. Tổ hai ca mà số người ca đang báo cộng ca liền trước / liền sau đã báo vượt tổng quân số (một người bị tính ở cả hai ca) thì thẻ báo **nhắc** soát lại — chỉ nhắc, vẫn gửi được (có thể là tăng ca thật).
 - **Ai làm được gì**:
 
   | Việc | Ai làm |
@@ -253,6 +253,7 @@ Có **hai luồng**: Tiểu đội trưởng **tự khai báo và báo** quân s
 - **Xếp thứ tự tổ** (thẻ Thiết lập): bấm Lên / Xuống từng tổ rồi Lưu. Thứ tự này dùng cho bảng quân số và mục 3 của báo cáo ca.
 - **Nhắc soạn báo cáo ca**: qua hạn báo mà ca đó chưa chép báo cáo thì Tổng quan của CVKTHT có thẻ *Soạn báo cáo ca … gửi cấp trên* (ghi số tổ đã báo), bấm là mở thẳng màn soạn.
 - **Tổng quan nhắc đúng người**: thẻ báo của Tiểu đội trưởng ghi *Chưa báo quân số ca ngày …* kèm giờ hạn khi tổ chưa báo ca đang làm, và nhắc cả ca kế tiếp từ một tiếng trước giờ vào ca; CVKTHT thấy *N/M tổ chưa báo quân số* (chỉ đếm các tổ làm ca đó), kèm tên và hạn báo, bấm vào là mở màn báo cáo ca, bước 1, để nhắc. Cấp chỉ huy không bị nhắc. Chỉ hiện khi người đó **mở app** — chưa có thông báo đẩy.
+- **Tên tổ không được trùng**: tạo, đổi tên hay đổi vai trò thành Tiểu đội trưởng mà trùng tên một tổ đang dùng app (không phân biệt hoa thường, dấu) thì bị từ chối — báo cáo ghi *Tổ <tên>* và sản lượng đọc mục 3 sửa tay theo tên, hai tổ cùng tên sẽ lẫn số. Còn tổ trùng tên từ trước (hoặc vừa khôi phục) thì báo cáo sản lượng cảnh báo và không đọc chữ sửa tay cho các tổ đó.
 - Ca đã qua thì Tiểu đội trưởng không sửa được nữa. App **không còn màn ghi thay** cho CVKTHT: tổ không báo thì báo cáo ca dùng số thiết lập, hoặc người soạn sửa tay mục 3. Mọi lần báo nằm trong **nhật ký**, có chip lọc *Quân số*.
 
 ### Sao lưu tự động hằng tuần

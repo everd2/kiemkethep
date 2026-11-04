@@ -40,6 +40,7 @@ const SUITES = [
   ['Sửa đợt 4: huỷ sắt vụn khi lên chức, quân số mất sóng bị từ chối, ô số "1.500", số thiết lập ca đã qua', 'sua4.test.mjs'],
   ['Tách tồn khỏi phiếu (v70): tồn = số đếm đã duyệt, phiếu chỉ thống kê, không chặn, Duyệt khu chỉ duyệt số đếm', 'tachton.test.mjs'],
   ['Sửa đợt 5 (rà soát toàn bộ): Duyệt khu sau 0h không duyệt số hôm qua, kg phiếu 0, dán trùng Excel, Đêm hôm trước, cookie gia hạn, khôi phục admin bị khoá, chữ sửa tay "Tổ Khoa 2", khoá chống gửi trùng (đếm, nhập Excel), chuỗi giữ nguyên khi huỷ, hoàn tác đặt lại', 'sua5.test.mjs'],
+  ['Sửa đợt 6 (chống tính lặp ở báo cáo quân số / sản lượng): tổ trùng tên bị chặn, sản lượng không đọc chung dòng sửa tay cho hai tổ cùng tên, tổ hai ca cộng hai ca vượt tổng thì nhắc', 'sua6.test.mjs'],
 ];
 
 const run = (file) =>

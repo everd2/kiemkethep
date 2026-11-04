@@ -30,6 +30,16 @@ export async function listUsers(env) {
   return json({ users: uR.results, first: fid });
 }
 
+/* TÊN TỔ KHÔNG ĐƯỢC TRÙNG. Một Tiểu đội trưởng = một tổ, báo cáo ca ghi "Tổ <tên>", và báo cáo sản lượng đọc lại mục quân số đã
+   sửa tay THEO TÊN đó (bcS3Cua ở app.js): hai tổ cùng tên thì cả hai đọc chung một dòng — số tổ này tính hai lần, số tổ kia mất —
+   và người đọc báo cáo cũng không biết dòng nào của tổ nào. So như app đọc chữ: không phân biệt hoa thường, dấu, khoảng trắng. */
+const tenTo = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
+async function chanTrungTo(env, name, boQua = 0) {
+  const ds = (await env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0 AND id <> ?").bind(boQua).all()).results;
+  const t = ds.find((u) => tenTo(u.name) === tenTo(name));
+  if (t) throw bad(`Đã có tổ của Tiểu đội trưởng "${t.name}". Hai tổ cùng tên thì báo cáo ca và báo cáo sản lượng lẫn số hai tổ: thêm chữ để phân biệt (ví dụ họ, hoặc số tổ).`);
+}
+
 export async function createUser(req, env, admin) {
   const b = await readJson(req);
   const name = String(b.name || '').trim().slice(0, 60);
@@ -37,6 +47,7 @@ export async function createUser(req, env, admin) {
   const phone = normPhone(b.phone);
   const role = String(b.role || 'tieudoi');
   if (!ROLES.includes(role)) throw bad('Vai trò không hợp lệ');
+  if (role === 'tieudoi') await chanTrungTo(env, name);
   const exist = await env.DB.prepare('SELECT name, deleted FROM users WHERE phone = ?').bind(phone).first();
   /* Số điện thoại là UNIQUE và dòng của người đã xoá vẫn còn, nên không tạo mới trùng số được.
      Nói rõ đường đi thay vì chỉ "đã có tài khoản": người dùng không nhìn thấy tài khoản đã xoá
@@ -143,6 +154,7 @@ export async function userAction(req, env, admin, id, action) {
     const role = String(b.role || '');
     if (!ROLES.includes(role)) throw bad('Vai trò không hợp lệ');
     if (id === admin.id && role !== 'admin') throw bad('Không thể tự bỏ quyền admin của mình');
+    if (role === 'tieudoi' && u.role !== 'tieudoi') await chanTrungTo(env, u.name, id);
     // thôi là Tiểu đội trưởng thì thôi phụ trách khu: cấp trên đếm được mọi khu, không đứng tên khu nào
     const go = role !== GIAO_KHU ? await goKhoiKhu(env, admin, u, b, 'Đổi vai trò') : { mo: [], stmts: [] };
     await env.DB.batch([
@@ -185,6 +197,7 @@ export async function userAction(req, env, admin, id, action) {
     const name = String(b.name || '').trim().slice(0, 60);
     if (!name) throw bad('Cần nhập tên');
     if (name === u.name) throw bad('Tên mới trùng tên cũ');
+    if (u.role === 'tieudoi') await chanTrungTo(env, name, id);
     await env.DB.batch([
       env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(name, id),
       auditStmt(env, admin, 'user_rename', { id, from: u.name, to: name }),
@@ -220,6 +233,8 @@ export async function userAction(req, env, admin, id, action) {
      Suốt thời gian tài khoản bị xoá, PIN cũ nằm ngoài tầm kiểm soát nên phải coi như đã mất. */
   if (action === 'restore') {
     if (!u.deleted) throw bad('Tài khoản này chưa bị xoá');
+    /* Không chặn trùng tên tổ ở đây: tài khoản đã xoá không đổi tên được, chặn là kẹt hẳn. Khôi phục xong đổi tên được; trong lúc
+       đó báo cáo sản lượng nhận ra hai tổ cùng tên và không đọc chữ sửa tay cho hai tổ đó (slGan). */
     const pin = genPin();
     const salt = rand(16);
     await env.DB.batch([

@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v77';
+const BAN = 'kho-thep-v78';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -3698,7 +3698,16 @@ function qhTinh() {
   const bc = haiCa ? soTu(fv('qhbc', qhBcCu(x))) : tong, lam = bc - nghi;
   const loi = !tong ? 'Ghi tổng quân số của tổ.' : haiCa && !bc ? 'Ghi số người của tổ thuộc ca này.' : bc > tong ? `Ca này ${bc} người, nhiều hơn tổng quân số ${tong}.`
     : lam < 0 ? `Nghỉ ${nghi} nhiều hơn số người của ca (${bc}).` : '';
-  return { tong, nghi, lam, bc, haiCa, loi };
+  // tổ 2 ca: ca liền kề đã báo mà cộng hai ca vượt tổng thì có người bị tính ở cả hai ca. Chỉ nhắc, vẫn gửi được (có thể tăng ca thật)
+  const o = haiCa && !loi && x ? qhKe(x).find((r) => bc + r.lam + qsSoNghi(r.nghi) > tong) : null;
+  const canh = o ? `${hoa(caGoi(o))} tổ đã báo ${o.lam + qsSoNghi(o.nghi)} người, cộng ca này ${bc} là ${bc + o.lam + qsSoNghi(o.nghi)}, nhiều hơn tổng ${tong}. Một người chỉ thuộc một ca: soát lại số người ca này.` : '';
+  return { tong, nghi, lam, bc, haiCa, loi, canh };
+}
+// tổ 2 ca: lần báo của ca liền trước và liền sau ca đang báo (S.boot.qs.toi.gan, xem qsToi ở src/quanso.js)
+function qhKe(x) {
+  const c = x.c, ds = S.boot.qs.toi.gan || [];
+  const ke = c.ca === 1 ? [{ ngay: congNgay(c.ngay, -1), ca: 2 }, { ngay: c.ngay, ca: 2 }] : [{ ngay: c.ngay, ca: 1 }, { ngay: congNgay(c.ngay, 1), ca: 1 }];
+  return ke.map((k) => ds.find((r) => caKhoa(r) === caKhoa(k))).filter((r) => r && r.lam + qsSoNghi(r.nghi) > 0);
 }
 /* Chưa gõ tổng quân số (tổ báo lần đầu) không phải là lỗi: chỉ nói phải làm gì, chữ thường. Chữ đỏ dành cho số
    cộng sai, hoặc khi đã bấm gửi mà còn thiếu (qhgui đặt H.thu). */
@@ -3778,6 +3787,7 @@ function qsTheHome() {
   return loi + `<div class="card ${tre ? 'bad' : can.length ? 'warn' : ''} col gap8">${dau}${H.sua ? '' : lichO}${daBao}
     ${tongO}${bcO}${nghiO}${mo}
     ${canTom ? `<b id="qhprev" style="font-size:17px${qhLoiDo(T) ? ';color:var(--bad)' : T.loi ? ';font-weight:400' : ''}">${esc(qhPrevTxt(T))}</b>` : ''}
+    ${T.haiCa ? `<span class="sm" id="qhcanh" style="line-height:1.4;color:var(--warn);font-weight:700${T.canh ? '' : ';display:none'}">${esc(T.canh)}</span>` : ''}
     <div class="row gap6"><button class="btn pri" style="flex:3;min-width:0;padding:8px 6px;line-height:1.2" data-a="qhgui" data-v="${caKhoa(x.c)}">${x.row ? 'GỬI LẠI ' : 'BÁO '}${esc(caGoi(x.c).toUpperCase())}</button>${H.sua || H.som ? '<button class="btn" style="flex:1;min-width:0;padding:8px 6px" data-a="qhthoi">Thôi</button>' : ''}</div>
   </div>`;
 }
@@ -4462,9 +4472,15 @@ function slGan() {
   const r1 = bcQuanSo(L.bc[0], nguon(L.bc[0])).rows, r2 = bcQuanSo(L.bc[1], nguon(L.bc[1])).rows;
   // mục 3 của ca đã sửa tay thì chữ đã sửa thắng số app tính (bcS3Tay); tổ không có dòng trong chữ đó vẫn theo số app
   L.tay = [bcS3Tay(L.bc[0]), bcS3Tay(L.bc[1])];
+  /* Hai tổ CÙNG TÊN (dữ liệu cũ, hoặc tài khoản vừa khôi phục; tạo / đổi tên trùng thì server đã chặn — chanTrungTo ở src/admin.js):
+     chữ sửa tay chỉ đọc theo tên nên cả hai sẽ đọc chung một dòng, số tổ này tính hai lần. Hai tổ đó bỏ qua chữ sửa tay, theo số app. */
+  const dem = {};
+  L.to.forEach((u) => { const k = bcChuTen(u.name); dem[k] = (dem[k] || 0) + 1; });
+  L.trung = L.to.filter((u) => dem[bcChuTen(u.name)] > 1).map((u) => u.name);
+  const tayCua = (i, u, c, phai) => (L.tay[i] == null || dem[bcChuTen(u.name)] > 1 ? null : bcS3Cua(L.tay[i], u.name, c, phai));
   L.to.forEach((u) => {
     const mot = (rows, ngay) => {
-      const i = rows === r1 ? 0 : 1, t = L.tay[i] == null ? null : bcS3Cua(L.tay[i], u.name, L.bc[i].ca);
+      const i = rows === r1 ? 0 : 1, t = tayCua(i, u, L.bc[i].ca);
       if (t === 'khong') return null;
       if (t) return { ngay, tong: t.tong, lam: t.lam, nguon: 'tay' };
       const r = rows.find((x) => x.u.id === u.id);
@@ -4474,8 +4490,8 @@ function slGan() {
     /* Dòng tổ làm hai ca trong báo cáo CA NGÀY cũng ghi số ca đêm hôm trước. Báo cáo ca đêm không có dòng sửa tay của tổ thì lấy số
        ca đêm đã sửa tay trên dòng đó; vẫn chưa có số thì lấy đúng số dòng đó đang ghi (tổ chưa báo ca đêm, chỉ khai người thuộc ca
        kia), để sản lượng không thiếu ca đêm so với báo cáo ca. */
-    if (L.tay[1] == null || bcS3Cua(L.tay[1], u.name, 2) == null) {
-      const k = L.tay[0] == null ? null : bcS3Cua(L.tay[0], u.name, 2, true), x = r1.find((y) => y.u.id === u.id);
+    if (tayCua(1, u, 2) == null) {
+      const k = tayCua(0, u, 2, true), x = r1.find((y) => y.u.id === u.id);
       if (k && k !== 'khong') u.dem = { ngay: L.hom, tong: k.tong, lam: k.lam, nguon: 'tay' };
       else if (!u.dem && x && x.truoc) u.dem = { ngay: L.hom, ...x.truoc };
     }
@@ -4567,6 +4583,7 @@ function vSanLuong() {
       <b>2. Quân số và công gia công thép</b>
       <span class="sm muted" style="line-height:1.4">Quân số lấy từ chính <b>Báo cáo ca</b> (cùng một cách tính): ca ngày ${fmtDay(L.ngay).slice(0, 5)} và ca đêm ${fmtDay(L.hom).slice(0, 5)} (tổ làm đêm). Công gia công thép mặc định bằng số đi làm, sửa được.</span>
       ${L.tay && (L.tay[0] != null || L.tay[1] != null) ? `<div class="card warn sm" style="line-height:1.4">Mục quân số của báo cáo ${[L.tay[0] != null && 'ca ngày ' + fmtDay(L.ngay).slice(0, 5), L.tay[1] != null && 'ca đêm ' + fmtDay(L.hom).slice(0, 5)].filter(Boolean).join(' và ')} đã sửa tay: sản lượng theo số đã sửa. Muốn theo số app tính thì bấm "Lấy lại số từ app" ở Báo cáo ca.</div>` : ''}
+      ${L.trung && L.trung.length ? `<div class="card warn sm" style="line-height:1.4">Có tổ trùng tên (${esc([...new Set(L.trung)].join(', '))}): báo cáo không phân biệt được hai tổ, các tổ này không đọc số sửa tay mà theo số app tính. Đổi tên một tổ ở Người dùng để phân biệt.</div>` : ''}
       <div class="row gap6">${[['to', 'Theo tổ báo'], ['tl', 'Chỉ số thiết lập']].map(([v, n]) => `<button class="chip s f1 ${nguonHien === v ? 'on' : ''}" style="min-width:0;white-space:nowrap" data-a="slnguon" data-v="${v}">${n}</button>`).join('')}</div>
       <div class="row gap6"><span class="sm muted f1" style="line-height:1.35">Tỷ lệ gia công: mỗi tổ bốc ngẫu nhiên trong khoảng đã đặt</span><button class="chip s" style="flex:none;white-space:nowrap;padding:6px 14px" data-a="slrnd">Làm mới</button></div>
       ${hang || '<div class="card muted">Chưa có tổ nào.</div>'}
@@ -7721,8 +7738,9 @@ document.addEventListener('input', (e) => {
   // thẻ báo quân số trên Tổng quan: dòng tóm tắt chạy theo ô đang gõ, không vẽ lại cả trang
   if (m && /^qhn_/.test(m) && S.qsH) { const n = soTu(e.target.value); if (n) S.qsH.nghi[m.slice(4)] = n; else delete S.qsH.nghi[m.slice(4)]; }
   if (m && (m === 'qhtong' || m === 'qhbc' || /^qhn_/.test(m)) && S.boot && S.boot.qs && S.boot.qs.toi) {
-    const T = qhTinh(), pv = document.getElementById('qhprev'), nt = document.getElementById('qhnt');
+    const T = qhTinh(), pv = document.getElementById('qhprev'), nt = document.getElementById('qhnt'), ch = document.getElementById('qhcanh');
     if (nt) nt.textContent = T.nghi ? T.nghi + ' người' : 'không ai';
+    if (ch) { ch.textContent = T.canh; ch.style.display = T.canh ? '' : 'none'; }
     if (pv) { pv.textContent = qhPrevTxt(T); pv.style.color = qhLoiDo(T) ? 'var(--bad)' : ''; pv.style.fontWeight = T.loi && !qhLoiDo(T) ? '400' : ''; }
   }
   // Cài đặt quy tắc: khung giờ đếm đổi theo ngay khi chọn số lần hoặc giờ làm, chưa cần lưu

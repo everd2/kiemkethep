@@ -423,7 +423,10 @@ function qsToi(mine, hien, ke) {
      đó; ca kia thu vào một dòng nhỏ — tổ làm một ca 15–30 ngày liền, nút ca kia chỉ để bấm nhầm. */
   const [a, z] = cua, motCa = (r) => r && r.lam > 0 && !r.ca_kia;
   const coDinh = motCa(a) && motCa(z) && a.ca === z.ca ? a.ca : 0;
-  return { tong: cua.length ? cua[0].tong : 0, hien: tim(hien), ke: tim(ke), truocHien: truoc(hien), truocKe: truoc(ke), coDinh };
+  /* gan: các lần báo gần nhất — tổ 2 ca soát số người ca đang báo với ca liền trước / liền sau đã báo (một người chỉ thuộc một ca,
+     hai ca cộng lại không vượt tổng quân số; xem qhKe ở app.js) */
+  return { tong: cua.length ? cua[0].tong : 0, hien: tim(hien), ke: tim(ke), truocHien: truoc(hien), truocKe: truoc(ke), coDinh,
+    gan: cua.map(({ ngay, ca, tong, lam, nghi }) => ({ ngay, ca, tong, lam, nghi })) };
 }
 export function qsBoot(rows, st, user, mine = [], bcDa = [], cfgRow = null) {
   const cfg = docCfg(cfgRow);
