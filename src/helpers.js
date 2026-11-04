@@ -101,8 +101,13 @@ export async function auth(req, env, renew = true) {
   // xoá tài khoản đã thu hồi mọi phiên, nhưng vẫn kiểm ở đây: phiên là thứ dùng để vào hệ thống
   if (!row || row.expires_at < Date.now() || row.locked || row.deleted) throw new HttpError(401, 'Phiên đăng nhập hết hạn');
   if (renew && row.expires_at - Date.now() < SESSION_MS / 2) {
-    await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(Date.now() + SESSION_MS, th).run();
+    row.expires_at = Date.now() + SESSION_MS;
+    await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(row.expires_at, th).run();
   }
+  /* Cookie phải theo hạn phiên: cookie chỉ đặt lúc đăng nhập với Max-Age 30 ngày, nên chỉ gia hạn phiên ở trên thì đúng 30 ngày sau
+     lần đăng nhập trình duyệt vẫn xoá cookie, người dùng hằng ngày cũng bị bắt nhập PIN lại. handle() đặt lại cookie theo hạn còn
+     lại ở mọi lần gọi (không riêng lần gia hạn: lần đó mà lỗi thì cookie lệch tới lần gia hạn sau). */
+  if (renew) row.sid = m[1];
   return row;
 }
 

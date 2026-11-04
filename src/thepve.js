@@ -82,7 +82,10 @@ function docDong(lines, phiBy, label) {
     const phi = String((x && x.phi) || '').trim();
     if (!Object.hasOwn(phiBy, phi)) throw bad(`Dòng ${i + 1}: phi không hợp lệ "${phi}"`);
     const p = phiBy[phi];
-    const bo = intOr(x.bo, SO, `Dòng ${i + 1}: số bó`), cay = intOr(x.cay, SO * 100, `Dòng ${i + 1}: số cây`), kg = kgOr(x.kg, `Dòng ${i + 1}: kg`);
+    const bo = intOr(x.bo, SO, `Dòng ${i + 1}: số bó`), cay = intOr(x.cay, SO * 100, `Dòng ${i + 1}: số cây`), kg0 = kgOr(x.kg, `Dòng ${i + 1}: kg`);
+    /* kg 0 mà có bó / cây là ô kg để trống kiểu Excel (ô có công thức ra 0): coi như không ghi kg phiếu. Lưu 0 thì COALESCE(kg, kg_tinh)
+       của thống kê lấy 0, cả dòng thành 0 kg mà không cảnh báo nào. */
+    const kg = kg0 === 0 && (bo || cay) ? null : kg0;
     if (!bo && !cay && !kg) throw bad(`Dòng ${i + 1} (${phi}): ghi ít nhất số bó, số cây hoặc kg`);
     const kgTinh = bo || cay ? Math.round(((bo || 0) * p.bo_size + (cay || 0)) * p.kg_per_cay) : null;
     return { phi, bo, cay, kg, kg_tinh: kgTinh };
@@ -317,7 +320,7 @@ export async function tvNhap(req, env, user) {
   const phiBy = Object.fromEntries(phiR.results.map((p) => [p.id, p]));
   const donBy = Object.fromEntries(donR.results.map((d) => [tenKhoa(d.ncc) + '|' + bbKhoa(d.so_don), d.id]));
   const daCo = new Set(coR.results.map((x) => tenKhoa(x.ncc) + '|' + bbKhoa(x.so_phieu)));
-  const loi = [], chuyen = new Map();
+  const loi = [], chuyen = new Map(), giongHet = new Map(), trung = [];
   rows.forEach((r, i) => {
     const so = i + 1;
     try {
@@ -333,6 +336,13 @@ export async function tvNhap(req, env, user) {
       let c = chuyen.get(k);
       if (!c) { c = { ngay, ncc, so_phieu: soPhieu || null, so_don: soDon || null, bien_so: chu(r.bien_so, 20) || null, ghi_chu: chu(r.ghi_chu, 200) || null, dong: [], khoa: 'nh' + chuyen.size }; chuyen.set(k, c); }
       if (soDon && !c.so_don) c.so_don = soDon;
+      /* Dán chồng một khối hai lần: dòng trùng cùng phiếu, cùng phi bị gộp vào một chuyến mà cộng đôi kg. Một phiếu ghi mỗi phi một dòng,
+         nên chặn. Dòng không số phiếu thì mỗi dòng một chuyến (hai xe cùng ngày là chuyện thật): giống hệt nhau thì chỉ cảnh báo. */
+      if (soPhieu && c.dong.some((x) => x.phi === l.phi)) throw bad(`Phiếu ${soPhieu} có hai dòng ${l.phi} (dán trùng?)`);
+      if (!soPhieu) {
+        const g = [ngay, tenKhoa(ncc), l.phi, l.bo, l.cay, l.kg].join('|');
+        if (giongHet.has(g)) trung.push({ dong: so, giong: giongHet.get(g) }); else giongHet.set(g, so);
+      }
       c.dong.push(l);
     } catch (e) { loi.push({ dong: so, loi: e.message.replace(/^Dòng [^:]*: /, '') }); }
   });
@@ -345,7 +355,7 @@ export async function tvNhap(req, env, user) {
   const canh = [];
   ds.forEach((c) => c.dong.forEach((l) => { if (l.kg != null && l.kg < 100 && !l.bo && !l.cay) canh.push({ ngay: c.ngay, ncc: c.ncc, phi: l.phi, kg: l.kg }); }));
   const tomTat = { dong: rows.length, chuyen: ds.length, kg: tongKg, ncc: [...new Set(ds.map((c) => c.ncc))].length, gan_don: ds.filter((c) => c.don_id).length,
-    tu: ngays[0] || null, den: ngays[ngays.length - 1] || null, canh: canh.slice(0, 50), so_canh: canh.length };
+    tu: ngays[0] || null, den: ngays[ngays.length - 1] || null, canh: canh.slice(0, 50), so_canh: canh.length, trung: trung.slice(0, 50), so_trung: trung.length };
   if (b.thu === true || loi.length) return json({ ok: !loi.length, thu: true, loi: loi.slice(0, 200), so_loi: loi.length, ...tomTat });
   const ts = Date.now(), lo = 'n' + ts.toString(36); // khoá tạm cho lần nhập này: nối dòng vào đúng chuyến vừa chèn
   ds.forEach((c, i) => { c.khoa = lo + '-' + i; });

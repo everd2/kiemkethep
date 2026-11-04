@@ -127,6 +127,8 @@ export async function recoverAdmin(req, env) {
   checkPin(np);
   const u = await env.DB.prepare('SELECT * FROM users WHERE phone = ? AND role = ? AND deleted = 0').bind(phone, 'admin').first();
   if (!u) throw new HttpError(404, 'Không tìm thấy tài khoản admin với số điện thoại này');
+  // khoá do admin khác đặt: đặt PIN mới không mở khoá, báo "đã đặt lại" thì người dùng vẫn bị chặn ở lần đăng nhập mà không hiểu vì sao
+  if (u.locked) throw new HttpError(403, 'Tài khoản này đang bị khoá: nhờ admin khác mở khoá trước, rồi mới đặt lại PIN.');
   const salt = rand(16);
   await env.DB.batch([
     env.DB.prepare('UPDATE users SET pin_salt=?, pin_hash=?, must_change=0, fail_count=0, locked_until=0, lock_level=0 WHERE id=?').bind(salt, await hashPin(env, salt, np), u.id),

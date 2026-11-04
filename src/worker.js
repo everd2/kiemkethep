@@ -3,7 +3,7 @@
 // Điểm vào: định tuyến /api/* và việc Cron. Logic nghiệp vụ nằm ở các module cùng thư mục.
 import { HttpError, LAP_PHIEU, ROLES, capOf, json, vnDay } from './core.js';
 import { migrate } from './db.js';
-import { auth } from './helpers.js';
+import { auth, sessionCookie } from './helpers.js';
 import { changePin, login, logout, recoverAdmin, setup } from './auth.js';
 import { bootstrap } from './bootstrap.js';
 import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } from './counts.js';
@@ -62,7 +62,12 @@ async function handle(req, env, url) {
   if (r0 === 'change-pin' && method === 'POST') return changePin(req, env, user);
   if (user.must_change) throw new HttpError(403, 'Bạn cần đổi PIN trước khi sử dụng');
   const res = await route(req, env, url, user, method, p, r0);
-  return method === 'GET' ? res : kemSau(req, env, url, user, r0, res);
+  const out = method === 'GET' ? res : await kemSau(req, env, url, user, r0, res);
+  // đặt lại cookie theo hạn phiên còn lại (xem auth); phiên vừa bị thu hồi thì cookie gửi lại cũng bị server từ chối như trước
+  if (!user.sid || !out || out.headers.has('Set-Cookie')) return out;
+  const r = new Response(out.body, out);
+  r.headers.append('Set-Cookie', sessionCookie(url, user.sid, Math.max(0, Math.floor((user.expires_at - Date.now()) / 1000))));
+  return r;
 }
 
 /* TẢI LẠI KÈM LỆNH GHI. Sau mỗi lần lưu, máy khách phải tải lại dữ liệu chung và màn đang đứng; làm bằng request
@@ -253,7 +258,7 @@ async function route(req, env, url, user, method, p, r0) {
   if (r0 === 'restore' && method === 'POST') return restoreData(req, env, user);
   // bản sao tự động hằng tuần trên kho R2: danh sách, tải về, sao lưu ngay (chỉ admin đầu tiên, xem src/saoluu.js)
   if (r0 === 'saoluu' && method === 'GET' && p.length === 1) return saoLuuDs(env, user);
-  if (r0 === 'saoluu' && method === 'GET' && p.length === 2) return saoLuuTai(env, user, decodeURIComponent(p[1]));
+  if (r0 === 'saoluu' && method === 'GET' && p.length === 2) { let ten = ''; try { ten = decodeURIComponent(p[1]); } catch (e) { /* '%' lẻ: tên không có thật, saoLuuTai trả 404 */ } return saoLuuTai(env, user, ten); }
   if (r0 === 'saoluu' && method === 'POST' && p.length === 1) return saoLuuNgay(env, user);
   if (r0 === 'users') {
     if (method === 'GET' && p.length === 1) return listUsers(env);

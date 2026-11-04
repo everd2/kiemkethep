@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v76';
+const BAN = 'kho-thep-v77';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -710,6 +710,9 @@ const draftKey = (kid = S.khu) => 'kt:' + S.boot.today + ':' + S.me.id + ':' + k
    đếm, nên phi có thép mới về vẫn bị bắt đếm thực tế như mọi ngày. */
 function dienSan(ts) {
   if (!ts || vnDayOf(ts) !== S.boot.today) return false;
+  /* Mở app lúc mất sóng bằng bản lưu từ hôm qua: S.boot.today vẫn là ngày của bản lưu, số hôm qua sẽ thành "hôm nay, đúng
+     khung" -> điền sẵn thành ô đã đếm, bấm GỬI (rồi "Gửi làm số hôm nay") là số cũ thành lần đếm mới. So với ngày thật. */
+  if (S.stale && vnDayOf(svNow()) !== S.boot.today) return false;
   const cur = slotNow();
   return !cur || slotIdxOf(ts) === cur.i;
 }
@@ -4433,7 +4436,9 @@ const bcChuTen = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f
    của tổ -> null (sản lượng lấy số app tính cho tổ đó). */
 function bcS3Cua(txt, ten, c, phaiGhiCa) {
   const k = bcChuTen('Tổ ' + ten);
-  const l = bcDong(txt).map(bcChuTen).find((x) => x.startsWith(k) && /^(\s*[:(,.;–-]|\s*\d|\s+ca\b|$)/.test(x.slice(k.length)));
+  /* Chữ số ngay sau tên chỉ nhận khi đó là số "12/21" ("Tổ Khoa 12/21 cn"): "Tổ Khoa 2: ..." là dòng của tổ "Khoa 2", "Tổ 12: ..."
+     là của tổ "12", không phải của tổ "Khoa" / "1" */
+  const l = bcDong(txt).map(bcChuTen).find((x) => x.startsWith(k) && /^(\s*[:(,.;–-]|\s+\d+\s*\/|\s+ca\b|$)/.test(x.slice(k.length)));
   if (l == null) return null;
   const sau = l.slice(k.length);
   const m = new RegExp(bcChuTen(CA_TEN[c]) + '\\s*:?\\s*(\\d+)\\s*/\\s*(\\d+)').exec(sau);
@@ -4619,7 +4624,8 @@ const tvKgSo = (v) => {
 function tvDong(k) {
   const n = S.tvSoDong || 1, out = [];
   for (let i = 0; i < n; i++) {
-    const phi = S.form[`t${k}p_${i}`] || '', bo = tvSo(S.form[`t${k}b_${i}`]), cay = tvSo(S.form[`t${k}c_${i}`]), kg = tvKgPhieu(S.form[`t${k}k_${i}`]);
+    const phi = S.form[`t${k}p_${i}`] || '', bo = tvSo(S.form[`t${k}b_${i}`]), cay = tvSo(S.form[`t${k}c_${i}`]), kg0 = tvKgPhieu(S.form[`t${k}k_${i}`]);
+    const kg = kg0 === 0 && (bo || cay) ? null : kg0; // như máy chủ (docDong): kg 0 mà có bó / cây = chưa ghi kg phiếu
     out.push({ i, phi, bo, cay, kg, kg_tinh: tvKgTinh(phi, bo, cay) });
   }
   return out;
@@ -4862,6 +4868,7 @@ function vThepVe() {
           ${N.moHo ? `<div class="col gap6" style="border:2px solid var(--warn);border-radius:8px;padding:8px"><span class="sm b" style="color:var(--warn)">Cột ngày không tự biết được là ngày/tháng hay tháng/ngày (ví dụ 03/04 là 3 tháng 4 hay 4 tháng 3?). Chọn đúng kiểu của file rồi mới nhập:</span>
             <div class="row gap6"><button class="chip s f1 ${S.tvKieuMy ? '' : 'on'}" data-a="tvkieungay" data-v="vn">Ngày/tháng (dd/mm)</button><button class="chip s f1 ${S.tvKieuMy ? 'on' : ''}" data-a="tvkieungay" data-v="my">Tháng/ngày (mm/dd)</button></div></div>` : ''}
           ${N.so_canh ? `<span class="sm b" style="color:var(--warn)">${N.so_canh} dòng chỉ có kg mà dưới 100 kg — cột khối lượng có phải đang ghi TẤN? Nếu đúng là tấn, đổi tên cột thành "Tấn" rồi dán lại.</span>${N.canh.slice(0, 5).map((x) => `<span class="sm muted">${fmtDay(x.ngay)} · ${esc(x.ncc)} · ${esc(x.phi)}: ${x.kg} kg</span>`).join('')}` : ''}
+          ${N.so_trung ? `<span class="sm b" style="color:var(--warn)">${N.so_trung} dòng không số phiếu giống hệt một dòng khác (cùng ngày, NCC, phi, số lượng) — có dán trùng không? Nếu đúng là hai xe thì cứ nhập.</span><span class="sm muted">${N.trung.slice(0, 5).map((x) => { const g = (d) => (N.dongGoc && N.dongGoc[d - 1]) || d + 1; return `dòng ${g(x.dong)} = dòng ${g(x.giong)}`; }).join(' · ')}</span>` : ''}
           ${(N.loi || []).slice(0, 30).map((x) => `<span class="sm" style="color:var(--bad)">Dòng ${(N.dongGoc && N.dongGoc[x.dong - 1]) || x.dong + 1}: ${esc(x.loi)}</span>`).join('')}${(N.loi || []).length > 30 ? '<span class="sm muted">…</span>' : ''}</div>` : '')
       + ((T.lo_nhap || []).length ? `<div class="card col gap6"><b>Các lần nhập gần đây (7 ngày)</b><span class="sm muted">Nhập nhầm (sai kỳ, sai đơn vị, dán trùng) thì huỷ cả lần nhập một lượt.</span>
           ${T.lo_nhap.map((x) => `<div class="row gap8" style="border-top:1px solid var(--line);padding-top:6px"><span class="f1 sm" style="min-width:0">${dmy(x.ts)} · ${esc(x.uname)}<br><b>${x.chuyen} chuyến</b> · ngày về ${fmtDay(x.tu)} → ${fmtDay(x.den)}</span>

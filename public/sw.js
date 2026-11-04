@@ -3,7 +3,7 @@
 // nên KHÔNG cần đổi số phiên bản mỗi lần sửa giao diện. Chỉ đổi khi muốn xoá sạch cache cũ.
 /* v6: bản 1.3 đổi giao thức báo cáo (gửi đủ mọi phi, ô để trống là 0). Bản app cũ còn trong cache
    sẽ gửi thiếu phi và bị server từ chối (need_all), nên phải xoá sạch cache cũ ở lần cài này. */
-const CACHE = 'kho-thep-v76';
+const CACHE = 'kho-thep-v77';
 const CHO_MS = 4000; // chờ mạng tối đa bấy lâu rồi dùng bản đã lưu (xem fetch bên dưới)
 const SHELL = ['/', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
@@ -13,7 +13,8 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
+  // /sw.js?b=<giờ>: app hỏi phiên bản mỗi lần mở (checkVer), mỗi lần một địa chỉ mới — để qua cache thì mỗi lần thêm một mục, phình mãi
+  if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/sw.js') return;
   /* Ưu tiên bản mới từ mạng, mất mạng thì dùng bản đã lưu; chỉ lưu phản hồi thành công.
      Mạng có HẠN CHỜ: sóng yếu ngoài bãi (còn vạch nhưng gói tin không đi) thì fetch không báo lỗi mà treo, app mở lên
      trắng màn hình cả phút dù bản đã lưu nằm sẵn trong máy. Quá CHO_MS mà mạng chưa trả thì đưa bản đã lưu ra dùng;

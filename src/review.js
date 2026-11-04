@@ -514,10 +514,14 @@ export async function reviewDuyet(req, env, user) {
      - Ô đang chờ duyệt: duyet_v = v, duyet_ts = ts là duyệt số mới.
      - Ô đã duyệt rồi: hai phép trên là vô tác dụng (duyet_v đã bằng v, duyet_ts đã bằng ts),
        chỉ còn duyet_at nhảy lên — tức "admin vừa xem lại và vẫn chấp nhận số này".
-     MỘT câu cho mọi khu đang duyệt: mỗi khu một câu thì "Duyệt tất cả" đọc lại cả kỳ một lần cho mỗi khu. */
+     MỘT câu cho mọi khu đang duyệt: mỗi khu một câu thì "Duyệt tất cả" đọc lại cả kỳ một lần cho mỗi khu.
+     Chỉ dòng của NGÀY MỚI NHẤT mỗi ô (đúng dòng subR của computeReview): sau 0h, trước lúc sổ hôm qua tự chốt, ô còn cả dòng
+     hôm qua chưa duyệt lẫn dòng hôm nay. Duyệt luôn dòng hôm qua là duyệt một con số không hiện trên màn Duyệt, không qua
+     capBao / nguoiBao (người duyệt có thể là chính người báo số đó), rồi số đó thành tồn chuẩn lúc chốt. */
   stmts.push(env.DB.prepare(
     `UPDATE counts SET duyet_v = v, duyet_kind = kind, duyet_ts = ts, duyet_at = ?1, duyet_by = ?2, duyet_name = ?3
-     WHERE day > ?5 AND day <= ?6 AND khu_id IN (SELECT value FROM json_each(?4))`
+     WHERE day > ?5 AND day <= ?6 AND khu_id IN (SELECT value FROM json_each(?4))
+       AND day = (SELECT MAX(c2.day) FROM counts c2 WHERE c2.khu_id = counts.khu_id AND c2.phi_id = counts.phi_id AND c2.day > ?5 AND c2.day <= ?6)`
   ).bind(ts, user.id, user.name, JSON.stringify(list.map((k) => k.khu)), last, day));
   // (v70) không còn duyệt kèm phiếu chờ của khu, cũng không kiểm tồn cho phiếu rút: phiếu duyệt riêng (duyetReceipt)
   stmts.push(

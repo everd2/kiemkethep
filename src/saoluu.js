@@ -62,11 +62,13 @@ async function luuLenKho(env, user, tay = false) {
   return { ten, co: chu.length };
 }
 
-/* Lịch mỗi giờ: 2h sáng giờ Việt Nam, bản mới nhất cũ hơn ~6,5 ngày (hoặc chưa có bản nào) thì lưu một bản. Lỗi không chặn việc khác. */
+/* Lịch mỗi giờ: từ 2h tới trước 5h sáng giờ Việt Nam, bản mới nhất cũ hơn ~6,5 ngày (hoặc chưa có bản nào) thì lưu một bản. Lỗi không
+   chặn việc khác. Ba giờ chứ không riêng 2h: lần 2h hỏng (R2 / D1 tạm lỗi) hay Cloudflare lỡ lượt cron 2h thì 3h, 4h thử lại, không
+   phải chờ tới 2h hôm sau; lưu xong thì bản mới nhất còn mới nên các giờ sau không lưu thêm. */
 export async function saoLuuTuDong(env, now = Date.now()) {
   if (!env.ANH || typeof env.ANH.list !== 'function') return null;
   const gio = Math.floor(((now + 7 * 3600e3) % 864e5) / 3600e3);
-  if (gio !== 2) return null;
+  if (gio < 2 || gio > 4) return null;
   // chỉ bản TỰ ĐỘNG tính lịch tuần: bản bấm tay không dời lịch (xem đầu tệp)
   const ds = (await dsBanSao(env)).filter((x) => !x.tay);
   if (ds.length && now - ds[0].luc < TUAN_MS) return null;

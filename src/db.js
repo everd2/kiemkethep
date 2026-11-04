@@ -4,7 +4,7 @@ import { seedPhi } from './core.js';
 /* ========================= TỰ NÂNG CẤP DATABASE =========================
    Deploy qua GitHub không chạy lại schema.sql, nên Worker tự áp dụng các thay đổi cấu trúc
    một lần (ghi số phiên bản vào meta.schema). Mỗi isolate chỉ tốn 1 truy vấn đọc để kiểm tra. */
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 46;
 // giữ khớp với hai trigger loans_* cuối schema.sql
 export const LOAN_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS loans_chk_insert BEFORE INSERT ON loans
@@ -557,6 +557,8 @@ export const MIGRATIONS = {
     "CREATE INDEX IF NOT EXISTS idx_thep_ve_dong_ve ON thep_ve_dong(ve_id)",
     'ALTER TABLE users ADD COLUMN thep_ve INTEGER NOT NULL DEFAULT 0',
   ],
+  // kg phiếu 0 mà có bó / cây (ô kg để trống của Excel) từng được lưu là 0 kg, thống kê lấy 0 thay vì kg tính: coi như chưa ghi kg phiếu
+  46: ['UPDATE thep_ve_dong SET kg = NULL WHERE kg = 0 AND kg_tinh IS NOT NULL'],
 };
 const RATE_WHERE = "dung IS NOT NULL AND bt = 0 AND day > date(?1, '-28 days') AND day <= ?1";
 export const RATE_SQL = `INSERT OR REPLACE INTO phi_rate (phi_id, per_day, days)

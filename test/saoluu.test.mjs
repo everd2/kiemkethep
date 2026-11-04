@@ -1,6 +1,6 @@
 /* Sao lưu tự động hằng tuần lên R2: node saoluu.test.mjs <đường-dẫn-repo>
    Những điều tính năng này hứa:
-   1. Lịch mỗi giờ: đúng 2h sáng giờ Việt Nam, bản mới nhất cũ hơn ~6,5 ngày (hoặc chưa có) thì lưu MỘT bản; giờ khác / chưa đủ tuần thì không.
+   1. Lịch mỗi giờ: 2h–5h sáng giờ Việt Nam (giờ sau thử lại khi lần trước hỏng), bản mới nhất cũ hơn ~6,5 ngày (hoặc chưa có) thì lưu MỘT bản; giờ khác / chưa đủ tuần thì không.
    2. Giữ 8 bản tự động mới nhất, bản cũ hơn tự xoá (bản bấm tay giữ riêng, xem baomat2.test.mjs).
    3. Bản trên kho y hệt "Tải bản sao toàn bộ" và NẠP LẠI được bằng đúng chỗ nạp sẵn có.
    4. Đọc mọi bảng trong MỘT lượt gọi D1 (lịch mỗi giờ gói miễn phí chỉ ~50 lượt mỗi lần chạy).
@@ -57,9 +57,12 @@ async function main() {
   S.DB.batch = b0; P.all = a0; P.run = r0;
 
   /* ===== 4. Lịch mỗi giờ ===== */
-  datGio(3, 5);
+  datGio(5, 5);
   await S.cron();
-  eq('3h sáng: không sao lưu', kho().length, 1);
+  eq('5h sáng: không sao lưu', kho().length, 1);
+  datGio(1, 5);
+  await S.cron();
+  eq('1h sáng: không sao lưu', kho().length, 1);
   datGio(2, 5);
   await S.cron();
   // bản "Sao lưu ngay" (đuôi _tay) không tính vào lịch tuần, nên chưa có bản tự động nào thì lưu luôn (xem baomat2.test.mjs)

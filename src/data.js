@@ -221,7 +221,9 @@ export const BK_COMPAT = { 15: [14], 16: [15], 17: [15, 16], 18: [15, 16, 17], 1
   // bản 44 chỉ thêm bảng báo cáo sản lượng (bản sao cũ chưa có thì giữ báo cáo đang có)
   44: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
   // bản 45 thêm các bảng sổ thép về và cột users.thep_ve (bản sao cũ thiếu thì để 0 = chưa giao quyền)
-  45: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44] };
+  45: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44],
+  // bản 46 không đổi bảng, chỉ sửa kg phiếu 0 của sổ thép về (nạp tệp cũ thì sửa y như vậy, xem scTep bên dưới)
+  46: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45] };
 /* Bảng chỉ-ghi-thêm: chép ra để đọc, không nạp lại. Nhật ký và lịch sử đếm dài vô hạn theo thời
    gian nên phải chặn trần, không thì một ngày nào đó bản sao to tới mức Worker không dựng nổi và
    nút sao lưu hỏng đúng lúc cần nhất. Lấy phần MỚI NHẤT vì đó là phần hay phải tra. */
@@ -384,6 +386,7 @@ export async function restoreData(req, env, user) {
   if (scTep < 29) stmts.push(env.DB.prepare("UPDATE don_gc SET huy_ts = cap_ts, biet_ts = cap_ts WHERE tt = 'huy' AND huy_ts IS NULL"));
   if (scTep < 30) stmts.push(env.DB.prepare('UPDATE don_gc SET lam_ts = cap_ts WHERE lam_ts IS NULL'), env.DB.prepare('UPDATE don_gc SET vuong_ts = cap_ts WHERE vuong IS NOT NULL AND vuong_ts IS NULL'));
   if (scTep < 35) stmts.push(env.DB.prepare("UPDATE don_gc SET xuat_tt = 'duyet', xuat_ts = xong_ts, xuat_duyet_ts = xong_ts WHERE tt = 'xong' AND xuat_tt IS NULL"));
+  if (scTep < 46) stmts.push(env.DB.prepare('UPDATE thep_ve_dong SET kg = NULL WHERE kg = 0 AND kg_tinh IS NOT NULL'));
   /* Bảng giữ nguyên (tệp cũ chưa có) có thể trỏ vào dòng của bảng vừa bị thay: ảnh của lần vay không còn, tin / nhật ký của đơn
      gia công không còn, dòng phi của chuyến / đơn thép về không còn. Bỏ các dòng mồ côi đó. */
   stmts.push(

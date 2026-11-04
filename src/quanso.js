@@ -295,19 +295,24 @@ export async function qsThietLap(req, env, user) {
     if (dt.ngay !== c.ngay) throw new HttpError(409, 'Đã sang ngày khác, hãy mở lại màn Thiết lập quân số.', 'changed');
     const [baoR, chepR] = await env.DB.batch([
       env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2').bind(c.ngay),
-      env.DB.prepare('SELECT user_id, tong FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(c.ngay),
+      env.DB.prepare('SELECT user_id, tong, nghi FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(c.ngay),
     ]);
-    const daBao = new Set(baoR.results.map((r) => r.user_id)), chep = new Map(chepR.results.map((r) => [r.user_id, r.tong])), now = Date.now();
+    const daBao = new Set(baoR.results.map((r) => r.user_id)), chep = new Map(chepR.results.map((r) => [r.user_id, r])), now = Date.now();
     for (const x of dt.ds) {
       const uid = Number(x && x.user), t = to.get(uid);
       if (!t) throw bad('Chỉ thiết lập cho tổ của một Tiểu đội trưởng đang dùng app');
       if (daBao.has(uid)) throw bad(`Tổ ${t.name} đã tự báo ca đêm ${fmtDay(c.ngay)}: sửa số tổ báo, không đặt số thiết lập cho ca đó`);
       const lam = intIn(x.lam, 0, QS_TONG_MAX, 'Số đi làm đêm hôm trước');
-      const moi = ds.find((y) => Number(y.user) === uid && y.tong != null && y.tong !== ''), tong = Number(moi ? moi.tong : chep.get(uid) || (cfg.tl[uid] || {}).tong) || 0;
+      /* Tổng của ca đã hết: lấy số đã chép cho ca đó trước. Tổng mới gõ cùng lần lưu là cho ca hôm nay, không được đổi luôn ca đêm qua. */
+      const cu = chep.get(uid), moi = ds.find((y) => Number(y.user) === uid && y.tong != null && y.tong !== '');
+      const tong = Number((cu && cu.tong) || (moi ? moi.tong : (cfg.tl[uid] || {}).tong)) || 0;
       if (!tong) throw bad(`Tổ ${t.name}: cần tổng quân số trước khi ghi số đêm hôm trước`);
       if (lam > tong) throw bad(`Tổ ${t.name}: đêm hôm trước ${lam} nhiều hơn tổng ${tong}`);
-      dem.push(env.DB.prepare(`INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?, 2, ?, ?, ?, '{}', NULL, ?)
-                               ON CONFLICT(ngay, ca, user_id) DO UPDATE SET tong = excluded.tong, lam = excluded.lam, ts = excluded.ts`).bind(c.ngay, uid, tong, lam, now),
+      /* Người nghỉ đã chép giữ lại khi vẫn vừa tổng; không vừa (ô này không có chỗ sửa số nghỉ) thì bỏ, không để đi làm + nghỉ > tổng */
+      const giuNghi = cu ? lam + Object.values(docNghi(cu.nghi)).reduce((a, v) => a + v, 0) <= tong : false;
+      dem.push(env.DB.prepare(`INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?1, 2, ?2, ?3, ?4, '{}', NULL, ?5)
+                               ON CONFLICT(ngay, ca, user_id) DO UPDATE SET tong = excluded.tong, lam = excluded.lam, ts = excluded.ts,
+                                 nghi = CASE WHEN ?6 THEN nghi ELSE '{}' END, ghi_chu = CASE WHEN ?6 THEN ghi_chu ELSE NULL END`).bind(c.ngay, uid, tong, lam, now, giuNghi ? 1 : 0),
         auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam }));
     }
   }
