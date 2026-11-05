@@ -166,7 +166,7 @@ async function main() {
     '3. Quân số đi làm trong ca 1 là: 9 công nhân / (tổng quân số 60)',
     '• Tổ Lê Hải Nam: chưa báo quân số ca ngày',
     '• Tổ Lò Văn Cơi: ca ngày 8/19 cn, ca đêm 9/19 cn, nghỉ 2 cn — ca ngày: 1 ốm; ca đêm: 1 việc gia đình',
-    '• Tổ Phạm Văn Khoa: ca ngày 1/21 cn, ca đêm 18/21 cn, nghỉ 2 cn — 1 nghỉ phép năm, 1 về quê',
+    '• Tổ Phạm Văn Khoa: ca ngày 1/21 cn, ca đêm 18/21 cn, nghỉ 2 cn — ca ngày: 1 nghỉ phép năm, 1 về quê',
     '• Tổ Lê Anh Tuấn (làm ca đêm): ca đêm 20/20 cn',
     '4. Nội dung công việc thực hiện trong ngày',
     '• Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 80%',

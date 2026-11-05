@@ -79,7 +79,7 @@ async function main() {
   ok('báo cáo ca đêm hôm trước ghi tổ Đêm 17', /ca đêm 17\/20 cn/.test(dong(1, 'Đêm')), dong(1, 'Đêm'));
   ok('báo cáo ca ngày ghi tổ Khai 10 + đêm 10', /ca ngày 10\/20 cn, ca đêm 10\/20 cn/.test(dong(0, 'Khai')), dong(0, 'Khai'));
   // tổ chỉ làm đêm, tổ chưa đặt lịch: báo cáo ca ngày cũng ghi số ca đêm hôm trước, đúng số sản lượng dùng
-  eq('báo cáo ca ngày ghi tổ Đêm (làm ca đêm) 17', dong(0, 'Đêm'), 'Tổ Đêm (làm ca đêm): ca đêm 17/20 cn');
+  eq('báo cáo ca ngày ghi tổ Đêm (làm ca đêm) 17, người không đi làm mà chưa có lý do cũng ghi ra', dong(0, 'Đêm'), 'Tổ Đêm (làm ca đêm): ca đêm 17/20 cn, nghỉ 3 cn — 3 chưa ghi lý do');
   ok('báo cáo ca ngày ghi tổ Mới 5 + đêm 6', /ca ngày 5\/20 cn, ca đêm 6\/20 cn/.test(dong(0, 'Mới')), dong(0, 'Mới'));
   ok('bản chữ sản lượng: tổ Hai đủ hai ca', R('slTao()').includes('• Tổ Hai: ca ngày 8/20 cn, ca đêm 9/20 cn'), R('slTao()'));
   ok('bản chữ sản lượng: tổ Khai đủ hai ca như báo cáo ca', R('slTao()').includes('• Tổ Khai: ca ngày 10/20 cn, ca đêm 10/20 cn'), R('slTao()'));
@@ -146,7 +146,7 @@ async function main() {
   nhap(0, 'Quân số\nTổ Đêm (làm ca đêm): ca đêm 0/20 cn');
   eq('ghi rõ ca đêm 0/20: theo chữ đó', so('Đêm'), [0, null, 0]);
   R(`localStorage.removeItem(bcKey(S.sl.bc)); slGan()`);
-  ok('báo cáo ca ngày ghi đúng số ca đêm đã sửa tay',/ca ngày 6\/20 cn, ca đêm 2\/20 cn/.test(dong(0, 'Hai')) && dong(0, 'Đêm') === 'Tổ Đêm (làm ca đêm): ca đêm 15/20 cn', dong(0, 'Hai') + ' | ' + dong(0, 'Đêm'));
+  ok('báo cáo ca ngày ghi đúng số ca đêm đã sửa tay',/ca ngày 6\/20 cn, ca đêm 2\/20 cn/.test(dong(0, 'Hai')) && dong(0, 'Đêm').startsWith('Tổ Đêm (làm ca đêm): ca đêm 15/20 cn'), dong(0, 'Hai') + ' | ' + dong(0, 'Đêm'));
 
   /* NÚT CHÉP: chữ chép ra phải theo thiết lập hiện tại. Máy khác vừa sửa mà máy này chưa làm mới thì chữ chép là số cũ (chép phải chạy ngay
      lúc bấm, không kịp hỏi máy chủ): lưu xong tải lại, báo đỏ để chép lại, lần chép sau đúng số mới. */
@@ -237,7 +237,7 @@ async function main() {
   // tổ đã xoá mà ca đêm hôm trước còn số: báo cáo ca ngày vẫn có dòng, sản lượng vẫn tính (trước đây báo cáo ca ngày mất dòng)
   S.raw.prepare('UPDATE users SET deleted = 1 WHERE id = ?').run(U['Đêm']);
   await tai(); nguonDem('tl');
-  eq('tổ đã xoá: báo cáo ca ngày ghi ca đêm 8, sản lượng 8', [dong(0, 'Đêm'), so('Đêm')], ['Tổ Đêm (làm ca đêm): ca đêm 8/20 cn', [8, null, 8]]);
+  eq('tổ đã xoá: báo cáo ca ngày ghi ca đêm 8, sản lượng 8', [dong(0, 'Đêm'), so('Đêm')], ['Tổ Đêm (làm ca đêm): ca đêm 8/20 cn, nghỉ 12 cn — 12 chưa ghi lý do', [8, null, 8]]);
 
   xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');

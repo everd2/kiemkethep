@@ -120,8 +120,8 @@ export async function qsView(env, user, url) {
       .bind(user.id, hien.ngay, hien.ca, ke.ngay, ke.ca),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare('SELECT id, name FROM users'),
-    env.DB.prepare('SELECT user_id, tong, lam, ts FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(demC.ngay),
-    env.DB.prepare('SELECT user_id, tong, lam FROM quan_so WHERE ngay = ? AND ca = 2').bind(demC.ngay),
+    env.DB.prepare('SELECT user_id, tong, lam, nghi, ghi_chu, ts FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(demC.ngay),
+    env.DB.prepare('SELECT user_id, tong, lam, nghi, ghi_chu FROM quan_so WHERE ngay = ? AND ca = 2').bind(demC.ngay),
   ]);
   const cfg = docCfg(cfgR.results[0]), ten = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
   const loc = (o) => Object.fromEntries(Object.entries(o).filter(([id]) => ql || Number(id) === user.id).map(([id, v]) => [id, { ...v, by_name: ten[v.by] || '' }]));
@@ -135,8 +135,9 @@ export async function qsView(env, user, url) {
     }),
     tdt: tdt.results, rows: rows.results.map((r) => ({ ...r, nghi: docNghi(r.nghi) })), truoc: truoc.results,
     lich: loc(cfg.lich), tl: ql ? loc(cfg.tl) : {},
-    // ô Đêm hôm trước: so = số thiết lập của ca đó, bao = tổ đã tự báo ca đó (ô khoá, số tổ báo là số dùng)
-    demTr: ql ? { ngay: demC.ngay, so: Object.fromEntries(demTl.results.map((r) => [r.user_id, r])), bao: Object.fromEntries(demBao.results.map((r) => [r.user_id, r])) } : null,
+    /* ca đêm đã hết gần nhất (bảng thiết lập mở từ báo cáo ca ngày hôm sau sửa cột Đêm của ca này): so = số thiết lập đã chép cho ca đó
+       (kèm người nghỉ), bao = tổ đã tự báo ca đó (khoá, số tổ báo là số dùng) */
+    demTr: ql ? { ngay: demC.ngay, so: Object.fromEntries(demTl.results.map((r) => [r.user_id, { ...r, nghi: docNghi(r.nghi) }])), bao: Object.fromEntries(demBao.results.map((r) => [r.user_id, { ...r, nghi: docNghi(r.nghi) }])) } : null,
   });
 }
 
@@ -309,12 +310,20 @@ export async function qsThietLap(req, env, user) {
       const tong = Number((cu && cu.tong) || (moi ? moi.tong : (cfg.tl[uid] || {}).tong)) || 0;
       if (!tong) throw bad(`Tổ ${t.name}: cần tổng quân số trước khi ghi số đêm hôm trước`);
       if (lam > tong) throw bad(`Tổ ${t.name}: đêm hôm trước ${lam} nhiều hơn tổng ${tong}`);
-      /* Người nghỉ đã chép giữ lại khi vẫn vừa tổng; không vừa (ô này không có chỗ sửa số nghỉ) thì bỏ, không để đi làm + nghỉ > tổng */
-      const giuNghi = cu ? lam + Object.values(docNghi(cu.nghi)).reduce((a, v) => a + v, 0) <= tong : false;
-      dem.push(env.DB.prepare(`INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?1, 2, ?2, ?3, ?4, '{}', NULL, ?5)
+      /* NGƯỜI NGHỈ của ca đêm đó: x.n2 / x.gc2 cùng khuôn với bảng thiết lập (tlNghi). Trước đây ô này chỉ ghi số đi làm và XOÁ người nghỉ đã chép
+         (lý do nghỉ ca đêm hôm trước không bao giờ nhập được, báo cáo ca ngày không hiện). Không gửi n2 (bản app cũ) thì giữ người nghỉ đã chép
+         khi vẫn vừa tổng, không vừa thì bỏ. */
+      let ng = tlNghi(x, cu ? { n2: docNghi(cu.nghi), gc2: cu.ghi_chu } : null, 2, t.name);
+      const soNg = Object.values(ng.n || {}).reduce((a, v) => a + v, 0);
+      if (lam + soNg > tong) {
+        if (!ng.giu) throw bad(`Tổ ${t.name}: đêm hôm trước đi làm ${lam} + nghỉ ${soNg} = ${lam + soNg}, nhiều hơn tổng ${tong}`);
+        ng = {};
+      }
+      const nghi = JSON.stringify(ng.n || {}), gc = ng.gc || null;
+      dem.push(env.DB.prepare(`INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?1, 2, ?2, ?3, ?4, ?6, ?7, ?5)
                                ON CONFLICT(ngay, ca, user_id) DO UPDATE SET tong = excluded.tong, lam = excluded.lam, ts = excluded.ts,
-                                 nghi = CASE WHEN ?6 THEN nghi ELSE '{}' END, ghi_chu = CASE WHEN ?6 THEN ghi_chu ELSE NULL END`).bind(c.ngay, uid, tong, lam, now, giuNghi ? 1 : 0),
-        auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam }));
+                                 nghi = excluded.nghi, ghi_chu = excluded.ghi_chu`).bind(c.ngay, uid, tong, lam, now, nghi, gc),
+        auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam, n2: ng.n }));
     }
     const uids = dt.ds.map((x) => Number(x && x.user));
     /* Hai người cùng sửa ô này: máy gửi kèm ts của dòng nó đang thấy (0 = chưa có dòng); dòng đã đổi từ đó thì từ chối, không để người lưu
