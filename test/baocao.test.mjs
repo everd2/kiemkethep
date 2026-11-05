@@ -118,6 +118,7 @@ async function main() {
       const r = await S.call(o.method || 'GET', String(url).replace(/^\/api/, ''), o.body ? JSON.parse(o.body) : undefined, who);
       // bộ này soát cách ghép chữ của ca đang soạn nhưng dùng ca đã qua cho đủ số liệu: bỏ mốc ca đã hết (ca đã hết không đọc số đặt sau đó: xem slchung.test.mjs)
       if (r.data && r.data.tlMoc) delete r.data.tlMoc;
+      if (r.data && r.data.demTr) delete r.data.demTr.tlMoc;
       return { ok: r.status < 400, status: r.status, json: async () => r.data, headers: { get: () => null } };
     },
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },
@@ -166,7 +167,7 @@ async function main() {
     '• Tổ Lê Hải Nam: chưa báo quân số ca ngày',
     '• Tổ Lò Văn Cơi: ca ngày 8/19 cn, ca đêm 9/19 cn, nghỉ 2 cn — ca ngày: 1 ốm; ca đêm: 1 việc gia đình',
     '• Tổ Phạm Văn Khoa: ca ngày 1/21 cn, ca đêm 18/21 cn, nghỉ 2 cn — 1 nghỉ phép năm, 1 về quê',
-    '• Tổ Lê Anh Tuấn (làm ca đêm)',
+    '• Tổ Lê Anh Tuấn (làm ca đêm): ca đêm 20/20 cn',
     '4. Nội dung công việc thực hiện trong ngày',
     '• Dầm sàn chéo tầng T7-t8 trục X17-X20: đang gia công 80%',
     '• Vách W1 cote 18.5-21.5m trục X27-X28 / 13: đang gia công 50%',

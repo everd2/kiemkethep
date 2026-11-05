@@ -164,23 +164,27 @@ async function main() {
   eq('màn lấy đúng ngày hôm nay', R('S.sl.ngay'), D);
   ok('menu Thêm của CVKTHT có mục Báo cáo sản lượng', R('vMore()').includes('data-a="slmo"'));
   /* ===== QUÂN SỐ LÀ CỦA BÁO CÁO CA: một nơi tính duy nhất (bcQuanSo) ===== */
-  const Bngay = R('S.sl.bc[0]'), Bdem = R('S.sl.bc[1]');
-  eq('lấy báo cáo ca của CA NGÀY hôm nay và CA ĐÊM hôm trước', [Bngay.ngay, Bngay.ca, Bdem.ngay, Bdem.ca], [D, 1, hom, 2]);
-  const hangBc = (idx, ng) => R(`bcQuanSo(S.sl.bc[${idx}], ${ng ? "'" + ng + "'" : `bcNGoc(S.sl.bc[${idx}])`}).rows.map((r) => [r.u.id, r.trang, r.lam, r.tong])`);
-  const khop = (nhan, idx, truong, ng) => {
-    for (const [uid, trang, lam, tong] of hangBc(idx, ng)) {
+  /* Quân số sản lượng ngày D = ĐÚNG mục 3 của báo cáo ca NGÀY ngày D; báo cáo đó đã gồm ca đêm D-1 (demTr = số liệu báo cáo ca đêm D-1).
+     Sản lượng không đọc riêng báo cáo ca đêm nữa. */
+  const Bngay = R('S.sl.bc');
+  eq('lấy báo cáo ca NGÀY hôm nay, kèm số liệu ca ĐÊM hôm trước', [Bngay.ngay, Bngay.ca, Bngay.demTr.ngay, Bngay.demTr.ca], [D, 1, hom, 2]);
+  const hangBc = (ng) => R(`bcQuanSo(S.sl.bc, ${ng ? "'" + ng + "'" : 'bcNGoc(S.sl.bc)'}).rows.map((r) => [r.u.id, r.trang, r.lam, r.tong, r.dem ? [r.dem.lam, r.dem.tong] : null])`);
+  const khop = (nhan, ng) => {
+    for (const [uid, trang, lam, tong, dem] of hangBc(ng)) {
       const u = R(`S.sl.to.find((x) => x.id === ${uid})`);
       if (!u) continue;
-      const mong = trang === 'da' || trang === 'tl' || trang === 'tlda' ? [lam, tong] : null;
-      const co = u[truong] ? [u[truong].lam, u[truong].tong] : null;
-      if (JSON.stringify(co) !== JSON.stringify(mong)) { ok(`${nhan}: tổ ${u.name} khớp báo cáo ca`, false, `báo cáo ca ${JSON.stringify(mong)} <> sản lượng ${JSON.stringify(co)}`); return; }
+      const mong = [trang === 'da' || trang === 'tl' || trang === 'tlda' ? [lam, tong] : null, dem];
+      const co = [u.ngay ? [u.ngay.lam, u.ngay.tong] : null, u.dem ? [u.dem.lam, u.dem.tong] : null];
+      if (JSON.stringify(co) !== JSON.stringify(mong)) { ok(`${nhan}: tổ ${u.name} khớp báo cáo ca ngày`, false, `báo cáo ca ${JSON.stringify(mong)} <> sản lượng ${JSON.stringify(co)}`); return; }
     }
-    ok(`${nhan}: mọi tổ khớp đúng số của báo cáo ca`, true);
+    ok(`${nhan}: mọi tổ khớp đúng số của báo cáo ca ngày (cả phần ca đêm hôm trước)`, true);
   };
-  khop('ca ngày', 0, 'ngay');
-  khop('ca đêm hôm trước', 1, 'dem');
-  const dongBc = R(`bcQuanSo(S.sl.bc[0], bcNGoc(S.sl.bc[0])).dong.join('|')`) + '|' + R(`bcQuanSo(S.sl.bc[1], bcNGoc(S.sl.bc[1])).dong.join('|')`);
-  ok('chữ của báo cáo ca có đúng các số mà sản lượng dùng (Khoa 18/21, Hoàng 12/15, Trường 7/19, Cơi 9/19, Sơn 17/19)', ['Phạm Văn Khoa: ca ngày 18/21 cn', 'Nguyễn Văn Hoàng: ca ngày 12/15 cn', 'Lý Đình Trường: ca ngày 7/19 cn', 'Lò Văn Cơi: ca đêm 9/19 cn', 'Nguyễn Đức Sơn: ca đêm 17/19 cn'].every((x) => dongBc.includes(x)), dongBc);
+  khop('ca ngày + ca đêm hôm trước');
+  const dongBc = R(`bcQuanSo(S.sl.bc, bcNGoc(S.sl.bc)).dong.join('|')`);
+  ok('chữ của báo cáo ca NGÀY có đúng các số mà sản lượng dùng (Khoa 18/21, Hoàng 12/15, Trường 7/19 + 7/19, Cơi 9/19, Sơn 17/19)', ['Phạm Văn Khoa: ca ngày 18/21 cn', 'Nguyễn Văn Hoàng: ca ngày 12/15 cn', 'Lý Đình Trường: ca ngày 7/19 cn, ca đêm 7/19 cn', 'Lò Văn Cơi: chưa báo quân số ca ngày, ca đêm 9/19 cn', 'Nguyễn Đức Sơn (làm ca đêm): ca đêm 17/19 cn'].every((x) => dongBc.includes(x)), dongBc);
+  // số ca đêm trên báo cáo ca ngày = đúng số báo cáo ca đêm hôm trước ghi
+  const dongDem = R(`bcQuanSo(S.sl.bc.demTr, bcNGoc(S.sl.bc.demTr)).dong.join('|')`);
+  ok('báo cáo ca đêm hôm trước ghi cùng số (Cơi 9/19, Sơn 17/19, Trường 7/19)', ['Lò Văn Cơi: ca đêm 9/19 cn', 'Nguyễn Đức Sơn: ca đêm 17/19 cn', 'Lý Đình Trường: ca đêm 7/19 cn'].every((x) => dongDem.includes(x)), dongDem);
   const uOf = (u) => R(`S.sl.to.find((x) => x.id === ${u.id})`);
   eq('Khoa: ca ngày 18/21, nguồn tổ báo', [uOf(khoa).lam, uOf(khoa).tong, uOf(khoa).ngay.nguon, uOf(khoa).dem], [18, 21, 'bao', null]);
   eq('Cơi: ca đêm hôm trước 9/19', [uOf(coi).lam, uOf(coi).tong, uOf(coi).dem.ngay, uOf(coi).ngay], [9, 19, hom, null]);
@@ -246,23 +250,21 @@ async function main() {
   eq('lưu thiết lập từ màn hình: tỷ lệ giá 0,4, Nam 0,9', [R('S.sl.tl.gia'), R('S.sl.tl.gc[' + nam.id + ']')], [0.4, 0.9]);
   eq('Khoa không bị đổi', R('S.sl.tl.gc[' + khoa.id + ']'), 0.8);
   eq('bảng thiết lập đóng sau khi lưu', R('S.slTlMo'), false);
-  // nguồn quân số "Chỉ số thiết lập" (cùng nút với báo cáo ca): Khoa đã báo 18/21 nhưng thiết lập là 10/21
+  /* nguồn quân số "Chỉ số thiết lập": chọn ở BÁO CÁO CA NGÀY (màn sản lượng không có nút nguồn riêng, kẻo hai nơi ra hai số).
+     Khoa đã báo 18/21 nhưng thiết lập là 10/21. */
   eq('đặt thiết lập quân số cho Khoa: đi làm ca ngày 10', (await S.call('PUT', '/quanso/thietlap', { user: khoa.id, tong: 21, s1: 10, s2: 0, ts: 0 }, CV)).status, 200);
   await R('slTai(undefined, true)'); await cho();
   eq('mặc định theo báo cáo ca (Theo tổ báo): Khoa vẫn 18', [uOf(khoa).lam, uOf(khoa).ngay.nguon], [18, 'bao']);
-  ok('có hai nút nguồn như báo cáo ca', R('vSanLuong()').includes('data-a="slnguon" data-v="tl"') && R('vSanLuong()').includes('data-a="slnguon" data-v="to"'));
-  R(`ACTIONS.slnguon({ v: 'tl' })`);
-  eq('đổi sang Chỉ số thiết lập: Khoa 10/21 (nguồn thiết lập)', [uOf(khoa).lam, uOf(khoa).tong, uOf(khoa).ngay.nguon], [10, 21, 'tl']);
-  khop('ca ngày (sau khi đổi nguồn)', 0, 'ngay', 'tl');
+  ok('màn sản lượng không còn nút nguồn riêng', !R('vSanLuong()').includes('data-a="slnguon"'));
+  const nguonNhap = (nguon) => R(`localStorage.setItem(bcKey(S.sl.bc), ${JSON.stringify(JSON.stringify({ v: 2, muc: {}, dau: {}, nguon, ts: Date.now() + 1 }))}); slGan()`);
+  nguonNhap('tl');
+  eq('báo cáo ca ngày chọn Chỉ số thiết lập: sản lượng Khoa 10/21 (nguồn thiết lập)', [uOf(khoa).lam, uOf(khoa).tong, uOf(khoa).ngay.nguon], [10, 21, 'tl']);
+  khop('ca ngày (sau khi đổi nguồn ở báo cáo ca)', 'tl');
   eq('Hoàng, Sơn vẫn đúng số thiết lập', [uOf(hoang).lam, uOf(son).lam], [12, 17]);
   const congKhoa = cua(R('slTinh()'), khoa);
   eq('công gia công thép của Khoa theo số mới (10), công đã sửa tay 15 thì giữ 15', congKhoa.cong, 15);
-  await R('slHang');
-  eq('đổi nguồn: tự lưu kèm nguồn đã chọn, không cần Chép', JSON.parse(S.one('SELECT data FROM san_luong WHERE ngay = ?', D).data).nguon, 'tl');
-  await R('slTai()'); await cho();
-  eq('mở lại: nhớ nguồn đã chọn', [R('S.slNguon'), uOf(khoa).lam], ['tl', 10]);
-  R(`ACTIONS.slnguon({ v: 'to' })`);
-  eq('đổi lại Theo tổ báo: Khoa 18', uOf(khoa).lam, 18);
+  R(`localStorage.removeItem(bcKey(S.sl.bc)); slGan()`);
+  eq('báo cáo ca ngày về Theo tổ báo: Khoa 18', uOf(khoa).lam, 18);
   // đổi ngày
   R(`ACTIONS.slngay({ v: '${hom}' })`); await cho();
   eq('đổi sang hôm qua', R('S.sl.ngay'), hom);
@@ -277,7 +279,7 @@ async function main() {
   R(`ACTIONS.slngay({ v: '${D}' })`); await cho();
   eq('mở lại báo cáo sản lượng: có số ngay khi bấm, chưa cần chờ mạng', R(`S.sl = null; ACTIONS.slmo(); !!(S.sl && S.sl.to && S.sl.to.length)`), true);
   await cho();
-  eq('sau khi bản mới về: vẫn đúng ngày, đúng số (nguồn đã lưu: Chỉ số thiết lập -> Khoa 10)', [R('S.sl.ngay'), R('S.slNguon'), R(`S.sl.to.find((x) => x.id === ${khoa.id}).lam`)], [D, 'tl', 10]);
+  eq('sau khi bản mới về: vẫn đúng ngày, đúng số (theo báo cáo ca ngày: Khoa 18)', [R('S.sl.ngay'), R(`S.sl.to.find((x) => x.id === ${khoa.id}).lam`)], [D, 18]);
   R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca')`); await cho();
   eq('mở lại báo cáo ca cùng ca: có số ngay khi bấm', R(`S.screen = 'more'; S.bcc = null; go('baocaoca'); !!S.bcc`), true);
   await cho();
@@ -286,14 +288,13 @@ async function main() {
   /* Màn sản lượng đang mở mà tổ báo thêm / người khác lưu: vòng tự làm mới phải theo số mới như màn báo cáo ca (trước đây màn
      này không nằm trong vòng làm mới: đứng yên số cũ tới khi mở lại màn). */
   R(`S.sl = null; ACTIONS.slmo()`); await cho();
-  R(`ACTIONS.slnguon({ v: 'to' })`);
   eq('trước khi Hoàng báo: Hoàng theo số thiết lập 12', [uOf(hoang).lam, uOf(hoang).ngay.nguon], [12, 'tl']);
   R(`S.form['slc_' + ${khoa.id}] = '20'`);
   await q(CV, { ngay: D, ca: 1, user: hoang.id, tong: 15, lam: 13 });
   await R('refresh()'); await cho();
   eq('Hoàng vừa báo 13/15: màn sản lượng tự cập nhật, không cần mở lại', [uOf(hoang).lam, uOf(hoang).tong, uOf(hoang).ngay.nguon], [13, 15, 'bao']);
-  eq('ô công đang gõ của Khoa giữ nguyên, nguồn đang chọn giữ nguyên', [R(`S.form['slc_' + ${khoa.id}]`), R('S.slNguon')], ['20', 'to']);
-  eq('khớp với báo cáo ca ngay lúc đó', R(`bcQuanSo(S.sl.bc[0], 'to').rows.find((r) => r.u.id === ${hoang.id}).lam`), 13);
+  eq('ô công đang gõ của Khoa giữ nguyên', R(`S.form['slc_' + ${khoa.id}]`), '20');
+  eq('khớp với báo cáo ca ngay lúc đó', R(`bcQuanSo(S.sl.bc, 'to').rows.find((r) => r.u.id === ${hoang.id}).lam`), 13);
   R(`S.slTlMo = true`);
   await q(CV, { ngay: D, ca: 1, user: hoang.id, tong: 15, lam: 14 });
   await R('refresh()'); await cho();
@@ -309,7 +310,7 @@ async function main() {
 
   /* Mục 3 của báo cáo ca SỬA TAY: sản lượng theo chữ đã sửa. Chưa sửa thì theo số app tính (như trên). Nháp trên máy đang soạn
      thắng (thấy ngay), máy khác thấy khi bản sửa đã chép lên máy chủ. Tổ không có dòng trong chữ đã sửa vẫn theo số app. */
-  const s3Nhap = (s3) => R(`localStorage.setItem(bcKey(S.sl.bc[0]), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3 }, dau: {}, ts: Date.now() + 1 }))})`);
+  const s3Nhap = (s3) => R(`localStorage.setItem(bcKey(S.sl.bc), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3 }, dau: {}, ts: Date.now() + 1 }))})`);
   s3Nhap('Quân số đi làm trong ca 1 là: 9 công nhân / (tổng quân số 30)\n• Tổ Nguyễn Văn Hoàng: ca ngày 9/15 cn, nghỉ 6 cn\n• Tổ Phạm Văn Khoa: chưa báo quân số ca ngày');
   R('slGan()');
   eq('nháp sửa tay trên máy: Hoàng theo chữ đã sửa 9/15', [uOf(hoang).lam, uOf(hoang).tong, uOf(hoang).ngay.nguon], [9, 15, 'tay']);
@@ -317,7 +318,7 @@ async function main() {
   eq('tổ không có dòng trong chữ đã sửa (Trường): vẫn theo số app', [uOf(truong).ngay.lam, uOf(truong).ngay.nguon], [7, 'bao']);
   ok('bản chữ sản lượng mang số đã sửa', R('slTao()').includes('Tổ Nguyễn Văn Hoàng: ca ngày 9/15 cn'), R('slTao()'));
   ok('màn hình nói rõ mục quân số đã sửa tay', /đã sửa tay: sản lượng theo số đã sửa/.test(R('vSanLuong()')) && R('vSanLuong()').includes('(đã sửa tay ở báo cáo ca)'));
-  R(`localStorage.removeItem(bcKey(S.sl.bc[0])); slGan()`);
+  R(`localStorage.removeItem(bcKey(S.sl.bc)); slGan()`);
   eq('bỏ nháp: Hoàng về số app 14', uOf(hoang).lam, 14);
   // máy KHÁC (Admin) chép báo cáo ca có mục 3 sửa tay: màn sản lượng đang mở tự lấy số đó
   const bcH = (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'Admin')).data;
@@ -327,7 +328,7 @@ async function main() {
   // máy này bấm "Lấy lại số từ app" (nháp: s3 = null) thì về số app dù bản đã chép có sửa tay
   s3Nhap(null); R('slGan()');
   eq('nháp "lấy lại số từ app": Hoàng về số app 14', [uOf(hoang).lam, uOf(hoang).ngay.nguon], [14, 'bao']);
-  R(`localStorage.removeItem(bcKey(S.sl.bc[0])); slGan()`);
+  R(`localStorage.removeItem(bcKey(S.sl.bc)); slGan()`);
   // đọc tên tổ đúng dòng: "Tổ Nam" không ăn nhầm dòng "Tổ Nam Anh"; dòng không ghi ca coi là số ca đó
   eq('tên tổ là đầu của tên khác: lấy đúng dòng', R(`JSON.stringify([bcS3Cua('Tổ Nam Anh: ca ngày 5/9 cn\\nTổ Nam: ca đêm 3/4 cn', 'Nam', 2), bcS3Cua('Tổ Nam Anh: ca ngày 5/9 cn\\nTổ Nam: ca đêm 3/4 cn', 'Nam', 1), bcS3Cua('- tổ  nam:  12 / 20 cn', 'Nam', 1), bcS3Cua('Tổ Khác: 1/2', 'Nam', 1)])`), JSON.stringify([{ lam: 3, tong: 4 }, 'khong', { lam: 12, tong: 20 }, null]));
 

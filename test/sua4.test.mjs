@@ -109,7 +109,7 @@ async function main() {
   eq('Thống kê cùng số: An 17, Binh thiếu số, Xoa 6, Cuong không có', [tkLam(U.An), tkLam(U.Binh), tkLam(U.Xoa), tkLam(U.Cuong)], [17, null, 6, undefined]);
   // sản lượng của ngày D2: lấy ca ngày D2 + ca đêm hôm trước, tính bằng bcQuanSo
   // chờ đúng promise của slLay (không đếm vòng: máy bận thì ba lời gọi chưa xong)
-  await R(`slLay('${D2}').then((L) => { S.sl = L; S.slNguon = null; slGan(); })`);
+  await R(`slLay('${D2}').then((L) => { S.sl = L; slGan(); })`);
   const slU = (n) => R(`(S.sl.to.find((x) => x.name === '${n}') || {}).lam`);
   eq('sản lượng ngày đã qua: An 17, Binh 0, Xoa 6 (tổ đã thôi vẫn có dòng)', [slU('An'), slU('Binh'), slU('Xoa')], [17, 0, 6]);
 

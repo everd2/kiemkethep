@@ -79,12 +79,12 @@ async function main() {
   await R(`slLay('${D}').then((L) => { slDung(L, false); })`);
   const so = () => JSON.parse(R(`JSON.stringify(S.sl.to.filter((u) => u.name === 'Hùng').map((u) => [u.id, u.lam]))`));
   eq('chưa sửa tay: mỗi tổ số của mình', so(), [[U['Hùng'], 10], [U.Lan, 5]]);
-  R(`localStorage.setItem(bcKey(S.sl.bc[0]), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3: 'Quân số\nTổ Hùng: ca ngày 12/20 cn' }, dau: {}, ts: Date.now() + 1 }))}); slGan()`);
+  R(`localStorage.setItem(bcKey(S.sl.bc), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3: 'Quân số\nTổ Hùng: ca ngày 12/20 cn' }, dau: {}, ts: Date.now() + 1 }))}); slGan()`);
   eq('mục 3 sửa tay một dòng "Tổ Hùng": không cộng 12 cho cả hai tổ, theo số app', so(), [[U['Hùng'], 10], [U.Lan, 5]]);
   eq('báo trùng tên trên màn sản lượng', R('S.sl.trung.length'), 2);
   ok('màn sản lượng có cảnh báo trùng tên', R('vSanLuong()').includes('Có tổ trùng tên'));
   ok('tổ không trùng tên vẫn đọc chữ sửa tay', (() => {
-    R(`localStorage.setItem(bcKey(S.sl.bc[0]), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3: 'Quân số\nTổ Hai: ca ngày 7/20 cn' }, dau: {}, ts: Date.now() + 2 }))}); slGan()`);
+    R(`localStorage.setItem(bcKey(S.sl.bc), ${JSON.stringify(JSON.stringify({ v: 2, muc: { s3: 'Quân số\nTổ Hai: ca ngày 7/20 cn' }, dau: {}, ts: Date.now() + 2 }))}); slGan()`);
     return R(`S.sl.to.find((u) => u.name === 'Hai').lam`) === 7;
   })());
   S.raw.prepare('UPDATE users SET name = ? WHERE id = ?').run('Lan', U.Lan);

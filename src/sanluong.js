@@ -6,10 +6,10 @@ import { MAU_CO, QS_TONG_MAX, TO_SX } from './quanso.js';
 /* ========================= BÁO CÁO SẢN LƯỢNG =========================
    Cùng khuôn với báo cáo ca (src/baocao.js): CVKTHT trở lên soạn, phần đầu (đơn vị, chỉ huy, dự án, khu vực) dùng CHUNG
    mẫu bc_mau với báo cáo ca. Khác ở chỗ: MỘT báo cáo gộp ca ngày và ca đêm, mỗi tổ một dòng.
-   - QUÂN SỐ KHÔNG TÍNH Ở ĐÂY. Quân số của báo cáo sản lượng là CHÍNH quân số của báo cáo ca (hàm bcQuanSo ở app.js, kèm lựa chọn
-     nguồn "Theo tổ báo" / "Chỉ số thiết lập", lịch ca, tổng quân số): máy khách lấy báo cáo ca của CA NGÀY ngày D và CA ĐÊM ngày
-     hôm trước (/baocao), tính bằng đúng hàm đó rồi cộng lại theo tổ. Chỉ MỘT nơi tính quân số, nên hai báo cáo không bao giờ ra hai
-     con số khác nhau. Server chỉ trả danh sách tổ, thiết lập sản lượng và phần đã lưu.
+   - QUÂN SỐ KHÔNG TÍNH Ở ĐÂY. Quân số của báo cáo sản lượng ngày D là ĐÚNG mục 3 của báo cáo ca NGÀY ngày D (hàm bcQuanSo ở
+     app.js, cùng nguồn số đã chọn và chữ đã sửa tay ở báo cáo đó). Báo cáo ca ngày D đã gồm ca đêm D-1 (bcView gửi kèm demTr), nên
+     máy khách chỉ lấy MỘT báo cáo ca. Server chỉ trả danh sách tổ, thiết lập sản lượng và phần đã lưu. data.nguon (bản app cũ còn
+     gửi) vẫn nhận và lưu nhưng không còn dùng.
    - CÔNG GIA CÔNG THÉP của tổ: mặc định = số ĐI LÀM ở trên; CVKTHT trở lên sửa được từng tổ (data.cong, chỉ lưu ô đã sửa).
    - THIẾT LẬP (lưu ở bc_mau.data.sl, dùng cho mọi ngày, CVKTHT trở lên sửa):
        chuan  công chuẩn, kg/công (mặc định 158)

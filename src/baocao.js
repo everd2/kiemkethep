@@ -106,7 +106,16 @@ async function caiDatNhanh(env, rev) {
 }
 export async function bcView(env, url, user) {
   const st = await caiDatNhanh(env, user && user.rev);
-  const c = docCa(url.searchParams, st), gio = caGio(st, c), hien = caLuc(st);
+  const c = docCa(url.searchParams, st);
+  /* CA ĐÊM HÔM TRƯỚC ĐẨY SANG CA NGÀY (chốt 2026-11-05): báo cáo ca ngày ngày D ghi kèm số ca đêm ngày D-1 của mọi tổ làm đêm,
+     và số đó là ĐÚNG số của báo cáo ca đêm D-1 (nguồn đã chọn, chữ đã sửa tay ở đó). Báo cáo sản lượng ngày D chỉ đọc báo cáo ca
+     ngày D. Nên báo cáo ca ngày mang theo số liệu của báo cáo ca đêm D-1 (demTr, bản gọn), máy khách tính bằng cùng hàm bcQuanSo. */
+  const [B, demTr] = await Promise.all([bcSo(env, st, c), c.ca === 1 ? bcSo(env, st, caTruoc(c), true) : null]);
+  return json(demTr ? { ...B, demTr } : B);
+}
+/* Số liệu của một ca. gon = chỉ phần quân số (cho demTr): bỏ đơn gia công, người chọn làm chỉ huy, danh mục, mẫu. */
+async function bcSo(env, st, c, gon) {
+  const gio = caGio(st, c), hien = caLuc(st), rong = () => env.DB.prepare('SELECT 1 WHERE 0');
   const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr, tlR] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),
     env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
@@ -117,18 +126,18 @@ export async function bcView(env, url, user) {
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND x.ngay < ?1 ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0`).bind(c.ngay),
     /* Đơn còn mở, cộng đơn XONG trong giờ ca. UNION ALL để mỗi nửa đi theo index (tt, cap_ts) như gcList. */
-    env.DB.prepare(`SELECT * FROM (
+    gon ? rong() : env.DB.prepare(`SELECT * FROM (
                       SELECT id, cau_kien, hang_muc, phan_khu, tang, cote, truc, user_id, han, buoi, tt, pct, vuong, xong_ts FROM don_gc WHERE tt IN ('moi', 'nhan', 'lam')
                       UNION ALL SELECT id, cau_kien, hang_muc, phan_khu, tang, cote, truc, user_id, han, buoi, tt, pct, vuong, xong_ts FROM don_gc
                         WHERE tt = 'xong' AND cap_ts >= ?1 AND xong_ts >= ?1 AND xong_ts < ?2) ORDER BY id`).bind(gio.tu, gio.den),
     // admin mang chức danh (users.chuc_danh) cũng là người chọn được, xếp theo chức danh đó
-    env.DB.prepare(`SELECT id, name, CASE role WHEN 'admin' THEN chuc_danh ELSE role END role FROM users
+    gon ? rong() : env.DB.prepare(`SELECT id, name, CASE role WHEN 'admin' THEN chuc_danh ELSE role END role FROM users
                     WHERE deleted = 0 AND (role IN ('daidoi', 'trungdoi', 'cvktht') OR (role = 'admin' AND chuc_danh IN ('daidoi', 'trungdoi', 'cvktht'))) ORDER BY name`),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare(`SELECT b.data, b.van_ban, b.ts, b.by_id, COALESCE(u.name, '(đã xoá)') by_name FROM bao_cao_ca b LEFT JOIN users u ON u.id = b.by_id
                     WHERE b.ngay = ? AND b.ca = ?`).bind(c.ngay, c.ca),
     // loại cấu kiện trong danh mục gia công: chọn nhanh khi thêm việc ngoài app vào mục 4
-    env.DB.prepare("SELECT ten FROM gc_muc WHERE loai = 'ck' ORDER BY sort, id"),
+    gon ? rong() : env.DB.prepare("SELECT ten FROM gc_muc WHERE loai = 'ck' ORDER BY sort, id"),
     /* báo cáo đã lưu GẦN NHẤT CÙNG CA trước ngày này, trong BC_MANG_NGAY ngày (xem homTruoc). Cũ hơn thì thôi: nghỉ soạn
        lâu không kéo chữ của nửa tháng trước về. */
     env.DB.prepare('SELECT ngay, data FROM bao_cao_ca WHERE ca = ?2 AND ngay < ?1 AND ngay >= ?3 ORDER BY ngay DESC LIMIT 1')
@@ -145,7 +154,17 @@ export async function bcView(env, url, user) {
   /* tlMoc[số ca]: ca đã hết thì là giờ hết ca + khoảng đệm, chưa hết là 0. Số đang đặt sửa sau mốc đó là số của ca TỚI (ô Đêm đang là đêm nay):
      ca đã hết không được đọc, không thì đêm nay đè lên đêm qua. Cùng mốc với soTlCa (xem bcQuanSo). */
   const nowHet = Date.now(), tlMoc = Object.fromEntries([c, caTruoc(c)].map((x) => { const den = caGio(st, x).den; return [x.ca, nowHet >= den ? den + TL_DEM_MS : 0]; }));
-  return json({
+  const bao = r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null;
+  if (gon) {
+    return {
+      ngay: c.ngay, ca: c.ca, lyDo: QS_LY_DO, tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
+      qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), lich: cfg.lich, tl: cfg.tl, tlCa, tlMoc,
+      // chỉ phần quyết định số quân: nguồn đã chọn và chữ mục 3 đã sửa tay (bcBan ở app.js)
+      homTruoc: H ? { nguon: H.nguon, muc: {} } : null,
+      bao: bao ? { muc: typeof bao.muc.s3 === 'string' ? { s3: bao.muc.s3 } : {}, nguon: bao.nguon, ts: bao.ts, by_id: bao.by_id } : null,
+    };
+  }
+  return {
     ngay: c.ngay, ca: c.ca, hien, ke: caKe(hien), gio, han: caHan(st, c), lyDo: QS_LY_DO,
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
     // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
@@ -154,9 +173,9 @@ export async function bcView(env, url, user) {
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     ck: ck.results.map((x) => x.ten),
     homTruoc: H, viecTruoc: viecTruoc(H),
-    bao: r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null,
+    bao,
     suaDuoc: c.ngay >= vnDay(Date.now() - BC_SUA_NGAY * 864e5),
-  });
+  };
 }
 
 /* Lưu báo cáo của một ca (lúc người soạn bấm chép / chia sẻ): các mục đã sửa, nguồn quân số và bản chữ đã gửi. Cùng
