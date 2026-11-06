@@ -305,9 +305,12 @@ export async function qsThietLap(req, env, user) {
       if (!t) throw bad('Chỉ thiết lập cho tổ của một Tiểu đội trưởng đang dùng app');
       if (daBao.has(uid)) throw bad(`Tổ ${t.name} đã tự báo ca đêm ${fmtDay(c.ngay)}: sửa số tổ báo, không đặt số thiết lập cho ca đó`);
       const lam = intIn(x.lam, 0, QS_TONG_MAX, 'Số đi làm đêm hôm trước');
-      /* Tổng của ca đã hết: lấy số đã chép cho ca đó trước. Tổng mới gõ cùng lần lưu là cho ca hôm nay, không được đổi luôn ca đêm qua. */
+      /* TỔNG của ca đêm đó: x.tong khi máy gửi kèm (bảng thiết lập mở từ báo cáo ca ngày: cột Tổng là tổng của tổ, cột Đêm là đêm hôm trước —
+         tổ có thêm / bớt người thì CVKTHT gõ tổng mới cùng số và lý do nghỉ đêm qua). Trước đây tổng luôn là bản đã chép lúc hết ca: tổ 16 người
+         có thêm 2, gõ tổng 18 + "14 đi làm, 4 nghỉ" là cả lần lưu bị từ chối (14 + 4 > 16), tổng không bao giờ đổi được (06/11, tổ Trọng Tuấn).
+         Không gửi (app cũ): bản đã chép, rồi tổng mới gõ cùng lần lưu, rồi số thiết lập. */
       const cu = chep.get(uid), moi = ds.find((y) => Number(y.user) === uid && y.tong != null && y.tong !== '');
-      const tong = Number((cu && cu.tong) || (moi ? moi.tong : (cfg.tl[uid] || {}).tong)) || 0;
+      const tong = x.tong != null && x.tong !== '' ? intIn(x.tong, 1, QS_TONG_MAX, 'Tổng quân số đêm hôm trước') : Number((cu && cu.tong) || (moi ? moi.tong : (cfg.tl[uid] || {}).tong)) || 0;
       if (!tong) throw bad(`Tổ ${t.name}: cần tổng quân số trước khi ghi số đêm hôm trước`);
       if (lam > tong) throw bad(`Tổ ${t.name}: đêm hôm trước ${lam} nhiều hơn tổng ${tong}`);
       /* NGƯỜI NGHỈ của ca đêm đó: x.n2 / x.gc2 cùng khuôn với bảng thiết lập (tlNghi). Trước đây ô này chỉ ghi số đi làm và XOÁ người nghỉ đã chép

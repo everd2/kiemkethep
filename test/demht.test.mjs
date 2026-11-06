@@ -23,7 +23,7 @@ async function main() {
   await S.login('Admin', '0900000001', '2468');
   const U = {};
   let i = 2;
-  for (const [name, role] of [['Hai', 'tieudoi'], ['Dem', 'tieudoi'], ['Ba', 'tieudoi'], ['CV', 'cvktht']]) {
+  for (const [name, role] of [['Hai', 'tieudoi'], ['Dem', 'tieudoi'], ['Ba', 'tieudoi'], ['Bon', 'tieudoi'], ['Ngay', 'tieudoi'], ['Moi', 'tieudoi'], ['Tuan', 'tieudoi'], ['Du', 'tieudoi'], ['CV', 'cvktht']]) {
     const phone = '09000000' + String(i++).padStart(2, '0');
     const r = await S.call('POST', '/users', { name, phone, role }, 'Admin');
     await S.login(name, phone, r.data.pin);
@@ -35,8 +35,14 @@ async function main() {
   eq('Hai hai ca: tổng 15, ngày 7, đêm 8', (await tl('Hai', { ca: 3, tong: 15, s1: 7, s2: 8 })).status, 200);
   eq('Dem làm đêm: tổng 12, đêm 10', (await tl('Dem', { ca: 2, tong: 12, s1: 0, s2: 10 })).status, 200);
   eq('Ba làm đêm: tổng 9, đêm 9', (await tl('Ba', { ca: 2, tong: 9, s1: 0, s2: 9 })).status, 200);
+  // Bon làm đêm mà chưa có số đi làm (đêm qua chép thành "thiếu số"); Ngay làm ca ngày; Moi chưa có số thiết lập nào
+  eq('Bon làm đêm, chưa có số', (await tl('Bon', { ca: 2, tong: 8, s1: 0, s2: 0 })).status, 200);
+  eq('Ngay làm ca ngày 10/10', (await tl('Ngay', { ca: 1, tong: 10, s1: 10, s2: 0 })).status, 200);
+  // Tuan làm đêm tổng 16, đêm qua 14 đi làm (như tổ Nguyễn Trọng Tuấn 05/11); Du làm đêm đủ cả tổ 16/16
+  eq('Tuan làm đêm: tổng 16, đêm 14', (await tl('Tuan', { ca: 2, tong: 16, s1: 0, s2: 14 })).status, 200);
+  eq('Du làm đêm: tổng 16, đêm 16', (await tl('Du', { ca: 2, tong: 16, s1: 0, s2: 16 })).status, 200);
   await S.cron(); // lịch mỗi giờ chép số ca đêm vừa hết
-  eq('đã chép ca đêm hôm qua (Hai 8, Dem 10)', S.sql('SELECT user_id, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 ORDER BY user_id', hom).map((r) => r.lam), [8, 10, 9]);
+  eq('đã chép ca đêm hôm qua (Hai 8, Dem 10, Ba 9, Bon thiếu số, Tuan 14, Du 16)', S.sql('SELECT user_id, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 ORDER BY user_id', hom).map((r) => r.lam), [8, 10, 9, null, 14, 16]);
   eq('Ba tự báo ca đêm hôm qua 7, 2 ốm', (await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Ba'], tong: 9, lam: 7, nghi: { om: 2 } }, 'CV')).status, 200);
 
   const store = {};
@@ -67,7 +73,7 @@ async function main() {
   const bt = (await S.call('GET', '/bootstrap', undefined, 'CV')).data;
   R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: U['CV'], name: 'CV', role: 'cvktht' })}; S.form = {}; S.screen = 'more';`);
   const cfg = () => JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data);
-  const chep = (ten) => { const r = S.one('SELECT lam, nghi FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?', hom, U[ten]); return r && [r.lam, JSON.parse(r.nghi)]; };
+  const chep = (ten) => { const r = S.one('SELECT lam, nghi FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?', hom, U[ten]); return r ? [r.lam, JSON.parse(r.nghi)] : undefined; };
   const dong = async (ngay, ca, ten) => { const B = (await S.call('GET', `/baocao?ngay=${ngay}&ca=${ca}`, undefined, 'CV')).data; return R(`bcQuanSo(${JSON.stringify(B)}, 'to').dong.find((l) => l.startsWith('Tổ ${ten}'))`); };
 
   // mở báo cáo ca ngày hôm nay, bấm bánh răng ở mục 3
@@ -96,12 +102,59 @@ async function main() {
   const ts0 = S.one('SELECT ts FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?', hom, U['Hai']).ts;
   R(`S.form['tl_${U['Hai']}_1'] = '5'; ACTIONS.qstlluu()`); await cho();
   eq('sửa ca ngày: số thiết lập ngày 5, đêm tối nay vẫn 8, đêm hôm trước không ghi lại', [cfg().tl[U['Hai']].s1, cfg().tl[U['Hai']].s2, S.one('SELECT ts FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?', hom, U['Hai']).ts], [5, 8, ts0]);
+  // ô Đêm app TỰ ĐIỀN (Bon: đêm qua thiếu số, app điền sẵn cả tổ) mà người dùng không gõ: lưu tổ khác không được ghi thành số đêm qua
+  eq('Bon không gõ gì: đêm hôm trước vẫn thiếu số', S.one('SELECT lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?', hom, U['Bon']).lam, null);
+  // đổi tổ Ngay sang làm đêm ngay buổi sáng: đêm TỐI NAY có số cả tổ (như bảng thường), đêm hôm trước không ghi gì
+  R(`S.form['tl_${U['Ngay']}_c'] = '2'; ACTIONS.qstlluu()`); await cho();
+  eq('Ngay sang ca đêm: đêm tối nay 10, ngày 0, không có số đêm hôm trước', [cfg().lich[U['Ngay']].ca, cfg().tl[U['Ngay']].s2, cfg().tl[U['Ngay']].s1, chep('Ngay')], [2, 10, 0, undefined]);
+  // tổ chưa có số thiết lập: số gõ ở cột Đêm vào đêm hôm trước (và làm số đêm tối nay)
+  R(`Object.assign(S.form, { 'tl_${U['Moi']}_c': '2', 'tl_${U['Moi']}_t': '6', 'tl_${U['Moi']}_2': '5', 'tl_${U['Moi']}_n2_om': '1' }); ACTIONS.qstlluu()`); await cho();
+  eq('Moi (chưa có số): đêm hôm trước 5 + 1 ốm, đêm tối nay 5', [chep('Moi'), cfg().tl[U['Moi']].s2], [[5, { om: 1 }], 5]);
+  /* TỔ CÓ THÊM NGƯỜI (06/11: tổ Nguyễn Trọng Tuấn 16 -> 18). Sáng mở bảng từ báo cáo ca ngày, gõ tổng 18 và 4 người nghỉ đêm qua.
+     Trước đây cả lần lưu bị từ chối: tổng của đêm hôm trước luôn lấy theo bản đã chép (16), 14 + 4 = 18 > 16. */
+  const demTr = (ten) => { const r = S.one('SELECT tong, lam, nghi FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?', hom, U[ten]); return r && [r.tong, r.lam, JSON.parse(r.nghi)]; };
+  R(`S.screen = 'baocaoca'; ACTIONS.bctl()`); await cho();
+  R(`Object.assign(S.form, { 'tl_${U['Tuan']}_t': '18', 'tl_${U['Tuan']}_n2_que': '2', 'tl_${U['Tuan']}_n2_off': '2' }); ACTIONS.qstlluu()`); await cho();
+  ok('Tuan tổng 18 + 4 nghỉ đêm qua: lưu được', /Đã lưu/.test(R('S.toast')), R('S.toast'));
+  eq('Tuan: số thiết lập tổng 18', cfg().tl[U['Tuan']].tong, 18);
+  eq('Tuan: đêm hôm trước 14 đi làm / tổng 18, 2 về quê 2 OFF', demTr('Tuan'), [18, 14, { que: 2, off: 2 }]);
+  eq('báo cáo ca ngày: Tuan theo tổng mới', await dong(D, 1, 'Tuan'), 'Tổ Tuan (làm ca đêm): ca đêm 14/18 cn, nghỉ 4 cn — 2 về quê, 2 OFF luân phiên');
+  // chỉ gõ tổng (Du 16 -> 18): ô Đêm hôm trước không tự nhảy thành 18 (đêm qua đã qua), tổng đêm qua theo 18, đêm tối nay cả tổ 18
+  R(`S.screen = 'baocaoca'; ACTIONS.bctl()`); await cho();
+  R(`S.form['tl_${U['Du']}_t'] = '18'`);
+  eq('Du gõ tổng 18: ô Đêm hôm trước vẫn 16', String(R(`fv('tl_${U['Du']}_2', qsTlMacDinh(${U['Du']}).s2)`)), '16');
+  R('ACTIONS.qstlluu()'); await cho();
+  ok('Du tổng 18: lưu được', /Đã lưu/.test(R('S.toast')), R('S.toast'));
+  eq('Du: đêm hôm trước 16/18, đêm tối nay 18', [demTr('Du'), cfg().tl[U['Du']].tong, cfg().tl[U['Du']].s2], [[18, 16, {}], 18, 18]);
+  eq('báo cáo ca ngày: Du ghi 2 người chưa ghi lý do', await dong(D, 1, 'Du'), 'Tổ Du (làm ca đêm): ca đêm 16/18 cn, nghỉ 2 cn — 2 chưa ghi lý do');
   // mở từ báo cáo ca ĐÊM: cột Đêm là đêm tối nay như cũ
   R(`S.screen = 'more'; S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca')`); await cho();
   R('ACTIONS.bctl()'); await cho();
   ok('mở từ báo cáo ca đêm: cột Đêm là đêm tối nay', R('vQuanSo()').includes('Làm<br>đêm') && String(R(`fv('tl_${U['Hai']}_2', qsTlMacDinh(${U['Hai']}).s2)`)) === '8');
   // server: người nghỉ quá tổng thì từ chối, nói rõ
   eq('đêm hôm trước đi làm + nghỉ vượt tổng: từ chối', (await S.call('PUT', '/quanso/thietlap', { ds: [], dem_truoc: { ngay: hom, ds: [{ user: U['Dem'], lam: 11, n2: { om: 2 } }] } }, 'CV')).status, 400);
+
+  /* TUỲ CHỌN "CHỈ GHI TÊN" (06/11): báo cáo ca ngày chỉ kể tổ ca ngày + tổ 2 ca; tổ chỉ làm đêm một dòng "Tổ B (làm ca đêm)". Sản lượng không đổi. */
+  R(`S.screen = 'more'; S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca')`); await cho();
+  R(`S.bcMo = 's3'`);
+  ok('báo cáo ca ngày có nút Chỉ ghi tên', /data-a="bcchiten"/.test(R('vBaoCaoCa()')));
+  R(`ACTIONS.bcchiten({ v: '1' })`);
+  const s3 = R('bcPhan().s3');
+  if (process.env.IN) console.log(s3.join('\n') + '\n--\n' + R("(S.bcChiTen = false, bcPhan().s3.join('\\n'))") + R("(S.bcChiTen = true, '')"));
+  ok('chỉ ghi tên: tổ chỉ làm đêm không kèm số', s3.some((l) => /Tổ Dem \(làm ca đêm\)$/.test(l)), JSON.stringify(s3));
+  ok('chỉ ghi tên: tổ 2 ca vẫn ghi ca đêm hôm trước', s3.some((l) => l.includes('Tổ Hai: ca ngày') && l.includes('ca đêm 6/15')), JSON.stringify(s3));
+  await R(`slLay('${D}').then((L) => { S.sl = L; slGan(); })`);
+  eq('chỉ ghi tên: sản lượng vẫn cộng ca đêm của Dem', R(`S.sl.to.find((x) => x.id === ${U['Dem']}).dem.lam`), 10);
+  R(`S.screen = 'baocaoca'; bcLuu(bcTao())`); await cho();
+  eq('chép lưu tuỳ chọn', JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D).data).chiTen, 1);
+  // hôm sau giữ như hôm trước: lưu báo cáo ca ngày hôm qua có chiTen, ca ngày hôm nay (chưa ai chép) mang sang
+  S.sql('DELETE FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D);
+  eq('lưu báo cáo ca ngày hôm qua chỉ ghi tên', (await S.call('PUT', '/baocao', { ngay: hom, ca: 1, ts: 0, van_ban: 'x', muc: {}, chiTen: 1 }, 'CV')).status, 200);
+  eq('ca ngày hôm nay mang tuỳ chọn từ hôm qua', (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'CV')).data.homTruoc.chiTen, 1);
+  R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca')`); await cho();
+  eq('mở ca hôm nay: đang chỉ ghi tên', R('S.bcChiTen'), true);
+  R(`ACTIONS.bcchiten({ v: '0' })`);
+  ok('bỏ chỉ ghi tên: Dem lại ghi số đêm qua', R('bcPhan().s3').some((l) => l.includes('Tổ Dem (làm ca đêm): ca đêm 10/12')));
 
   xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');
