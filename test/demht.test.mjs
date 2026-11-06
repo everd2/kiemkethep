@@ -136,11 +136,13 @@ async function main() {
 
   /* TUỲ CHỌN "CHỈ GHI TÊN" (06/11): báo cáo ca ngày chỉ kể tổ ca ngày + tổ 2 ca; tổ chỉ làm đêm một dòng "Tổ B (làm ca đêm)". Sản lượng không đổi. */
   R(`S.screen = 'more'; S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca')`); await cho();
-  R(`S.bcMo = 's3'`);
-  ok('báo cáo ca ngày có nút Chỉ ghi tên', /data-a="bcchiten"/.test(R('vBaoCaoCa()')));
+  R(`S.bcMo = null`);
+  // nút nằm ngay trên mục 3, không phải bấm Sửa mới thấy
+  const v1 = R('vBaoCaoCa()');
+  ok('báo cáo ca ngày: hai nút ngay trên mục 3 (không mở Sửa)', /data-v="2">Tất cả tổ/.test(v1) && /data-v="1">Chỉ ca ngày \+ 2 ca/.test(v1));
   R(`ACTIONS.bcchiten({ v: '1' })`);
   const s3 = R('bcPhan().s3');
-  if (process.env.IN) console.log(s3.join('\n') + '\n--\n' + R("(S.bcChiTen = false, bcPhan().s3.join('\\n'))") + R("(S.bcChiTen = true, '')"));
+  if (process.env.IN) console.log(s3.join('\n') + '\n--\n' + R("(S.bcChiTen = 0, bcPhan().s3.join('\\n'))") + R("(S.bcChiTen = 1, '')"));
   ok('chỉ ghi tên: tổ chỉ làm đêm không kèm số', s3.some((l) => /Tổ Dem \(làm ca đêm\)$/.test(l)), JSON.stringify(s3));
   ok('chỉ ghi tên: tổ 2 ca vẫn ghi ca đêm hôm trước', s3.some((l) => l.includes('Tổ Hai: ca ngày') && l.includes('ca đêm 6/15')), JSON.stringify(s3));
   await R(`slLay('${D}').then((L) => { S.sl = L; slGan(); })`);
@@ -152,9 +154,43 @@ async function main() {
   eq('lưu báo cáo ca ngày hôm qua chỉ ghi tên', (await S.call('PUT', '/baocao', { ngay: hom, ca: 1, ts: 0, van_ban: 'x', muc: {}, chiTen: 1 }, 'CV')).status, 200);
   eq('ca ngày hôm nay mang tuỳ chọn từ hôm qua', (await S.call('GET', `/baocao?ngay=${D}&ca=1`, undefined, 'CV')).data.homTruoc.chiTen, 1);
   R(`S.bcCa = { ngay: '${D}', ca: 1 }; S.bcc = null; go('baocaoca')`); await cho();
-  eq('mở ca hôm nay: đang chỉ ghi tên', R('S.bcChiTen'), true);
+  eq('mở ca hôm nay: đang chỉ ghi tên', R('S.bcChiTen'), 1);
   R(`ACTIONS.bcchiten({ v: '0' })`);
-  ok('bỏ chỉ ghi tên: Dem lại ghi số đêm qua', R('bcPhan().s3').some((l) => l.includes('Tổ Dem (làm ca đêm): ca đêm 10/12')));
+  ok('bỏ chỉ ghi tên: Dem lại ghi số đêm qua', R('bcPhan().s3').some((l) => l.includes('Tổ Dem (làm ca đêm): ca đêm 10/12')), JSON.stringify([R('S.bcChiTen'), R('bcPhan().s3')]));
+
+  /* HAI NÚT (06/11) "Tất cả tổ" (2) / "Chỉ ca này + 2 ca" (1), cả hai tab. Chỉ đổi chữ: dòng tổng, số tổ, sản lượng giữ nguyên. */
+  const dau0 = R('bcPhan().s3[0]'), slDem0 = R(`S.sl.to.map((x) => [x.id, x.lam, x.dem && x.dem.lam])`);
+  const v1b = R('vBaoCaoCa()');
+  ok('ca ngày chưa chọn: nút Tất cả tổ đang sáng', /class="chip s on"[^>]*data-v="2">Tất cả tổ/.test(v1b) && /data-v="1">Chỉ ca ngày \+ 2 ca/.test(v1b));
+  R(`ACTIONS.bcchiten({ v: '1' })`);
+  const s3n = R('bcPhan().s3');
+  if (process.env.IN) console.log(s3n.join('\n'));
+  ok('chỉ ca ngày + 2 ca: tổ đêm chỉ tên, tổ 2 ca đủ số', s3n.includes('• Tổ Dem (làm ca đêm)') && s3n.some((l) => l.includes('Tổ Hai: ca ngày') && l.includes('ca đêm 6/15')), JSON.stringify(s3n));
+  eq('dòng tổng quân số không đổi', R('bcPhan().s3[0]'), dau0);
+  eq('nhãn trạng thái khớp từng dòng', R('bcQuanSo(S.bcc).hang.length'), s3n.length - 1);
+  await R(`slLay('${D}').then((L) => { S.sl = L; slGan(); })`);
+  eq('sản lượng không đổi', R(`S.sl.to.map((x) => [x.id, x.lam, x.dem && x.dem.lam])`), slDem0);
+  R(`S.screen = 'baocaoca'; bcLuu(bcTao())`); await cho();
+  eq('chép: bản đã chép có tên, không có số tổ đêm', /• Tổ Dem \(làm ca đêm\)\n/.test(S.one('SELECT van_ban FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D).van_ban + '\n'), true);
+  // ca đêm: mặc định như cũ (tổ ca ngày chỉ tên); chọn Tất cả tổ thì tổ chỉ làm ngày kèm ca ngày cùng ngày
+  R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca')`); await cho();
+  eq('Ngay về lại ca ngày 10/10', (await tl('Ngay', { ca: 1, tong: 10, s1: 10, s2: 0, ts: cfg().tl[U['Ngay']].ts })).status, 200);
+  R(`S.bcc = null; go('baocaoca')`); await cho();
+  const v2 = R('vBaoCaoCa()');
+  ok('ca đêm: nút Chỉ ca đêm + 2 ca đang sáng (mặc định cũ)', /class="chip s on"[^>]*data-v="1">Chỉ ca đêm \+ 2 ca/.test(v2), v2.match(/bcchiten[^<]*/g));
+  ok('ca đêm mặc định: Ngay một dòng tên', R('bcPhan().s3').includes('• Tổ Ngay (làm ca ngày)'), JSON.stringify(R('bcPhan().s3')));
+  R(`ACTIONS.bcchiten({ v: '2' })`);
+  const s3d = R('bcPhan().s3');
+  if (process.env.IN) console.log(s3d.join('\n'));
+  ok('ca đêm tất cả: Ngay kèm ca ngày 10/10, Hai vẫn đủ', s3d.includes('• Tổ Ngay (làm ca ngày): ca ngày 10/10 cn') && s3d.some((l) => l.startsWith('• Tổ Hai: ca đêm')), JSON.stringify(s3d));
+  ok('ca đêm tất cả: báo phần sửa chưa chép', R('bcCoKhac(bcKhac())'));
+  R(`S.screen = 'baocaoca'; bcLuu(bcTao())`); await cho();
+  eq('ca đêm: lưu 2, ca ngày giữ 1', [JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', D).data).chiTen, JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 1', D).data).chiTen], [2, 1]);
+  // báo cáo ca ngày hôm sau đọc ca đêm này: dòng "ca ngày 10/10" của Ngay không bị đọc thành số ca đêm
+  eq('ca đêm tất cả: số ca đêm đẩy sang hôm sau không có Ngay', R(`bcDemSo(S.bcc)[${U['Ngay']}]`), undefined);
+  R(`S.bcc = null; go('baocaoca')`); await cho();
+  eq('mở lại ca đêm: vẫn Tất cả tổ', R('bcCHien(S.bcc, S.bcChiTen)'), 2);
+  eq('server: chiTen lạ thành 1', [(await S.call('PUT', '/baocao', { ngay: hom, ca: 2, ts: 0, van_ban: 'y', muc: {}, chiTen: 7 }, 'CV')).status, JSON.parse(S.one('SELECT data FROM bao_cao_ca WHERE ngay = ? AND ca = 2', hom).data).chiTen], [200, 1]);
 
   xong = true;
   const fail = T.filter((x) => x[0] === 'FAIL');

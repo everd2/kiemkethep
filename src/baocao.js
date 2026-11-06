@@ -74,10 +74,12 @@ function mauStmt(env, cu, mau, ts, uid) {
    mục 5 (máy móc vốn nằm trong mẫu). Lọc phần chỉnh mục 4 theo đơn còn hay không làm ở máy khách (bcVGoc), vì
    ở đó có danh sách đơn của ca. */
 const BC_MANG_NGAY = 7, BC_MANG_MUC = ['s4', 's6', 's7', 's8'];
+// tuỳ chọn tổ chỉ làm ca kia của mục 3 (bcQuanSo ở public/app.js): 0 chưa chọn (mặc định của tab), 1 chỉ ghi tên, 2 kèm số ca kia
+const chiSo = (v) => { const n = Number(v); return n === 2 ? 2 : n || v === true ? 1 : 0; };
 function homTruoc(row) {
   if (!row) return null;
   const d = docJ(row.data), m = d.muc && typeof d.muc === 'object' ? d.muc : {};
-  return { ngay: row.ngay, muc: Object.fromEntries(BC_MANG_MUC.filter((k) => typeof m[k] === 'string').map((k) => [k, m[k]])), viec: docViec(d.viec), nguon: d.nguon === 'tl' ? 'tl' : 'to', chiTen: d.chiTen ? 1 : 0 };
+  return { ngay: row.ngay, muc: Object.fromEntries(BC_MANG_MUC.filter((k) => typeof m[k] === 'string').map((k) => [k, m[k]])), viec: docViec(d.viec), nguon: d.nguon === 'tl' ? 'tl' : 'to', chiTen: chiSo(d.chiTen) };
 }
 // app bản cũ chỉ đọc viecTruoc: việc ngoài app chưa xong; mục 4 chép bằng chữ thì không mang (dòng có thể đã bị xoá trong chữ)
 const viecTruoc = (H) => (!H || typeof H.muc.s4 === 'string' ? [] : H.viec.tu.filter((x) => x.tt !== 'xong'));
@@ -154,7 +156,7 @@ async function bcSo(env, st, c, gon) {
   /* tlMoc[số ca]: ca đã hết thì là giờ hết ca + khoảng đệm, chưa hết là 0. Số đang đặt sửa sau mốc đó là số của ca TỚI (ô Đêm đang là đêm nay):
      ca đã hết không được đọc, không thì đêm nay đè lên đêm qua. Cùng mốc với soTlCa (xem bcQuanSo). */
   const nowHet = Date.now(), tlMoc = Object.fromEntries([c, caTruoc(c)].map((x) => { const den = caGio(st, x).den; return [x.ca, nowHet >= den ? den + TL_DEM_MS : 0]; }));
-  const bao = r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', chiTen: docJ(r.data).chiTen ? 1 : 0, van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null;
+  const bao = r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', chiTen: chiSo(docJ(r.data).chiTen), van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null;
   if (gon) {
     return {
       ngay: c.ngay, ca: c.ca, lyDo: QS_LY_DO, tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
@@ -213,7 +215,7 @@ export async function bcPut(req, env, user) {
   if (b.kt_mau && typeof muc.s6 === 'string') mau.kt = muc.s6.split('\n').map((x) => chu(x, 200)).filter(Boolean);
   /* phần chỉnh mục 4: máy không gửi (app bản cũ) thì GIỮ phần đang lưu, không xoá trắng các dòng người khác đã chỉnh */
   const viecCu = bao ? docJ(bao.data).viec : undefined;
-  const data = JSON.stringify({ muc, viec: b.viec ? docViec(b.viec) : viecCu ? docViec(viecCu) : undefined, nguon: b.nguon === 'tl' ? 'tl' : undefined, chiTen: b.chiTen ? 1 : undefined });
+  const data = JSON.stringify({ muc, viec: b.viec ? docViec(b.viec) : viecCu ? docViec(viecCu) : undefined, nguon: b.nguon === 'tl' ? 'tl' : undefined, chiTen: chiSo(b.chiTen) || undefined });
   const mauDoi = JSON.stringify([mau.dau, mau.mmtb, mau.kt]) !== JSON.stringify([cu.dau, cu.mmtb, cu.kt]);
   if (bao && !mauDoi && bao.van_ban === van_ban && JSON.stringify(docJ(bao.data)) === data) {
     // lần chép nào cũng vào nhật ký, kể cả khi không có gì mới để lưu
