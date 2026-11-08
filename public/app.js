@@ -309,7 +309,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v85';
+const BAN = 'kho-thep-v86';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -2241,6 +2241,8 @@ function fmtAudit(a) {
     bc_luu: ['chép báo cáo ' + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay) + ' gửi cấp trên' + (d.kt_mau ? ' (đặt lại mẫu kiểm tra)' : ''), 'qs'],
     qs_lich: ['đặt ca cho tổ ' + (d.to || '?') + ': ' + (CA_LICH[d.ca] || '').toLowerCase() + (d.den ? ', đến ' + fmtDay(d.den) : ', đến khi đổi'), 'qs'],
     qs_nguong: ['đặt ngưỡng tô đỏ thống kê quân số: nghỉ từ ' + d.pct + '%', 'qs'],
+    qs_khong: [(d.khong ? 'đánh dấu tổ ' : 'bỏ đánh dấu "không làm" của tổ ') + (d.to || '?') + (d.khong ? ' không làm ' : ', ') + CA_TEN[d.ca] + ' ' + fmtDay(d.ngay)
+      + (d.cu ? ` (bỏ số đã báo: đi làm ${d.cu.lam}/${d.cu.tong})` : d.cu_tl ? ` (bỏ số đã chép: đi làm ${d.cu_tl.lam}/${d.cu_tl.tong})` : ''), 'qs'],
     qs_thietlap: ['đặt số thiết lập tổ ' + (d.to || '?') + ': tổng ' + d.tong + ', đi làm ngày ' + d.s1 + ', đi làm đêm ' + d.s2
       + [1, 2].map((c) => (qsSoNghi(d['n' + c]) ? `, nghỉ ${CA_TEN[c]} ${qsSoNghi(d['n' + c])} (${qsLyDoTxt(d['n' + c], QS_LY_DO)})` : '')).join(''), 'qs'],
     qs_thutu: ['xếp lại thứ tự ' + (d.n || 0) + ' tổ', 'qs'],
@@ -4112,6 +4114,8 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
   /* hang: từng dòng của mục 3 kèm trạng thái tổ — 'da' tổ tự báo, 'tl' đang lấy số thiết lập, 'chua' chưa có số, 'kia' làm
      ca kia. Màn soạn hiện nhãn ngay trên dòng đó, nên không cần một danh sách tổ riêng ở bước 1. */
   const chua = [], dung = [], truocNhom = [], sauNhom = [], truocHang = [], sauHang = [], kiaTen = [];
+  // id tổ của từng dòng (cùng thứ tự với hang): màn soạn gắn nút "Sửa" vào đúng tổ của dòng đó
+  const truocId = [], sauId = [];
   /* rows: số của từng tổ cho ca này, DÙNG CHUNG với báo cáo sản lượng (slGan) để hai báo cáo không bao giờ ra hai con số khác nhau.
      trang: 'da' tổ tự báo, 'tl' / 'tlda' số thiết lập, 'chua' tổ làm ca này mà chưa có số, 'kia' tổ làm ca kia (không có số ca này). */
   const rows = [];
@@ -4122,6 +4126,8 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
     /* số thiết lập không có số nào cho ca c (tổ trưởng vừa tự đổi ca mà CVKTHT chưa đặt lại số): coi như chưa có số, như
        thống kê / chép lúc hết ca (soTlCa ở src/quanso.js), không ghi "0/N cn" như thể cả tổ nghỉ không lý do */
     const tlDong = (c) => {
+      // CVKTHT đã đánh dấu tổ không làm ca c (B.khong, xem qsKhong ở src/quanso.js): ca đó không có số thiết lập nào
+      if (((B.khong || {})[c] || []).includes(u.id)) return null;
       // có bản chép lúc hết ca: chỉ bản chép (lam null = lúc hết ca tổ chưa có số, ca thiếu số: không lấy số đặt sau đó bù vào)
       const x = (tlCa[c] || {})[u.id];
       if (x) return x.lam != null ? { ca: c, tong: x.tong, lam: x.lam, ca_kia: 0, nghi: x.nghi || {}, ghi_chu: x.ghi_chu || null, tl: true } : null;
@@ -4155,22 +4161,28 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
     // số ca đêm hôm trước của tổ (chỉ báo cáo ca ngày): có số là tổ có làm đêm đó, dòng của tổ ghi kèm, dù lịch ca bây giờ là gì
     const dm = demSo ? demSo[u.id] : null, demChu = (k) => `${caKia} ${k.lam}/${k.tong} cn`;
     const demRow = (k) => ({ lam: k.lam, tong: k.tong, nguon: k.nguon });
+    /* TỔ KHÔNG LÀM CA NÀY (CVKTHT đánh dấu bằng "Sửa ca này"): một dòng "không làm", không tính là chưa báo, người của tổ không thuộc ca
+       này (kiaSo). Ca đêm hôm trước vẫn ghi kèm nếu có số — sản lượng ngày đó vẫn cộng đêm hôm trước. */
+    if (((B.khong || {})[ca] || []).includes(u.id)) {
+      sauNhom.push(`Tổ ${u.name}: không làm ${caNay}${dm ? `, ${demChu(dm)}` : ''}`);
+      sauId.push(u.id), sauHang.push('khong'); kiaSo += tongTo; rows.push({ u, trang: 'khong', lam: null, tong: tongTo, ...(dm ? { dem: demRow(dm) } : {}) }); return;
+    }
     if (L === kia) {
       /* tổ chỉ làm ca kia, chọn "Tất cả tổ": báo cáo ca ngày kèm ca đêm hôm trước, báo cáo ca đêm kèm ca ngày cùng ngày (số tổ báo /
          số thiết lập theo nguồn đã chọn), nghỉ theo lý do. Chỉ là chữ: bcS3Cua chỉ đọc số ghi đúng ca nên không lẫn sang ca đang báo. */
       const k = !kiaSoO ? null : dm || (ca === 2 ? chon(p0, kia) : null), n = k ? qsSoNghi(k.nghi) : 0;
       sauNhom.push(`Tổ ${u.name} (làm ${caKia})${k ? `: ${demChu(k)}${bcNghiChu([{ n, ly: bcLyDo(k, B.lyDo) }], k.tong - k.lam - n)}` : ''}`);
-      sauHang.push('kia'); kiaTen.push(u.name); kiaSo += tongTo; rows.push({ u, trang: 'kia', lam: null, tong: tongTo, ...(dm ? { dem: demRow(dm) } : {}) }); return;
+      sauId.push(u.id), sauHang.push('kia'); kiaTen.push(u.name); kiaSo += tongTo; rows.push({ u, trang: 'kia', lam: null, tong: tongTo, ...(dm ? { dem: demRow(dm) } : {}) }); return;
     }
     if (!r0) chua.push(u.name);
     const r = chon(r0, ca);
     if (!r) {
       const n = dm ? qsSoNghi(dm.nghi) : 0;
-      truocNhom.push(`Tổ ${u.name}: chưa báo quân số ${caNay}${dm ? `, ${demChu(dm)}${bcNghiChu([{ ten: caKia, n, ly: bcLyDo(dm, B.lyDo) }], 0, true)}` : ''}`); truocHang.push('chua'); chuaSo += tongTo;
+      truocNhom.push(`Tổ ${u.name}: chưa báo quân số ${caNay}${dm ? `, ${demChu(dm)}${bcNghiChu([{ ten: caKia, n, ly: bcLyDo(dm, B.lyDo) }], 0, true)}` : ''}`); truocId.push(u.id), truocHang.push('chua'); chuaSo += tongTo;
       rows.push({ u, trang: 'chua', lam: null, tong: tongTo, ...(dm ? { dem: demRow(dm) } : {}) }); return;
     }
     if (r.tl) dung.push(u.name);
-    truocHang.push(r.tl ? (r0 ? 'tlda' : 'tl') : 'da');
+    truocId.push(u.id), truocHang.push(r.tl ? (r0 ? 'tlda' : 'tl') : 'da');
     const dongSo = { u, trang: r.tl ? (r0 ? 'tlda' : 'tl') : 'da', lam: r.lam, tong: r.tong, nghi: r.nghi || {}, ghi_chu: r.ghi_chu || null };
     rows.push(dongSo);
     lam += r.lam;
@@ -4200,7 +4212,29 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
   /* nghi: số nghỉ của ca đang báo cáo; phai: số tổ làm ca này (tổ làm ca kia không tính là phải báo). kiaSo: người
      không thuộc ca này (tổ làm ca kia, phần ca kia của tổ 2 ca); chuaSo: người của tổ chưa có số nào cho ca này.
      Bốn số cộng lại đúng bằng tổng: tong = lam + nghi + kiaSo + chuaSo. */
-  return { rows, dong: truocNhom.concat(sauNhom), hang: truocHang.concat(sauHang), kiaTen, chua, dung, lam, tong, nghi, kiaSo, chuaSo, phai: truocNhom.length, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
+  return { rows, dong: truocNhom.concat(sauNhom), hang: truocHang.concat(sauHang), ids: truocId.concat(sauId), kiaTen, chua, dung, lam, tong, nghi, kiaSo, chuaSo, phai: truocNhom.length, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
+}
+/* SỬA MỘT CA (chốt 2026-11-08, CVKTHT trở lên, lùi 7 ngày như máy chủ): nút "Sửa" trên dòng mỗi tổ ở mục 3. Sửa SỐ của tổ cho đúng ca đang
+   xem (ghi thay: PUT /quanso kèm user — thay cho số tổ báo / số tự chép), hoặc đánh dấu "Tổ không làm ca này" (PUT /quanso/khong): ca đó
+   không tự chép số, báo cáo ghi "không làm", sản lượng không tính công ca đó. Mọi lần sửa vào nhật ký. */
+const BC_SUA_CA_NGAY = 7; // = QS_SUA_NGAY ở src/quanso.js
+const bcSuaDuoc = (B) => isQL() && !!B && B.ngay >= congNgay(S.boot.today, -BC_SUA_CA_NGAY) && caKhoaMay(B) <= caKhoaMay(S.boot.qs && S.boot.qs.ke ? S.boot.qs.ke : B);
+const caKhoaMay = (c) => c.ngay + ':' + c.ca;
+const bcSuaNut = (B, id) => (id && bcSuaDuoc(B) && !(S.bcSuaCa && S.bcSuaCa.id === id) ? `<button class="chip s" style="flex:none;padding:2px 10px" data-a="bcsuaca" data-id="${id}" aria-label="Sửa quân số tổ này ca này">Sửa</button>` : '');
+function bcSuaHtml(B, Q) {
+  const id = S.bcSuaCa.id, x = Q.rows.find((r) => r.u.id === id), ten = x ? x.u.name : '', khong = ((B.khong || {})[B.ca] || []).includes(id);
+  const o = (k, nhanO, w) => `<label class="col sm" style="min-width:0;${w ? 'flex:' + w : ''}">${nhanO}<input class="inp s" style="text-align:center;font-weight:700" id="bsc_${k}" inputmode="numeric" maxlength="3" autocomplete="off" data-model="bsc_${k}" value="${esc(S.form['bsc_' + k] || '')}"></label>`;
+  const tay = typeof S.bcM.s3 === 'string';
+  return `<div class="card col gap8" style="border:2px solid var(--pri);margin:4px 0 8px"><b>Sửa quân số tổ ${esc(ten)} · ${esc(caGoi(B))}</b>
+    <span class="sm muted" style="line-height:1.4">Số này thay cho số tổ báo và số app tự chép của đúng ca này. Ghi vào nhật ký.</span>
+    ${tay ? '<span class="sm" style="color:var(--warn);line-height:1.4">Mục 3 đang sửa tay bằng chữ: lưu xong bấm "Lấy lại số từ app" ở mục 3 mới thấy số mới.</span>' : ''}
+    <div class="row gap8">${o('t', 'Tổng quân số', 1)}${o('l', 'Đi làm ca này', 1)}</div>
+    <span class="sm b">Nghỉ (theo lý do)</span>
+    <div class="row gap6" style="flex-wrap:wrap">${QS_LY_DO.map(([k, n]) => `<label class="col sm" style="width:30%;min-width:84px">${esc(n)}<input class="inp s" style="text-align:center" id="bsc_n_${k}" inputmode="numeric" maxlength="3" autocomplete="off" data-model="bsc_n_${k}" value="${esc(S.form['bsc_n_' + k] || '')}"></label>`).join('')}</div>
+    <input class="inp s" id="bsc_gc" maxlength="200" autocomplete="off" placeholder="Ghi chú (bắt buộc nếu có nghỉ lý do khác)" data-model="bsc_gc" value="${esc(S.form.bsc_gc || '')}">
+    <div class="row gap6"><button class="btn s f1" data-a="bcsuadong">Đóng</button><button class="btn s pri f1" data-a="bcsualuu">LƯU SỐ</button></div>
+    ${khong ? '<button class="btn s full" data-a="bcsuakhong" data-v="0">Bỏ đánh dấu "không làm ca này"</button>'
+      : '<button class="btn s full" style="border:2px solid var(--warn)" data-a="bcsuakhong" data-v="1">TỔ KHÔNG LÀM CA NÀY</button>'}</div>`;
 }
 const bcTre = (B, d) => gcMo(d) && (d.han < B.ngay || (d.han === B.ngay && B.ca === 2));
 // chữ app tự ghép cho một mục
@@ -5078,13 +5112,13 @@ function vBaoCaoCa() {
   // mục 3 đọc được ngay tổ nào tự báo, tổ nào đang lấy số thiết lập, tổ nào chưa báo (bản chép đi vẫn đúng chữ của mẫu)
   const nhan = { da: '<span class="badge ok" style="flex:none;font-size:12px;padding:2px 8px">Đã báo</span>', tlda: '<span class="badge pri" style="flex:none;font-size:12px;padding:2px 8px">Số thiết lập</span>',
     tl: `<span class="badge ${quaHan ? 'bad' : 'warn'}" style="flex:none;font-size:12px;padding:2px 8px">Chưa báo · số thiết lập</span>`,
-    chua: `<span class="badge ${quaHan ? 'bad' : 'warn'}" style="flex:none;font-size:12px;padding:2px 8px">${quaHan ? 'Quá hạn' : 'Chưa báo'}</span>`, kia: '' };
+    chua: `<span class="badge ${quaHan ? 'bad' : 'warn'}" style="flex:none;font-size:12px;padding:2px 8px">${quaHan ? 'Quá hạn' : 'Chưa báo'}</span>`, kia: '', khong: '<span class="badge" style="flex:none;font-size:12px;padding:2px 8px">Không làm ca này</span>' };
   /* tổ chỉ làm ca kia: chọn ngay trên mục 3 (không phải mở Sửa mới thấy) — "Tất cả tổ" (kèm số ca kia) hay "Chỉ ca này + 2 ca" (tổ
      ca kia chỉ dòng tên). Chỉ đổi chữ, số liệu và sản lượng giữ nguyên (xem bcQuanSo). */
   const chiV = bcCHien(B, S.bcChiTen);
   const chiO = `<div class="row gap6" style="margin:4px 4px 2px 0;flex-wrap:wrap">${[[2, 'Tất cả tổ'], [1, B.ca === 1 ? 'Chỉ ca ngày + 2 ca' : 'Chỉ ca đêm + 2 ca']]
     .map(([v, n]) => `<button class="chip s ${chiV === v ? 'on' : ''}" style="white-space:nowrap" data-a="bcchiten" data-v="${v}">${n}</button>`).join('')}</div>`;
-  const s3Html = `${chiO}<div class="col" style="gap:0;margin:2px 4px 0 0;font-size:15px;line-height:1.45"><span>${esc(P.s3[0])}</span>${P.s3.slice(1).map((l, i) => `<div class="row gap8" style="align-items:flex-start;padding:3px 0"><span class="f1" style="min-width:0">${esc(l)}</span>${nhan[Q.hang[i]] || ''}</div>`).join('')}</div>`;
+  const s3Html = `${chiO}<div class="col" style="gap:0;margin:2px 4px 0 0;font-size:15px;line-height:1.45"><span>${esc(P.s3[0])}</span>${P.s3.slice(1).map((l, i) => `<div class="row gap8" style="align-items:flex-start;padding:3px 0"><span class="f1" style="min-width:0">${esc(l)}</span>${nhan[Q.hang[i]] || ''}${bcSuaNut(B, Q.ids[i])}</div>${S.bcSuaCa && S.bcSuaCa.id === Q.ids[i] ? bcSuaHtml(B, Q) : ''}`).join('')}</div>`;
   const ib = (a, k, ten, hinh, on) => `<button class="ib${on ? ' on' : ''}" data-a="${a}" data-k="${k}" aria-label="${ten}" title="${ten}">${hinh}</button>`;
   const muc = [['dau', 'Phần đầu']].concat(BC_MUC).map(([k, ten]) => {
     const mo = S.bcMo === k, sua = k !== 'dau' && (typeof S.bcM[k] === 'string' || (k === 's4' && bcVChinh(B, S.bcV)));
@@ -7800,6 +7834,43 @@ const ACTIONS = {
   bcnguon(d) { S.bcNguon = d.v === 'tl' ? 'tl' : 'to'; delete S.bcM.s3; bcNhap(); render(); },
   // tổ chỉ làm ca đêm trên báo cáo ca ngày: ghi kèm số ca đêm hôm trước, hay chỉ tên + "(làm ca đêm)". Chỉ đổi chữ, sản lượng không đổi
   bcchiten(d) { S.bcChiTen = bcCSo(d.v); delete S.bcM.s3; bcNhap(); render(); },
+  // Sửa một ca (xem bcSuaHtml): mở form ngay dưới dòng của tổ, điền sẵn số mục 3 đang ghi cho tổ đó
+  bcsuaca(d) {
+    const B = S.bcc, id = Number(d.id); if (!B || !id) return;
+    const x = bcQuanSo(B).rows.find((r) => r.u.id === id), co = x && x.lam != null;
+    Object.keys(S.form).filter((k) => /^bsc_/.test(k)).forEach((k) => delete S.form[k]);
+    S.form.bsc_t = x && x.tong ? String(x.tong) : '';
+    S.form.bsc_l = co ? String(x.lam) : '';
+    if (co) Object.entries(x.nghi || {}).forEach(([k, n]) => { if (n) S.form['bsc_n_' + k] = String(n); });
+    S.form.bsc_gc = (co && x.ghi_chu) || '';
+    S.bcSuaCa = { id }; render();
+  },
+  bcsuadong() { S.bcSuaCa = null; render(); },
+  bcsualuu() {
+    const B = S.bcc, F = S.bcSuaCa; if (!B || !F) return;
+    const so = (k) => { const t = String(S.form['bsc_' + k] || '').trim(); return t === '' ? 0 : /^\d+$/.test(t) ? Number(t) : NaN; };
+    const tong = so('t'), lam = so('l'), nghi = {};
+    QS_LY_DO.forEach(([k]) => { const n = so('n_' + k); if (n) nghi[k] = n; });
+    const soNghi = Object.values(nghi).reduce((a, n) => a + n, 0), gc = String(S.form.bsc_gc || '').trim();
+    if (!(tong >= 1 && tong <= 500)) return say('Tổng quân số phải từ 1 đến 500.', true), render();
+    if (!Number.isInteger(lam) || Object.values(nghi).some((n) => !Number.isInteger(n))) return say('Số người phải là số nguyên.', true), render();
+    if (lam + soNghi > tong) return say(`Đi làm ${lam} + nghỉ ${soNghi} = ${lam + soNghi}, nhiều hơn tổng ${tong}.`, true), render();
+    if (nghi.khac && !gc) return say('Có người nghỉ lý do khác: ghi rõ lý do vào ô ghi chú.', true), render();
+    const ten = ((bcQuanSo(B).rows.find((r) => r.u.id === F.id) || {}).u || {}).name || '';
+    act(async () => {
+      await api('PUT', '/quanso', { ngay: B.ngay, ca: B.ca, user: F.id, tong, lam, nghi, ghi_chu: gc });
+      S.bcSuaCa = null; await bcTai();
+    }, `Đã sửa quân số tổ ${ten} ${caGoi(B)}.`);
+  },
+  async bcsuakhong(d) {
+    const B = S.bcc, F = S.bcSuaCa; if (!B || !F) return;
+    const khong = d.v === '1', ten = ((bcQuanSo(B).rows.find((r) => r.u.id === F.id) || {}).u || {}).name || '';
+    if (khong && !(await ask(`Đánh dấu tổ ${ten} KHÔNG LÀM ${caGoi(B)}?\n\nSố tổ đã báo / số app tự chép của ca này bị bỏ (nhật ký vẫn giữ số cũ). Báo cáo ca ghi "không làm", sản lượng không tính công ca này.`, 'KHÔNG LÀM CA NÀY'))) return render();
+    act(async () => {
+      await api('PUT', '/quanso/khong', { ngay: B.ngay, ca: B.ca, user: F.id, khong });
+      S.bcSuaCa = null; await bcTai();
+    }, khong ? `Đã đánh dấu tổ ${ten} không làm ${caGoi(B)}.` : `Đã bỏ đánh dấu, tổ ${ten} lại theo lịch ca.`);
+  },
   // bỏ phần sửa chưa chép của máy này: về đúng bản dùng chung đang lưu
   bcbo() { if (!S.bcc) return; bcGhep(S.bcc, null); bcNhap(); S.bcMo = null; say('Đã bỏ phần sửa chưa chép, về bản chung đang lưu.'); render(); },
   /* Chép cả báo cáo, hoặc riêng một phần (d.k = 'dau', 's3' … 's8'). Lần chép nào cũng lưu cả báo cáo của ca: phần

@@ -1,7 +1,7 @@
 // Báo cáo ca gửi cấp trên: gom quân số đầu ca + công việc gia công thành một bản chữ theo mẫu của đơn vị.
 import { HttpError, bad, json, vnDay } from './core.js';
 import { SETTINGS_SQL, auditStmt, batchGuarded, bump, guardStmt, parseSettings, readJson } from './helpers.js';
-import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, caTruoc, docCfg, tlCaDaQua, TL_DEM_MS } from './quanso.js';
+import { MAU_CO, QS_LY_DO, TO_SX, caGio, caHan, caKe, caKhoa, caLuc, caTruoc, docCfg, khongLam, lichCaTai, tlCaDaQua, TL_DEM_MS } from './quanso.js';
 
 /* ========================= BÁO CÁO CA =========================
    Người soạn: CVKTHT trở lên. Server chỉ GOM SỐ LIỆU và LƯU; việc ghép chữ theo mẫu nằm ở máy khách (app.js,
@@ -156,11 +156,16 @@ async function bcSo(env, st, c, gon) {
   /* tlMoc[số ca]: ca đã hết thì là giờ hết ca + khoảng đệm, chưa hết là 0. Số đang đặt sửa sau mốc đó là số của ca TỚI (ô Đêm đang là đêm nay):
      ca đã hết không được đọc, không thì đêm nay đè lên đêm qua. Cùng mốc với soTlCa (xem bcQuanSo). */
   const nowHet = Date.now(), tlMoc = Object.fromEntries([c, caTruoc(c)].map((x) => { const den = caGio(st, x).den; return [x.ca, nowHet >= den ? den + TL_DEM_MS : 0]; }));
+  /* lich: lịch ca ĐÚNG NHƯ LÚC CA NÀY BẮT ĐẦU (lichCaTai): tổ đổi lịch giữa ca hay sau ca thì báo cáo ca đó vẫn theo lịch cũ.
+     khong[số ca]: các tổ CVKTHT đã đánh dấu "không làm" ở ca này và ca liền trước (xem khongLam ở src/quanso.js). */
+  const lichCa = lichCaTai(cfg.lich, gio.tu, gio.den);
+  const khong = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, tdt.results.concat(qs.results.map((q) => ({ id: q.user_id }))).map((u) => u.id)
+    .filter((id, i, a) => a.indexOf(id) === i && khongLam(cfg, id, x))]));
   const bao = r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', chiTen: chiSo(docJ(r.data).chiTen), van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null;
   if (gon) {
     return {
       ngay: c.ngay, ca: c.ca, lyDo: QS_LY_DO, tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
-      qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), lich: cfg.lich, tl: cfg.tl, tlCa, tlMoc,
+      qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), lich: lichCa, khong, tl: cfg.tl, tlCa, tlMoc,
       // chỉ phần quyết định số quân: nguồn đã chọn và chữ mục 3 đã sửa tay (bcBan ở app.js)
       homTruoc: H ? { nguon: H.nguon, muc: {} } : null,
       bao: bao ? { muc: typeof bao.muc.s3 === 'string' ? { s3: bao.muc.s3 } : {}, nguon: bao.nguon, ts: bao.ts, by_id: bao.by_id } : null,
@@ -171,7 +176,7 @@ async function bcSo(env, st, c, gon) {
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
     // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
-    lich: cfg.lich, tl: cfg.tl, tlCa, tlMoc,
+    lich: lichCa, khong, tl: cfg.tl, tlCa, tlMoc,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     ck: ck.results.map((x) => x.ten),
     homTruoc: H, viecTruoc: viecTruoc(H),

@@ -10,7 +10,7 @@ import { conflictResolve, conflictView, huyBaoCao, putCounts, submissionsView } 
 import { duyetReceipt, postAdjust, postReceipt, postTransfer, postXuat, voidReceipt } from './phieu.js';
 import { doitacCreate, doitacUpdate, duyetLoan, loansCsv, loansView, postLoan, voidLoan } from './loans.js';
 import { gcCreate, gcDoc, gcList, gcMucAdd, gcMucXoa, gcThuHoi, gcTn, gcTnMoi, gcUpdate, gcViec, gcView } from './giacong.js';
-import { qsChotCa, qsHan, qsLich, qsNguong, qsPut, qsThietLap, qsThongKe, qsThuTu, qsView } from './quanso.js';
+import { qsChotCa, qsHan, qsKhong, qsLich, qsNguong, qsPut, qsThietLap, qsThongKe, qsThuTu, qsView } from './quanso.js';
 import { duyetSv, postSv, svCsv, svView, voidSv } from './satvun.js';
 import { deleteAnh, getAnh, listAnh, postAnh } from './anh.js';
 import { bcPut, bcView } from './baocao.js';
@@ -202,6 +202,8 @@ async function route(req, env, url, user, method, p, r0) {
     // lịch ca: tổ trưởng đặt cho tổ mình, CVKTHT đặt hộ (qsLich tự kiểm); số thiết lập: CVKTHT trở lên
     if (method === 'PUT' && p.length === 2 && p[1] === 'lich') return qsLich(req, env, user);
     if (method === 'PUT' && p.length === 2 && p[1] === 'thietlap') { needCap(1); return qsThietLap(req, env, user); }
+    // sửa một ca: đánh dấu / bỏ dấu "tổ không làm ca này" (CVKTHT trở lên; sửa số thì PUT /quanso kèm user)
+    if (method === 'PUT' && p.length === 2 && p[1] === 'khong') { needCap(1); return qsKhong(req, env, user); }
     // thống kê quân số theo tháng: mọi vai trò (Tiểu đội trưởng chỉ thấy tổ mình, qsThongKe tự lọc); ngưỡng tô đỏ: CVKTHT trở lên
     if (method === 'GET' && p.length === 2 && p[1] === 'thongke') return qsThongKe(env, user, url);
     if (method === 'PUT' && p.length === 2 && p[1] === 'nguong') { needCap(1); return qsNguong(req, env, user); }

@@ -82,8 +82,42 @@ const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().s
 export const MAU_CO = "INSERT OR IGNORE INTO bc_mau (id, data, ts) VALUES (1, '{}', 0)";
 export const docCfg = (row) => {
   let d = {}; try { d = JSON.parse((row && row.data) || '{}') || {}; } catch (e) { d = {}; }
-  return { lich: d.lich && typeof d.lich === 'object' ? d.lich : {}, tl: d.tl && typeof d.tl === 'object' ? d.tl : {} };
+  return { lich: d.lich && typeof d.lich === 'object' ? d.lich : {}, tl: d.tl && typeof d.tl === 'object' ? d.tl : {},
+    khong: d.khong && typeof d.khong === 'object' ? d.khong : {} };
 };
+/* LỊCH CA THEO THỜI ĐIỂM (chốt 2026-11-08: đổi lịch giữa ca thì ca ĐANG CHẠY vẫn tính theo lịch cũ, lịch mới áp từ ca sau).
+   Mỗi lần đổi CA (không phải chỉ khai lại tổng), lịch ghi kèm lịch cũ (truoc: { ca, den, ts }) và lúc đổi (doi_ts). Ca nào bắt đầu
+   TRƯỚC lúc đổi thì dùng lịch cũ: tổ ca đêm 22h tối đổi sang ca ngày thì đêm nay vẫn là ca đêm của tổ (tự chép số nếu tổ không báo),
+   ngày mai mới là ca ngày. Chỉ giữ một lịch cũ: đủ cho ca đang chạy và những ngày gần đây. Lịch ghi trước bản này không có doi_ts. */
+/* het = giờ hết ca. Tổ CHƯA CÓ lịch lúc vào ca (truoc.ca 0) mà đặt lịch LẦN ĐẦU trong lúc ca đó đang chạy (hoặc ngay sau giờ hết ca, trong
+   khoảng đệm của lượt chép): không có lịch cũ nào để giữ, nên lịch mới áp luôn cho ca đó — hết ca vẫn chép số / ghi "thiếu số" như trước.
+   Ca đã hết hẳn trước lúc đặt thì không bị viết lại. */
+export function lichLuc(r, bat, het) {
+  if (!r || !r.truoc || !r.doi_ts || bat == null || r.doi_ts <= bat) return r || null;
+  if (!r.truoc.ca && het != null && r.doi_ts <= het + TL_DEM_MS) return r;
+  return { ...r.truoc, tong: r.tong, ts: r.truoc.ts, doi_ts: r.truoc.ts };
+}
+// lịch của mọi tổ đúng như lúc ca bắt đầu (bat / het = giờ vào / hết ca): báo cáo ca / sản lượng của ca đó đọc lịch này
+export const lichCaTai = (lich, bat, het) => Object.fromEntries(Object.entries(lich || {}).map(([id, r]) => [id, lichLuc(r, bat, het)]));
+/* lịch mới khi đặt / đổi ca: đổi CA thì nhớ lịch cũ và lúc đổi; chỉ khai lại tổng / hạn thì giữ nguyên mốc đổi trước đó.
+   batHien = giờ vào ca ĐANG CHẠY. Đổi nhiều lần trong cùng một ca (ngày → đêm → ngày) thì "lịch cũ" phải là lịch LÚC CA NÀY BẮT ĐẦU, không phải
+   lịch của lần đổi ngay trước: lần đổi trước cũng sau giờ vào ca thì giữ nguyên truoc của nó; đổi về đúng lịch đó là coi như chưa đổi. */
+function lichMoi(cu, ca, den, tong, by, now, batHien) {
+  const doi = !cu || cu.ca !== ca;
+  const v = { ca, den, tong, ts: now, by, doi_ts: doi ? now : cu.doi_ts || cu.ts || now };
+  if (doi && cu && cu.truoc && cu.doi_ts && batHien != null && cu.doi_ts > batHien) {
+    // lần đổi trước cũng trong ca đang chạy: lịch lúc vào ca vẫn là cu.truoc
+    if (cu.truoc.ca === ca) v.doi_ts = cu.truoc.ts || 0; else v.truoc = cu.truoc;
+  } else if (doi) {
+    // lịch cũ; tổ CHƯA CÓ lịch thì nhớ "chưa đặt" (ca 0): ca đang chạy vẫn đoán ca như lúc chưa có lịch (theo số thiết lập / lần báo)
+    v.truoc = cu && [1, 2, 3].includes(cu.ca) ? { ca: cu.ca, den: cu.den || null, ts: cu.doi_ts || cu.ts || 0 } : { ca: 0, den: null, ts: 0 };
+  } else if (cu && cu.truoc) v.truoc = cu.truoc;
+  return v;
+}
+/* TỔ KHÔNG LÀM CA NÀY (CVKTHT trở lên đánh dấu từng ca, lùi QS_SUA_NGAY ngày): khong."<ngày>:<ca>"."<id tổ>" = { ts, by }. Ca đó không tự chép
+   số thiết lập, báo cáo ca ghi "không làm", sản lượng không tính công ca đó. Tổ / cấp trên báo số cho ca đó thì dấu tự bỏ (qsPut). */
+export const khongLam = (cfg, id, c) => !!(cfg.khong && cfg.khong[caKhoa(c)] && cfg.khong[caKhoa(c)][id]);
+const khongCua = (cfg, c) => Object.keys((cfg.khong && cfg.khong[caKhoa(c)]) || {}).map(Number);
 // ca của tổ theo lịch vào ngày `ngay`: 1, 2, 3 (cả hai) hoặc 0 (chưa đặt / hết hạn)
 export const caLich = (cfg, uid, ngay) => { const r = cfg.lich[uid]; return r && [1, 2, 3].includes(r.ca) && (!r.den || ngay <= r.den) ? r.ca : 0; };
 const caMang = (c) => (c === 3 ? [1, 2] : c ? [c] : []);
@@ -185,9 +219,54 @@ export async function qsPut(req, env, user) {
                       nghi = excluded.nghi, ghi_chu = excluded.ghi_chu, ts = excluded.ts, by_id = excluded.by_id`)
       .bind(c.ngay, c.ca, uid, tong, lam, ca_kia, JSON.stringify(nghi), ghi_chu, ts, user.id),
     auditStmt(env, user, 'qs_bao', { ngay: c.ngay, ca: c.ca, to: to.name, tong, lam, nghi, ca_kia, ghi_chu: ghi_chu || undefined, thay: uid !== user.id ? 1 : undefined }),
+    // có số cho ca này thì tổ có làm ca này: bỏ dấu "không làm ca này" nếu có
+    khongBo(env, c, uid),
     bump(env),
   ]);
   return json({ ok: true, ngay: c.ngay, ca: c.ca, user: uid, tong, lam, ca_kia, nghi: soNghi });
+}
+const khongDuong = (c, uid) => '$.khong."' + caKhoa(c) + '"."' + uid + '"';
+const khongBo = (env, c, uid) => env.DB.prepare('UPDATE bc_mau SET data = json_remove(data, ?1) WHERE id = 1 AND json_extract(data, ?1) IS NOT NULL').bind(khongDuong(c, uid));
+
+/* SỬA MỘT CA: TỔ KHÔNG LÀM CA NÀY (CVKTHT trở lên, ca trong QS_SUA_NGAY ngày gần đây tới ca kế tiếp). body: { ngay, ca, user, khong: true | false }.
+   khong = true: đánh dấu (xem khongLam), xoá số tổ đã báo và số đã chép cho ca đó (nhật ký giữ số cũ) — ca đó không còn số nào, lượt chép
+   tự động cũng không chép. khong = false: bỏ dấu; ca đó lại theo lịch như thường (ca đã hết thì lượt chép sau sẽ chép số thiết lập nếu tổ
+   làm ca đó). Sửa SỐ của một ca thì dùng PUT /quanso kèm user (ghi thay), cũng trong QS_SUA_NGAY ngày. */
+export async function qsKhong(req, env, user) {
+  const b = await readJson(req);
+  const c = docCa(b.ngay, b.ca), uid = Number(b.user);
+  if (!Number.isInteger(uid)) throw bad('Cần chọn tổ');
+  const [stR, toR, cuR, tlR] = await env.DB.batch([
+    env.DB.prepare(SETTINGS_SQL),
+    env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid),
+    env.DB.prepare('SELECT tong, lam, nghi FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+    env.DB.prepare('SELECT tong, lam FROM quan_so_tl WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+  ]);
+  const st = parseSettings(stR.results), hien = caLuc(st), to = toR.results[0];
+  if (caKhoa(c) > caKhoa(caKe(hien))) throw bad('Chưa tới ' + caGoi(c) + ': chỉ sửa trước được một ca');
+  if (c.ngay < vnDay(Date.now() - QS_SUA_NGAY * NGAY)) throw bad(`Chỉ sửa được quân số trong ${QS_SUA_NGAY} ngày gần đây`);
+  if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ sửa ca cho tổ của một Tiểu đội trưởng đang dùng app');
+  const khong = b.khong === true, cu = cuR.results[0] || null, cuTl = tlR.results[0] || null;
+  await env.DB.batch([
+    env.DB.prepare(MAU_CO),
+    khong
+      ? env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), '$.khong', json(COALESCE(json_extract(data, '$.khong'), '{}'))) WHERE id = 1")
+      : env.DB.prepare('SELECT 1'),
+    khong
+      ? env.DB.prepare("UPDATE bc_mau SET data = json_set(data, ?1, json(COALESCE(json_extract(data, ?1), '{}'))) WHERE id = 1").bind('$.khong."' + caKhoa(c) + '"')
+      : env.DB.prepare('SELECT 1'),
+    khong
+      ? env.DB.prepare('UPDATE bc_mau SET data = json_set(data, ?, json(?)) WHERE id = 1').bind(khongDuong(c, uid), JSON.stringify({ ts: Date.now(), by: user.id }))
+      : khongBo(env, c, uid),
+    ...(khong ? [
+      env.DB.prepare('DELETE FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+      env.DB.prepare('DELETE FROM quan_so_tl WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+    ] : []),
+    auditStmt(env, user, 'qs_khong', { ngay: c.ngay, ca: c.ca, to: to.name, khong: khong ? 1 : 0,
+      ...(khong && cu ? { cu: { tong: cu.tong, lam: cu.lam, nghi: docNghi(cu.nghi) } } : {}), ...(khong && cuTl ? { cu_tl: { tong: cuTl.tong, lam: cuTl.lam } } : {}) }),
+    bump(env),
+  ]);
+  return json({ ok: true, ngay: c.ngay, ca: c.ca, user: uid, khong });
 }
 
 /* Đổi hạn báo quân số của hai ca (CVKTHT trở lên). Nhận phút trong ngày: { ca1, ca2 }. Hạn ca ngày phải nằm
@@ -221,17 +300,20 @@ export async function qsLich(req, env, user) {
   }
   /* TỔNG QUÂN SỐ TỔ TỰ KHAI (tong): tổ trưởng khai cùng lúc với ca. Lần đặt ca không gửi kèm tổng thì giữ nguyên số tổ
      đã khai. Khác SỐ THIẾT LẬP (tl) — số của CVKTHT, xem qsThietLap. Tìm tổ và đọc số đã khai trong MỘT lượt D1. */
-  const [toR, cuR] = await env.DB.batch([
+  const [toR, cuR, stR] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid),
-    env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind('$.lich."' + uid + '".tong'),
+    env.DB.prepare("SELECT json_extract(m.data, ?) v FROM bc_mau m WHERE m.id = 1").bind('$.lich."' + uid + '"'),
+    env.DB.prepare(SETTINGS_SQL),
   ]);
-  const to = toR.results[0], cu = cuR.results[0];
+  const to = toR.results[0];
+  // lịch đang có của tổ (cả khối): giữ tổng đã khai, và để lichMoi nhớ lịch cũ khi đổi ca
+  let cu = null; try { cu = cuR.results[0] && cuR.results[0].v ? JSON.parse(cuR.results[0].v) : null; } catch (e) { cu = null; }
   if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ đặt ca cho tổ của một Tiểu đội trưởng đang dùng app');
-  const tong = b.tong == null || b.tong === '' ? (cu && Number(cu.v)) || undefined : intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số của tổ');
+  const tong = b.tong == null || b.tong === '' ? (cu && Number(cu.tong)) || undefined : intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số của tổ');
   /* Chép số của ca vừa hết TRƯỚC khi đổi lịch, không chờ lượt chép mỗi giờ: tổ ca đêm sáng ra chuyển sang ca ngày (lúc hay đổi
      nhất) mà chưa chép thì lượt chép đọc lịch MỚI (không làm đêm) và bỏ hẳn đêm vừa làm khỏi báo cáo ca / sản lượng. */
   await qsChotCa(env, Date.now(), true);
-  const v = { ca, den, tong, ts: Date.now(), by: user.id };
+  const st = parseSettings(stR.results), v = lichMoi(cu, ca, den, tong, user.id, Date.now(), caGio(st, caLuc(st)).tu);
   await env.DB.batch([
     env.DB.prepare(MAU_CO),
     env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind('$.lich."' + uid + '"', JSON.stringify(v)),
@@ -262,10 +344,12 @@ export async function qsThietLap(req, env, user) {
      (lúc mở màn chưa có dòng đêm qua) thì dòng do CHÍNH lần lưu này chép không phải "người khác vừa sửa" (xem demChan). */
   let chotTs = -1;
   if (ds.some((x) => (x.tong != null && x.tong !== '') || x.ca != null)) { chotTs = Date.now(); await qsChotCa(env, chotTs, true); }
-  const [toR, mauR] = await env.DB.batch([
+  const [toR, mauR, stTl] = await env.DB.batch([
     env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0"),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
+    env.DB.prepare(SETTINGS_SQL),
   ]);
+  const stL = parseSettings(stTl.results), batHien = caGio(stL, caLuc(stL)).tu;
   const to = new Map(toR.results.map((u) => [u.id, u])), cfg = docCfg(mauR.results[0]);
   const now = Date.now(), chan = [], ghi = [], dat = (path, v) => env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind(path, JSON.stringify(v));
   let dau = null;
@@ -276,7 +360,7 @@ export async function qsThietLap(req, env, user) {
       const ca = Number(x.ca);
       if (![1, 2, 3].includes(ca)) throw bad('Chọn ca ngày, ca đêm hoặc cả hai ca');
       // đặt ca hộ: đến khi đổi, giữ nguyên tổng quân số tổ tự khai
-      ghi.push(dat('$.lich."' + uid + '"', { ca, den: null, tong: (cfg.lich[uid] || {}).tong || undefined, ts: now, by: user.id }), auditStmt(env, user, 'qs_lich', { to: t.name, ca }));
+      ghi.push(dat('$.lich."' + uid + '"', lichMoi(cfg.lich[uid] || null, ca, null, (cfg.lich[uid] || {}).tong || undefined, user.id, now, batHien)), auditStmt(env, user, 'qs_lich', { to: t.name, ca }));
     }
     if (x.tong == null || x.tong === '') continue;
     const tong = intIn(x.tong, 1, QS_TONG_MAX, 'Tổng quân số');
@@ -487,14 +571,19 @@ export const caTruoc = (c) => (c.ca === 2 ? { ngay: c.ngay, ca: 1 } : { ngay: co
    số thiết lập. Lịch ca (hoặc số thiết lập, khi chưa đặt lịch) đặt SAU mốc `het` thì không biết lúc đó tổ có làm ca này
    không: null. Kết quả: { tong, lam, nghi, ghi_chu } — tong / lam null nếu tổ làm ca này mà chưa có số thiết lập.
    Dùng chung cho việc chép lúc hết ca (qsChotCa) và số tạm của ca đang diễn ra trên màn thống kê (qsThongKe). */
-function soTlCa(cfg, id, c, het) {
+function soTlCa(cfg, id, c, het, bat) {
+  // CVKTHT đã đánh dấu tổ không làm ca này: không có số nào để chép
+  if (khongLam(cfg, id, c)) return null;
   // s: số ĐI LÀM của ca theo số thiết lập; người nghỉ ghi riêng ngoài số đó
   const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, nghi = (tl && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0), co = s + so > 0;
-  const L = caLich(cfg, id, c.ngay);
+  // lịch đúng như lúc ca BẮT ĐẦU (lichLuc): đổi lịch giữa ca thì ca đó vẫn theo lịch cũ
+  const r = lichLuc(cfg.lich[id], bat, het);
+  const L = caLich({ lich: { [id]: r } }, id, c.ngay);
   if (L ? L !== 3 && L !== c.ca : !co) return null;
   /* Đặt SAU lúc hết ca thì không biết lúc đó tổ có làm ca này không (không chép ngược). Nhưng cho một khoảng đệm bằng chu kỳ chép tự
-     động (lịch chạy mỗi giờ): CVKTHT sửa số ngay sau giờ hết ca, trước lượt chép, thì ca đó vẫn có số thay vì thành "thiếu số". */
-  if ((L ? cfg.lich[id].ts : tl.ts) > het + TL_DEM_MS) return null;
+     động (lịch chạy mỗi giờ): CVKTHT sửa số ngay sau giờ hết ca, trước lượt chép, thì ca đó vẫn có số thay vì thành "thiếu số".
+     Lịch: mốc là lúc ĐỔI CA (doi_ts) — tổ chỉ khai lại tổng quân số sau giờ hết ca thì không phải "đặt lịch sau lúc hết ca". */
+  if ((L ? r.doi_ts || r.ts : tl.ts) > het + TL_DEM_MS) return null;
   return { tong: co ? tl.tong : null, lam: co ? s : null, nghi: co ? nghi : {}, ghi_chu: (co && nghi.khac && tl['gc' + c.ca]) || null };
 }
 /* SỐ THIẾT LẬP CỦA MỘT CA ĐÃ HẾT, cho báo cáo ca và báo cáo sản lượng (bcView). Số thiết lập chỉ có một bản, sửa là mất số cũ;
@@ -531,7 +620,7 @@ export async function qsChotCa(env, now = Date.now(), chiCoSo = false) {
     for (const { id } of toR.results) {
       if (co.has(caKhoa(c) + ':' + id)) continue;
       // tổ không làm ca này, chưa biết làm ca nào, hoặc lịch ca đặt sau lúc hết ca (không chép ngược)
-      const x = soTlCa(cfg, id, c, caGio(st, c).den);
+      const g = caGio(st, c), x = soTlCa(cfg, id, c, g.den, g.tu);
       if (!x || (chiCoSo && x.lam == null)) continue;
       ghi.push(env.DB.prepare('INSERT OR IGNORE INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?,?,?,?,?,?,?,?)')
         .bind(c.ngay, c.ca, id, x.tong, x.lam, JSON.stringify(x.nghi), x.ghi_chu, now));
@@ -573,7 +662,7 @@ export async function qsThongKe(env, user, url) {
     if (c.ngay < tu || c.ngay > den) continue;
     for (const { id } of tdtR.results) {
       if (co.has(caKhoa(c) + ':' + id)) continue;
-      const x = soTlCa(cfg, id, c, caGio(st, c).den);
+      const g = caGio(st, c), x = soTlCa(cfg, id, c, g.den, g.tu);
       if (x && x.lam != null) tam.push({ ngay: c.ngay, ca: c.ca, u: id, ...x, tam: 1 });
     }
   }

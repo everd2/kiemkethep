@@ -188,6 +188,7 @@ async function main() {
   const thuc = txt.split('\n');
   mong.forEach((l, n) => { if (thuc[n] !== l) ok(`dòng ${n + 1} đúng mẫu`, false, `mong: ${l}\n    thực: ${thuc[n]}`); });
   eq('bản chữ đúng số dòng của mẫu', thuc.length, mong.length);
+  // lịch gửi kèm là lịch của ca này (lichCaTai): hai tổ đặt lịch LẦN ĐẦU trong lúc ca này đang chạy, không có lịch cũ để giữ, nên áp luôn
   eq('server gửi kèm ca đêm của ngày hôm trước, lịch ca và số thiết lập', [R('S.bcc.qsDemTruoc.length'), R(`S.bcc.lich[${U['Lò Văn Cơi']}].ca`), R(`S.bcc.lich[${U['Lê Anh Tuấn']}].ca`)], [2, 3, 2]);
   /* SỐ THIẾT LẬP: tổ chưa báo thì báo cáo lấy số CVKTHT đã đặt, viết y như dòng thường (không ghi chú gì thêm);
      màn soạn thì nói rõ tổ nào đang lấy số thiết lập. Chọn "Chỉ số thiết lập" thì tổ đã báo cũng lấy số thiết lập. */
@@ -387,8 +388,12 @@ async function main() {
     /* tổ trưởng tự đổi ca mà số thiết lập chưa có số cho ca mới: báo cáo ghi "chưa báo" (như thống kê: ca thiếu số),
        không ghi "0/23 cn" như thể cả tổ nghỉ không lý do */
     await S.call('PUT', '/quanso/lich', { ca: 2 }, 'Lê Hải Nam');
+    /* Lịch ca theo thời điểm (chốt 2026-11-08): đổi lịch chỉ áp cho ca BẮT ĐẦU SAU lúc đổi. Ca đêm hôm trước (D, đã hết từ trước lúc đổi)
+       giữ lịch cũ — tổ vẫn là tổ ca ngày, không bị viết lại thành "chưa báo ca đêm". Ca đêm tối nay (bắt đầu sau lúc đổi) theo lịch mới. */
     R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
-    eq('tổ trưởng tự đổi sang ca đêm, số thiết lập chỉ có ca ngày: báo cáo ghi chưa báo', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: chưa báo quân số ca đêm');
+    eq('đổi lịch sau khi ca đêm hôm trước đã hết: ca đó giữ lịch cũ (tổ làm ca ngày)', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam (làm ca ngày)');
+    R(`S.bcCa = { ngay: '${vnDay()}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
+    eq('tổ trưởng tự đổi sang ca đêm, số thiết lập chỉ có ca ngày: ca đêm tối nay ghi chưa báo', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: chưa báo quân số ca đêm');
     await cho(); // chờ hết các lần tải lại còn dở (sau Lưu tất cả) trước khi sang phần sau
     S.raw.exec("UPDATE bc_mau SET data = json_remove(data, '$.tl') WHERE id = 1");
   }
