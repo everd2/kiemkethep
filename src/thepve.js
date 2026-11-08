@@ -157,7 +157,7 @@ export async function tvView(env, url, user) {
   const tong = tongR.results[0] || { chuyen: 0, kg: 0, ncc: 0 };
   return json({
     tu, den, quyen: { ghi: q.ghi }, ncc: nccR.results, phi: phiR.results,
-    don: donR.results.map((d) => ({ ...d, dong: ddBy[d.id] || [], da_ve: veDon[d.id] || {} })),
+    don: donR.results.map((d) => ({ ...d, dong: ddBy[d.id] || [], da_ve: veDon[d.id] || {}, ver: donVer(d, ddBy[d.id] || []) })),
     ve: veR.results.map((v) => ({ ...v, dong: dongBy[v.id] || [] })),
     trang: { so, bo_qua: boQua, tong: tim ? khopR.results[0].n : tong.chuyen }, q: tim, lo_nhap: loR.results,
     tk: { tong, thang: thangR.results, ncc: nccTkR.results, phi: phiTkR.results, cheo: cheoR.results },
@@ -419,6 +419,13 @@ export async function tvNhapHuy(req, env, user, lo) {
 /* ---------- SỬA ĐƠN HÀNG ----------
    Số lượng đặt / hạn giao thay đổi giữa chừng là chuyện thường: sửa hạn, ghi chú và các dòng phi đặt (nhà cung cấp, số đơn giữ nguyên).
    Nhật ký ghi cả cũ lẫn mới. Đơn đã huỷ thì không sửa. */
+/* DẤU PHIÊN BẢN của một đơn (hạn, ghi chú, các dòng phi) — chống hai người cùng sửa một đơn: máy nhận `ver` cùng danh sách đơn,
+   lúc lưu sửa gửi lại; đơn đã đổi từ lúc mở sửa thì từ chối (409 'changed') thay vì người lưu sau đè im lặng phần người trước.
+   dongChu PHẢI cùng cách viết với dongSql (guard của tvDonSua): phi:kg:bo:cay, xếp theo chuỗi, nối bằng dấu phẩy. */
+const dongChu = (dong) => dong.map((l) => `${l.phi}:${l.kg ?? ''}:${l.bo ?? ''}:${l.cay ?? ''}`).sort().join(',');
+const dongSql = "IFNULL((SELECT group_concat(x, ',') FROM (SELECT phi_id || ':' || IFNULL(kg, '') || ':' || IFNULL(bo, '') || ':' || IFNULL(cay, '') x FROM thep_don_dong WHERE don_id = ?1 ORDER BY x)), '')";
+function donVer(d, dong) { return [d.han || '', d.ghi_chu || '', dongChu(dong)].join('|'); }
+
 export async function tvDonSua(req, env, user, id) {
   await canGhi(env, user);
   const b = await readJson(req);
@@ -430,16 +437,21 @@ export async function tvDonSua(req, env, user, id) {
   const phiR = await env.DB.prepare('SELECT id, bo_size, kg_per_cay FROM phi').all();
   const lines = docDong(b.lines, Object.fromEntries(phiR.results.map((p) => [p.id, p])), 'Đơn hàng');
   if (new Set(lines.map((l) => l.phi)).size !== lines.length) throw bad('Mỗi phi chỉ một dòng trong đơn');
-  const cu = (await env.DB.prepare('SELECT phi_id phi, kg FROM thep_don_dong WHERE don_id = ?').bind(id).all()).results;
+  const cuDu = (await env.DB.prepare('SELECT phi_id phi, bo, cay, kg FROM thep_don_dong WHERE don_id = ?').bind(id).all()).results;
+  const cu = cuDu.map((l) => ({ phi: l.phi, kg: l.kg }));
+  // máy gửi dấu của đơn lúc mở sửa (app cũ không gửi: bỏ qua bước này, guard bên dưới vẫn chặn phần đổi trong lúc xử lý)
+  const doi = new HttpError(409, 'Đơn hàng này vừa được người khác sửa hoặc huỷ. Màn hình đã tải lại số mới: xem lại, bấm lưu lần nữa nếu vẫn muốn sửa như bạn đã gõ.', 'changed');
+  if (b.ver != null && String(b.ver) !== donVer(d, cuDu)) throw doi;
   const data = JSON.stringify(lines.map((l) => ({ phi: l.phi, bo: l.bo, cay: l.cay, kg: l.kg ?? l.kg_tinh })));
-  await batchGuarded(env, guardStmt(env, "NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ? AND tt <> 'huy')", id), [
+  await batchGuarded(env, guardStmt(env, `NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ?1 AND tt <> 'huy' AND IFNULL(han, '') = ?2 AND IFNULL(ghi_chu, '') = ?3 AND ${dongSql} = ?4)`,
+    id, d.han || '', d.ghi_chu || '', dongChu(cuDu)), [
     env.DB.prepare('UPDATE thep_don SET han = ?, ghi_chu = ? WHERE id = ?').bind(han, chu(b.ghi_chu, 200) || null, id),
     env.DB.prepare('DELETE FROM thep_don_dong WHERE don_id = ?').bind(id),
     env.DB.prepare(`INSERT INTO thep_don_dong (don_id, phi_id, bo, cay, kg) SELECT ?1, json_extract(j.value, '$.phi'), json_extract(j.value, '$.bo'),
                     json_extract(j.value, '$.cay'), json_extract(j.value, '$.kg') FROM json_each(?2) j`).bind(id, data),
     auditStmt(env, user, 'tv_don_sua', { id, ncc: d.ncc, so_don: d.so_don, han_cu: d.han || undefined, han: han || undefined, cu, moi: lines.map((l) => ({ phi: l.phi, kg: l.kg ?? l.kg_tinh })) }),
     bump(env),
-  ], new HttpError(409, 'Đơn hàng vừa bị huỷ', 'changed'));
+  ], doi);
   return json({ ok: true });
 }
 

@@ -261,6 +261,21 @@ async function main() {
   eq('đơn sau khi sửa', S.sql('SELECT phi_id, kg FROM thep_don_dong WHERE don_id = ? ORDER BY phi_id', dn2).map((x) => [x.phi_id, x.kg]), [['D16', 12000], ['D20', 5000]]);
   eq('sửa đơn: hạn trước ngày đặt bị từ chối', (await S.call('PATCH', '/thepve/don/' + dn2, { han: '2000-01-01', lines: [{ phi: 'D16', kg: '1' }] }, LAN)).status, 400);
   eq('CVKTHT (chỉ xem) không sửa đơn được', (await S.call('PATCH', '/thepve/don/' + dn2, { lines: [{ phi: 'D16', kg: '1' }] }, CV)).status, 403);
+  // hai người cùng mở sửa một đơn: người lưu sau không được đè im lặng phần người trước vừa sửa (dấu phiên bản ver)
+  const verCua = async (who) => (await S.call('GET', '/thepve', undefined, who)).data.don.find((x) => x.id === dn2).ver;
+  const vLan = await verCua(LAN), vAd = await verCua('Admin');
+  eq('hai người mở cùng đơn: cùng một dấu phiên bản', vLan, vAd);
+  eq('Admin lưu sửa trước (dấu đúng)', (await S.call('PATCH', '/thepve/don/' + dn2, { han: D, ghi_chu: 'Admin sửa', lines: [{ phi: 'D16', kg: '15000' }, { phi: 'D20', kg: '5000' }], ver: vAd }, 'Admin')).status, 200);
+  const rTre = await S.call('PATCH', '/thepve/don/' + dn2, { han: D, lines: [{ phi: 'D16', kg: '9000' }], ver: vLan }, LAN);
+  eq('Lan lưu sau với dấu cũ: từ chối 409 changed', [rTre.status, rTre.data.code], [409, 'changed']);
+  eq('... phần Admin vừa sửa còn nguyên', S.sql('SELECT phi_id, kg FROM thep_don_dong WHERE don_id = ? ORDER BY phi_id', dn2).map((x) => [x.phi_id, x.kg]), [['D16', 15000], ['D20', 5000]]);
+  ok('dấu phiên bản đổi sau khi sửa', (await verCua(LAN)) !== vLan);
+  eq('Lan tải lại (dấu mới) rồi lưu: được', (await S.call('PATCH', '/thepve/don/' + dn2, { han: D, ghi_chu: 'Admin sửa', lines: [{ phi: 'D16', kg: '12000' }, { phi: 'D20', kg: '5000' }], ver: await verCua(LAN) }, LAN)).status, 200);
+  eq('app cũ không gửi dấu: vẫn sửa được như trước', (await S.call('PATCH', '/thepve/don/' + dn2, { han: D, lines: [{ phi: 'D16', kg: '12000' }, { phi: 'D20', kg: '5000' }] }, LAN)).status, 200);
+  const vBo = await verCua(LAN);
+  S.sql("UPDATE thep_don_dong SET bo = 3 WHERE don_id = ? AND phi_id = 'D16'", dn2);
+  eq('dòng đơn đổi (số bó) sau khi mở: cũng bị chặn', (await S.call('PATCH', '/thepve/don/' + dn2, { han: D, lines: [{ phi: 'D16', kg: '1' }], ver: vBo }, LAN)).status, 409);
+  S.sql("UPDATE thep_don_dong SET bo = NULL WHERE don_id = ? AND phi_id = 'D16'", dn2);
   // gắn chuyến đã ghi vào đơn lập sau
   const c9 = (await chuyen({ so_phieu: 'GAN-01', bien_so: '51D-999.88', lines: [{ phi: 'D16', kg: '3000' }] }, LAN)).data.id;
   ok('tìm theo biển số (một phần)', (await tim('999.8')).ve.some((v) => v.id === c9));

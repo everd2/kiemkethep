@@ -100,13 +100,17 @@ const MAN = ['home', 'ton', 'khu', 'nhap', 'duyet', 'giacong', 'quanso', 'qstk',
 const lenh = (s) => (s === 'sanluong' ? 'ACTIONS.slmo()' : `ACTIONS.nav({ s: '${s}' })`);
 const kq = {};
 for (const lan of [1, 2]) for (const s of MAN) (kq[s] = kq[s] || []).push(await doMan(lenh(s)));
+/* "Không chờ trắng" = màn có số TRƯỚC khi mạng kịp trả lời (mỗi lượt gọi trễ TRE ms). Ngưỡng cũ 50 ms đo cả độ trễ của chính
+   vòng hỏi trong test: máy chạy test bận (Windows, chạy cả bộ) thì lần mở hiện ngay (~1 ms) vẫn đo ra 60–90 ms, test đỏ ngẫu nhiên.
+   Màn phải chờ mạng thì luôn >= TRE, nên ngưỡng TRE - 30 vẫn bắt đúng lỗi chờ trắng. */
+const KHONG_CHO = TRE - 30;
 const T = [];
 const ok = (name, cond, extra) => { T.push([cond ? 'PASS' : 'FAIL', name, extra === undefined ? '' : String(extra)]); };
 for (const [n, v] of Object.entries(kq)) {
-  ok(`mở lại "${n}": không chờ trắng`, v[1][0] <= 50, v[1][0] + ' ms');
+  ok(`mở lại "${n}": không chờ trắng`, v[1][0] < KHONG_CHO, v[1][0] + ' ms');
   ok(`"${n}": mỗi lần mở gọi máy chủ không quá 3 lượt`, v[0][1] <= 3 && v[1][1] <= 3, v.map((x) => x[1]).join('/'));
 }
-for (const n of ['duyet', 'giacong', 'baocaoca']) ok(`tải sẵn lúc đăng nhập: mở lần ĐẦU "${n}" không chờ trắng`, kq[n][0][0] <= 50, kq[n][0][0] + ' ms');
+for (const n of ['duyet', 'giacong', 'baocaoca']) ok(`tải sẵn lúc đăng nhập: mở lần ĐẦU "${n}" không chờ trắng`, kq[n][0][0] < KHONG_CHO, kq[n][0][0] + ' ms');
 const fail = T.filter((x) => x[0] === 'FAIL');
 console.log(T.map((x) => x[0] + ' | ' + x[1] + (x[0] === 'FAIL' ? '  [' + x[2] + ']' : '')).join('\n'));
 console.log('\n=== ' + T.length + ' kiểm tra, ' + fail.length + ' lỗi ===');

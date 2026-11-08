@@ -306,7 +306,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v83';
+const BAN = 'kho-thep-v84';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4690,7 +4690,7 @@ let tvSoTai = 0;
    khoá chống trùng, kỳ / ô tìm, form đang gõ — người sau không được thấy, cũng không thừa hưởng. Lần tải đang bay cũng bỏ. */
 function tvQuen() {
   tvSoTai++;
-  Object.assign(S, { tv: null, tvTab: null, tvMo: null, tvNhapKq: null, tvKhoa: null, tvKy: null, tvTim: '', tvSuaDon: null, tvKieuMy: false, tvNgayChon: null,
+  Object.assign(S, { tv: null, tvTab: null, tvMo: null, tvNhapKq: null, tvKhoa: null, tvKy: null, tvTim: '', tvSuaDon: null, tvSuaVer: null, tvKieuMy: false, tvNgayChon: null,
     tvGan: null, tvDonHien: null, tvSoDong: 1, tvSoHien: null });
   if (S.form) Object.keys(S.form).filter((k) => /^t[vd]/.test(k)).forEach((k) => delete S.form[k]);
 }
@@ -5729,8 +5729,17 @@ function render() {
   S._last = S.screen;
 }
 
+/* Vẽ lại khi người dùng NGỪNG gõ (250 ms sau phím cuối), không phải ở mỗi phím. Chuyển màn / đang lưu / đang hỏi trong lúc chờ thì
+   bỏ (lần vẽ của việc đó đã mang số mới). */
+let veHen = 0;
+function veSauGo() {
+  clearTimeout(veHen);
+  const man = S.screen;
+  veHen = setTimeout(() => { veHen = 0; if (S.screen === man && !S.busy && !S.ask) render(); }, 250);
+}
+
 /* ===================== HÀNH ĐỘNG ===================== */
-const val = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+const val =(id) => { const e = document.getElementById(id); return e ? e.value : ''; };
 function addLine(phi, qty) {
   const l = S.nhap.lines.find((x) => x.phi === phi);
   if (l) l.qty += qty; else S.nhap.lines.push({ phi, qty });
@@ -7485,7 +7494,7 @@ const ACTIONS = {
   // sửa đơn: mở form đơn, điền sẵn hạn / ghi chú / các phi đặt
   tvsuadon(d) {
     const don = S.tv.don.find((x) => x.id === Number(d.id)); if (!don) return;
-    ACTIONS.tvmo({ v: 'don' }); S.tvSuaDon = don.id;
+    ACTIONS.tvmo({ v: 'don' }); S.tvSuaDon = don.id; S.tvSuaVer = don.ver; // dấu phiên bản: máy chủ từ chối nếu đơn đổi từ lúc này (src/thepve.js donVer)
     S.form.tdf_han = don.han || ''; S.form.tdf_gc = don.ghi_chu || '';
     S.tvSoDong = Math.max(1, don.dong.length);
     don.dong.forEach((l, i) => { S.form['tdp_' + i] = l.phi; if (l.bo != null) S.form['tdb_' + i] = String(l.bo); if (l.cay != null) S.form['tdc_' + i] = String(l.cay); if (l.kg != null) S.form['tdk_' + i] = String(l.kg); });
@@ -7539,7 +7548,19 @@ const ACTIONS = {
     if (leS) return say(`Dòng ${leS.i + 1}: số ${Number.isNaN(leS.bo) ? 'bó' : 'cây'} phải là số nguyên.`, true), render();
     const dong = lines.map((l) => ({ phi: l.phi, bo: S.form[`tdb_${l.i}`] || null, cay: S.form[`tdc_${l.i}`] || null, kg: S.form[`tdk_${l.i}`] || null })), sua = S.tvSuaDon;
     act(async () => {
-      if (sua) await api('PATCH', `/thepve/don/${sua}`, { han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong });
+      if (sua) {
+        try { await api('PATCH', `/thepve/don/${sua}`, { han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong, ver: S.tvSuaVer }); }
+        catch (e) {
+          /* người khác vừa sửa / huỷ đơn: tải số mới cho thấy, chữ mình đang gõ trong form giữ nguyên; nhận dấu mới để lần bấm
+             lưu sau (đã biết có người sửa) đi qua được. Đơn đã huỷ thì đóng form. */
+          if (e.code === 'changed') {
+            await tvTai();
+            const m = S.tv && S.tv.don.find((x) => x.id === sua && x.tt !== 'huy');
+            if (m) S.tvSuaVer = m.ver; else { S.tvMo = null; S.tvSuaDon = null; }
+          }
+          throw e;
+        }
+      }
       else await api('POST', '/thepve/don', { ncc: String(S.form.tdf_ncc || '').trim(), so_don: S.form.tdf_so || '', ngay_dat: S.form.tdf_ngay || S.boot.today, han: S.form.tdf_han || '', ghi_chu: S.form.tdf_gc || '', lines: dong });
       S.tvMo = null; S.tvSuaDon = null; await tvTai();
     }, sua ? 'Đã sửa đơn hàng.' : 'Đã lập đơn hàng.');
@@ -7822,9 +7843,12 @@ document.addEventListener('input', (e) => {
   }
   if (m) S.form[m] = e.target.value;
   if (m === 'gcq') gcLoc();
-  if (m && S.screen === 'thepve' && /^(t[vd][bck]_\d+|tvf_ncc)$/.test(m)) render();
-  // báo cáo sản lượng: tổng và sản lượng chạy theo từng chữ số vừa gõ (vẽ lại giữ nguyên ô đang gõ)
-  if (m && S.screen === 'sanluong' && S.sl && /^slc_\d+$/.test(m)) render();
+  /* Sổ thép về (kg tự tính, chênh, tổng chuyến) và báo cáo sản lượng (kg từng tổ, tổng): số chạy theo ô đang gõ. Trước đây vẽ lại
+     CẢ màn hình ở MỖI phím — màn có nhiều chuyến / nhiều tổ thì máy yếu giật, bàn phím chớp. Nay vẽ lại một lần khi ngừng gõ
+     (veSauGo). Ô Nhà cung cấp (tvf_ncc) không vẽ lại lúc gõ nữa: vẽ lại giữa chừng làm mất gợi ý tên và hỏng bộ gõ tiếng Việt;
+     danh sách đơn theo nhà cung cấp lọc lại khi rời ô (xem 'change'). Nút lưu / chép tự kiểm lại từ S.form nên không phụ thuộc lần vẽ. */
+  if (m && S.screen === 'thepve' && /^t[vd][bck]_\d+$/.test(m)) veSauGo();
+  if (m && S.screen === 'sanluong' && S.sl && /^slc_\d+$/.test(m)) veSauGo();
   if (m && GC_O_TRUC.includes(m)) { const x = document.getElementById('gctrucxem'); if (x) x.textContent = gcTrucCua() || 'chưa nhập'; }
   /* Quân số đầu ca: gõ tổng thì số đi làm và dòng tóm tắt chạy theo ngay, không vẽ lại màn hình giữa lúc gõ.
      Gõ vào ô đi làm là gõ đè (tổ chia hai ca); xoá trắng ô đó thì về lại số app tự tính. */
@@ -7904,6 +7928,8 @@ document.addEventListener('change', async (e) => {
   if (t.dataset && t.dataset.change === 'sldate') { if (t.value) ACTIONS.slngay({ v: t.value > S.boot.today ? S.boot.today : t.value }); return; }
   // sổ thép về: chọn phi của một dòng thì kg tự tính chạy theo ngay
   if (t.dataset && t.dataset.change === 'tvphi') { S.form[t.dataset.model] = t.value; render(); return; }
+  // rời ô Nhà cung cấp: lọc lại danh sách đơn hàng theo tên vừa gõ (lúc gõ không vẽ lại, xem 'input')
+  if (t.dataset && t.dataset.model === 'tvf_ncc' && S.screen === 'thepve') { S.form.tvf_ncc = t.value; render(); return; }
   if (t.dataset && t.dataset.change === 'tvdon') { tvApDon(t.value); render(); return; }
   if (t.dataset && t.dataset.change === 'hdate') { if (t.value) loadHist(t.value > S.boot.today ? S.boot.today : t.value); return; }
   if (t.dataset && t.dataset.change === 'chucdanh') {
