@@ -2,7 +2,7 @@
    Những điều tính năng này hứa:
    1. Chỉ CVKTHT trở lên mở, lưu, đặt thiết lập; Tiểu đội trưởng bị chặn.
    2. MỘT báo cáo gộp ca ngày + ca đêm: mỗi tổ một dòng, quân số = ca ngày của ngày báo cáo và/hoặc ca đêm HÔM TRƯỚC; không có phần nghỉ.
-   3. Thiết lập: công chuẩn (158), tỷ lệ giá CHUNG (0,2-1, mặc định 0,2), tỷ lệ gia công RIÊNG TỪNG TỔ (0,5-1, mặc định 0,70-0,80).
+   3. Thiết lập: công chuẩn (158), tỷ lệ giá CHUNG (0,2-1, mặc định 0,2), tỷ lệ gia công RIÊNG TỪNG TỔ (0,1-10, khoảng bốc mặc định 0,7-1; tổ chưa bốc tạm 0,70-0,80).
    4. Sản lượng tổ = (công x công chuẩn x tỷ lệ gia công của tổ) / tỷ lệ giá, tự tính theo thiết lập; ngày đã lưu giữ thiết lập lúc lưu.
    5. Bản chữ đúng khuôn báo cáo quân số: phần đầu giữ nguyên, mục 2 quân số + công gia công thép, mục 3 sản lượng. */
 import { advance, boot, vnDay } from './harness.mjs';
@@ -76,7 +76,7 @@ async function main() {
 
   /* ===== 3. Thiết lập ===== */
   eq('công chuẩn mặc định 158, tỷ lệ giá 0,2', [V.tl.chuan, V.tl.gia], [158, 0.2]);
-  eq('khoảng hợp lệ', [V.gioi_han.chuan.min, V.gioi_han.gia.min, V.gioi_han.gia.max, V.gioi_han.gc.min, V.gioi_han.gc.max], [1, 0.2, 1, 0.5, 1]);
+  eq('khoảng hợp lệ', [V.gioi_han.chuan.min, V.gioi_han.gia.min, V.gioi_han.gia.max, V.gioi_han.gc.min, V.gioi_han.gc.max], [1, 0.2, 1, 0.1, 10]);
   ok('tỷ lệ gia công mặc định từng tổ trong 0,70-0,80', V.to.every((t) => V.tl.gc[t.id] >= 0.7 && V.tl.gc[t.id] <= 0.8), JSON.stringify(V.tl.gc));
   eq('chưa tổ nào được đặt tay', V.tl.da_dat, []);
   eq('mặc định cố định theo tổ: hỏi lại ra cùng số', (await S.call('GET', '/sanluong', undefined, CV)).data.tl.gc, V.tl.gc);
@@ -85,8 +85,8 @@ async function main() {
   eq('công chuẩn quá lớn bị từ chối', (await tlap({ chuan: 5000 })).status, 400);
   eq('tỷ lệ giá dưới 0,2 bị từ chối', (await tlap({ gia: 0.1 })).status, 400);
   eq('tỷ lệ giá trên 1 bị từ chối', (await tlap({ gia: 1.5 })).status, 400);
-  eq('tỷ lệ gia công dưới 0,5 bị từ chối', (await tlap({ gc: { [khoa.id]: 0.4 } })).status, 400);
-  eq('tỷ lệ gia công trên 1 bị từ chối', (await tlap({ gc: { [khoa.id]: 1.2 } })).status, 400);
+  eq('tỷ lệ gia công dưới 0,1 bị từ chối', (await tlap({ gc: { [khoa.id]: 0.05 } })).status, 400);
+  eq('tỷ lệ gia công trên 10 bị từ chối', (await tlap({ gc: { [khoa.id]: 12 } })).status, 400);
   eq('tỷ lệ gia công cho người không phải tổ bị từ chối', (await tlap({ gc: { [U[CV]]: 0.8 } })).status, 400);
   eq('thiết lập rỗng bị từ chối', (await tlap({})).status, 400);
   eq('các lần hỏng không đổi gì', (await S.call('GET', '/sanluong', undefined, CV)).data.tl.gia, 0.2);
@@ -336,10 +336,18 @@ async function main() {
      tổ đó, mọi máy cùng bộ số; báo cáo đã lưu chỉ đổi khi Chép. */
   eq('Tiểu đội trưởng không bốc được', (await tlap({ ngau: true }, 'Phạm Văn Khoa')).status, 403);
   eq('khoảng ngược: từ chối', (await tlap({ khoang: { [khoa.id]: { tu: 0.9, den: 0.7 } } })).status, 400);
-  eq('khoảng ngoài 0,5 - 1: từ chối', (await tlap({ khoang: { [khoa.id]: { tu: 0.4, den: 0.7 } } })).status, 400);
+  eq('khoảng ngoài 0,1 - 10: từ chối', (await tlap({ khoang: { [khoa.id]: { tu: 0.05, den: 0.7 } } })).status, 400);
+  // không giới hạn ≤ 1 nữa (chốt 2026-11-08): khoảng 0,5 - 2 đặt được, bốc ra số trên 1 được; đặt xong trả lại khoảng cũ cho các phần sau
+  {
+    const cu = (await S.call('GET', '/sanluong', undefined, CV)).data.tl.khoang[khoa.id];
+    eq('khoảng 0,5 - 2: đặt được', (await tlap({ khoang: { [khoa.id]: { tu: 0.5, den: 2 } } })).status, 200);
+    eq('khoảng đã lưu 0,5 - 2', (await S.call('GET', '/sanluong', undefined, CV)).data.tl.khoang[khoa.id], { tu: 0.5, den: 2 });
+    eq('khoảng cố định 1,5 - 1,5: bốc ra đúng 1,5 (trên 1 được)', [(await tlap({ khoang: { [khoa.id]: { tu: 1.5, den: 1.5 } }, ngau: true })).status, (await S.call('GET', '/sanluong', undefined, CV)).data.tl.gc[khoa.id]], [200, 1.5]);
+    await tlap({ khoang: { [khoa.id]: cu } });
+  }
   eq('khoảng của người không phải tổ: từ chối', (await tlap({ khoang: { [U[CV]]: { tu: 0.6, den: 0.7 } } })).status, 400);
   R(`S.screen = 'sanluong'; S.toast = ''; S.form = {}; S.slTlMo = true`); await R('slTai()'); await cho();
-  eq('tổ chưa đặt: mặc định 0,7 - 0,8', R(`JSON.stringify(S.sl.tl.khoang[${hoang.id}])`), JSON.stringify({ tu: 0.7, den: 0.8 }));
+  eq('tổ chưa đặt: khoảng mặc định 0,7 - 1', R(`JSON.stringify(S.sl.tl.khoang[${hoang.id}])`), JSON.stringify({ tu: 0.7, den: 1 }));
   R(`S.form.slt_chung_tu = '0,5'; S.form.slt_chung_den = '1'; ACTIONS.slapchung()`);
   eq('ô chung điền vào mọi tổ', [R(`S.form['slt_tu_${son.id}']`), R(`S.form['slt_den_${coi.id}']`)], ['0,5', '1']);
   R(`S.form['slt_tu_${khoa.id}'] = '0,6'; S.form['slt_den_${khoa.id}'] = '0,65'; S.form['slt_tu_${nam.id}'] = '0,9'; S.form['slt_den_${nam.id}'] = '0,9'; ACTIONS.sltl()`); await cho();

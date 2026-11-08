@@ -309,7 +309,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v86';
+const BAN = 'kho-thep-v87';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4630,7 +4630,7 @@ function slGan() {
 // thiết lập đang dùng cho báo cáo của ngày này: ảnh chụp lúc lưu nếu có (trừ khi bấm "Tính lại"), không thì thiết lập hiện tại
 const slCS = () => { const L = S.sl; return L.luu && L.luu.chup && !S.slLai ? L.luu.chup : L.tl; };
 // khoảng bốc tỷ lệ gia công của tổ; thiếu (dữ liệu cũ) thì mặc định như SL_KHOANG ở src/sanluong.js
-const slKh = (L, id) => (L.tl.khoang && L.tl.khoang[id]) || { tu: 0.7, den: 0.8 };
+const slKh = (L, id) => (L.tl.khoang && L.tl.khoang[id]) || { tu: 0.7, den: 1 };
 const slGcCua = (cs, id) => (cs.gc[id] !== undefined ? cs.gc[id] : S.sl.tl.gc[id]);
 function slTinh() {
   const L = S.sl, cs = slCS();

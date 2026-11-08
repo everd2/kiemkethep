@@ -14,15 +14,16 @@ import { MAU_CO, QS_TONG_MAX, TO_SX } from './quanso.js';
    - THIẾT LẬP (lưu ở bc_mau.data.sl, dùng cho mọi ngày, CVKTHT trở lên sửa):
        chuan  công chuẩn, kg/công (mặc định 158)
        gia    tỷ lệ giá, CHUNG cho mọi tổ, 0,2 – 1 (mặc định 0,2)
-       gc     tỷ lệ gia công, RIÊNG TỪNG TỔ, 0,5 – 1; tổ chưa đặt thì mặc định ngẫu nhiên 0,70 – 0,80, cố định theo tổ.
+       gc     tỷ lệ gia công, RIÊNG TỪNG TỔ, 0,1 – 10 (chốt 2026-11-08: không giới hạn ≤ 1, tuỳ đơn vị đặt, ví dụ 0,5 – 2); khoảng bốc
+              mặc định 0,7 – 1; tổ chưa bốc lần nào thì tạm một số cố định theo tổ trong 0,70 – 0,80 (giữ như cũ để báo cáo chưa lưu không tự đổi số).
    - SẢN LƯỢNG của tổ (kg) = (công × chuan × tỷ lệ gia công của tổ) ÷ tỷ lệ giá, làm tròn kg; tổng báo cáo = cộng các tổ.
    - Lưu báo cáo của một ngày thì CHỤP LẠI thiết lập đang dùng (data.chup): đổi thiết lập sau này không làm đổi số của báo cáo cũ.
    Server GOM SỐ và LƯU; việc ghép chữ nằm ở máy khách (app.js, slTao), như báo cáo ca. */
 export const SL_CHUAN = { min: 1, max: 1000, mac_dinh: 158 };
 export const SL_GIA = { min: 0.2, max: 1, mac_dinh: 0.2 };
-export const SL_GC = { min: 0.5, max: 1 };
+export const SL_GC = { min: 0.1, max: 10 };
 // khoảng bốc ngẫu nhiên tỷ lệ gia công của tổ chưa đặt khoảng riêng (sl.kh[id tổ] = { tu, den }; tu = den là tỷ lệ cố định)
-export const SL_KHOANG = { tu: 0.7, den: 0.8 };
+export const SL_KHOANG = { tu: 0.7, den: 1 };
 const SL_SUA_NGAY = 31;
 
 // tỷ lệ gia công mặc định của một tổ: 0,70 – 0,80, cố định theo tổ
