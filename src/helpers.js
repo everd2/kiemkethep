@@ -40,6 +40,8 @@ export const qtyWord = (v, p) => {
 export const intIn = (v, min, max, label) => {
   // null, '', true, [5] đều ép ra số được (0 hoặc 1 hoặc 5): không nhận, kẻo thiếu số mà thành "0"
   if ((typeof v !== 'number' && typeof v !== 'string') || (typeof v === 'string' && !v.trim())) throw bad(label + ' không hợp lệ');
+  // chuỗi: chỉ chữ số thập phân. Number() còn nhận "0x10" (16), "1e3" (1000), "0b1"... — gõ nhầm thành số khác hẳn
+  if (typeof v === 'string' && !/^\s*-?\d+\s*$/.test(v)) throw bad(label + ' không hợp lệ');
   const n = Number(v);
   if (!Number.isInteger(n) || n < min || n > max) throw bad(label + ' không hợp lệ');
   return n;

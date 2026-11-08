@@ -73,9 +73,19 @@ function docNguoi(d) {
   delete d.nguoi_json;
   d.nguoi = ds;
   d.uname = ds.map((n) => n.ten).join(', ');
+  d.sua_ver = gcSuaVer(d);
   return docAnh(d);
 }
-const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
+/* DẤU CÁC Ô SỬA ĐƯỢC của đơn (form Sửa đơn): máy nhớ lúc mở form, lưu thì gửi lại; người khác đã sửa đơn từ lúc đó thì từ chối (gcUpdate)
+   thay vì lần lưu sau âm thầm trả các ô về giá trị cũ của form. Không gồm tiến độ / vướng: tổ cập nhật % trong lúc CVKTHT sửa hạn
+   không phải là xung đột. */
+const GC_O_SUA = ['cau_kien', 'hang_muc', 'phan_khu', 'tang', 'cote', 'truc', 'noi_dung', 'od_nguoi', 'od_dd', 'han', 'buoi'];
+function gcSuaVer(d) {
+  return JSON.stringify([...GC_O_SUA.map((k) => (d[k] == null || d[k] === '' ? null : String(d[k]))), (d.nguoi || []).map((n) => n.id).sort((a, z) => a - z)]);
+}
+// cắt theo KÝ TỰ (code point), không theo đơn vị UTF-16: cắt giữa một emoji để lại nửa ký tự, lưu thành "�"
+const catKt = (s, max) => (s.length <= max ? s : Array.from(s).slice(0, max).join(''));
+const chu = (v, max) => catKt(String(v == null ? '' : v).replace(/\s+/g, ' ').trim(), max);
 /* Tầng chỉ lưu phần riêng của nó: "1", "2", "B1", "Mái". Người giao gõ "Tầng 5" hay "5" đều thành "5", nên đơn
    trùng, gom và tìm theo tầng không bị tách đôi; chữ "Tầng" do màn hình tự thêm khi hiện. */
 const chuTang = (v) => {
@@ -92,7 +102,7 @@ const vuaDoi = () => new HttpError(409, 'Đơn vừa được người khác c�
 export const GC_MUC = { khu: 'phân khu', hm: 'hạng mục', ck: 'loại cấu kiện', vg: 'lý do vướng', od: 'người order', dd: 'đại đội order' };
 const GC_MUC_MAX = 40;
 const MUC_SQL = 'SELECT id, loai, ten FROM gc_muc ORDER BY loai, sort, id';
-const xepMuc = (rows) => { const o = { khu: [], hm: [], ck: [], vg: [], od: [], dd: [] }; rows.forEach((r) => { if (o[r.loai]) o[r.loai].push({ id: r.id, ten: r.ten }); }); return o; };
+const xepMuc = (rows) => { const o = { khu: [], hm: [], ck: [], vg: [], od: [], dd: [] }; rows.forEach((r) => { if (Object.hasOwn(o, r.loai)) o[r.loai].push({ id: r.id, ten: r.ten }); }); return o; };
 // so tên không phân hoa/thường (COLLATE NOCASE của SQLite chỉ biết chữ không dấu, nên so ở đây)
 const mucTen = (ds, v) => { const x = ds.find((m) => m.ten.toLowerCase() === String(v).toLowerCase()); return x ? x.ten : null; };
 
@@ -187,12 +197,14 @@ export async function gcView(env, id, user) {
 }
 
 // một đơn CÒN MỞ khác (id khác boQua) của cùng người, giống hệt cấu kiện + phân khu + tầng + cote + trục
+// điều kiện "đơn còn mở giống hệt" — dùng cả khi hỏi trước (donTrung) lẫn trong guard của lô ghi (gcCreate: hai lần giao cùng lúc)
+const TRUNG_DK = `d.tt IN ('moi', 'nhan', 'lam') AND d.id <> ?1 AND EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id IN (SELECT value FROM json_each(?2))) AND d.cau_kien = ?3 COLLATE NOCASE
+     AND COALESCE(d.phan_khu, '') = ?4 COLLATE NOCASE AND COALESCE(d.tang, '') = ?5 COLLATE NOCASE
+     AND COALESCE(d.cote, '') = ?6 COLLATE NOCASE AND COALESCE(d.truc, '') = ?7 COLLATE NOCASE`;
+const trungThamSo = (f, boQua) => [boQua, JSON.stringify(f.user_ids || [f.user_id]), f.cau_kien, f.phan_khu || '', f.tang || '', f.cote || '', f.truc || ''];
 const donTrung = (env, f, boQua) => env.DB.prepare(
   `SELECT d.id, d.ts, COALESCE(g.name, '(đã xoá)') giao_name FROM don_gc d LEFT JOIN users g ON g.id = d.giao_by
-   WHERE d.tt IN ('moi', 'nhan', 'lam') AND d.id <> ?1 AND EXISTS (SELECT 1 FROM don_gc_nguoi n WHERE n.don_id = d.id AND n.user_id IN (SELECT value FROM json_each(?2))) AND d.cau_kien = ?3 COLLATE NOCASE
-     AND COALESCE(d.phan_khu, '') = ?4 COLLATE NOCASE AND COALESCE(d.tang, '') = ?5 COLLATE NOCASE
-     AND COALESCE(d.cote, '') = ?6 COLLATE NOCASE AND COALESCE(d.truc, '') = ?7 COLLATE NOCASE
-   ORDER BY d.id DESC LIMIT 1`).bind(boQua, JSON.stringify(f.user_ids || [f.user_id]), f.cau_kien, f.phan_khu || '', f.tang || '', f.cote || '', f.truc || '').first();
+   WHERE ${TRUNG_DK} ORDER BY d.id DESC LIMIT 1`).bind(...trungThamSo(f, boQua)).first();
 const viTriTxt = (f) => [f.cau_kien, f.phan_khu, f.tang ? 'tầng ' + f.tang : '', f.cote ? 'cote ' + f.cote : '', f.truc ? 'trục ' + f.truc : ''].filter(Boolean).join(', ');
 
 /* ĐƠN TRÙNG: người nhận đang giữ một đơn CÒN MỞ giống hệt (cấu kiện, phân khu, tầng, cote, trục). Hai đường dẫn tới đó,
@@ -201,14 +213,17 @@ const viTriTxt = (f) => [f.cau_kien, f.phan_khu, f.tang ? 'tầng ' + f.tang : '
 export async function gcCreate(req, env, user) {
   const b = await readJson(req);
   const f = await docDon(env, b, null);
+  const trungErr = (t) => new HttpError(409, `${f.uname} đang giữ một đơn còn mở giống hệt: ${viTriTxt(f)}${t ? ` (${t.giao_name} giao ngày ${fmtDay(vnDay(t.ts))})` : ''}.\n\nNếu vừa bấm giao mà mạng chập chờn thì đơn đã vào rồi. Vẫn giao thêm một đơn nữa?`, 'trung');
   if (!b.trung) {
     const t = await donTrung(env, f, 0);
-    if (t) {
-      throw new HttpError(409, `${f.uname} đang giữ một đơn còn mở giống hệt: ${viTriTxt(f)} (${t.giao_name} giao ngày ${fmtDay(vnDay(t.ts))}).\n\nNếu vừa bấm giao mà mạng chập chờn thì đơn đã vào rồi. Vẫn giao thêm một đơn nữa?`, 'trung');
-    }
+    if (t) throw trungErr(t);
   }
   const ts = Date.now();
-  const r = await env.DB.batch([
+  /* Hai lần giao giống hệt tới CÙNG LÚC (bấm lại khi lần đầu chưa trả lời) đều qua bước hỏi ở trên: kiểm lại ngay trong lô ghi
+     (guard), lần sau thành 409 'trung' như thường. Đã xác nhận giao thêm (trung = true) thì không kiểm. */
+  const ghiDon = (stmts) => (b.trung ? env.DB.batch(stmts) : batchGuarded(env, guardStmt(env, `EXISTS (SELECT 1 FROM don_gc d WHERE ${TRUNG_DK})`, ...trungThamSo(f, 0)), stmts, trungErr(null))
+    .catch(async (e) => { if (e instanceof HttpError && e.code === 'trung') throw trungErr(await donTrung(env, f, 0)); throw e; }));
+  const r = await ghiDon([
     env.DB.prepare(`INSERT INTO don_gc (cau_kien, hang_muc, phan_khu, tang, cote, truc, noi_dung, od_nguoi, od_dd, user_id, han, buoi, tt, pct, giao_by, ts, cap_ts)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'moi',0,?,?,?)`).bind(f.cau_kien, f.hang_muc, f.phan_khu, f.tang, f.cote, f.truc, f.noi_dung, f.od_nguoi, f.od_dd, f.user_id, f.han, f.buoi, user.id, ts, ts),
     // MAX(id) = đơn vừa ghi ở câu trên: cả batch là một giao dịch
@@ -228,6 +243,8 @@ export async function gcUpdate(req, env, user, id) {
   const d = docNguoi(await env.DB.prepare(`${GC_SELECT} WHERE d.id = ?`).bind(id).first());
   if (!d) throw khongThay();
   if (!GC_MO.includes(d.tt)) throw new HttpError(409, d.tt === 'xong' ? 'Đơn đã xong, không sửa được. Mở lại đơn trước.' : 'Đơn đã huỷ, không sửa được.');
+  // máy gửi dấu các ô lúc mở form (app cũ không gửi: bỏ qua); đơn đã bị người khác sửa từ lúc đó thì không cho đè
+  if (b.ver != null && String(b.ver) !== d.sua_ver) throw new HttpError(409, 'Đơn vừa được người khác sửa trong lúc bạn đang sửa. Màn hình đã tải lại số mới, chữ bạn đang gõ vẫn giữ: xem lại rồi bấm lưu lần nữa.', 'changed');
   const f = await docDon(env, b, d);
   const doi = [];
   if (f.cau_kien !== d.cau_kien) doi.push('cấu kiện: ' + f.cau_kien);
@@ -270,7 +287,8 @@ export async function gcUpdate(req, env, user, id) {
 export async function gcMucAdd(req, env, user) {
   const b = await readJson(req);
   const loai = String(b.loai || '');
-  if (!GC_MUC[loai]) throw bad('Loại danh mục không hợp lệ');
+  // hasOwn: "toString" / "__proto__" có sẵn trên mọi object — lọt qua thì dòng lạ đó làm sập mọi màn Gia công (xepMuc)
+  if (!Object.hasOwn(GC_MUC, loai)) throw bad('Loại danh mục không hợp lệ');
   const ten = chu(b.ten, loai === 'hm' || loai === 'od' ? 60 : 40);
   if (!ten) throw bad('Cần ghi tên ' + GC_MUC[loai]);
   if ((loai === 'ck' || loai === 'vg') && ten.toLowerCase() === 'khác') throw bad('"Khác" luôn có sẵn, không cần thêm');
@@ -334,7 +352,8 @@ export async function gcTn(req, env, user, id) {
   if (!trong && capOf(user.role) < 1) throw new HttpError(403, 'Chỉ người làm đơn này và CVKTHT trở lên mới trao đổi được');
   const dong = d.tt === 'xong' ? d.xong_ts : d.tt === 'huy' ? d.huy_ts || d.cap_ts : null;
   if (dong && Date.now() - dong > GC_TN_MO_MS) throw new HttpError(409, 'Đơn đã đóng quá 7 ngày, không trao đổi thêm được.', 'tt');
-  const nd = String(b.noi_dung == null ? '' : b.noi_dung).replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, GC_TN_MAX);
+  let nd = String(b.noi_dung == null ? '' : b.noi_dung).replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  nd = catKt(nd, GC_TN_MAX);
   if (!nd) throw bad('Tin nhắn trống');
   const canTl = b.can_tl && !trong ? 1 : 0;
   // người trong nhóm làm nhắn là đã trả lời; người giao hỏi "cần trả lời" thì đơn chờ tin đó
@@ -351,14 +370,20 @@ export async function gcTn(req, env, user, id) {
 }
 export async function gcThuHoi(env, user, id, tnId) {
   const t = Number.isInteger(id) && Number.isInteger(tnId)
-    ? await env.DB.prepare('SELECT t.id, t.user_id, t.ts, t.thu_hoi, d.cho_tl FROM don_gc_tn t JOIN don_gc d ON d.id = t.don_id WHERE t.id = ? AND t.don_id = ?').bind(tnId, id).first() : null;
+    ? await env.DB.prepare('SELECT t.id, t.user_id, t.ts, t.thu_hoi, t.can_tl, d.cho_tl FROM don_gc_tn t JOIN don_gc d ON d.id = t.don_id WHERE t.id = ? AND t.don_id = ?').bind(tnId, id).first() : null;
   if (!t) throw new HttpError(404, 'Không tìm thấy tin nhắn');
   if (t.user_id !== user.id) throw new HttpError(403, 'Chỉ thu hồi được tin của chính mình');
   if (t.thu_hoi) throw new HttpError(409, 'Tin này đã thu hồi rồi.', 'tt');
   if (Date.now() - t.ts > GC_TN_THU_HOI_MS) throw new HttpError(409, 'Quá 2 phút, không thu hồi được nữa. Nhắn thêm một tin để đính chính.', 'tt');
   await env.DB.batch([
     env.DB.prepare('UPDATE don_gc_tn SET thu_hoi = 1 WHERE id = ?').bind(tnId),
-    env.DB.prepare('UPDATE don_gc SET cho_tl = NULL WHERE id = ? AND cho_tl = ?').bind(id, tnId),
+    /* Tính lại "chờ trả lời" sau khi thu hồi: là câu hỏi cần trả lời MỚI NHẤT (chưa thu hồi) mà sau nó chưa có tin nào (chưa thu hồi)
+       của người trong nhóm làm. Trước đây chỉ xoá: thu hồi câu trả lời thì câu hỏi trông như đã trả lời, thu hồi câu hỏi thứ hai thì
+       mất luôn câu hỏi thứ nhất còn chờ. */
+    env.DB.prepare(`UPDATE don_gc SET cho_tl = (SELECT t.id FROM don_gc_tn t WHERE t.don_id = ?1 AND t.can_tl = 1 AND t.thu_hoi = 0
+                      AND NOT EXISTS (SELECT 1 FROM don_gc_tn m JOIN don_gc_nguoi n ON n.don_id = m.don_id AND n.user_id = m.user_id
+                                      WHERE m.don_id = ?1 AND m.thu_hoi = 0 AND m.id > t.id)
+                      ORDER BY t.id DESC LIMIT 1) WHERE id = ?1`).bind(id),
     bumpTn(env),
   ]);
   return json({ ok: true });
@@ -415,7 +440,8 @@ export async function gcViec(req, env, user, id, viec) {
   } else if (viec === 'tiendo') {
     if (d.tt === 'moi') throw sai('Hãy nhận đơn trước khi cập nhật tiến độ.');
     if (dong) throw sai(dong);
-    const pct = Number(b.pct);
+    // thiếu / trống / true / [] không phải "0%": Number() biến chúng thành 0 và đơn đang 60% tụt về 0
+    const pct = (typeof b.pct === 'number' || (typeof b.pct === 'string' && /^\s*\d+\s*$/.test(b.pct))) ? Number(b.pct) : NaN;
     note = chu(b.note, 200) || null;
     // đơn cũ còn mức 25% / 75% (trước khi đổi thang): vẫn ghi chú thêm được mà không phải đổi mức
     if (!GC_PCT.includes(pct) && !(pct === d.pct && note)) throw bad('Tiến độ không hợp lệ');

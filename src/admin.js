@@ -308,6 +308,8 @@ export async function khuUsers(req, env, admin, id) {
   return json({ ok: true });
 }
 
+// ô số đếm khác 0 đang chờ duyệt trong kỳ chưa chốt (ô chờ duyệt <=> duyet_ts IS NULL OR duyet_ts <> ts, xem schema.sql)
+const DEM_CHO = "SELECT COUNT(*) n FROM counts WHERE v <> 0 AND (duyet_ts IS NULL OR duyet_ts <> ts) AND day > (SELECT COALESCE(MAX(day), '') FROM day_close)";
 export async function khuUpdate(req, env, admin, id) {
   const b = await readJson(req);
   const k = await env.DB.prepare('SELECT * FROM khu WHERE id = ?').bind(id).first();
@@ -327,6 +329,9 @@ export async function khuUpdate(req, env, admin, id) {
     // phiếu kho còn chờ duyệt vào/ra khu này: khu ẩn rồi thì không duyệt được phiếu đó nữa (duyetReceipt), thống kê treo mãi
     const cho = await env.DB.prepare('SELECT COUNT(*) n FROM receipts WHERE khu_id = ? AND voided = 0 AND duyet_day IS NULL').bind(id).first();
     if (cho && cho.n > 0) throw bad(`${k.name} còn ${cho.n} dòng phiếu kho chờ duyệt. Duyệt hoặc huỷ các phiếu đó trước khi ẩn`);
+    // số báo CHỜ DUYỆT khác 0: tonCells chỉ thấy số đã duyệt — ẩn lúc này thì lần báo đó treo (duyệt sau vẫn vào tồn của khu đã ẩn)
+    const bao = await env.DB.prepare(DEM_CHO + ' AND khu_id = ?').bind(id).first();
+    if (bao && bao.n > 0) throw bad(`${k.name} còn ${bao.n} ô số báo chờ duyệt. Duyệt (số 0 nếu đã dọn hết) hoặc huỷ báo cáo đó trước khi ẩn`);
   }
   await env.DB.batch([
     env.DB.prepare('UPDATE khu SET name = ?, active = ? WHERE id = ?').bind(name, active, id),
@@ -363,6 +368,9 @@ export async function phiUpdate(req, env, admin, id) {
     if (st && st.n > 0) throw bad(`Phi ${id} còn ${qtyWord(st.n, p)} trong bãi. Hãy đếm về 0 hoặc dùng hết trước khi ẩn`);
     const cho = await env.DB.prepare('SELECT COUNT(*) n FROM receipts WHERE phi_id = ? AND voided = 0 AND duyet_day IS NULL').bind(id).first();
     if (cho && cho.n > 0) throw bad(`Phi ${id} còn ${cho.n} dòng phiếu kho chờ duyệt. Duyệt hoặc huỷ các phiếu đó trước khi ẩn`);
+    // như lúc ẩn khu: số báo chờ duyệt khác 0 của phi này (duyệt sau khi ẩn là tồn nằm ở phi không đếm lại được nữa)
+    const bao = await env.DB.prepare(DEM_CHO + ' AND phi_id = ?').bind(id).first();
+    if (bao && bao.n > 0) throw bad(`Phi ${id} còn ${bao.n} ô số báo chờ duyệt. Duyệt hoặc huỷ các báo cáo đó trước khi ẩn`);
     /* Sổ vay mượn chỉ ghi được phi đang hiện: ẩn một phi còn công nợ (hoặc còn lần ghi chờ duyệt) là
        khoá luôn đường ghi TRẢ khoản đó, dư nợ treo mãi cho tới khi có người nhớ ra phải hiện lại phi. */
     const no = (await env.DB.prepare(

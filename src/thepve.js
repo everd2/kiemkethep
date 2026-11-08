@@ -212,9 +212,18 @@ export async function tvGhi(req, env, user) {
   ];
   /* gửi lại cùng khoá (bấm đúp, mạng chậm): không ghi thêm. Gắn đơn: đơn phải CÒN chưa huỷ ngay trong giao dịch ghi (kiểm ở trên là đọc
      trước — người khác huỷ đơn chen giữa thì chuyến gắn vào đơn đã huỷ). */
-  const res = await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM thep_ve WHERE khoa = ?1) OR (?2 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ?2 AND tt <> 'huy'))", khoa, donId), stmts,
+  /* ?3..?5: hai người ghi CÙNG phiếu của cùng nhà cung cấp gần như cùng lúc đều qua bước hỏi "số phiếu trùng" ở trên (đọc trước): kiểm lại
+     trong giao dịch (so đúng chữ số phiếu — hai máy gõ cùng một phiếu thì thường y hệt), lần sau thành 409 trung_tv như khi ghi lần lượt. */
+  const res = await batchGuarded(env, guardStmt(env, `EXISTS (SELECT 1 FROM thep_ve WHERE khoa = ?1) OR (?2 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM thep_don WHERE id = ?2 AND tt <> 'huy'))
+      OR (?3 <> '' AND ?4 = 0 AND EXISTS (SELECT 1 FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE v.voided = 0 AND v.so_phieu = ?3 AND n.name = ?5 COLLATE NOCASE))`,
+    khoa, donId, soPhieu || '', b.trung === true ? 1 : 0, ncc), stmts,
     new HttpError(409, 'Chuyến này vừa được ghi (gửi hai lần). Xem lại sổ.', 'trung_tv')).catch(async (e) => {
-    if (e instanceof HttpError && e.code === 'trung_tv' && donId != null && !(await env.DB.prepare('SELECT 1 x FROM thep_ve WHERE khoa = ?').bind(khoa).first())) throw new HttpError(409, 'Đơn hàng vừa bị huỷ — chọn lại đơn', 'changed');
+    if (e instanceof HttpError && e.code === 'trung_tv' && !(await env.DB.prepare('SELECT 1 x FROM thep_ve WHERE khoa = ?').bind(khoa).first())) {
+      if (soPhieu && b.trung !== true && (await env.DB.prepare('SELECT 1 x FROM thep_ve v JOIN thep_ncc n ON n.id = v.ncc_id WHERE v.voided = 0 AND v.so_phieu = ? AND n.name = ? COLLATE NOCASE').bind(soPhieu, ncc).first())) {
+        throw new HttpError(409, `Phiếu số ${soPhieu} của ${ncc} vừa được người khác ghi vào sổ. Nếu đúng là chuyến khác thì xác nhận để ghi thêm.`, 'trung_tv');
+      }
+      if (donId != null) throw new HttpError(409, 'Đơn hàng vừa bị huỷ — chọn lại đơn', 'changed');
+    }
     throw e;
   });
   return json({ ok: true, id: res[res.length - 1].results[0].id });
@@ -376,7 +385,11 @@ export async function tvNhap(req, env, user) {
   // đơn được gắn phải còn chưa huỷ lúc ghi (người khác huỷ đơn giữa lúc Kiểm tra và lúc Nhập)
   const donIds = JSON.stringify([...new Set(ds.map((c) => c.don_id).filter(Boolean))]);
   try {
-    await batchGuarded(env, guardStmt(env, "EXISTS (SELECT 1 FROM json_each(?) j JOIN thep_don d ON d.id = j.value WHERE d.tt = 'huy')", donIds), [
+    /* ?2/?3: hai người nhập CÙNG bảng dán gần như cùng lúc (mỗi máy một khoá lo) đều qua bước so "phiếu đã có" (daCo, đọc trước): kiểm lại
+       trong giao dịch — có phiếu (cùng nhà cung cấp, cùng chữ số phiếu) vừa vào sổ thì không ghi gì, bấm Kiểm tra lại sẽ thấy dòng trùng. */
+    await batchGuarded(env, guardStmt(env, `EXISTS (SELECT 1 FROM json_each(?1) j JOIN thep_don d ON d.id = j.value WHERE d.tt = 'huy')
+        OR (?2 = 0 AND EXISTS (SELECT 1 FROM json_each(?3) j JOIN thep_ve v ON v.voided = 0 AND v.so_phieu = json_extract(j.value, '$.so_phieu')
+                               JOIN thep_ncc n ON n.id = v.ncc_id AND n.name = json_extract(j.value, '$.ncc') COLLATE NOCASE))`, donIds, b.bo_trung === true ? 1 : 0, ve), [
       env.DB.prepare(`INSERT OR IGNORE INTO thep_ncc (name, active, ts) SELECT value, 1, ? FROM json_each(?)`).bind(ts, JSON.stringify(ncc)),
       env.DB.prepare(`INSERT INTO thep_ve (ngay, ncc_id, don_id, so_don, so_phieu, bien_so, ghi_chu, nguon, user_id, ts, khoa)
                       SELECT ${J('ngay')}, (SELECT id FROM thep_ncc WHERE name = ${J('ncc')} COLLATE NOCASE), ${J('don_id')}, ${J('so_don')}, ${J('so_phieu')}, ${J('bien_so')}, ${J('ghi_chu')},
@@ -385,7 +398,7 @@ export async function tvNhap(req, env, user) {
                       SELECT (SELECT id FROM thep_ve WHERE khoa = ${J('khoa')}), ${J('phi')}, ${J('bo')}, ${J('cay')}, ${J('kg')}, ${J('kg_tinh')} FROM json_each(?) j`).bind(dong),
       auditStmt(env, user, 'tv_nhap', tomTat),
       bump(env),
-    ], new HttpError(409, 'Có đơn hàng vừa bị huỷ — bấm Kiểm tra lại rồi nhập', 'changed'));
+    ], new HttpError(409, 'Có đơn hàng vừa bị huỷ, hoặc có phiếu vừa được người khác nhập vào sổ — bấm Kiểm tra lại rồi nhập', 'changed'));
   } catch (e) {
     // cùng khoá gửi song song: lần kia đã ghi (khoa UNIQUE), trả lại lần đó thay vì báo lỗi máy chủ
     if (!(e instanceof HttpError) && /UNIQUE/i.test(String(e && e.message))) { const da = await daNhap(); if (da) return da; }
@@ -408,11 +421,12 @@ export async function tvNhapHuy(req, env, user, lo) {
   if (!r || !r.n) throw new HttpError(404, 'Lần nhập này không còn chuyến nào chưa huỷ');
   if (Date.now() - r.ts > NHAP_HUY_MS) throw bad('Lần nhập đã quá 7 ngày, không huỷ cả lần được nữa — huỷ từng chuyến');
   const ts = Date.now();
-  const res = await env.DB.batch([
+  // hai lần bấm huỷ cùng lúc: lần sau không còn chuyến nào chưa huỷ — không ghi thêm dòng nhật ký "huỷ N chuyến" thứ hai
+  const res = await batchGuarded(env, guardStmt(env, "NOT EXISTS (SELECT 1 FROM thep_ve WHERE khoa LIKE ? AND nguon = 'excel' AND voided = 0)", lo + '-%'), [
     env.DB.prepare("UPDATE thep_ve SET voided = 1, voided_ts = ?, voided_by = ?, voided_note = ? WHERE khoa LIKE ? AND nguon = 'excel' AND voided = 0").bind(ts, user.id, ly, lo + '-%'),
     auditStmt(env, user, 'tv_nhap_huy', { lo, chuyen: r.n, ly_do: ly }),
     bump(env),
-  ]);
+  ], new HttpError(409, 'Lần nhập này vừa được huỷ.', 'changed'));
   return json({ ok: true, chuyen: res[0].meta.changes });
 }
 
@@ -492,10 +506,13 @@ export async function tvCsv(env, url, user) {
      WHERE v.voided = 0 AND v.ngay >= ? AND v.ngay <= ? ORDER BY v.ngay, v.id, d.id`).bind(tu, den).all();
   const t = (s) => { const x = String(s == null ? '' : s); return /^[=+\-@\t\r]/.test(x) ? "'" + x : x; };
   const o = (s) => '"' + t(s).replace(/"/g, '""') + '"';
+  /* số phiếu / số đơn / biển số chỉ gồm số và dấu ("01/10", "0123", "1e5"): Excel tự đổi thành ngày 1/10, số 123... — viết dạng ="..."
+     để giữ đúng chữ, như CSV sổ vay mượn / sắt vụn (txt ở loans.js). Chữ chỉ có chữ số và dấu nên không có dấu nháy để thoát. */
+  const ma = (s) => { const v = String(s == null ? '' : s); return v && (/^[\d\s.,/:-]+$/.test(v) || /^\d+[eE]\d+$/.test(v)) ? '"=""' + v + '"""' : o(s); };
   const lines = [csvRow(['Ngày về', 'Nhà cung cấp', 'Số đơn', 'Số phiếu', 'Biển số', 'Phi', 'Số bó', 'Số cây', 'Kg theo phiếu', 'Kg tự tính', 'Chênh lệch kg', 'Tấn (thống kê)', 'Ghi chú'])];
   for (const r of results) {
     const kg = r.kg ?? r.kg_tinh ?? 0;
-    lines.push(csvRow([r.ngay.split('-').reverse().join('/'), o(r.ncc), o(r.so_don), o(r.so_phieu), o(r.bien_so), r.phi_id, r.bo ?? '', r.cay ?? '', r.kg ?? '', r.kg_tinh ?? '',
+    lines.push(csvRow([r.ngay.split('-').reverse().join('/'), o(r.ncc), ma(r.so_don), ma(r.so_phieu), ma(r.bien_so), r.phi_id, r.bo ?? '', r.cay ?? '', r.kg ?? '', r.kg_tinh ?? '',
       r.kg != null && r.kg_tinh != null ? r.kg - r.kg_tinh : '', csvDec(kg / 1000, 3), o(r.ghi_chu)]));
   }
   return new Response(CSV_HEAD + lines.join('\r\n'), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="thep-ve-${tu}-den-${den}.csv"`, 'Cache-Control': 'no-store' } });

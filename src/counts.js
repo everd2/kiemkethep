@@ -172,7 +172,8 @@ export async function putCounts(req, env, user) {
      lệch giờ tới quá SLOT_LATE_MS thì màn Duyệt nói ra. */
   const tuoi = b.tuoi == null ? NaN : Number(b.tuoi); // null không phải "tuổi 0"
   const atIn = Number.isFinite(tuoi) && tuoi >= 0 ? ts - tuoi : Number(b.at);
-  const at = Number.isFinite(atIn) && atIn <= ts && vnDay(atIn) === day ? Math.round(atIn) : ts;
+  // atIn > ts - 2 ngày TRƯỚC khi gọi vnDay: số hữu hạn mà ngoài khoảng của Date (tuoi 1e308) thì vnDay nổ RangeError -> 500
+  const at = Number.isFinite(atIn) && atIn <= ts && atIn > ts - 2 * 864e5 && vnDay(atIn) === day ? Math.round(atIn) : ts;
   /* Mốc để so XUNG ĐỘT: chỉ lần báo của người khác TRONG CÙNG KHUNG GIỜ mới đem so. Bắt đếm 2 lần/ngày
      thì số buổi chiều khác buổi sáng là chuyện thường (thép dùng, thép về giữa hai buổi) — coi là
      "hai người báo khác số" thì ngày nào khu cũng bị bắt chọn số, và nút chọn lại mời admin lấy số
@@ -216,7 +217,10 @@ export async function putCounts(req, env, user) {
   });
   const data = JSON.stringify(rows);
 
-  const res = await batchGuarded(env, guardStmt(env, IS_CLOSED, day), [
+  /* Gửi lại cùng khoá (máy hết giờ chờ, bấm lại) mà hai lần tới gần như cùng lúc: cả hai qua bước hỏi daR ở trên. Kiểm lại ngay trong lô
+     ghi — lần sau không được ghi thêm (thêm dòng nhật ký, và đẩy khu vừa duyệt về "chờ duyệt"); trả da_gui như lần gửi lại thường. */
+  const daGui = khoa ? ' OR EXISTS (SELECT 1 FROM khu_report_log WHERE khoa = ? AND user_id = ? AND khu_id = ?)' : '';
+  const res = await batchGuarded(env, guardStmt(env, IS_CLOSED + daGui, day, ...(khoa ? [khoa, user.id, khuId] : [])), [
     // chạy TRƯỚC khi ghi counts: cờ này nói "lần gửi NÀY lệch với người khác", để trả lời người gửi
     env.DB.prepare(`SELECT ${conflictCond(1, 2, 3, 4, 5)} conflict`).bind(day, khuId, user.id, data, tXd),
     env.DB.prepare(
@@ -249,7 +253,13 @@ export async function putCounts(req, env, user) {
     ).bind(khuId, data, day),
     auditStmt(env, user, 'count', { khu: khuId, n: clean.length, changes: changes.slice(0, 30), conflict: !!conflict }),
     bump(env),
-  ], closedErr());
+  ], closedErr()).catch(async (e) => {
+    // guard chặn vì lần gửi trùng khoá vừa ghi xong (không phải ngày đã chốt): trả lời như lần gửi lại thường
+    if (khoa && e instanceof HttpError && e.code === 'closed'
+      && (await env.DB.prepare('SELECT 1 x FROM khu_report_log WHERE khoa = ? AND user_id = ? AND khu_id = ? LIMIT 1').bind(khoa, user.id, khuId).first())) return null;
+    throw e;
+  });
+  if (!res) return json({ ok: true, conflict: false, da_gui: true });
   // cờ do database tính, đúng cả khi hai người gửi cùng lúc (cờ tính ở JS chỉ dùng cho nhật ký)
   const probe = res[0].results[0];
   return json({ ok: true, conflict: !!(probe && probe.conflict) });
@@ -297,7 +307,8 @@ export async function conflictResolve(req, env, user) {
   const k = (await computeReview(env, day)).khus.find((x) => x.khu === khu);
   if (b.mark !== undefined && (!k || k.mark !== b.mark)) throw new HttpError(409, 'Khu vừa báo lại số khác. Màn Duyệt đã tải lại, hãy so sánh lại rồi chọn.', 'changed');
   // chọn số là sửa báo cáo đang chờ: cùng luật cấp bậc với huỷ báo cáo, CVKTHT không đụng được số do cấp trên báo
-  if (k && k.waiting && !duyetCap(user.role, k.capBao)) {
+  // kiểm cả khi khu đã duyệt (không còn chờ): chọn số lúc đó vẫn ghi đè số của cấp trên thành một lần báo mới
+  if (k && k.capBao != null && !duyetCap(user.role, k.capBao)) {
     throw new HttpError(403, `Báo cáo ${k.name} do CVKTHT hoặc cấp trên báo: cần ${CAP_TREN} chọn số.`, 'cap');
   }
   const [closedR, curR, repR] = await env.DB.batch([

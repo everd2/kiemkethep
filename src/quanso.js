@@ -228,6 +228,9 @@ export async function qsLich(req, env, user) {
   const to = toR.results[0], cu = cuR.results[0];
   if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ đặt ca cho tổ của một Tiểu đội trưởng đang dùng app');
   const tong = b.tong == null || b.tong === '' ? (cu && Number(cu.v)) || undefined : intIn(b.tong, 1, QS_TONG_MAX, 'Tổng quân số của tổ');
+  /* Chép số của ca vừa hết TRƯỚC khi đổi lịch, không chờ lượt chép mỗi giờ: tổ ca đêm sáng ra chuyển sang ca ngày (lúc hay đổi
+     nhất) mà chưa chép thì lượt chép đọc lịch MỚI (không làm đêm) và bỏ hẳn đêm vừa làm khỏi báo cáo ca / sản lượng. */
+  await qsChotCa(env, Date.now(), true);
   const v = { ca, den, tong, ts: Date.now(), by: user.id };
   await env.DB.batch([
     env.DB.prepare(MAU_CO),
@@ -245,6 +248,8 @@ export async function qsLich(req, env, user) {
    Một mục có `ca` là đặt ca hộ tổ (giữ nguyên tổng tổ tự khai), có `tong` là đặt số thiết lập. ts là lần sửa mà người
    này đang nhìn thấy (0 nếu tổ chưa có số thiết lập): người khác đã sửa sau đó thì TỪ CHỐI CẢ LẦN LƯU, nói rõ ai sửa, số
    mới là gì. Cả lần lưu là một batch (một giao dịch): hoặc ghi hết, hoặc không ghi gì. D1: một lượt đọc, một lượt ghi. */
+// dòng số đêm hôm trước đã đổi so với lần máy nhìn thấy (?4 = chotTs: dòng chính lần lưu này vừa chép, máy thấy "chưa có" = 0, không tính)
+const DEM_DOI = "q.ts <> json_extract(j.value, '$.ts') AND NOT (json_extract(j.value, '$.ts') = 0 AND q.ts = ?4)";
 export async function qsThietLap(req, env, user) {
   const b = await readJson(req);
   const ds = Array.isArray(b.ds) ? b.ds : [b], dt = b.dem_truoc;
@@ -253,7 +258,10 @@ export async function qsThietLap(req, env, user) {
   for (const x of ds) if (!x || !Number.isInteger(Number(x.user))) throw bad('Cần chọn tổ');
   /* Chép số của ca vừa hết TRƯỚC khi đổi bảng thiết lập, không chờ lượt chép mỗi giờ: sửa ô Đêm cho đêm nay không được đổi số đêm qua. Tổ chưa
      có số thì chưa chép (ghi "thiếu số" ở đây sẽ chặn số CVKTHT vừa đặt trong khoảng đệm, xem soTlCa). */
-  if (ds.some((x) => x.tong != null && x.tong !== '')) await qsChotCa(env, Date.now(), true);
+  /* Đặt ca hộ (x.ca) cũng phải chép trước, cùng lý do như qsLich. chotTs: ts của các dòng chính lần chép này ghi — máy gửi ts 0
+     (lúc mở màn chưa có dòng đêm qua) thì dòng do CHÍNH lần lưu này chép không phải "người khác vừa sửa" (xem demChan). */
+  let chotTs = -1;
+  if (ds.some((x) => (x.tong != null && x.tong !== '') || x.ca != null)) { chotTs = Date.now(); await qsChotCa(env, chotTs, true); }
   const [toR, mauR] = await env.DB.batch([
     env.DB.prepare("SELECT id, name FROM users WHERE role = 'tieudoi' AND deleted = 0"),
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
@@ -333,7 +341,7 @@ export async function qsThietLap(req, env, user) {
        sau âm thầm đè số người kia vừa ghi. Bản app cũ không gửi ts thì không so. */
     const tsMay = JSON.stringify(dt.ds.filter((x) => x && Number.isFinite(Number(x.ts)) && x.ts !== null && x.ts !== '').map((x) => ({ u: Number(x.user), ts: Number(x.ts) })));
     demChan = { ngay: c.ngay, uids, tsMay, stmt: guardStmt(env, `EXISTS (SELECT 1 FROM quan_so WHERE ngay = ?1 AND ca = 2 AND user_id IN (SELECT value FROM json_each(?2)))
-      OR EXISTS (SELECT 1 FROM json_each(?3) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u') WHERE q.ts <> json_extract(j.value, '$.ts'))`, c.ngay, JSON.stringify(uids), tsMay) };
+      OR EXISTS (SELECT 1 FROM json_each(?3) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u') WHERE ${DEM_DOI})`, c.ngay, JSON.stringify(uids), tsMay, chotTs) };
   }
   if (!ghi.length && !dem.length) throw bad('Không có gì để lưu');
   const sau = [env.DB.prepare(MAU_CO), ...ghi, ...dem, bump(env)];
@@ -348,7 +356,7 @@ export async function qsThietLap(req, env, user) {
         const t = bao.length && to.get(bao[0].user_id);
         if (t) throw new HttpError(409, `Tổ ${t.name} vừa tự báo ca đêm ${fmtDay(demChan.ngay)}: sửa số tổ báo, không đặt số thiết lập cho ca đó`, 'changed');
         const doi = (await env.DB.prepare(`SELECT q.user_id FROM json_each(?2) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u')
-                                           WHERE q.ts <> json_extract(j.value, '$.ts') LIMIT 1`).bind(demChan.ngay, demChan.tsMay).first());
+                                           WHERE ${DEM_DOI} LIMIT 1`).bind(demChan.ngay, demChan.tsMay, null, chotTs).first());
         const t2 = doi && to.get(doi.user_id);
         if (t2) throw new HttpError(409, `Tổ ${t2.name}: số đêm hôm trước vừa được người khác sửa. Màn đã tải lại, xem rồi lưu lại.`, 'changed');
       }

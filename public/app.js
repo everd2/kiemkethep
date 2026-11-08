@@ -225,6 +225,9 @@ function sauGhi() {
 /* Quên hết dữ liệu của người đang dùng: đăng xuất và hết phiên đều qua đây. Máy dùng chung thì người sau không được thấy
    bảng gia công, số quân số, thẻ PIN vừa cấp... của người trước. */
 function xoaPhien() {
+  /* lần tải số liệu chung đang bay (vòng làm mới ngầm bắt đầu trước lúc đăng xuất) về sau thì bỏ — không được đặt lại S.me của người
+     vừa đăng xuất và ghi lại kt:boot, kẻo người sau mở app lúc mất mạng vào thẳng bằng phiên người trước (xem loadBoot) */
+  bootSo++; ghiSo++;
   forgetBoot();
   Object.keys(NHO).forEach((k) => delete NHO[k]);
   S.me = null; S.boot = null; S.stale = null; S.screen = 'login'; S.err = ''; S.form = {}; S.qsH = null;
@@ -306,7 +309,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v84';
+const BAN = 'kho-thep-v85';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -404,9 +407,10 @@ let bootSo = 0;
 async function loadBoot() {
   /* Hai lần tải chồng nhau (vòng làm mới ngầm bắt đầu trước một lần lưu, về SAU lần lưu): lần về sau mà là lần gửi trước thì mang
      số cũ, không được đè lên số mới vừa nạp. Đánh số từng lần, chỉ lần mới nhất được ghi. */
-  const so = ++bootSo;
+  const so = ++bootSo, uid = S.me && S.me.id;
   const b = await api('GET', '/bootstrap');
-  if (so !== bootSo) return;
+  // đã đăng xuất / đổi người trong lúc chờ: bản này là của người trước, bỏ (xoaPhien cũng đổi bootSo)
+  if (so !== bootSo || (uid && (!S.me || S.me.id !== uid))) return;
   try { localStorage.setItem('kt:boot', JSON.stringify({ at: Date.now(), b })); } catch (e) { /* đầy bộ nhớ */ }
   indexBoot(b);
   S.boot = b; S.me = b.user; S.stale = null;
@@ -1715,9 +1719,10 @@ function svSec(R) {
 // Nạp lại màn Duyệt, nuốt lỗi mạng để không che mất lỗi gốc khi gọi trong finally.
 /* Nạp lại màn Duyệt. Khu nào đổi dấu (báo lại, phiếu mới) thì bỏ luôn bảng so sánh và danh sách lần
    báo đang mở của khu đó: chúng tải từ trước, chọn số trên đó là chọn trên số cũ. */
-async function reloadReview() {
+async function reloadReview(moi) {
   let nv;
   try { nv = await api('GET', '/review'); } catch (e) { return; /* giữ lỗi gốc */ }
+  if (moi && !moi()) return; // vòng làm mới ngầm: có lần lưu chen vào trong lúc chờ thì bản này đã cũ (xem refreshInner)
   const cu = Object.fromEntries(((S.review && S.review.khus) || []).map((k) => [k.khu, k.mark]));
   (nv.khus || []).forEach((k) => {
     if (cu[k.khu] === undefined || cu[k.khu] === k.mark) return;
@@ -2997,6 +3002,13 @@ async function gcTnTai() {
     if (S.screen === 'gcdon' && S.gcId === id) { S.gcDetail = D; if (D.tn.length > n) S.gcXuong = true; gcDocXong(); }
   }
   if (S.screen === 'giacong') S.gc = await api('GET', '/giacong');
+  /* Thẻ "Chờ bạn trả lời" ở Tổng quan đọc cho_tl trong số liệu chung (S.boot.gc), mà tin nhắn không đổi rev (không bắt mọi máy tải lại
+     cả số liệu chung): đang đứng ở Tổng quan và có đơn còn mở thì lấy bảng đơn (một lượt gọi) và thay cho_tl vào, thẻ hiện / tắt ngay. */
+  else if (S.screen === 'home' && (S.boot.gc || []).some(gcMo)) {
+    const g = await api('GET', '/giacong'), by = new Map(g.items.map((x) => [x.id, x.cho_tl]));
+    S.boot.gc.forEach((d) => { if (by.has(d.id)) d.cho_tl = by.get(d.id); });
+    S.gc = g;
+  }
 }
 const GC_KHOI_PHUC_MS = 7 * 864e5; // chép từ src/giacong.js
 // một dòng nói đủ về lần huỷ: ai huỷ, lúc nào, người giữ đơn đã biết chưa
@@ -3423,7 +3435,7 @@ const gcChipGoiY = (loai, v, on, a, nhan) => `<span class="row" style="flex:none
    mà danh mục đi kèm bảng đơn — vGcForm tách khi đã có. */
 function gcSoan(d, sua) {
   const b = S.boot;
-  S.gcForm = { id: sua ? d.id : null, users: d ? gcNguoi(d) : gcNho('kt:gcuser').split(',').map(Number).filter(Boolean),
+  S.gcForm = { id: sua ? d.id : null, ver: sua ? d.sua_ver : null, users: d ? gcNguoi(d) : gcNho('kt:gcuser').split(',').map(Number).filter(Boolean),
     usersCu: sua ? gcNguoi(d) : [], nguoiCu: sua && Array.isArray(d.nguoi) ? d.nguoi : [],
     buoi: d ? d.buoi || '' : '', khu: d ? d.phan_khu || '' : gcNho('kt:gckhu'), hm: d ? d.hang_muc || '' : gcNho('kt:gchm'),
     thieuCaoDo: !!(sua && !d.tang && !d.cote), ckDay: d ? d.cau_kien : null, khuCu: sua ? d.phan_khu || '' : '', hmCu: sua ? d.hang_muc || '' : '',
@@ -3644,6 +3656,9 @@ async function qsFlush() {
   let doi = false, loi = 0;
   try {
     for (const j of toi) {
+      /* đã đăng xuất / người khác đăng nhập trên máy này trong lúc lần gửi trước còn chờ: dừng, giữ hàng chờ cho đúng người đó.
+         Thân lần báo không mang tên tổ — gửi dưới phiên người sau là server ghi số của An vào tổ của Bình. */
+      if (!S.me || j.uid !== S.me.id) break;
       // lần báo mới hơn (qhgui) đã thay / gỡ lần này trong lúc vòng đang chạy: gửi nữa là số cũ đè số mới
       if (!qsHangDoi().some((x) => x.id === j.id)) continue;
       try { await api('PUT', '/quanso', j.body); doi = true; qsGhiHang(qsHangDoi().filter((x) => x.id !== j.id)); }
@@ -3792,7 +3807,7 @@ function qsTheHome() {
   </div>`;
 }
 // số liệu của màn Quân số: bảng thiết lập (CVKTHT trở lên) hoặc các ca tổ mình đã báo (Tiểu đội trưởng)
-async function qsTai() { S.qs = qsDemXem(await api('GET', '/quanso')); }
+async function qsTai(moi) { const Q = await api('GET', '/quanso'); if (moi && !moi()) return; S.qs = qsDemXem(Q); }
 /* MỞ BẢNG THIẾT LẬP TỪ BÁO CÁO CA NGÀY (nút bánh răng ở mục 3): cột Đêm và Nghỉ đêm là CA ĐÊM HÔM TRƯỚC — đúng ca đêm báo cáo ca ngày đó ghi
    kèm và báo cáo sản lượng cộng. Trước đây cột Đêm luôn là đêm TỐI NAY: CVKTHT mở từ báo cáo ca ngày lúc 7h, gõ số và lý do nghỉ của đêm
    vừa qua, app lại ghi thành số đêm nay (lưu bảng còn chép chốt số đêm qua trước), nên báo cáo ca ngày / sản lượng không có lý do nghỉ
@@ -4812,11 +4827,30 @@ const tvCotTen = { ngay: ['ngay', 'ngay ve', 'ngay nhap', 'date'], ncc: ['ncc', 
   bo: ['bo', 'so bo', 'so luong bo', 'sl bo'], cay: ['cay', 'so cay', 'so luong cay', 'sl cay'], kg: ['kg', 'so luong', 'so luong kg', 'sl kg', 'kg thuc te', 'khoi luong thuc te', 'khoi luong', 'trong luong', 'kg theo phieu', 'khoi luong kg', 'trong luong kg', 'kl'], tan: ['tan', 'khoi luong tan', 'trong luong tan'], ghi_chu: ['ghi chu', 'note'] };
 /* chon: người dùng đã chọn kiểu ngày cho cột KHÔNG tự đoán được ('my' tháng/ngày, 'vn' ngày/tháng; mặc định ngày/tháng).
    Trả thêm dongGoc[i] = số dòng THẬT trong bảng dán (dòng tiêu đề là 1) của rows[i]: dòng trống bị bỏ không làm lệch số dòng báo lỗi. */
+/* Tách bảng dán từ Excel thành các hàng ô, HIỂU DẤU NHÁY như Excel chép ra: ô có xuống dòng (Alt+Enter), dấu tab hay dấu nháy thì Excel
+   bọc trong "..." và nhân đôi dấu nháy bên trong. Tách thẳng theo xuống dòng thì một ô ghi chú hai dòng thành một hàng giả và cả lần nhập
+   bị từ chối ở hàng không có trong bảng. Mỗi hàng kèm số dòng THẬT (dòng đầu của hàng) trong bảng dán. Có tab thì tách theo tab, không thì ';'. */
+function tvTachBang(text) {
+  const s = String(text || '').replace(/\r\n?/g, '\n'), sep = s.includes('\t') ? '\t' : ';', out = [];
+  let row = [], cell = '', q = false, moi = true, line = 1, dau = 1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === '"') { if (s[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else { if (c === '\n') line++; cell += c; }
+    } else if (c === '"' && moi) { q = true; moi = false; }
+    else if (c === sep) { row.push(cell); cell = ''; moi = true; }
+    else if (c === '\n') { row.push(cell); out.push({ c: row, so: dau }); row = []; cell = ''; moi = true; line++; dau = line; }
+    else { cell += c; moi = false; }
+  }
+  if (cell !== '' || row.length) { row.push(cell); out.push({ c: row, so: dau }); }
+  return out;
+}
 function tvDocDan(text, chon) {
-  const tat = String(text || '').replace(/\r/g, '').split('\n'), soGoc = [];
-  const dong = tat.filter((l, i) => l.trim() && soGoc.push(i + 1));
+  const hang = tvTachBang(text).filter((h) => h.c.some((x) => x.trim()));
+  const soGoc = hang.map((h) => h.so), dong = hang.map((h) => h.c);
   if (dong.length < 2) return { rows: [], cot: {}, loi: 'Dán cả dòng tiêu đề và ít nhất một dòng số liệu.' };
-  const tach = (l) => (l.includes('\t') ? l.split('\t') : l.split(';'));
+  const tach = (l) => l;
   const tieuDe = tach(dong[0]).map((h) => gcKhongDau(h).replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim());
   const cot = {};
   tieuDe.forEach((h, i) => { for (const [k, ten] of Object.entries(tvCotTen)) if (cot[k] === undefined && ten.includes(h)) cot[k] = i; });
@@ -5857,8 +5891,11 @@ window.addEventListener('popstate', (e) => {
   go(sc, true, sc === 'dem' ? st.k : undefined);
 });
 // Một thao tác ghi tại một thời điểm: bấm đúp hay mạng chậm cũng không gửi trùng (ví dụ 2 phiếu nhập)
+// đếm số lần lưu: vòng làm mới ngầm so số này để biết số nó đang chờ có còn mới không (xem refreshInner)
+let ghiSo = 0;
 async function act(fn, okMsg, busyMsg) {
   if (S.busy) return;
+  ghiSo++;
   S.busy = true; S.busyMsg = busyMsg || 'Đang lưu...'; render();
   try { await fn(); if (okMsg) say(okMsg); } catch (e) { say(e.message, true); }
   finally { S.busy = false; S.busyMsg = ''; }
@@ -7067,9 +7104,17 @@ const ACTIONS = {
     act(async () => {
       /* trung === true, KHÔNG phải "trung có giá trị": bấm nút thì hàm này được gọi với (dataset, sự kiện bấm), nên tham số
          thứ hai luôn có giá trị — bản đầu vì thế lần nào cũng gửi trung: true và server không bao giờ hỏi đơn trùng. */
-      try { if (F.id) await api('PATCH', '/giacong/' + F.id, body); else await api('POST', '/giacong', trung === true ? { ...body, trung: true } : body); }
+      try { if (F.id) await api('PATCH', '/giacong/' + F.id, F.ver ? { ...body, ver: F.ver } : body); else await api('POST', '/giacong', trung === true ? { ...body, trung: true } : body); }
       // người nhận đang giữ một đơn giống hệt còn mở: dừng lại hỏi (hộp hỏi mở sau khi lớp "Đang lưu" tắt)
-      catch (e) { if (e.code === 'trung') { hoiTrung = e.message; return; } throw e; }
+      catch (e) {
+        if (e.code === 'trung') { hoiTrung = e.message; return; }
+        /* người khác vừa sửa đơn (dấu sua_ver đổi): tải bản mới để xem, giữ form đang gõ; nhận dấu mới để lần bấm lưu sau (đã biết có
+           người sửa) đi qua được */
+        if (e.code === 'changed' && F.id) {
+          try { const D = await api('GET', '/giacong/' + F.id); if (S.gcForm === F) { F.ver = D.don.sua_ver; S.gcDetail = D; } } catch (er) { /* mạng: lần lưu sau sẽ lại báo */ }
+        }
+        throw e;
+      }
       /* Server đã ghi. Từ đây không được để lỗi mạng lúc tải lại biến thành "giao hỏng": người giao sẽ bấm
          lại và sinh đơn trùng. Rời màn soạn (hoặc xoá ô) TRƯỚC, tải lại SAU và bỏ qua lỗi. */
       xong = true;
@@ -8022,15 +8067,22 @@ async function refreshInner() {
     const reviewBusy = S.screen === 'duyet' && (S.ask || S.busy);
     const manLamMoi = ['home', 'ton', 'khu', 'nhap', 'dem', 'stats', 'vaymuon', 'vaychitiet', 'satvun', 'duyet', 'giacong', 'gcdon', 'quanso', 'qstk'];
     if (changed && !busy && !reviewBusy && manLamMoi.includes(S.screen)) {
+      /* Bản tải ngầm bắt đầu TRƯỚC một lần lưu (bấm Nhận đơn, Duyệt khu... trong lúc vòng này đang chờ mạng) mà về SAU lần lưu thì mang
+         số cũ: không được đè lên số mới lần lưu vừa nạp (đơn trở lại "mới giao", khu đã duyệt lại hiện chờ). ghiSo đổi mỗi lần lưu
+         (act) và lúc đăng xuất; đổi rồi thì bỏ phần còn lại của vòng này, vòng sau hỏi lại. loadBoot tự có bootSo. */
+      const g0 = ghiSo, man = S.screen, moi = () => ghiSo === g0 && !S.busy && S.screen === man;
+      const lay = async (f, dat) => { const x = await f(); if (moi()) dat(x); };
       await loadBoot();
-      if (S.screen === 'quanso') await qsTai();
-      if (S.screen === 'qstk') S.tk = await tkTai();
-      if (S.screen === 'giacong') S.gc = await api('GET', '/giacong');
-      if (S.screen === 'gcdon' && S.gcId) { S.gcDetail = await api('GET', '/giacong/' + S.gcId); gcDocXong(); }
-      if (S.screen === 'vaymuon') S.loans = await api('GET', '/loans');
-      if (S.screen === 'satvun') S.svs = await svTai();
-      if (S.screen === 'vaychitiet') S.loanDetail = await api('GET', '/loans?doitac=' + S.loanDt);
-      if (S.screen === 'duyet') await reloadReview();
+      if (!moi()) return;
+      if (S.screen === 'quanso') await qsTai(moi);
+      if (S.screen === 'qstk') await lay(tkTai, (x) => { S.tk = x; });
+      if (S.screen === 'giacong') await lay(() => api('GET', '/giacong'), (x) => { S.gc = x; });
+      if (S.screen === 'gcdon' && S.gcId) { const id = S.gcId; await lay(() => api('GET', '/giacong/' + id), (x) => { if (S.gcId === id) { S.gcDetail = x; gcDocXong(); } }); }
+      if (S.screen === 'vaymuon') await lay(() => api('GET', '/loans'), (x) => { S.loans = x; });
+      if (S.screen === 'satvun') await lay(svTai, (x) => { S.svs = x; });
+      if (S.screen === 'vaychitiet') { const dt = S.loanDt; await lay(() => api('GET', '/loans?doitac=' + dt), (x) => { if (S.loanDt === dt) S.loanDetail = x; }); }
+      if (S.screen === 'duyet') await reloadReview(moi);
+      if (!moi()) return;
       render();
     }
     /* Đang xem số liệu cũ (mất mạng lúc mở app) ở một màn không nằm trong danh sách làm mới: có mạng lại thì kéo số mới về,

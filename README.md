@@ -389,6 +389,15 @@ Hai việc khác nhau, nằm ở **Thêm → Cài đặt → Dữ liệu thép**
 - Cả hai **không chạm được nhật ký và lịch sử đếm** (database chặn mọi lệnh xoá hai bảng đó). Nhờ vậy dòng nhật ký của chính lần đặt lại ghi kèm **tổng số thép trước khi xoá theo từng phi** — đó là chỗ đọc lại được số cũ, kể cả sau khi đã xoá sạch.
 - Giữ nguyên: tài khoản, khu, cấu hình phi, cài đặt. Nên **tải bản sao CSV** trước khi đặt lại (có nút ngay cạnh).
 
+### Nhiều người cùng ghi một lúc (rà soát đợt 9, `test/sua9.test.mjs`)
+Mọi lệnh ghi kiểm lại điều kiện **ngay trong giao dịch ghi** (`batchGuarded`), không chỉ đọc trước — hai lần gửi tới cùng lúc thì lần sau thành 409 và màn tải lại số mới:
+- **Gửi trùng khi mạng chập chờn** (cùng khoá): báo số đếm (`putCounts`), giao đơn gia công giống hệt (`gcCreate`), ghi chuyến thép về cùng nhà cung cấp + số phiếu (`tvGhi`), nhập cùng bảng Excel hai lần (`tvNhap`), huỷ một lần nhập hai lần (`tvNhapHuy`).
+- **Hai người cùng sửa một thứ**: đơn gia công (`sua_ver` — các ô của form Sửa đơn; tổ cập nhật % trong lúc đó không phải xung đột), đơn hàng thép về (`ver`), báo cáo ca / sản lượng / thiết lập quân số (ts như trước). Người lưu sau được báo, chữ đang gõ giữ nguyên, bấm lưu lần nữa nếu vẫn muốn.
+- **Đổi lịch ca** (tổ tự đổi hay CVKTHT đổi hộ) chép số của ca vừa hết **trước** khi đổi: tổ ca đêm sáng ra chuyển sang ca ngày không làm mất đêm vừa làm khỏi báo cáo ca / sản lượng.
+- **Máy khách**: đăng xuất giữa lúc đang tải không hồi sinh phiên cũ (`bootSo`); hàng chờ quân số gửi lúc mất sóng dừng khi đổi người đăng nhập; bản tải ngầm bắt đầu trước một lần lưu mà về sau thì bỏ (`ghiSo`), không đè số mới; thẻ "Chờ bạn trả lời" ở Tổng quan cập nhật khi có tin nhắn mà không bắt mọi máy tải lại cả số liệu chung.
+- **Số lạ**: ô số nguyên không nhận "0x10", "1e3" (`intIn`); tiến độ trống không thành 0%; danh mục gia công loại "toString" bị từ chối; chữ dài cắt theo ký tự (không để nửa emoji). Ẩn khu / phi còn **số báo chờ duyệt** khác 0 bị chặn như khi còn tồn. Bảng dán Excel hiểu ô có xuống dòng (Alt+Enter) và dấu nháy. CSV thép về ghi số phiếu / số đơn chỉ có số dạng `="01/10"` để Excel không đổi thành ngày.
+- Còn để ngỏ (rủi ro thấp): hai người tạo **cùng lúc** nhà cung cấp / đối tác / nơi nhận sắt vụn mới mà khác hoa thường có dấu ("Việt Ý" / "VIỆT Ý") thì thành hai tên; thêm danh mục gia công cùng lúc có thể vượt 40 mục.
+
 
 ---
 
