@@ -83,14 +83,34 @@ async function main() {
       (await S.call('PUT', '/quanso/thietlap', { ds: [{ user: U.B, ca: 1 }] }, 'CV')).status], [200, 200, 200]);
     const M = await may(S, U, 'CV');
     await M.moBc(D, 2);
-    eq('1: báo cáo ca đêm tối nay: tổ A vẫn là tổ ca đêm (lịch mới áp từ ca sau)', M.dong('A'), 'Tổ A: ca đêm 9/10 cn, nghỉ 1 cn — 1 ốm');
-    eq('1: …tổ B cũng vậy (đổi ba lần trong ca vẫn nhớ lịch lúc vào ca)', M.dong('B'), 'Tổ B: ca đêm 9/10 cn, nghỉ 1 cn — 1 ốm');
+    // chốt 2026-11-18: "thiết lập lúc nào cũng được và báo cáo theo thiết lập" — báo cáo theo lịch ĐANG ĐẶT, kể cả ca đang chạy
+    eq('1: báo cáo ca đêm tối nay theo lịch đang đặt: tổ A đã đổi sang ca ngày', M.dong('A'), 'Tổ A (làm ca ngày)');
+    eq('1: …tổ B (đổi ba lần, lần cuối ca ngày) cũng theo lịch đang đặt', M.dong('B'), 'Tổ B (làm ca ngày)');
     toi(7, 0); await S.cron();
-    eq('1: hết ca đêm, lượt chép tự động vẫn chép số đêm đó cho cả hai tổ', S.sql('SELECT user_id, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 ORDER BY user_id', D).map((r) => [r.user_id, r.lam]), [[U.A, 9], [U.B, 9]]);
+    eq('1: hết ca đêm: lượt chép theo lịch đang đặt, không chép ca đêm cho hai tổ đã đổi sang ca ngày', S.sql('SELECT user_id FROM quan_so_tl WHERE ngay = ? AND ca = 2', D).length, 0);
     const homNay = vnDay();
     await M.moBc(homNay, 1);
-    ok('1: báo cáo ca ngày hôm sau: tổ A thuộc ca ngày (lịch mới), kèm ca đêm vừa qua', /^Tổ A: (chưa báo quân số ca ngày|ca ngày)/.test(M.dong('A') || '') && /ca đêm 9\/10/.test(M.dong('A') || ''), M.dong('A'));
+    ok('1: báo cáo ca ngày hôm sau: tổ A là tổ ca ngày', /^Tổ A: (chưa báo quân số ca ngày|ca ngày)/.test(M.dong('A') || ''), M.dong('A'));
     ok('1: không có lỗi JavaScript', !M.loi.length, M.loi.join(' | '));
+  }
+
+  /* ===== 1b. Lỗi thật 17/11: tổ ca đêm, 7h38 CVKTHT đổi thành "cả hai ca" (thêm ca ngày) trong bảng thiết lập ===== */
+  {
+    toi(20, 0);
+    const { S, U } = await dung([['Tuan', 'tieudoi'], ['CV', 'cvktht']]);
+    await S.call('PUT', '/quanso/lich', { ca: 2 }, 'Tuan');
+    await S.call('PUT', '/quanso/thietlap', { user: U.Tuan, ts: 0, ca: 2, tong: 17, s1: 0, s2: 15 }, 'CV');
+    advance(864e5); toi(7, 38); // sáng hôm sau, ca ngày đã bắt đầu từ 6h30
+    const D = vnDay();
+    const Q = (await S.call('GET', '/quanso', undefined, 'CV')).data;
+    eq('1b: 7h38 đổi tổ Tuan thành cả hai ca, số ca ngày 16 / ca đêm 0', (await S.call('PUT', '/quanso/thietlap', { ds: [{ user: U.Tuan, ca: 3, tong: 18, s1: 16, s2: 0, n1: { om: 2 }, ts: Q.tl[U.Tuan].ts }] }, 'CV')).status, 200);
+    const M = await may(S, U, 'CV');
+    await M.moBc(D, 1);
+    ok('1b: báo cáo ca ngày hôm đó có số ca ngày của tổ (thêm ca thì áp ngay)', /^Tổ Tuan: ca ngày 16\/18/.test(M.dong('Tuan') || ''), M.dong('Tuan'));
+    toi(19, 0); await S.cron();
+    eq('1b: hết ca ngày: số ca ngày được chép', S.sql('SELECT lam FROM quan_so_tl WHERE ngay = ? AND ca = 1 AND user_id = ?', D, U.Tuan).map((r) => r.lam), [16]);
+    await M.R(`slLay('${D}').then((L) => { slDung(L, false); })`); await tick(100);
+    ok('1b: sản lượng ngày đó tính công ca ngày của tổ (16) cộng ca đêm hôm trước (15)', M.R('slTinh().dong[0].cong') === 31, M.R('slTinh().dong[0].cong'));
   }
 
   /* ===== 2. Sửa ca này / Tổ không làm ca này ===== */

@@ -158,7 +158,7 @@ async function bcSo(env, st, c, gon) {
   const nowHet = Date.now(), tlMoc = Object.fromEntries([c, caTruoc(c)].map((x) => { const den = caGio(st, x).den; return [x.ca, nowHet >= den ? den + TL_DEM_MS : 0]; }));
   /* lich: lịch ca ĐÚNG NHƯ LÚC CA NÀY BẮT ĐẦU (lichCaTai): tổ đổi lịch giữa ca hay sau ca thì báo cáo ca đó vẫn theo lịch cũ.
      khong[số ca]: các tổ CVKTHT đã đánh dấu "không làm" ở ca này và ca liền trước (xem khongLam ở src/quanso.js). */
-  const lichCa = lichCaTai(cfg.lich, gio.tu, gio.den);
+  const lichCa = lichCaTai(cfg.lich, gio.tu, gio.den, c.ca);
   const khong = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, tdt.results.concat(qs.results.map((q) => ({ id: q.user_id }))).map((u) => u.id)
     .filter((id, i, a) => a.indexOf(id) === i && khongLam(cfg, id, x))]));
   const bao = r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', chiTen: chiSo(docJ(r.data).chiTen), van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null;

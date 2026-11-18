@@ -391,7 +391,8 @@ async function main() {
     /* Lịch ca theo thời điểm (chốt 2026-11-08): đổi lịch chỉ áp cho ca BẮT ĐẦU SAU lúc đổi. Ca đêm hôm trước (D, đã hết từ trước lúc đổi)
        giữ lịch cũ — tổ vẫn là tổ ca ngày, không bị viết lại thành "chưa báo ca đêm". Ca đêm tối nay (bắt đầu sau lúc đổi) theo lịch mới. */
     R(`S.bcCa = { ngay: '${D}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
-    eq('đổi lịch sau khi ca đêm hôm trước đã hết: ca đó giữ lịch cũ (tổ làm ca ngày)', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam (làm ca ngày)');
+    // báo cáo theo lịch ĐANG ĐẶT (chốt 2026-11-18), kể cả xem lại ca đêm đã qua mà không có bản chép
+    eq('tổ trưởng tự đổi sang ca đêm: ca đêm D (không có bản chép) theo lịch đang đặt, ghi chưa báo', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: chưa báo quân số ca đêm');
     R(`S.bcCa = { ngay: '${vnDay()}', ca: 2 }; S.bcc = null; go('baocaoca', true)`); await cho();
     eq('tổ trưởng tự đổi sang ca đêm, số thiết lập chỉ có ca ngày: ca đêm tối nay ghi chưa báo', R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Hải Nam')), 'Tổ Lê Hải Nam: chưa báo quân số ca đêm');
     await cho(); // chờ hết các lần tải lại còn dở (sau Lưu tất cả) trước khi sang phần sau

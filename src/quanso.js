@@ -92,13 +92,21 @@ export const docCfg = (row) => {
 /* het = giờ hết ca. Tổ CHƯA CÓ lịch lúc vào ca (truoc.ca 0) mà đặt lịch LẦN ĐẦU trong lúc ca đó đang chạy (hoặc ngay sau giờ hết ca, trong
    khoảng đệm của lượt chép): không có lịch cũ nào để giữ, nên lịch mới áp luôn cho ca đó — hết ca vẫn chép số / ghi "thiếu số" như trước.
    Ca đã hết hẳn trước lúc đặt thì không bị viết lại. */
-export function lichLuc(r, bat, het) {
-  if (!r || !r.truoc || !r.doi_ts || bat == null || r.doi_ts <= bat) return r || null;
-  if (!r.truoc.ca && het != null && r.doi_ts <= het + TL_DEM_MS) return r;
-  return { ...r.truoc, tong: r.tong, ts: r.truoc.ts, doi_ts: r.truoc.ts };
+/* caSo = ca đang xét (1 / 2). Đổi lịch TRONG LÚC ca đó đang chạy (hoặc ngay sau giờ hết ca, trong khoảng đệm của lượt chép):
+   - lịch mới CÓ ca đó (thêm ca: CVKTHT làm bảng thiết lập lúc 7h38 đổi tổ ca đêm thành "cả hai ca") -> áp NGAY cho ca đó. Trước đây (đợt 10)
+     ca đang chạy luôn giữ lịch cũ, nên ca ngày hôm đó của tổ bị coi là "không làm", không chép số, báo cáo / sản lượng mất ca ngày (lỗi 17/11);
+   - lịch mới KHÔNG có ca đó (tổ ca đêm 22h đổi sang ca ngày) -> ca đó vẫn theo lịch cũ: đêm nay vẫn là ca đêm của tổ (chốt 2026-11-08).
+   Ca đã hết hẳn trước lúc đổi thì luôn giữ lịch cũ (không viết lại ca đã qua). */
+/* CHỐT 2026-11-18 (người dùng): "thiết lập lúc nào cũng được và báo cáo theo thiết lập" — BỎ việc giữ lịch cũ cho ca đang chạy / ca đã qua.
+   Báo cáo ca, sản lượng, thống kê và lượt chép luôn theo lịch ĐANG ĐẶT. Lịch vẫn ghi kèm truoc / doi_ts (lichMoi) nhưng không đọc nữa.
+   Vẫn giữ: đổi lịch thì chép số ca vừa hết TRƯỚC (qsLich / qsThietLap gọi qsChotCa), nên ca đã hết có số trước lúc đổi không bị mất.
+   (bat / het / caSo để nguyên chữ ký cho các chỗ gọi.) */
+// eslint-disable-next-line no-unused-vars
+export function lichLuc(r, bat, het, caSo) {
+  return r || null;
 }
-// lịch của mọi tổ đúng như lúc ca bắt đầu (bat / het = giờ vào / hết ca): báo cáo ca / sản lượng của ca đó đọc lịch này
-export const lichCaTai = (lich, bat, het) => Object.fromEntries(Object.entries(lich || {}).map(([id, r]) => [id, lichLuc(r, bat, het)]));
+// lịch của mọi tổ cho ca `caSo` (bat / het = giờ vào / hết ca): báo cáo ca / sản lượng của ca đó đọc lịch này
+export const lichCaTai = (lich, bat, het, caSo) => Object.fromEntries(Object.entries(lich || {}).map(([id, r]) => [id, lichLuc(r, bat, het, caSo)]));
 /* lịch mới khi đặt / đổi ca: đổi CA thì nhớ lịch cũ và lúc đổi; chỉ khai lại tổng / hạn thì giữ nguyên mốc đổi trước đó.
    batHien = giờ vào ca ĐANG CHẠY. Đổi nhiều lần trong cùng một ca (ngày → đêm → ngày) thì "lịch cũ" phải là lịch LÚC CA NÀY BẮT ĐẦU, không phải
    lịch của lần đổi ngay trước: lần đổi trước cũng sau giờ vào ca thì giữ nguyên truoc của nó; đổi về đúng lịch đó là coi như chưa đổi. */
@@ -577,7 +585,7 @@ function soTlCa(cfg, id, c, het, bat) {
   // s: số ĐI LÀM của ca theo số thiết lập; người nghỉ ghi riêng ngoài số đó
   const tl = cfg.tl[id], s = tl ? Number(tl['s' + c.ca]) || 0 : 0, nghi = (tl && tl['n' + c.ca]) || {}, so = Object.values(nghi).reduce((a, v) => a + v, 0), co = s + so > 0;
   // lịch đúng như lúc ca BẮT ĐẦU (lichLuc): đổi lịch giữa ca thì ca đó vẫn theo lịch cũ
-  const r = lichLuc(cfg.lich[id], bat, het);
+  const r = lichLuc(cfg.lich[id], bat, het, c.ca);
   const L = caLich({ lich: { [id]: r } }, id, c.ngay);
   if (L ? L !== 3 && L !== c.ca : !co) return null;
   /* Đặt SAU lúc hết ca thì không biết lúc đó tổ có làm ca này không (không chép ngược). Nhưng cho một khoảng đệm bằng chu kỳ chép tự
