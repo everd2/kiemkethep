@@ -118,10 +118,11 @@ export async function bcView(env, url, user) {
 /* Số liệu của một ca. gon = chỉ phần quân số (cho demTr): bỏ đơn gia công, người chọn làm chỉ huy, danh mục, mẫu. */
 async function bcSo(env, st, c, gon) {
   const gio = caGio(st, c), hien = caLuc(st), rong = () => env.DB.prepare('SELECT 1 WHERE 0');
-  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr, tlR] = await env.DB.batch([
+  const [tdt, qs, qsDem, truoc, don, nguoi, mau, bc, ck, bcTr, tlR, tenR] = await env.DB.batch([
     env.DB.prepare(`SELECT u.id, u.name FROM users u WHERE u.role = 'tieudoi' AND u.deleted = 0 ORDER BY ${TO_SX}`),
-    env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
-                    FROM quan_so q LEFT JOIN users u ON u.id = q.user_id WHERE q.ngay = ?`).bind(c.ngay),
+    // by_id / ts / by_name: ai ghi số này, lúc nào — người khác tổ (CVKTHT bấm Sửa / ghi thay) thì màn hình ghi rõ "Sửa: tên · giờ"
+    env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname, q.by_id, q.ts, b.name by_name
+                    FROM quan_so q LEFT JOIN users u ON u.id = q.user_id LEFT JOIN users b ON b.id = q.by_id WHERE q.ngay = ?`).bind(c.ngay),
     // ca đêm của NGÀY HÔM TRƯỚC: báo cáo ca ngày của tổ làm hai ca kèm ca liền trước đó
     env.DB.prepare('SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu FROM quan_so q WHERE q.ngay = ? AND q.ca = 2').bind(new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
     env.DB.prepare(`SELECT q.user_id, q.ca, q.tong, q.lam, q.ca_kia, q.ts FROM users u JOIN quan_so q ON q.rowid = (
@@ -148,6 +149,8 @@ async function bcSo(env, st, c, gon) {
     env.DB.prepare(`SELECT t.ngay, t.ca, t.user_id, t.tong, t.lam, t.nghi, t.ghi_chu, COALESCE(u.name, '(đã xoá)') uname
                     FROM quan_so_tl t LEFT JOIN users u ON u.id = t.user_id WHERE t.ngay = ?1 OR (t.ngay = ?2 AND t.ca = 2)`)
       .bind(c.ngay, new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
+    // tên mọi tài khoản (ít dòng): người đánh dấu "không làm ca này" (khong.*.by chỉ lưu id)
+    env.DB.prepare('SELECT id, name FROM users'),
   ]);
   const r = bc.results[0], H = homTruoc(bcTr.results[0]), cfg = docCfg(mau.results[0]);
   /* tlCa[số ca]: bản chép lúc hết ca của ca này và ca liền trước — đúng hai ca bcQuanSo đọc số thiết lập. Tổ có bản chép thì
@@ -161,11 +164,16 @@ async function bcSo(env, st, c, gon) {
   const lichCa = lichCaTai(cfg.lich, gio.tu, gio.den, c.ca);
   const khong = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, tdt.results.concat(qs.results.map((q) => ({ id: q.user_id }))).map((u) => u.id)
     .filter((id, i, a) => a.indexOf(id) === i && khongLam(cfg, id, x))]));
+  // ai đánh dấu "không làm", lúc nào: khongAi[số ca][id tổ] = { by_name, ts } (màn hình ghi nhãn cho cấp chỉ huy biết)
+  const tenCua = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
+  const khongAi = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, Object.fromEntries(khong[x.ca].map((id) => {
+    const k = cfg.khong[caKhoa(x)][id] || {}; return [id, { by_name: tenCua[k.by] || '', ts: k.ts || 0 }];
+  }))]));
   const bao = r ? { muc: docJ(r.data).muc || {}, viec: docViec(docJ(r.data).viec), nguon: docJ(r.data).nguon === 'tl' ? 'tl' : 'to', chiTen: chiSo(docJ(r.data).chiTen), van_ban: r.van_ban, ts: r.ts, by_id: r.by_id, by_name: r.by_name } : null;
   if (gon) {
     return {
       ngay: c.ngay, ca: c.ca, lyDo: QS_LY_DO, tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
-      qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), lich: lichCa, khong, tl: cfg.tl, tlCa, tlMoc,
+      qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), lich: lichCa, khong, khongAi, tl: cfg.tl, tlCa, tlMoc,
       // chỉ phần quyết định số quân: nguồn đã chọn và chữ mục 3 đã sửa tay (bcBan ở app.js)
       homTruoc: H ? { nguon: H.nguon, muc: {} } : null,
       bao: bao ? { muc: typeof bao.muc.s3 === 'string' ? { s3: bao.muc.s3 } : {}, nguon: bao.nguon, ts: bao.ts, by_id: bao.by_id } : null,
@@ -176,7 +184,7 @@ async function bcSo(env, st, c, gon) {
     tdt: tdt.results, qs: qs.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })), truoc: truoc.results,
     // ca đêm của ngày hôm trước (cho báo cáo ca ngày); lịch ca và số thiết lập của các tổ
     qsDemTruoc: qsDem.results.map((x) => ({ ...x, nghi: docJ(x.nghi) })),
-    lich: lichCa, khong, tl: cfg.tl, tlCa, tlMoc,
+    lich: lichCa, khong, khongAi, tl: cfg.tl, tlCa, tlMoc,
     don: don.results, nguoi: nguoi.results, mau: docMau(mau.results[0]),
     ck: ck.results.map((x) => x.ten),
     homTruoc: H, viecTruoc: viecTruoc(H),

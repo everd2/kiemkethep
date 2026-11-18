@@ -17,7 +17,7 @@ export async function bootstrap(env, user) {
      ?1 luôn là hôm nay. kyNay đổi câu dùng chung (?1 = ngày chốt trước, ?2 = ngày đang xét) sang dạng đó. */
   const LAST = "(SELECT COALESCE(MAX(day), '') FROM day_close WHERE day < ?1)";
   const kyNay = (sql) => sql.replace(/\?1/g, LAST).replace(/\?2/g, '?1');
-  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, lastR, gcR, qsR, qsToiR, bcDaR, cfgR, gcTnR, tnR, svR] = await env.DB.batch([
+  const [phi, khu, khuPhi, counts, baseline, reports, reportTimes, receipts, closed, rev, innKhu, eff, settings, rates, khuUser, uFirst, doitacAct, loanPending, loanLotR, huyR, lastR, gcR, qsR, qsToiR, bcDaR, cfgR, gcTnR, tnR, svR, qsSuaR] = await env.DB.batch([
     env.DB.prepare('SELECT id, kg_per_cay, bo_size, min_stock, unit, active FROM phi ORDER BY sort'),
     env.DB.prepare('SELECT id, name, active FROM khu ORDER BY sort, id'),
     env.DB.prepare('SELECT khu_id, phi_id, keep_streak FROM khu_phi'),
@@ -104,6 +104,12 @@ export async function bootstrap(env, user) {
     env.DB.prepare("SELECT value FROM meta WHERE key = 'tn'"),
     // lần xuất sắt vụn chờ duyệt: chỉ cấp và người ghi, để đếm đúng số lần NGƯỜI NÀY duyệt được (xem duyetSv)
     env.DB.prepare('SELECT cap, user_id uid FROM satvun WHERE voided = 0 AND duyet_ts IS NULL'),
+    /* QUÂN SỐ VỪA ĐƯỢC SỬA (cấp chỉ huy + admin, thẻ trên Tổng quan): 2 ngày gần đây, người khác ghi thay số một ca (nút Sửa ở báo cáo ca),
+       đánh dấu "không làm ca này", hoặc sửa số đêm hôm trước ở bảng thiết lập. Đi theo idx_audit_ts; Tiểu đội trưởng / CVKTHT không tốn câu này. */
+    env.DB.prepare(capOf(user.role) >= 2
+      ? `SELECT id, ts, user_id, user_name, action, detail FROM audit WHERE ts > ?1 AND user_id <> ?2 AND (action IN ('qs_khong', 'qs_dem_truoc')
+           OR (action = 'qs_bao' AND json_extract(detail, '$.thay') = 1)) ORDER BY ts DESC LIMIT 8`
+      : 'SELECT 1 WHERE 0 AND ?1 AND ?2').bind(Date.now() - 2 * 864e5, user.id),
   ]);
   const last = (lastR.results[0] || {}).d || '';
   return {
@@ -145,6 +151,7 @@ export async function bootstrap(env, user) {
     gcTn: tnMoi(gcTnR.results),
     tn: (tnR.results[0] || {}).value || 0,
     qs: qsBoot(qsR.results, parseSettings(settings.results), user, qsToiR.results, bcDaR.results, cfgR.results[0]),
+    qsSua: qsSuaR.results.map((r) => { let d = {}; try { d = JSON.parse(r.detail || '{}') || {}; } catch (e) { d = {}; } return { id: r.id, ts: r.ts, ai: r.user_name, action: r.action, d }; }),
     svPending: svR.results.length,
     svDuyet: svR.results.filter((x) => duyetCuaNguoi(user, x.cap, [x.uid])).length,
     loanPending: loanPending.results.length,

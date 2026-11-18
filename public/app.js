@@ -309,7 +309,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v87';
+const BAN = 'kho-thep-v88';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -1184,8 +1184,10 @@ function vHome() {
   const usedTxt = T.usedKg === null ? '—' : fmtT(T.usedKg) + ' tấn';
   const note = (miss.length ? `Tạm tính: ${miss.length} khu chưa báo${b.lastClosed ? ' nên lấy số hôm qua' : ''}` : 'Đủ ' + b.khuAct.length + '/' + b.khuAct.length + ' khu đã báo hôm nay')
     + (T.hidKg > 0 ? ` · gồm ${fmtT(T.hidKg)} tấn ở khu đã ẩn (không có trong danh sách dưới)` : '');
+  qsSuaThe(alerts);
   const canXuLy = pendingHtml() + (alerts.length ? `<h2 class="sec">Cần xử lý (${alerts.length})</h2>` + alerts.map((a) => {
     const inner = `<span class="f1 col" style="gap:2px"><b style="font-size:18px">${esc(a.t)}</b><span class="sm">${esc(a.s)}</span></span>`;
+    if (a.a) return `<button class="alertbtn ${a.bad ? 'bad' : 'warn'}" data-a="${a.a}">${inner}${IC.chev}</button>`;
     return a.to
       ? `<button class="alertbtn ${a.bad ? 'bad' : 'warn'}" data-a="nav" data-s="${a.to}"${a.k ? ` data-k="${esc(a.k)}"` : ''}${a.f ? ` data-f="${a.f}"` : ''}${a.gid ? ` data-gid="${a.gid}"` : ''}>${inner}${IC.chev}</button>`
       : `<div class="alertbtn ${a.bad ? 'bad' : 'warn'}">${inner}</div>`;
@@ -4212,7 +4214,7 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
   /* nghi: số nghỉ của ca đang báo cáo; phai: số tổ làm ca này (tổ làm ca kia không tính là phải báo). kiaSo: người
      không thuộc ca này (tổ làm ca kia, phần ca kia của tổ 2 ca); chuaSo: người của tổ chưa có số nào cho ca này.
      Bốn số cộng lại đúng bằng tổng: tong = lam + nghi + kiaSo + chuaSo. */
-  return { rows, dong: truocNhom.concat(sauNhom), hang: truocHang.concat(sauHang), ids: truocId.concat(sauId), kiaTen, chua, dung, lam, tong, nghi, kiaSo, chuaSo, phai: truocNhom.length, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
+  return { rows, dong: truocNhom.concat(sauNhom), hang: truocHang.concat(sauHang), ids: truocId.concat(sauId), sua: truocId.concat(sauId).map((id) => bcSuaAi(B, id)), kiaTen, chua, dung, lam, tong, nghi, kiaSo, chuaSo, phai: truocNhom.length, soTo: ds.length, dau: `Quân số đi làm trong ca ${ca} là: ${lam} công nhân / (tổng quân số ${tong})` };
 }
 /* SỬA MỘT CA (chốt 2026-11-08, CVKTHT trở lên, lùi 7 ngày như máy chủ): nút "Sửa" trên dòng mỗi tổ ở mục 3. Sửa SỐ của tổ cho đúng ca đang
    xem (ghi thay: PUT /quanso kèm user — thay cho số tổ báo / số tự chép), hoặc đánh dấu "Tổ không làm ca này" (PUT /quanso/khong): ca đó
@@ -4235,6 +4237,37 @@ function bcSuaHtml(B, Q) {
     <div class="row gap6"><button class="btn s f1" data-a="bcsuadong">Đóng</button><button class="btn s pri f1" data-a="bcsualuu">LƯU SỐ</button></div>
     ${khong ? '<button class="btn s full" data-a="bcsuakhong" data-v="0">Bỏ đánh dấu "không làm ca này"</button>'
       : '<button class="btn s full" style="border:2px solid var(--warn)" data-a="bcsuakhong" data-v="1">TỔ KHÔNG LÀM CA NÀY</button>'}</div>`;
+}
+/* AI SỬA (chốt 2026-11-18: sửa quân số lúc nào cũng được, cấp trên phải biết người sửa): số của ca do NGƯỜI KHÁC tổ ghi (CVKTHT bấm Sửa /
+   ghi thay — quan_so.by_id khác tổ), hay tổ bị đánh dấu "không làm ca này", thì dòng của tổ ghi "Sửa: tên · giờ". Báo cáo ca ngày kèm cả
+   người sửa ca đêm hôm trước (demTr). Chỉ hiện trên màn hình, không vào bản chép gửi Zalo. */
+function bcSuaAi(B, id) {
+  const t = [], ai = (r) => `${r.by_name || '(đã xoá)'} · ${dmy(r.ts)}`;
+  const mot = (Bx, ca, nhan) => {
+    if (!Bx) return;
+    const r = (Bx.qs || []).find((x) => x.user_id === id && x.ca === ca);
+    if (r && r.by_id && r.by_id !== id && r.ts) t.push(`${nhan}sửa: ${ai(r)}`);
+    const k = ((Bx.khongAi || {})[ca] || {})[id];
+    if (k) t.push(`${nhan}đánh dấu không làm: ${ai(k)}`);
+  };
+  mot(B, B.ca, B.ca === 1 && B.demTr ? 'Ca ngày ' : '');
+  if (B.ca === 1 && B.demTr) mot(B.demTr, 2, 'Ca đêm ' + fmtDay(B.demTr.ngay).slice(0, 5) + ' ');
+  return t.map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(' · ');
+}
+/* Thẻ "Quân số vừa được sửa" trên Tổng quan của cấp chỉ huy / admin (S.boot.qsSua, xem bootstrap.js): các lần người khác sửa số một ca,
+   đánh dấu không làm, sửa số đêm hôm trước trong 2 ngày. Bấm là mở Nhật ký lọc Quân số; đã xem thì thẻ tắt tới lần sửa sau (nhớ trên máy). */
+function qsSuaTxt(x) {
+  const d = x.d || {}, ca = CA_TEN[d.ca] || 'ca đêm', ngay = d.ngay ? fmtDay(d.ngay).slice(0, 5) : '';
+  if (x.action === 'qs_khong') return `${x.ai} ${d.khong ? 'đánh dấu' : 'bỏ đánh dấu'} tổ ${d.to} không làm ${ca} ${ngay}`;
+  if (x.action === 'qs_dem_truoc') return `${x.ai} sửa số đêm ${ngay} tổ ${d.to}: đi làm ${d.lam}/${d.tong}`;
+  return `${x.ai} sửa quân số tổ ${d.to} ${ca} ${ngay}: đi làm ${d.lam}/${d.tong}`;
+}
+function qsSuaThe(alerts) {
+  if (!isCH() || !S.boot || !(S.boot.qsSua || []).length) return;
+  let xem = 0; try { xem = Number(localStorage.getItem('kt:qssua:' + S.me.id) || 0); } catch (e) { xem = 0; }
+  const moi = S.boot.qsSua.filter((x) => x.id > xem);
+  if (!moi.length) return;
+  alerts.push({ bad: false, t: `Quân số vừa được sửa (${moi.length} lần)`, s: moi.slice(0, 3).map((x) => qsSuaTxt(x) + ' · ' + hhmm(x.ts)).join('; ') + (moi.length > 3 ? '; …' : '') + ' · bấm để xem nhật ký', a: 'qssuaxem' });
 }
 const bcTre = (B, d) => gcMo(d) && (d.han < B.ngay || (d.han === B.ngay && B.ca === 2));
 // chữ app tự ghép cho một mục
@@ -4615,6 +4648,7 @@ function slGan() {
   const trung = bcTenTrung(L.to);
   L.trung = L.to.filter(trung).map((u) => u.name);
   L.to.forEach((u) => {
+    u.sua = bcSuaAi(B, u.id); // ai sửa số ca ngày / ca đêm hôm trước của tổ (xem bcSuaAi)
     const x = rows.find((y) => y.u.id === u.id), co = L.tay != null && !trung(u);
     // dòng sửa tay: số ca ngày ("ca ngày 12/21", hay "12/21" không ghi ca); số ca đêm chỉ khi dòng ghi rõ "ca đêm a/b"
     const t1 = co ? bcS3Cua(L.tay, u.name, 1) : null, t2 = co ? bcS3Cua(L.tay, u.name, 2, true) : null;
@@ -4685,6 +4719,7 @@ function vSanLuong() {
   const hang = T.dong.map((r) => `<div class="card col gap6"><div class="row gap8"><b class="f1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tổ ${esc(r.u.name)}</b><span class="sm muted" style="flex:none">tỷ lệ gia công ${slFmt(r.gc)}</span></div>
       <div class="row gap8"><span class="sm f1" style="min-width:0;line-height:1.35">${slNguon(r.u) ? 'Đi làm: ' + slNguon(r.u) + (r.u.ngay && r.u.ngay.nguon === 'tay' || r.u.dem && r.u.dem.nguon === 'tay' ? ' (đã sửa tay ở báo cáo ca)' : r.u.ngay && r.u.ngay.nguon === 'tl' || r.u.dem && r.u.dem.nguon === 'tl' ? ' (số thiết lập)' : '') : '<span class="muted">Chưa báo quân số</span>'}</span>
         <div class="col gap6" style="align-items:center;flex:none"><span class="muted" style="font-size:12px">công gia công thép</span>${oSo(`slc_${r.u.id}`, r.raw)}</div></div>
+      ${r.u.sua ? `<span class="sm" style="color:var(--warn);line-height:1.35">✎ ${esc(r.u.sua)}</span>` : ''}
       <div class="row gap8"><span class="sm muted f1">Sản lượng</span><b>${fmtInt(r.kg)} kg</b></div></div>`).join('');
   const mui = (ngay, chu, ten, bat) => `<button class="chip s" style="flex:none;width:44px;padding:6px 0${bat ? '' : ';opacity:.35'}" ${bat ? `data-a="slngay" data-v="${ngay}"` : 'disabled'} aria-label="${ten}">${chu}</button>`;
   const dauDong = slDau(L).map((x) => `<div class="sm" style="line-height:1.4">${esc(x)}</div>`).join('');
@@ -5118,7 +5153,7 @@ function vBaoCaoCa() {
   const chiV = bcCHien(B, S.bcChiTen);
   const chiO = `<div class="row gap6" style="margin:4px 4px 2px 0;flex-wrap:wrap">${[[2, 'Tất cả tổ'], [1, B.ca === 1 ? 'Chỉ ca ngày + 2 ca' : 'Chỉ ca đêm + 2 ca']]
     .map(([v, n]) => `<button class="chip s ${chiV === v ? 'on' : ''}" style="white-space:nowrap" data-a="bcchiten" data-v="${v}">${n}</button>`).join('')}</div>`;
-  const s3Html = `${chiO}<div class="col" style="gap:0;margin:2px 4px 0 0;font-size:15px;line-height:1.45"><span>${esc(P.s3[0])}</span>${P.s3.slice(1).map((l, i) => `<div class="row gap8" style="align-items:flex-start;padding:3px 0"><span class="f1" style="min-width:0">${esc(l)}</span>${nhan[Q.hang[i]] || ''}${bcSuaNut(B, Q.ids[i])}</div>${S.bcSuaCa && S.bcSuaCa.id === Q.ids[i] ? bcSuaHtml(B, Q) : ''}`).join('')}</div>`;
+  const s3Html = `${chiO}<div class="col" style="gap:0;margin:2px 4px 0 0;font-size:15px;line-height:1.45"><span>${esc(P.s3[0])}</span>${P.s3.slice(1).map((l, i) => `<div class="row gap8" style="align-items:flex-start;padding:3px 0"><span class="f1" style="min-width:0">${esc(l)}</span>${nhan[Q.hang[i]] || ''}${bcSuaNut(B, Q.ids[i])}</div>${Q.sua[i] ? `<div class="sm" style="margin:-2px 0 4px;color:var(--warn);line-height:1.35">✎ ${esc(Q.sua[i])}</div>` : ''}${S.bcSuaCa && S.bcSuaCa.id === Q.ids[i] ? bcSuaHtml(B, Q) : ''}`).join('')}</div>`;
   const ib = (a, k, ten, hinh, on) => `<button class="ib${on ? ' on' : ''}" data-a="${a}" data-k="${k}" aria-label="${ten}" title="${ten}">${hinh}</button>`;
   const muc = [['dau', 'Phần đầu']].concat(BC_MUC).map(([k, ten]) => {
     const mo = S.bcMo === k, sua = k !== 'dau' && (typeof S.bcM[k] === 'string' || (k === 's4' && bcVChinh(B, S.bcV)));
@@ -7846,6 +7881,11 @@ const ACTIONS = {
     S.bcSuaCa = { id }; render();
   },
   bcsuadong() { S.bcSuaCa = null; render(); },
+  qssuaxem() {
+    const m = Math.max(0, ...((S.boot && S.boot.qsSua) || []).map((x) => x.id));
+    try { localStorage.setItem('kt:qssua:' + S.me.id, String(m)); } catch (e) { /* bỏ qua */ }
+    S.logTab = 'log'; S.logFilter = 'qs'; go('nhatky');
+  },
   bcsualuu() {
     const B = S.bcc, F = S.bcSuaCa; if (!B || !F) return;
     const so = (k) => { const t = String(S.form['bsc_' + k] || '').trim(); return t === '' ? 0 : /^\d+$/.test(t) ? Number(t) : NaN; };
