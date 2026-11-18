@@ -46,6 +46,8 @@ async function main() {
   // Trường làm CẢ HAI ca: ca ngày hôm nay 7/19 và ca đêm hôm qua 7/19 (tổng 19 => nghỉ 5)
   await q(CV, { ngay: D, ca: 1, user: U['Lý Đình Trường'], tong: 19, lam: 7 });
   await q(CV, { ngay: hom, ca: 2, user: U['Lý Đình Trường'], tong: 19, lam: 7 });
+  // các dòng trên là TỔ TỰ báo (ghi bằng CVKTHT cho gọn): đặt người ghi là chính tổ — số người khác ghi thay (nút Sửa) thì báo cáo luôn dùng, kể cả nguồn "Chỉ số thiết lập"
+  S.raw.exec('UPDATE quan_so SET by_id = user_id');
   // Hoàng và Sơn KHÔNG báo gì, chỉ có "Thiết lập quân số" do CVKTHT đặt: Hoàng làm ca ngày 12/15, Sơn làm ca đêm 17/19
   const tlq = (b) => S.call('PUT', '/quanso/thietlap', b, CV);
   eq('đặt thiết lập quân số cho Hoàng (ca ngày)', (await tlq({ user: U['Nguyễn Văn Hoàng'], tong: 15, s1: 12, s2: 0, ts: 0 })).status, 200);

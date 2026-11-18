@@ -124,7 +124,7 @@ async function bcSo(env, st, c, gon) {
     env.DB.prepare(`SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, COALESCE(u.name, '(đã xoá)') uname, q.by_id, q.ts, b.name by_name
                     FROM quan_so q LEFT JOIN users u ON u.id = q.user_id LEFT JOIN users b ON b.id = q.by_id WHERE q.ngay = ?`).bind(c.ngay),
     // ca đêm của NGÀY HÔM TRƯỚC: báo cáo ca ngày của tổ làm hai ca kèm ca liền trước đó
-    env.DB.prepare('SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu FROM quan_so q WHERE q.ngay = ? AND q.ca = 2').bind(new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
+    env.DB.prepare('SELECT q.ca, q.user_id, q.tong, q.lam, q.ca_kia, q.nghi, q.ghi_chu, q.by_id FROM quan_so q WHERE q.ngay = ? AND q.ca = 2').bind(new Date(Date.parse(c.ngay) - 864e5).toISOString().slice(0, 10)),
     env.DB.prepare(`SELECT q.user_id, q.ca, q.tong, q.lam, q.ca_kia, q.ts FROM users u JOIN quan_so q ON q.rowid = (
                       SELECT x.rowid FROM quan_so x WHERE x.user_id = u.id AND x.ngay < ?1 ORDER BY x.ngay DESC, x.ca DESC LIMIT 1)
                     WHERE u.role = 'tieudoi' AND u.deleted = 0`).bind(c.ngay),

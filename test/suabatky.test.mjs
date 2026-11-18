@@ -58,14 +58,19 @@ async function may(S, U, who) {
   await tick(200);
   const bt = (await S.call('GET', '/bootstrap', undefined, who)).data;
   R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: U[who], name: who, role: 'cvktht' })}; S._dataUid = S.me.id; S.form = {};`);
-  const moBc = async (ngay, ca) => { R(`S.bcCa = { ngay: '${ngay}', ca: ${ca} }; S.bcc = null; go('baocaoca', true)`); await tick(300); };
+  /* CHỜ THEO ĐIỀU KIỆN, không theo số vòng: đăng nhập / xác thực có bước chạy bất đồng bộ thật (băm PIN, phiên), máy bận thì 300 vòng chưa đủ —
+     test từng hỏng ngẫu nhiên (~1/5 lần) vì bấm Sửa lúc màn báo cáo ca chưa tải xong. */
+  const cho = async (f) => { for (let i = 0; i < 50000; i++) { await new Promise((z) => setImmediate(z)); if (f()) { await tick(20); return true; } } return false; };
+  const moBc = async (ngay, ca) => { R(`Object.keys(NHO).filter((k) => /^bc:/.test(k)).forEach((k) => delete NHO[k]); S.bcCa = { ngay: '${ngay}', ca: ${ca} }; S.bcc = null; go('baocaoca', true)`); await cho(() => R(`!!(S.bcc && S.bcc.ngay === '${ngay}' && S.bcc.ca === ${ca} && !S.busy)`)); };
+  const xong = async () => { await tick(10); await cho(() => !R('S.busy')); };
   const dong = (ten) => R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Tổ ' + ten));
-  return { R, moBc, dong, loi };
+  return { R, moBc, dong, loi, xong };
 }
 
 async function main() {
   toi(20, 0);
-  const { S, U } = await dung([['A', 'tieudoi'], ['B', 'tieudoi'], ['C', 'tieudoi'], ['CV', 'cvktht'], ['Trung', 'trungdoi']]);
+  const { S, U } = await dung([['A', 'tieudoi'], ['B', 'tieudoi'], ['C', 'tieudoi'], ['E', 'tieudoi'], ['CV', 'cvktht'], ['Trung', 'trungdoi']]);
+  await S.call('PUT', '/quanso/lich', { ca: 2 }, 'E'); await S.call('PUT', '/quanso/thietlap', { user: U.E, ts: 0, ca: 2, tong: 10, s1: 0, s2: 9 }, 'CV');
   await S.call('PUT', '/quanso/lich', { ca: 2 }, 'A'); await S.call('PUT', '/quanso/thietlap', { user: U.A, ts: 0, ca: 2, tong: 10, s1: 0, s2: 10 }, 'CV');
   await S.call('PUT', '/quanso/lich', { ca: 1 }, 'B'); await S.call('PUT', '/quanso/thietlap', { user: U.B, ts: 0, ca: 1, tong: 12, s1: 12, s2: 0 }, 'CV');
   await S.call('PUT', '/quanso/lich', { ca: 3 }, 'C'); await S.call('PUT', '/quanso/thietlap', { user: U.C, ts: 0, ca: 3, tong: 16, s1: 8, s2: 8 }, 'CV');
@@ -73,19 +78,20 @@ async function main() {
   const H = vnDay(); // ca đêm H: tối hôm trước
   toi(7, 5); await S.cron();
   const D = vnDay();
-  eq('sáng D: lượt chép đã chép ca đêm H (A 10, C 8)', S.sql('SELECT user_id u, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 ORDER BY u', H).map((r) => [r.u, r.lam]), [[U.A, 10], [U.C, 8]]);
+  eq('sáng D: lượt chép đã chép ca đêm H (A 10, C 8, E 9)', S.sql('SELECT user_id u, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 ORDER BY u', H).map((r) => [r.u, r.lam]), [[U.A, 10], [U.C, 8], [U.E, 9]]);
   const M = await may(S, U, 'CV');
   toi(10, 0);
   /* 1. 10h sáng D sửa số ca đêm H của tổ A */
   await M.moBc(H, 2);
-  M.R(`ACTIONS.bcsuaca({ id: '${U.A}' })`); M.R("S.form.bsc_t = '10'; S.form.bsc_l = '7'; S.form.bsc_n_om = '3'; ACTIONS.bcsualuu()"); await tick(300);
+  M.R(`ACTIONS.bcsuaca({ id: '${U.A}' })`); M.R("S.form.bsc_t = '10'; S.form.bsc_l = '7'; S.form.bsc_n_om = '3'; ACTIONS.bcsualuu()"); await M.xong();
   eq('1: báo cáo ca đêm H theo số vừa sửa', M.dong('A'), 'Tổ A: ca đêm 7/10 cn, nghỉ 3 cn — 3 ốm');
   ok('1: dòng tổ A ghi người sửa (chỉ trên màn hình)', /✎ Sửa: CV · /.test(M.R('vBaoCaoCa()')) && !/sửa: CV/i.test(M.R('bcTao()')), M.R(`bcQuanSo(S.bcc).sua.join('|')`));
+  eq('1: nguồn "Chỉ số thiết lập": số đã Sửa cho riêng ca này vẫn được dùng', M.R(`bcQuanSo(S.bcc, 'tl').rows.find((r) => r.u.id === ${U.A}).lam`), 7);
   /* 2. tổ C không làm ca đêm H */
-  M.R(`ACTIONS.bcsuaca({ id: '${U.C}' })`); M.R('ask = async () => true'); M.R("ACTIONS.bcsuakhong({ v: '1' })"); await tick(300);
+  M.R(`ACTIONS.bcsuaca({ id: '${U.C}' })`); M.R('ask = async () => true'); M.R("ACTIONS.bcsuakhong({ v: '1' })"); await M.xong();
   eq('2: tổ C không làm ca đêm H', M.dong('C'), 'Tổ C: không làm ca đêm');
   ok('2: dòng tổ C ghi người đánh dấu', /Đánh dấu không làm: CV · /.test(M.R(`bcQuanSo(S.bcc).sua.join('|')`)), M.R(`bcQuanSo(S.bcc).sua.join('|')`));
-  eq('2: tổng ca đêm H: đi làm 7', M.R('bcQuanSo(S.bcc).lam'), 7);
+  eq('2: tổng ca đêm H: đi làm 7 (A) + 9 (E)', M.R('bcQuanSo(S.bcc).lam'), 16);
   /* 3. 10h chuyển tổ A từ ca đêm sang ca ngày (bảng thiết lập), số ca ngày 10 */
   const Q = (await S.call('GET', '/quanso', undefined, 'CV')).data;
   eq('3: chuyển tổ A sang ca ngày lúc 10h', (await S.call('PUT', '/quanso/thietlap', { ds: [{ user: U.A, ca: 1, tong: 10, s1: 10, s2: 0, ts: Q.tl[U.A].ts }] }, 'CV')).status, 200);
@@ -97,18 +103,57 @@ async function main() {
   eq('3: ca đêm H vẫn giữ số đã sửa của tổ A sau khi chuyển ca', M.dong('A'), 'Tổ A: ca đêm 7/10 cn, nghỉ 3 cn — 3 ốm');
   /* 4. sản lượng D = ca ngày D + ca đêm H */
   await M.R(`slLay('${D}').then((L) => { slDung(L, false); })`); await tick(100);
-  eq('4: sản lượng D: A 10 + 7, B 12, C 8 (không cộng đêm H)', JSON.parse(M.R('JSON.stringify(slTinh().dong.map((r) => [r.u.name, r.cong]))')), [['A', 17], ['B', 12], ['C', 8]]);
+  eq('4: sản lượng D: A 10 + 7, B 12, C 8 (không cộng đêm H), E 9 (đêm H)', JSON.parse(M.R('JSON.stringify(slTinh().dong.map((r) => [r.u.name, r.cong]))')), [['A', 17], ['B', 12], ['C', 8], ['E', 9]]);
   ok('4: sản lượng ghi người sửa của tổ A', /sửa: CV/.test(M.R(`S.sl.to.find((u) => u.name === 'A').sua`) || '') && M.R('vSanLuong()').includes('✎'), M.R(`S.sl.to.find((u) => u.name === 'A').sua`));
+  /* 4b. XUNG ĐỘT NÚT SỬA / BÁNH RĂNG (lỗi 18/11) — lần sửa sau cùng thắng, dù sửa ở đâu */
+  {
+    // tổ E (chỉ ca đêm) ở báo cáo ca NGÀY: bấm Sửa thì chọn sẵn ca đêm hôm trước — ca có số trên dòng của tổ — không ghi nhầm vào ca ngày
+    await M.moBc(D, 1);
+    M.R(`ACTIONS.bcsuaca({ id: '${U.E}' })`);
+    eq('4b: Sửa tổ E (làm ca đêm) trên báo cáo ca ngày: chọn sẵn ca đêm hôm trước, điền số 9', M.R('JSON.stringify([S.bcSuaCa.ngay, S.bcSuaCa.ca, S.form.bsc_l])'), JSON.stringify([H, 2, '9']));
+    ok('4b: form có hai nút chọn ca', (M.R('vBaoCaoCa()').match(/data-a="bcsuachon"/g) || []).length === 2);
+    M.R("S.form.bsc_l = '8'; ACTIONS.bcsualuu()"); await M.xong();
+    eq('4b: lưu vào ca đêm H, không có gì ở ca ngày D', [S.one('SELECT lam FROM quan_so WHERE ngay = ? AND ca = 2 AND user_id = ?', H, U.E)?.lam, S.one('SELECT COUNT(*) n FROM quan_so WHERE ngay = ? AND ca = 1 AND user_id = ?', D, U.E).n], [8, 0]);
+    M.R(`ACTIONS.bcsuaca({ id: '${U.E}' }); ACTIONS.bcsuachon({ v: '${D}|1' })`);
+    eq('4b: đổi sang ca ngày D trong form: ô trống (tổ không làm ca ngày)', M.R('JSON.stringify([S.bcSuaCa.ngay, S.bcSuaCa.ca, S.form.bsc_l])'), JSON.stringify([D, 1, '']));
+    M.R('ACTIONS.bcsuadong()');
+    // bánh răng sửa số đêm hôm trước SAU khi đã bấm Sửa: trước đây bị chặn "tổ đã tự báo" (thật ra là CVKTHT ghi thay)
+    const Q2 = (await S.call('GET', '/quanso', undefined, 'CV')).data;
+    ok('4b: /quanso gửi kèm người ghi số đêm hôm trước', Q2.demTr.bao[U.A] && Q2.demTr.bao[U.A].by_id === U.CV);
+    const r1 = await S.call('PUT', '/quanso/thietlap', { ds: [], dem_truoc: { ngay: H, ds: [{ user: U.A, lam: 6, tong: 10, n2: { om: 4 }, ts: (Q2.demTr.so[U.A] || {}).ts || 0 }] } }, 'CV');
+    eq('4b: bánh răng sửa số đêm H của tổ A (đã Sửa ghi thay trước đó): được', r1.status, 200);
+    await M.moBc(H, 2);
+    eq('4b: báo cáo ca đêm H theo số bánh răng vừa lưu (sau cùng thắng)', M.dong('A'), 'Tổ A: ca đêm 6/10 cn, nghỉ 4 cn — 4 ốm');
+    // bánh răng ghi số đêm H cho tổ C (đang đánh dấu không làm đêm H): bỏ dấu, số ăn
+    const r2 = await S.call('PUT', '/quanso/thietlap', { ds: [], dem_truoc: { ngay: H, ds: [{ user: U.C, lam: 5, tong: 16, ts: 0 }] } }, 'CV');
+    await M.moBc(H, 2);
+    eq('4b: bánh răng ghi số đêm H cho tổ đang "không làm": bỏ dấu, báo cáo theo số mới', [r2.status, /^Tổ C: ca đêm 5\/16/.test(M.dong('C') || '')], [200, true]);
+    // số thiết lập ca ĐANG CHẠY đổi sau khi đã Sửa ca đó: số thiết lập mới thắng
+    await S.call('PUT', '/quanso', { ngay: D, ca: 1, user: U.B, tong: 12, lam: 11, nghi: { om: 1 } }, 'CV');
+    const Q3 = (await S.call('GET', '/quanso', undefined, 'CV')).data;
+    eq('4b: bánh răng đổi số ca ngày của tổ B sau khi đã Sửa ca ngày D', (await S.call('PUT', '/quanso/thietlap', { ds: [{ user: U.B, tong: 12, s1: 10, s2: 0, n1: { phep: 2 }, ts: Q3.tl[U.B].ts }] }, 'CV')).status, 200);
+    await M.moBc(D, 1);
+    // số thiết lập là số dùng hằng ngày; số "Sửa" là số chính xác của riêng ca đó — sửa bánh răng (cho các ngày sau) không xoá số chính xác đã Sửa
+    eq('4b: ca đang chạy đã Sửa: số Sửa giữ, bánh răng đổi sau không đè', M.dong('B'), 'Tổ B: ca ngày 11/12 cn, nghỉ 1 cn — 1 ốm');
+    ok('4b: dòng có nhãn người sửa', /sửa: CV/i.test(M.R(`bcQuanSo(S.bcc).sua.join('|')`)));
+    // tổ TỰ báo thì bánh răng không đè (như trước)
+    await S.call('PUT', '/quanso', { ngay: D, ca: 1, tong: 12, lam: 12, nghi: {} }, 'B');
+    const Q4 = (await S.call('GET', '/quanso', undefined, 'CV')).data;
+    await S.call('PUT', '/quanso/thietlap', { ds: [{ user: U.B, tong: 12, s1: 9, s2: 0, n1: { phep: 3 }, ts: Q4.tl[U.B].ts }] }, 'CV');
+    await M.moBc(D, 1);
+    eq('4b: tổ B tự báo ca ngày D: số tổ báo giữ nguyên dù bánh răng đổi sau', M.dong('B'), 'Tổ B: ca ngày 12/12 cn');
+    await M.R(`slLay('${D}').then((L) => { slDung(L, false); })`); await tick(100);
+  }
   /* 5. thống kê và lượt chép */
   toi(19, 0); await S.cron();
-  eq('5: hết ca ngày D: chép A 10, B 12, C 8', S.sql('SELECT user_id u, lam FROM quan_so_tl WHERE ngay = ? AND ca = 1 ORDER BY u', D).map((r) => [r.u, r.lam]), [[U.A, 10], [U.B, 12], [U.C, 8]]);
+  eq('5: hết ca ngày D: chép A 10, C 8 (B đã tự báo, không chép)', S.sql('SELECT user_id u, lam FROM quan_so_tl WHERE ngay = ? AND ca = 1 ORDER BY u', D).map((r) => [r.u, r.lam]), [[U.A, 10], [U.C, 8]]);
   const tk = (await S.call('GET', `/quanso/thongke?tu=${H}&den=${D}`, undefined, 'CV')).data;
-  eq('5: thống kê ca đêm H: số đã sửa của tổ A (7), không còn số của tổ C', tk.qs.filter((x) => x.ngay === H && x.ca === 2).map((x) => [x.u, x.lam]).concat(tk.tl.filter((x) => x.ngay === H && x.ca === 2 && x.u === U.C).map((x) => [x.u, x.lam])), [[U.A, 7]]);
+  eq('5: thống kê ca đêm H: A 6 (bánh răng), C 5 (bánh răng), E 8 (Sửa)', tk.qs.filter((x) => x.ngay === H && x.ca === 2).map((x) => [x.u, x.lam]).concat(tk.tl.filter((x) => x.ngay === H && x.ca === 2 && !tk.qs.some((q) => q.ngay === H && q.ca === 2 && q.u === x.u)).map((x) => [x.u, x.lam])).sort((a, b) => a[0] - b[0]), [[U.A, 6], [U.C, 5], [U.E, 8]]);
   /* 6. thẻ trên Tổng quan của cấp chỉ huy */
   const T2 = await may(S, U, 'Trung');
   T2.R(`S.me.role = 'trungdoi'; S.screen = 'home'`);
   const home = T2.R('vHome()');
-  ok('6: Tổng quan của Trung đội trưởng có thẻ "Quân số vừa được sửa" kèm người sửa', /Quân số vừa được sửa \(\d+ lần\)/.test(home) && /CV sửa quân số tổ A ca đêm/.test(home) && /CV đánh dấu tổ C không làm ca đêm/.test(home), home.slice(home.indexOf('Cần xử lý'), home.indexOf('Cần xử lý') + 400));
+  ok('6: Tổng quan của Trung đội trưởng có thẻ "Quân số vừa được sửa" kèm người sửa', /Quân số vừa được sửa \(\d+ lần\)/.test(home) && /CV sửa (quân số|số đêm)/.test(home) && T2.R('S.boot.qsSua.some((x) => x.action === "qs_khong" && x.d.to === "C")'), home.slice(home.indexOf('Cần xử lý'), home.indexOf('Cần xử lý') + 400));
   T2.R('ACTIONS.qssuaxem()'); await tick(100);
   eq('6: bấm thẻ: mở Nhật ký lọc Quân số', T2.R('JSON.stringify([S.screen, S.logFilter])'), JSON.stringify(['nhatky', 'qs']));
   T2.R(`S.screen = 'home'`);

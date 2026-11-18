@@ -59,9 +59,13 @@ async function may(S, U, who) {
   await tick(200);
   const bt = (await S.call('GET', '/bootstrap', undefined, who)).data;
   R(`S.boot = ${JSON.stringify(bt)}; indexBoot(S.boot); S.me = ${JSON.stringify({ id: U[who], name: who, role: 'cvktht' })}; S._dataUid = S.me.id; S.form = {};`);
-  const moBc = async (ngay, ca) => { R(`S.bcCa = { ngay: '${ngay}', ca: ${ca} }; S.bcc = null; go('baocaoca', true)`); await tick(300); };
+  /* CHỜ THEO ĐIỀU KIỆN, không theo số vòng: đăng nhập / xác thực có bước chạy bất đồng bộ thật (băm PIN, phiên), máy bận thì 300 vòng chưa đủ —
+     test từng hỏng ngẫu nhiên (~1/5 lần) vì bấm Sửa lúc màn báo cáo ca chưa tải xong. */
+  const cho = async (f) => { for (let i = 0; i < 50000; i++) { await new Promise((z) => setImmediate(z)); if (f()) { await tick(20); return true; } } return false; };
+  const moBc = async (ngay, ca) => { R(`Object.keys(NHO).filter((k) => /^bc:/.test(k)).forEach((k) => delete NHO[k]); S.bcCa = { ngay: '${ngay}', ca: ${ca} }; S.bcc = null; go('baocaoca', true)`); await cho(() => R(`!!(S.bcc && S.bcc.ngay === '${ngay}' && S.bcc.ca === ${ca} && !S.busy)`)); };
+  const xong = async () => { await tick(10); await cho(() => !R('S.busy')); };
   const dong = (ten) => R("bcAuto(S.bcc, 's3')").split('\n').find((l) => l.includes('Tổ ' + ten));
-  return { R, moBc, dong, loi };
+  return { R, moBc, dong, loi, xong };
 }
 
 async function main() {
@@ -139,14 +143,14 @@ async function main() {
     ok('2: form sửa hiện ngay dưới dòng tổ', M.R('vBaoCaoCa()').includes('Sửa quân số tổ An'));
     M.R("S.form.bsc_l = '9'; S.form.bsc_n_phep = '2'; S.form.bsc_n_khac = '1'; S.form.bsc_gc = ''; ACTIONS.bcsualuu()"); await tick(100);
     ok('2: thiếu ghi chú khi có nghỉ lý do khác: chưa lưu', S.one('SELECT COUNT(*) n FROM quan_so WHERE ngay = ? AND ca = 1 AND user_id = ?', D, U.An).n === 0 && /lý do khác/.test(M.R('S.toast')));
-    M.R("S.form.bsc_gc = 'đi khám'; ACTIONS.bcsualuu()"); await tick(300);
+    M.R("S.form.bsc_gc = 'đi khám'; ACTIONS.bcsualuu()"); await M.xong();
     const r = S.one('SELECT tong, lam, nghi, by_id FROM quan_so WHERE ngay = ? AND ca = 1 AND user_id = ?', D, U.An);
     eq('2: lưu: số ca ngày D của tổ An, người ghi là CVKTHT', r && [r.tong, r.lam, JSON.parse(r.nghi), r.by_id], [12, 9, { phep: 2, khac: 1 }, U.CV]);
     eq('2: báo cáo ca ngày D theo số vừa sửa', M.dong('An'), 'Tổ An: ca ngày 9/12 cn, nghỉ 3 cn — 2 nghỉ phép năm, 1 đi khám');
     // không làm ca này
     M.R(`ACTIONS.bcsuaca({ id: '${U.Binh}' })`);
     M.R('globalThis.__hoi = ask; ask = async () => true');
-    M.R("ACTIONS.bcsuakhong({ v: '1' })"); await tick(300);
+    M.R("ACTIONS.bcsuakhong({ v: '1' })"); await M.xong();
     eq('2: đánh dấu tổ Binh không làm ca ngày D: báo cáo ghi "không làm"', M.dong('Binh'), 'Tổ Binh: không làm ca ngày');
     eq('2: số tổ đã báo của ca đó bị bỏ', S.one('SELECT COUNT(*) n FROM quan_so WHERE ngay = ? AND ca = 1 AND user_id = ?', D, U.Binh).n, 0);
     ok('2: nhật ký ghi số cũ', /"cu":\{"tong":12,"lam":11/.test(S.one("SELECT detail FROM audit WHERE action = 'qs_khong' ORDER BY id DESC LIMIT 1").detail || ''));

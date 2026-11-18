@@ -163,7 +163,7 @@ export async function qsView(env, user, url) {
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare('SELECT id, name FROM users'),
     env.DB.prepare('SELECT user_id, tong, lam, nghi, ghi_chu, ts FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(demC.ngay),
-    env.DB.prepare('SELECT user_id, tong, lam, nghi, ghi_chu FROM quan_so WHERE ngay = ? AND ca = 2').bind(demC.ngay),
+    env.DB.prepare('SELECT user_id, tong, lam, nghi, ghi_chu, by_id FROM quan_so WHERE ngay = ? AND ca = 2').bind(demC.ngay),
   ]);
   const cfg = docCfg(cfgR.results[0]), ten = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
   const loc = (o) => Object.fromEntries(Object.entries(o).filter(([id]) => ql || Number(id) === user.id).map(([id, v]) => [id, { ...v, by_name: ten[v.by] || '' }]));
@@ -388,15 +388,16 @@ export async function qsThietLap(req, env, user) {
     ghi.push(dat(path, v), auditStmt(env, user, 'qs_thietlap', { to: t.name, tong, s1, s2, n1: v.n1, n2: v.n2 }));
     if (!dau) dau = { user: uid, ...v };
   }
-  /* Ô ĐÊM HÔM TRƯỚC: ghi thẳng số của ca đêm đã hết. Trang cũ từ hôm trước gửi lên thì từ chối (ngày đã khác). Tổ đã tự báo ca đó thì khoá,
-     không để một ca có hai số. */
+  /* Ô ĐÊM HÔM TRƯỚC: ghi thẳng số của ca đêm đã hết. Trang cũ từ hôm trước gửi lên thì từ chối (ngày đã khác). Tổ đã TỰ báo ca đó thì khoá,
+     không để một ca có hai số. Số do NGƯỜI KHÁC ghi thay (nút Sửa ở báo cáo ca) thì không khoá: lần sửa sau cùng thắng — lưu ở đây xoá số ghi thay
+     đó và bỏ dấu "không làm ca này" của đêm đó (trước đây: bánh răng bị chặn với lời báo sai "tổ đã tự báo", hoặc lưu xong không ăn, 18/11). */
   const dem = [];
   let demChan = null; // chặn lần nữa ngay trong batch: tổ tự báo ca đêm đó giữa lượt đọc daBao và lượt ghi thì không ghi số thiết lập chồng lên
   if (dt && dt.ds.length) {
     const st = parseSettings((await env.DB.prepare(SETTINGS_SQL).all()).results), c = caDemTruoc(st);
     if (dt.ngay !== c.ngay) throw new HttpError(409, 'Đã sang ngày khác, hãy mở lại màn Thiết lập quân số.', 'changed');
     const [baoR, chepR] = await env.DB.batch([
-      env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2').bind(c.ngay),
+      env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2 AND (by_id IS NULL OR by_id = user_id)').bind(c.ngay),
       env.DB.prepare('SELECT user_id, tong, nghi FROM quan_so_tl WHERE ngay = ? AND ca = 2').bind(c.ngay),
     ]);
     const daBao = new Set(baoR.results.map((r) => r.user_id)), chep = new Map(chepR.results.map((r) => [r.user_id, r])), now = Date.now();
@@ -426,13 +427,15 @@ export async function qsThietLap(req, env, user) {
       dem.push(env.DB.prepare(`INSERT INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?1, 2, ?2, ?3, ?4, ?6, ?7, ?5)
                                ON CONFLICT(ngay, ca, user_id) DO UPDATE SET tong = excluded.tong, lam = excluded.lam, ts = excluded.ts,
                                  nghi = excluded.nghi, ghi_chu = excluded.ghi_chu`).bind(c.ngay, uid, tong, lam, now, nghi, gc),
-        auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam, n2: ng.n }));
+        auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam, n2: ng.n }),
+        env.DB.prepare('DELETE FROM quan_so WHERE ngay = ? AND ca = 2 AND user_id = ? AND by_id IS NOT NULL AND by_id <> user_id').bind(c.ngay, uid),
+        khongBo(env, c, uid));
     }
     const uids = dt.ds.map((x) => Number(x && x.user));
     /* Hai người cùng sửa ô này: máy gửi kèm ts của dòng nó đang thấy (0 = chưa có dòng); dòng đã đổi từ đó thì từ chối, không để người lưu
        sau âm thầm đè số người kia vừa ghi. Bản app cũ không gửi ts thì không so. */
     const tsMay = JSON.stringify(dt.ds.filter((x) => x && Number.isFinite(Number(x.ts)) && x.ts !== null && x.ts !== '').map((x) => ({ u: Number(x.user), ts: Number(x.ts) })));
-    demChan = { ngay: c.ngay, uids, tsMay, stmt: guardStmt(env, `EXISTS (SELECT 1 FROM quan_so WHERE ngay = ?1 AND ca = 2 AND user_id IN (SELECT value FROM json_each(?2)))
+    demChan = { ngay: c.ngay, uids, tsMay, stmt: guardStmt(env, `EXISTS (SELECT 1 FROM quan_so WHERE ngay = ?1 AND ca = 2 AND user_id IN (SELECT value FROM json_each(?2)) AND (by_id IS NULL OR by_id = user_id))
       OR EXISTS (SELECT 1 FROM json_each(?3) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u') WHERE ${DEM_DOI})`, c.ngay, JSON.stringify(uids), tsMay, chotTs) };
   }
   if (!ghi.length && !dem.length) throw bad('Không có gì để lưu');
@@ -444,7 +447,7 @@ export async function qsThietLap(req, env, user) {
     catch (e) {
       if (!(e instanceof HttpError) || e.code !== 'doi') throw e;
       if (demChan) {
-        const bao = (await env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2 AND user_id IN (SELECT value FROM json_each(?))').bind(demChan.ngay, JSON.stringify(demChan.uids)).all()).results;
+        const bao = (await env.DB.prepare('SELECT user_id FROM quan_so WHERE ngay = ? AND ca = 2 AND user_id IN (SELECT value FROM json_each(?)) AND (by_id IS NULL OR by_id = user_id)').bind(demChan.ngay, JSON.stringify(demChan.uids)).all()).results;
         const t = bao.length && to.get(bao[0].user_id);
         if (t) throw new HttpError(409, `Tổ ${t.name} vừa tự báo ca đêm ${fmtDay(demChan.ngay)}: sửa số tổ báo, không đặt số thiết lập cho ca đó`, 'changed');
         const doi = (await env.DB.prepare(`SELECT q.user_id FROM json_each(?2) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u')

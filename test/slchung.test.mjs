@@ -94,6 +94,8 @@ async function main() {
   /* NGUỒN SỐ CỦA CA ĐÊM ĐẨY SANG CA NGÀY. Trước đây phần ca đêm trên báo cáo ca ngày theo nguồn của báo cáo ca NGÀY, còn sản lượng theo
      nguồn của báo cáo ca ĐÊM: tổ Hai tự báo đêm 5 (thiết lập 9), ca đêm chọn "Chỉ số thiết lập" thì báo cáo ca ngày ghi 5, sản lượng 9. */
   eq('Hai tự báo ca đêm hôm trước 5', (await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Hai'], tong: 20, lam: 5 }, 'CV')).status, 200);
+  // các dòng trên là TỔ TỰ báo (ghi bằng CVKTHT cho gọn): đặt người ghi là chính tổ — số người khác ghi thay (nút Sửa) thì báo cáo luôn dùng, kể cả nguồn "Chỉ số thiết lập"
+  S.raw.exec('UPDATE quan_so SET by_id = user_id');
   await tai();
   eq('ca đêm Theo tổ báo: ca ngày ghi đêm 5, sản lượng 5', [/ca đêm 5\/20 cn/.test(dong(0, 'Hai')), so('Hai')], [true, [5, 8, 13]]);
   eq('báo cáo ca đêm hôm trước chép với nguồn Chỉ số thiết lập', (await S.call('PUT', '/baocao', { ngay: hom, ca: 2, ts: 0, van_ban: 'x', muc: {}, nguon: 'tl' }, 'CV')).status, 200);
@@ -220,6 +222,8 @@ async function main() {
   eq('không có số đêm qua: không đọc ô Đêm', so('Mới')[0], null);
   // tổ đã tự báo đêm qua: ô khoá, chọn nguồn Chỉ số thiết lập cũng không lấy ô Đêm của đêm nay
   eq('Đêm tự báo đêm qua 8', (await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Đêm'], tong: 20, lam: 8 }, 'CV')).status, 200);
+  // ca đã qua nên ghi bằng CVKTHT rồi đặt người ghi là chính tổ (= tổ tự báo): số NGƯỜI KHÁC ghi thay thì bánh răng vẫn sửa được (suabatky)
+  S.raw.prepare('UPDATE quan_so SET by_id = user_id WHERE ngay = ? AND ca = 2 AND user_id = ?').run(hom, U['Đêm']);
   eq('tổ đã báo: ô Đêm hôm trước bị từ chối', (await demTr([{ user: U['Đêm'], lam: 5 }])).status, 400);
   S.raw.prepare('DELETE FROM quan_so_tl WHERE ngay = ? AND ca = 2 AND user_id = ?').run(hom, U['Đêm']);
   // báo cáo ca đêm hôm trước chọn "Chỉ số thiết lập" (nháp trên máy): nguồn đó đẩy sang ca ngày

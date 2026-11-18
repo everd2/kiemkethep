@@ -309,7 +309,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v88';
+const BAN = 'kho-thep-v89';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -3825,7 +3825,8 @@ function qsDemXem(Q) {
   Q.tlGoc = Q.tl || {}; Q.tl = {}; Q.demKhoa = {};
   for (const [id, t] of Object.entries(Q.tlGoc)) {
     const x = D.bao[id] || D.so[id];
-    if (D.bao[id]) Q.demKhoa[id] = true;
+    // khoá khi CHÍNH tổ tự báo đêm đó; số người khác ghi thay (nút Sửa) thì vẫn sửa được ở đây (lần sửa sau cùng thắng)
+    if (D.bao[id] && (D.bao[id].by_id == null || D.bao[id].by_id === Number(id))) Q.demKhoa[id] = true;
     // demTong: tổng của chính đêm hôm trước (bản chép / tổ báo), để ô Đêm không tự chạy theo tổng mới gõ cho hôm nay (qsTlMacDinh)
     Q.tl[id] = x ? { ...t, s2: x.lam || 0, n2: x.nghi || {}, gc2: (x.nghi && x.nghi.khac && x.ghi_chu) || undefined, demTong: x.tong || t.tong } : t;
   }
@@ -4140,7 +4141,10 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
     };
     // tổng quân số theo số thiết lập: của bản chép ca này nếu có, không thì số đang đặt (tổng là của tổ, không riêng ca nào)
     const cp = tlCa[ca] && tlCa[ca][u.id], tlT = cp && cp.tong != null ? cp : tl;
-    const chon = (row, c) => (chiTl ? tlDong(c) || row : row || tlDong(c));
+    /* số người khác GHI THAY cho riêng ca đó (nút Sửa: by_id khác tổ) là số chính xác của ca đó: dùng cả khi nguồn là "Chỉ số thiết lập" —
+       trước đây chọn nguồn đó thì mọi lần bấm Sửa trên báo cáo bị bỏ qua. Số TỔ TỰ báo vẫn theo nguồn đã chọn như trước. */
+    const daSua = (row) => !!(row && row.by_id && row.by_id !== u.id);
+    const chon = (row, c) => (chiTl && !daSua(row) ? tlDong(c) || row : row || tlDong(c));
     let L = qsLichCa(B.lich, u.id, B.ngay);
     if (!L) {
       /* chưa đặt lịch: theo ca có số trong BẢNG THIẾT LẬP trước (CVKTHT đã đặt tổ làm ca nào); chưa có thì theo lần báo. Không đoán
@@ -4223,11 +4227,34 @@ const BC_SUA_CA_NGAY = 7; // = QS_SUA_NGAY ở src/quanso.js
 const bcSuaDuoc = (B) => isQL() && !!B && B.ngay >= congNgay(S.boot.today, -BC_SUA_CA_NGAY) && caKhoaMay(B) <= caKhoaMay(S.boot.qs && S.boot.qs.ke ? S.boot.qs.ke : B);
 const caKhoaMay = (c) => c.ngay + ':' + c.ca;
 const bcSuaNut = (B, id) => (id && bcSuaDuoc(B) && !(S.bcSuaCa && S.bcSuaCa.id === id) ? `<button class="chip s" style="flex:none;padding:2px 10px" data-a="bcsuaca" data-id="${id}" aria-label="Sửa quân số tổ này ca này">Sửa</button>` : '');
+/* CA CẦN SỬA: ca của báo cáo đang xem, hoặc CA KIA mà dòng của tổ ghi kèm — báo cáo ca ngày D: ca đêm D-1; báo cáo ca đêm D: ca ngày D.
+   Trước đây Sửa luôn sửa ca của báo cáo: tổ ca đêm nằm ở dòng "(làm ca đêm)" của báo cáo ca ngày, bấm Sửa gõ số đêm thì số rơi vào CA NGÀY
+   (lỗi 18/11, tổ Lê Văn Dũng). Nay form có hai nút chọn ca, tổ làm ca kia thì chọn sẵn ca kia. */
+const bcCaKia = (B) => (B.ca === 1 ? { ngay: congNgay(B.ngay, -1), ca: 2 } : { ngay: B.ngay, ca: 1 });
+// số đang ghi cho tổ ở ca c (để điền sẵn form): ca của báo cáo theo mục 3; ca kia theo báo cáo đó (ca đêm D-1 có sẵn trong B.demTr) / số báo / số thiết lập
+function bcSuaGoc(B, id, c) {
+  const tu = (r) => (r && r.lam != null ? { tong: r.tong, lam: r.lam, nghi: r.nghi || {}, ghi_chu: r.ghi_chu || '' } : null);
+  if (c.ngay === B.ngay && c.ca === B.ca) { const x = bcQuanSo(B).rows.find((r) => r.u.id === id); return tu(x) || { tong: x ? x.tong : '' }; }
+  if (B.ca === 1 && B.demTr) { const x = bcQuanSo(B.demTr).rows.find((r) => r.u.id === id); return tu(x) || { tong: x ? x.tong : '' }; }
+  const r = (B.qs || []).find((q) => q.user_id === id && q.ca === c.ca), cp = ((B.tlCa || {})[c.ca] || {})[id], tl = (B.tl || {})[id];
+  return tu(r) || tu(cp) || (tl && (tl['s' + c.ca] || qsSoNghi(tl['n' + c.ca] || {})) ? { tong: tl.tong, lam: tl['s' + c.ca] || 0, nghi: tl['n' + c.ca] || {}, ghi_chu: tl['gc' + c.ca] || '' } : { tong: tl ? tl.tong : '' });
+}
+function bcSuaDien(B, id, c) {
+  const g = bcSuaGoc(B, id, c);
+  Object.keys(S.form).filter((k) => /^bsc_/.test(k)).forEach((k) => delete S.form[k]);
+  S.form.bsc_t = g.tong ? String(g.tong) : '';
+  S.form.bsc_l = g.lam != null ? String(g.lam) : '';
+  Object.entries(g.nghi || {}).forEach(([k, n]) => { if (n) S.form['bsc_n_' + k] = String(n); });
+  S.form.bsc_gc = g.ghi_chu || '';
+}
 function bcSuaHtml(B, Q) {
-  const id = S.bcSuaCa.id, x = Q.rows.find((r) => r.u.id === id), ten = x ? x.u.name : '', khong = ((B.khong || {})[B.ca] || []).includes(id);
+  const F = S.bcSuaCa, id = F.id, x = Q.rows.find((r) => r.u.id === id), ten = x ? x.u.name : '', khong = ((B.khong || {})[F.ca] || []).includes(id);
+  const kia = bcCaKia(B), chon = (c, nhanC) => `<button class="chip s ${F.ngay === c.ngay && F.ca === c.ca ? 'on' : ''}" style="white-space:nowrap" data-a="bcsuachon" data-v="${c.ngay}|${c.ca}" ${bcSuaDuoc(c) ? '' : 'disabled'}>${nhanC}</button>`;
+  const chonO = `<div class="row gap6" style="flex-wrap:wrap">${chon(B, hoa(caGoi(B)))}${chon(kia, hoa(caGoi(kia)) + (B.ca === 1 ? ' (hôm trước)' : ''))}</div>`;
   const o = (k, nhanO, w) => `<label class="col sm" style="min-width:0;${w ? 'flex:' + w : ''}">${nhanO}<input class="inp s" style="text-align:center;font-weight:700" id="bsc_${k}" inputmode="numeric" maxlength="3" autocomplete="off" data-model="bsc_${k}" value="${esc(S.form['bsc_' + k] || '')}"></label>`;
   const tay = typeof S.bcM.s3 === 'string';
-  return `<div class="card col gap8" style="border:2px solid var(--pri);margin:4px 0 8px"><b>Sửa quân số tổ ${esc(ten)} · ${esc(caGoi(B))}</b>
+  return `<div class="card col gap8" style="border:2px solid var(--pri);margin:4px 0 8px"><b>Sửa quân số tổ ${esc(ten)} · ${esc(caGoi(F))}</b>
+    <span class="sm b">Sửa ca nào</span>${chonO}
     <span class="sm muted" style="line-height:1.4">Số này thay cho số tổ báo và số app tự chép của đúng ca này. Ghi vào nhật ký.</span>
     ${tay ? '<span class="sm" style="color:var(--warn);line-height:1.4">Mục 3 đang sửa tay bằng chữ: lưu xong bấm "Lấy lại số từ app" ở mục 3 mới thấy số mới.</span>' : ''}
     <div class="row gap8">${o('t', 'Tổng quân số', 1)}${o('l', 'Đi làm ca này', 1)}</div>
@@ -7872,13 +7899,15 @@ const ACTIONS = {
   // Sửa một ca (xem bcSuaHtml): mở form ngay dưới dòng của tổ, điền sẵn số mục 3 đang ghi cho tổ đó
   bcsuaca(d) {
     const B = S.bcc, id = Number(d.id); if (!B || !id) return;
-    const x = bcQuanSo(B).rows.find((r) => r.u.id === id), co = x && x.lam != null;
-    Object.keys(S.form).filter((k) => /^bsc_/.test(k)).forEach((k) => delete S.form[k]);
-    S.form.bsc_t = x && x.tong ? String(x.tong) : '';
-    S.form.bsc_l = co ? String(x.lam) : '';
-    if (co) Object.entries(x.nghi || {}).forEach(([k, n]) => { if (n) S.form['bsc_n_' + k] = String(n); });
-    S.form.bsc_gc = (co && x.ghi_chu) || '';
-    S.bcSuaCa = { id }; render();
+    const x = bcQuanSo(B).rows.find((r) => r.u.id === id), kia = bcCaKia(B);
+    // tổ làm ca kia (dòng "(làm ca đêm)") thì chọn sẵn ca kia — đó là ca có số của tổ trên dòng này
+    const c = x && x.trang === 'kia' && bcSuaDuoc(kia) ? kia : { ngay: B.ngay, ca: B.ca };
+    bcSuaDien(B, id, c); S.bcSuaCa = { id, ngay: c.ngay, ca: c.ca }; render();
+  },
+  bcsuachon(d) {
+    const B = S.bcc, F = S.bcSuaCa; if (!B || !F) return;
+    const [ngay, ca] = String(d.v).split('|'); const c = { ngay, ca: Number(ca) };
+    bcSuaDien(B, F.id, c); S.bcSuaCa = { ...F, ngay: c.ngay, ca: c.ca }; render();
   },
   bcsuadong() { S.bcSuaCa = null; render(); },
   qssuaxem() {
@@ -7898,18 +7927,19 @@ const ACTIONS = {
     if (nghi.khac && !gc) return say('Có người nghỉ lý do khác: ghi rõ lý do vào ô ghi chú.', true), render();
     const ten = ((bcQuanSo(B).rows.find((r) => r.u.id === F.id) || {}).u || {}).name || '';
     act(async () => {
-      await api('PUT', '/quanso', { ngay: B.ngay, ca: B.ca, user: F.id, tong, lam, nghi, ghi_chu: gc });
+      await api('PUT', '/quanso', { ngay: F.ngay || B.ngay, ca: F.ca || B.ca, user: F.id, tong, lam, nghi, ghi_chu: gc });
       S.bcSuaCa = null; await bcTai();
-    }, `Đã sửa quân số tổ ${ten} ${caGoi(B)}.`);
+    }, `Đã sửa quân số tổ ${ten} ${caGoi(F.ngay ? F : B)}.`);
   },
   async bcsuakhong(d) {
     const B = S.bcc, F = S.bcSuaCa; if (!B || !F) return;
     const khong = d.v === '1', ten = ((bcQuanSo(B).rows.find((r) => r.u.id === F.id) || {}).u || {}).name || '';
-    if (khong && !(await ask(`Đánh dấu tổ ${ten} KHÔNG LÀM ${caGoi(B)}?\n\nSố tổ đã báo / số app tự chép của ca này bị bỏ (nhật ký vẫn giữ số cũ). Báo cáo ca ghi "không làm", sản lượng không tính công ca này.`, 'KHÔNG LÀM CA NÀY'))) return render();
+    const C = F.ngay ? F : B;
+    if (khong && !(await ask(`Đánh dấu tổ ${ten} KHÔNG LÀM ${caGoi(C)}?\n\nSố tổ đã báo / số app tự chép của ca này bị bỏ (nhật ký vẫn giữ số cũ). Báo cáo ca ghi "không làm", sản lượng không tính công ca này.`, 'KHÔNG LÀM CA NÀY'))) return render();
     act(async () => {
-      await api('PUT', '/quanso/khong', { ngay: B.ngay, ca: B.ca, user: F.id, khong });
+      await api('PUT', '/quanso/khong', { ngay: C.ngay, ca: C.ca, user: F.id, khong });
       S.bcSuaCa = null; await bcTai();
-    }, khong ? `Đã đánh dấu tổ ${ten} không làm ${caGoi(B)}.` : `Đã bỏ đánh dấu, tổ ${ten} lại theo lịch ca.`);
+    }, khong ? `Đã đánh dấu tổ ${ten} không làm ${caGoi(C)}.` : `Đã bỏ đánh dấu, tổ ${ten} lại theo lịch ca.`);
   },
   // bỏ phần sửa chưa chép của máy này: về đúng bản dùng chung đang lưu
   bcbo() { if (!S.bcc) return; bcGhep(S.bcc, null); bcNhap(); S.bcMo = null; say('Đã bỏ phần sửa chưa chép, về bản chung đang lưu.'); render(); },

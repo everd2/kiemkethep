@@ -44,6 +44,9 @@ async function main() {
   await S.cron(); // lịch mỗi giờ chép số ca đêm vừa hết
   eq('đã chép ca đêm hôm qua (Hai 8, Dem 10, Ba 9, Bon thiếu số, Tuan 14, Du 16)', S.sql('SELECT user_id, lam FROM quan_so_tl WHERE ngay = ? AND ca = 2 ORDER BY user_id', hom).map((r) => r.lam), [8, 10, 9, null, 14, 16]);
   eq('Ba tự báo ca đêm hôm qua 7, 2 ốm', (await S.call('PUT', '/quanso', { ngay: hom, ca: 2, user: U['Ba'], tong: 9, lam: 7, nghi: { om: 2 } }, 'CV')).status, 200);
+  /* ca đó đã qua nên tổ trưởng không tự gửi được nữa: ghi bằng CVKTHT rồi đặt người ghi là chính tổ Ba (= tổ tự báo). Số do người khác ghi thay
+     thì bánh răng vẫn sửa được (lần sửa sau cùng thắng, xem suabatky.test.mjs) — chỉ số TỔ TỰ báo mới khoá. */
+  S.raw.prepare('UPDATE quan_so SET by_id = user_id WHERE ngay = ? AND ca = 2 AND user_id = ?').run(hom, U['Ba']);
 
   const store = {};
   const el = () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, appendChild() {}, remove() {}, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} });
