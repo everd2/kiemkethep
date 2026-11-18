@@ -177,7 +177,8 @@ async function main() {
     await S.call('PUT', '/quanso', { ngay: D3, ca: 1, tong: 12, lam: 12, nghi: {} }, 'An');
     ok('2: tổ An tự báo ca đã đánh dấu: dấu "không làm" tự bỏ', !(JSON.parse(S.one('SELECT data FROM bc_mau WHERE id = 1').data).khong || {})[D3 + ':1']?.[U.An]);
     // giới hạn 7 ngày
-    eq('2: quá 7 ngày: không sửa được', (await S.call('PUT', '/quanso/khong', { ngay: vnDay(Date.now() - 9 * 864e5), ca: 1, user: U.An, khong: true }, 'CV')).status, 400);
+    eq('2: quá 31 ngày: không sửa được', (await S.call('PUT', '/quanso/khong', { ngay: vnDay(Date.now() - 33 * 864e5), ca: 1, user: U.An, khong: true }, 'CV')).status, 400);
+    eq('2: 9 ngày trước: sửa được (hạn 31 ngày, như sản lượng)', (await S.call('PUT', '/quanso/khong', { ngay: vnDay(Date.now() - 9 * 864e5), ca: 1, user: U.An, khong: true }, 'CV')).status, 200);
     ok('2: không có lỗi JavaScript', !M.loi.length, M.loi.join(' | '));
     void hom;
   }

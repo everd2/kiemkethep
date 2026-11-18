@@ -3,7 +3,7 @@
    1. Mỗi tổ (Tiểu đội trưởng) báo theo CA; ca đêm vắt qua nửa đêm vẫn thuộc ngày bắt đầu ca.
    2. Số nghỉ là tổng các lý do, phần còn lại sau đi làm + nghỉ là người thuộc ca kia: không có dòng cộng sai.
    3. Tiểu đội trưởng chỉ thấy và chỉ ghi tổ mình, cho ca đang diễn ra hoặc ca kế tiếp.
-   4. CVKTHT trở lên thấy mọi tổ, ghi thay và sửa được (lùi 7 ngày), dòng ghi rõ ai ghi. */
+   4. CVKTHT trở lên thấy mọi tổ, ghi thay và sửa được (lùi 31 ngày), dòng ghi rõ ai ghi. */
 import { boot, advance, vnDay } from './harness.mjs';
 
 const ROOT = process.argv[2] || '.';
@@ -135,9 +135,10 @@ async function main() {
   await S.call('PUT', '/quanso/han', { ca1: 420, ca2: 1155 }, 'Cv');
   eq('mốc hết ca gửi kèm (18h30 hôm nay)', ((bC.den + 7 * 3600e3) % 864e5) / 60e3, 1110);
 
-  /* ===== 7. Sửa lùi: CVKTHT được 7 ngày ===== */
+  /* ===== 7. Sửa lùi: CVKTHT được 31 ngày ===== */
   eq('sửa ca của 3 ngày trước: được', (await ghi('Cv', { ngay: cong(D1, -3), ca: 1, user: U.An, tong: 21, lam: 20, nghi: { phep: 1 } })).status, 200);
-  eq('sửa ca của 9 ngày trước: từ chối', (await ghi('Cv', { ngay: cong(D1, -9), ca: 1, user: U.An, tong: 21, lam: 20, nghi: { phep: 1 } })).status, 400);
+  // hạn sửa 31 ngày (chốt 2026-11-18: sửa bất cứ lúc nào, bằng hạn báo cáo sản lượng)
+  eq('sửa ca của 33 ngày trước: từ chối', (await ghi('Cv', { ngay: cong(D1, -33), ca: 1, user: U.An, tong: 21, lam: 20, nghi: { phep: 1 } })).status, 400);
   eq('nhưng xem lại thì được', (await S.call('GET', `/quanso?ngay=${cong(D1, -9)}&ca=1`, undefined, 'Cv')).status, 200);
 
   /* ===== 8. Tổ trưởng đổi vai trò: dòng đã báo không mất ===== */

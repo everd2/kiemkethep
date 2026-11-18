@@ -22,7 +22,7 @@ export const BC_KT = [
 ];
 const BC_DAU = ['don_vi', 'ddt', 'tdtr', 'cbpt', 'du_an', 'khu_vuc'];
 const BC_MUC = ['s3', 's4', 's5', 's6', 's7', 's8'];
-const BC_SUA_NGAY = 7;
+const BC_SUA_NGAY = 31; // bằng hạn sửa quân số (QS_SUA_NGAY) và báo cáo sản lượng
 const docJ = (s) => { try { const o = JSON.parse(s || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } };
 const chu = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
 // chữ nhiều dòng (một mục của báo cáo): giữ xuống dòng, bỏ dòng trống thừa
@@ -162,8 +162,8 @@ async function bcSo(env, st, c, gon) {
   /* lich: lịch ca ĐÚNG NHƯ LÚC CA NÀY BẮT ĐẦU (lichCaTai): tổ đổi lịch giữa ca hay sau ca thì báo cáo ca đó vẫn theo lịch cũ.
      khong[số ca]: các tổ CVKTHT đã đánh dấu "không làm" ở ca này và ca liền trước (xem khongLam ở src/quanso.js). */
   const lichCa = lichCaTai(cfg.lich, gio.tu, gio.den, c.ca);
-  const khong = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, tdt.results.concat(qs.results.map((q) => ({ id: q.user_id }))).map((u) => u.id)
-    .filter((id, i, a) => a.indexOf(id) === i && khongLam(cfg, id, x))]));
+  // đọc thẳng các dấu đã đặt (cả tổ đã xoá — trước đây chỉ xét tổ đang dùng app và tổ có số hôm đó, tổ xoá rồi mất dấu)
+  const khong = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, Object.keys((cfg.khong && cfg.khong[caKhoa(x)]) || {}).map(Number).filter((id) => khongLam(cfg, id, x))]));
   // ai đánh dấu "không làm", lúc nào: khongAi[số ca][id tổ] = { by_name, ts } (màn hình ghi nhãn cho cấp chỉ huy biết)
   const tenCua = Object.fromEntries(tenR.results.map((u) => [u.id, u.name]));
   const khongAi = Object.fromEntries([c, caTruoc(c)].map((x) => [x.ca, Object.fromEntries(khong[x.ca].map((id) => {

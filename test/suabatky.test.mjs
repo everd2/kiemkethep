@@ -67,6 +67,7 @@ async function may(S, U, who) {
   return { R, moBc, dong, loi, xong };
 }
 
+const bcBanS3 = (M) => M.R('bcBan(S.bcc).s3') || '';
 async function main() {
   toi(20, 0);
   const { S, U } = await dung([['A', 'tieudoi'], ['B', 'tieudoi'], ['C', 'tieudoi'], ['E', 'tieudoi'], ['CV', 'cvktht'], ['Trung', 'trungdoi']]);
@@ -144,11 +145,35 @@ async function main() {
     eq('4b: tổ B tự báo ca ngày D: số tổ báo giữ nguyên dù bánh răng đổi sau', M.dong('B'), 'Tổ B: ca ngày 12/12 cn');
     await M.R(`slLay('${D}').then((L) => { slDung(L, false); })`); await tick(100);
   }
+  /* 4c. SỐ VỪA SỬA LUÔN VÀO BÁO CÁO, kể cả khi mục 3 đã sửa tay bằng chữ (chốt 2026-11-18) */
+  {
+    // nháp trên máy: mục 3 báo cáo ca ngày D sửa tay ghi tổ A 99 người
+    await M.moBc(D, 1);
+    M.R(`S.bcM.s3 = bcAuto(S.bcc, 's3').replace(/Tổ A: [^\\n]*/, 'Tổ A: ca ngày 99/99 cn'); bcNhap()`);
+    eq('4c: mục 3 sửa tay (nháp): chữ thắng số app', bcBanS3(M).includes('Tổ A: ca ngày 99/99 cn'), true);
+    M.R(`ACTIONS.bcsuaca({ id: '${U.A}' })`); M.R("S.form.bsc_t = '10'; S.form.bsc_l = '9'; S.form.bsc_n_om = '1'; ACTIONS.bcsualuu()"); await M.xong();
+    eq('4c: bấm Sửa tổ A ca ngày D: chữ sửa tay bỏ, báo cáo theo số vừa sửa', [M.R("typeof S.bcM.s3"), M.dong('A')], ['undefined', 'Tổ A: ca ngày 9/10 cn, ca đêm 6/10 cn, nghỉ 5 cn — ca ngày: 1 ốm; ca đêm: 4 ốm']);
+    // bản đã lưu trên máy chủ: báo cáo ca đêm H có chữ sửa tay ghi tổ E 1 người — báo cáo ca ngày D và sản lượng D đọc chữ đó
+    S.raw.prepare("INSERT INTO bao_cao_ca (ngay, ca, data, van_ban, ts, by_id) VALUES (?, 2, ?, 'x', ?, ?) ON CONFLICT(ngay, ca) DO UPDATE SET data = excluded.data")
+      .run(H, JSON.stringify({ muc: { s3: 'Quân số đi làm trong ca 2 là: 1 công nhân\nTổ E: ca đêm 1/10 cn' } }), Date.now(), U.CV);
+    await M.moBc(D, 1);
+    ok('4c: báo cáo ca ngày D đọc chữ sửa tay của ca đêm H (E 1)', /ca đêm 1\/10/.test(M.dong('E') || ''), M.dong('E'));
+    M.R(`ACTIONS.bcsuaca({ id: '${U.E}' })`); M.R("S.form.bsc_l = '7'; ACTIONS.bcsualuu()"); await M.xong();
+    eq('4c: Sửa tổ E ca đêm H: máy chủ bỏ chữ sửa tay của ca đêm H', S.one("SELECT json_type(data, '$.muc.s3') t FROM bao_cao_ca WHERE ngay = ? AND ca = 2", H).t, null);
+    await M.moBc(D, 1);
+    ok('4c: báo cáo ca ngày D theo số vừa sửa (E ca đêm 7)', /ca đêm 7\/10/.test(M.dong('E') || ''), M.dong('E'));
+    await M.R(`slLay('${D}').then((L) => { slDung(L, false); })`); await tick(100);
+    eq('4c: sản lượng D theo số vừa sửa: A 9 + 6, E 7', JSON.parse(M.R("JSON.stringify(slTinh().dong.filter((r) => r.u.name === 'A' || r.u.name === 'E').map((r) => [r.u.name, r.cong]))")), [['A', 15], ['E', 7]]);
+    // Sửa 0 người đi làm (cả tổ nghỉ có lý do) cho tổ có lịch ca kia: vẫn là số của ca đó
+    await M.moBc(H, 2);
+    M.R(`ACTIONS.bcsuaca({ id: '${U.B}' }); ACTIONS.bcsuachon({ v: '${H}|2' })`); M.R("S.form.bsc_t = '12'; S.form.bsc_l = '0'; S.form.bsc_n_phep = '12'; ACTIONS.bcsualuu()"); await M.xong();
+    eq('4c: tổ B (lịch ca ngày) Sửa ca đêm H 0 người, 12 phép: dòng ghi đúng số, không thành "(làm ca ngày)"', M.dong('B'), 'Tổ B: ca đêm 0/12 cn, nghỉ 12 cn — 12 nghỉ phép năm');
+  }
   /* 5. thống kê và lượt chép */
   toi(19, 0); await S.cron();
-  eq('5: hết ca ngày D: chép A 10, C 8 (B đã tự báo, không chép)', S.sql('SELECT user_id u, lam FROM quan_so_tl WHERE ngay = ? AND ca = 1 ORDER BY u', D).map((r) => [r.u, r.lam]), [[U.A, 10], [U.C, 8]]);
+  eq('5: hết ca ngày D: chép C 8 (A đã Sửa, B đã tự báo: không chép)', S.sql('SELECT user_id u, lam FROM quan_so_tl WHERE ngay = ? AND ca = 1 ORDER BY u', D).map((r) => [r.u, r.lam]), [[U.C, 8]]);
   const tk = (await S.call('GET', `/quanso/thongke?tu=${H}&den=${D}`, undefined, 'CV')).data;
-  eq('5: thống kê ca đêm H: A 6 (bánh răng), C 5 (bánh răng), E 8 (Sửa)', tk.qs.filter((x) => x.ngay === H && x.ca === 2).map((x) => [x.u, x.lam]).concat(tk.tl.filter((x) => x.ngay === H && x.ca === 2 && !tk.qs.some((q) => q.ngay === H && q.ca === 2 && q.u === x.u)).map((x) => [x.u, x.lam])).sort((a, b) => a[0] - b[0]), [[U.A, 6], [U.C, 5], [U.E, 8]]);
+  eq('5: thống kê ca đêm H: A 6 (bánh răng), B 0 (Sửa), C 5 (bánh răng), E 7 (Sửa)', tk.qs.filter((x) => x.ngay === H && x.ca === 2).map((x) => [x.u, x.lam]).concat(tk.tl.filter((x) => x.ngay === H && x.ca === 2 && !tk.qs.some((q) => q.ngay === H && q.ca === 2 && q.u === x.u)).map((x) => [x.u, x.lam])).sort((a, b) => a[0] - b[0]), [[U.A, 6], [U.B, 0], [U.C, 5], [U.E, 7]]);
   /* 6. thẻ trên Tổng quan của cấp chỉ huy */
   const T2 = await may(S, U, 'Trung');
   T2.R(`S.me.role = 'trungdoi'; S.screen = 'home'`);

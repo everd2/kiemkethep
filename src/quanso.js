@@ -22,7 +22,8 @@ export const QS_LY_DO = [['om', 'ốm'], ['phep', 'nghỉ phép năm'], ['que', 
 export const CA_TEN = { 1: 'ca ngày', 2: 'ca đêm' };
 // trần cho một tổ: cao hơn hẳn thực tế (tổ vài chục người), chỉ để chặn gõ thừa số
 export const QS_TONG_MAX = 500;
-const QS_SUA_NGAY = 7;
+// CVKTHT trở lên sửa quân số một ca trong chừng này ngày (chốt 2026-11-18: "sửa bất cứ lúc nào" — bằng hạn sửa báo cáo sản lượng)
+const QS_SUA_NGAY = 31;
 export const TL_DEM_MS = 65 * 60e3; // đệm sau giờ hết ca cho số thiết lập (xem soTlCa)
 const PHUT = 60e3, NGAY = 864e5;
 
@@ -229,9 +230,19 @@ export async function qsPut(req, env, user) {
     auditStmt(env, user, 'qs_bao', { ngay: c.ngay, ca: c.ca, to: to.name, tong, lam, nghi, ca_kia, ghi_chu: ghi_chu || undefined, thay: uid !== user.id ? 1 : undefined }),
     // có số cho ca này thì tổ có làm ca này: bỏ dấu "không làm ca này" nếu có
     khongBo(env, c, uid),
+    ...boTay(env, c),
     bump(env),
   ]);
   return json({ ok: true, ngay: c.ngay, ca: c.ca, user: uid, tong, lam, ca_kia, nghi: soNghi });
+}
+/* SỐ VỪA SỬA PHẢI VÀO BÁO CÁO: chữ sửa tay mục 3 (bao_cao_ca.data.muc.s3) thắng số app tính ở báo cáo ca VÀ báo cáo sản lượng. Có lần sửa
+   quân số một ca thì bỏ chữ đó của báo cáo ca đó — và của báo cáo ca ngày hôm sau khi sửa ca đêm (dòng ca ngày ghi kèm "ca đêm a/b") — để báo
+   cáo tính lại theo số mới. Bản đã chép (van_ban) giữ nguyên: màn hình báo "đã đổi sau lần chép", chép lại là có số mới. */
+export function boTay(env, c) {
+  // ca đêm D: kèm báo cáo ca ngày D+1 (ghi kèm ca đêm D); ca ngày D: kèm báo cáo ca đêm D (tổ hai ca ghi kèm ca ngày cùng ngày)
+  const ds = [c, c.ca === 2 ? { ngay: congNgay(c.ngay, 1), ca: 1 } : { ngay: c.ngay, ca: 2 }];
+  /* ts + 1: máy khác còn mở bản cũ (chưa tải lại) bấm Chép thì bị từ chối 409 như khi có người vừa chép, không gửi lại chữ sửa tay cũ */
+  return ds.map((x) => env.DB.prepare("UPDATE bao_cao_ca SET data = json_remove(data, '$.muc.s3'), ts = ts + 1 WHERE ngay = ? AND ca = ? AND json_type(data, '$.muc.s3') IS NOT NULL").bind(x.ngay, x.ca));
 }
 const khongDuong = (c, uid) => '$.khong."' + caKhoa(c) + '"."' + uid + '"';
 const khongBo = (env, c, uid) => env.DB.prepare('UPDATE bc_mau SET data = json_remove(data, ?1) WHERE id = 1 AND json_extract(data, ?1) IS NOT NULL').bind(khongDuong(c, uid));
@@ -244,17 +255,30 @@ export async function qsKhong(req, env, user) {
   const b = await readJson(req);
   const c = docCa(b.ngay, b.ca), uid = Number(b.user);
   if (!Number.isInteger(uid)) throw bad('Cần chọn tổ');
-  const [stR, toR, cuR, tlR] = await env.DB.batch([
+  const [stR, toR, cuR, tlR, dauR] = await env.DB.batch([
     env.DB.prepare(SETTINGS_SQL),
     env.DB.prepare('SELECT id, name, role, deleted FROM users WHERE id = ?').bind(uid),
-    env.DB.prepare('SELECT tong, lam, nghi FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
-    env.DB.prepare('SELECT tong, lam FROM quan_so_tl WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+    env.DB.prepare('SELECT tong, lam, ca_kia, nghi, ghi_chu, ts, by_id FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+    env.DB.prepare('SELECT tong, lam, nghi, ghi_chu, ts FROM quan_so_tl WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
+    // dấu đang có (kèm số cất lúc đánh dấu): bỏ dấu thì trả lại đúng số đó
+    env.DB.prepare('SELECT json_extract(data, ?) v FROM bc_mau WHERE id = 1').bind(khongDuong(c, uid)),
   ]);
   const st = parseSettings(stR.results), hien = caLuc(st), to = toR.results[0];
   if (caKhoa(c) > caKhoa(caKe(hien))) throw bad('Chưa tới ' + caGoi(c) + ': chỉ sửa trước được một ca');
   if (c.ngay < vnDay(Date.now() - QS_SUA_NGAY * NGAY)) throw bad(`Chỉ sửa được quân số trong ${QS_SUA_NGAY} ngày gần đây`);
   if (!to || to.deleted || to.role !== 'tieudoi') throw bad('Chỉ sửa ca cho tổ của một Tiểu đội trưởng đang dùng app');
   const khong = b.khong === true, cu = cuR.results[0] || null, cuTl = tlR.results[0] || null;
+  let dau = null; try { dau = dauR.results[0] && dauR.results[0].v ? JSON.parse(dauR.results[0].v) : null; } catch (e) { dau = null; }
+  /* ĐÁNH DẤU NHẦM RỒI BỎ DẤU: số của ca đó phải trở lại như trước. Lúc đánh dấu cất số tổ báo / số đã chép vào chính dấu (cu / cu_tl); bỏ dấu thì ghi
+     lại (nếu ca đó chưa có số mới). Trước đây số bị xoá hẳn, lượt chép sau chép số thiết lập HÔM NAY — số chưa từng đúng cho ca đó. Đánh dấu lại khi
+     đang có dấu thì giữ số đã cất. */
+  const cat = { ts: Date.now(), by: user.id, cu: cu || (dau && dau.cu) || null, cu_tl: cuTl || (dau && dau.cu_tl) || null };
+  const traLai = !khong && dau ? [
+    ...(dau.cu ? [env.DB.prepare('INSERT OR IGNORE INTO quan_so (ngay, ca, user_id, tong, lam, ca_kia, nghi, ghi_chu, ts, by_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .bind(c.ngay, c.ca, uid, dau.cu.tong, dau.cu.lam, dau.cu.ca_kia || 0, typeof dau.cu.nghi === 'string' ? dau.cu.nghi : JSON.stringify(dau.cu.nghi || {}), dau.cu.ghi_chu || null, dau.cu.ts || Date.now(), dau.cu.by_id || null)] : []),
+    ...(dau.cu_tl ? [env.DB.prepare('INSERT OR IGNORE INTO quan_so_tl (ngay, ca, user_id, tong, lam, nghi, ghi_chu, ts) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(c.ngay, c.ca, uid, dau.cu_tl.tong, dau.cu_tl.lam, typeof dau.cu_tl.nghi === 'string' ? dau.cu_tl.nghi : JSON.stringify(dau.cu_tl.nghi || {}), dau.cu_tl.ghi_chu || null, dau.cu_tl.ts || Date.now())] : []),
+  ] : [];
   await env.DB.batch([
     env.DB.prepare(MAU_CO),
     khong
@@ -264,14 +288,17 @@ export async function qsKhong(req, env, user) {
       ? env.DB.prepare("UPDATE bc_mau SET data = json_set(data, ?1, json(COALESCE(json_extract(data, ?1), '{}'))) WHERE id = 1").bind('$.khong."' + caKhoa(c) + '"')
       : env.DB.prepare('SELECT 1'),
     khong
-      ? env.DB.prepare('UPDATE bc_mau SET data = json_set(data, ?, json(?)) WHERE id = 1').bind(khongDuong(c, uid), JSON.stringify({ ts: Date.now(), by: user.id }))
+      ? env.DB.prepare('UPDATE bc_mau SET data = json_set(data, ?, json(?)) WHERE id = 1').bind(khongDuong(c, uid), JSON.stringify(cat))
       : khongBo(env, c, uid),
+    ...traLai,
     ...(khong ? [
       env.DB.prepare('DELETE FROM quan_so WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
       env.DB.prepare('DELETE FROM quan_so_tl WHERE ngay = ? AND ca = ? AND user_id = ?').bind(c.ngay, c.ca, uid),
     ] : []),
+    ...boTay(env, c),
     auditStmt(env, user, 'qs_khong', { ngay: c.ngay, ca: c.ca, to: to.name, khong: khong ? 1 : 0,
-      ...(khong && cu ? { cu: { tong: cu.tong, lam: cu.lam, nghi: docNghi(cu.nghi) } } : {}), ...(khong && cuTl ? { cu_tl: { tong: cuTl.tong, lam: cuTl.lam } } : {}) }),
+      ...(khong && cu ? { cu: { tong: cu.tong, lam: cu.lam, nghi: docNghi(cu.nghi) } } : {}), ...(khong && cuTl ? { cu_tl: { tong: cuTl.tong, lam: cuTl.lam } } : {}),
+      ...(traLai.length ? { tra_lai: 1 } : {}) }),
     bump(env),
   ]);
   return json({ ok: true, ngay: c.ngay, ca: c.ca, user: uid, khong });
@@ -326,6 +353,8 @@ export async function qsLich(req, env, user) {
     env.DB.prepare(MAU_CO),
     env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind('$.lich."' + uid + '"', JSON.stringify(v)),
     auditStmt(env, user, 'qs_lich', { to: to.name, ca, den: den || undefined, tong: b.tong == null || b.tong === '' ? undefined : tong }),
+    // đổi lịch: báo cáo ca đang chạy tính lại theo lịch mới, bỏ chữ sửa tay mục 3
+    ...boTay(env, caLuc(st)),
     bump(env),
   ]);
   return json({ ok: true, user: uid, ...v });
@@ -357,7 +386,7 @@ export async function qsThietLap(req, env, user) {
     env.DB.prepare('SELECT data FROM bc_mau WHERE id = 1'),
     env.DB.prepare(SETTINGS_SQL),
   ]);
-  const stL = parseSettings(stTl.results), batHien = caGio(stL, caLuc(stL)).tu;
+  const stL = parseSettings(stTl.results), caHien = caLuc(stL), batHien = caGio(stL, caHien).tu;
   const to = new Map(toR.results.map((u) => [u.id, u])), cfg = docCfg(mauR.results[0]);
   const now = Date.now(), chan = [], ghi = [], dat = (path, v) => env.DB.prepare("UPDATE bc_mau SET data = json_set(COALESCE(data, '{}'), ?, json(?)) WHERE id = 1").bind(path, JSON.stringify(v));
   let dau = null;
@@ -429,7 +458,7 @@ export async function qsThietLap(req, env, user) {
                                  nghi = excluded.nghi, ghi_chu = excluded.ghi_chu`).bind(c.ngay, uid, tong, lam, now, nghi, gc),
         auditStmt(env, user, 'qs_dem_truoc', { to: t.name, ngay: c.ngay, tong, lam, n2: ng.n }),
         env.DB.prepare('DELETE FROM quan_so WHERE ngay = ? AND ca = 2 AND user_id = ? AND by_id IS NOT NULL AND by_id <> user_id').bind(c.ngay, uid),
-        khongBo(env, c, uid));
+        khongBo(env, c, uid), ...boTay(env, c));
     }
     const uids = dt.ds.map((x) => Number(x && x.user));
     /* Hai người cùng sửa ô này: máy gửi kèm ts của dòng nó đang thấy (0 = chưa có dòng); dòng đã đổi từ đó thì từ chối, không để người lưu
@@ -439,7 +468,8 @@ export async function qsThietLap(req, env, user) {
       OR EXISTS (SELECT 1 FROM json_each(?3) j JOIN quan_so_tl q ON q.ngay = ?1 AND q.ca = 2 AND q.user_id = json_extract(j.value, '$.u') WHERE ${DEM_DOI})`, c.ngay, JSON.stringify(uids), tsMay, chotTs) };
   }
   if (!ghi.length && !dem.length) throw bad('Không có gì để lưu');
-  const sau = [env.DB.prepare(MAU_CO), ...ghi, ...dem, bump(env)];
+  // đổi số / ca của tổ: báo cáo ca đang chạy (và ca liền kề) tính lại theo số mới, bỏ chữ sửa tay mục 3
+  const sau = [env.DB.prepare(MAU_CO), ...ghi, ...dem, ...(ghi.length ? boTay(env, caHien) : []), bump(env)];
   const chot = [...chan.map((c) => c[0]), ...(demChan ? [demChan.stmt] : [])];
   if (!chot.length) await env.DB.batch(sau);
   else {
@@ -594,7 +624,9 @@ function soTlCa(cfg, id, c, het, bat) {
   /* Đặt SAU lúc hết ca thì không biết lúc đó tổ có làm ca này không (không chép ngược). Nhưng cho một khoảng đệm bằng chu kỳ chép tự
      động (lịch chạy mỗi giờ): CVKTHT sửa số ngay sau giờ hết ca, trước lượt chép, thì ca đó vẫn có số thay vì thành "thiếu số".
      Lịch: mốc là lúc ĐỔI CA (doi_ts) — tổ chỉ khai lại tổng quân số sau giờ hết ca thì không phải "đặt lịch sau lúc hết ca". */
-  if ((L ? r.doi_ts || r.ts : tl.ts) > het + TL_DEM_MS) return null;
+  /* số thiết lập đặt sau lúc hết ca (quá khoảng đệm) là số của các ca sau, không phải của ca này — kể cả tổ có lịch (trước đây chỉ xét mốc lịch:
+     đánh dấu nhầm "không làm" rồi bỏ, lượt chép lấy số thiết lập hôm nay cho ca hôm qua). Cùng mốc với máy khách (tlDong / tlMoc). */
+  if ((L ? r.doi_ts || r.ts : 0) > het + TL_DEM_MS || (tl && tl.ts > het + TL_DEM_MS)) return null;
   return { tong: co ? tl.tong : null, lam: co ? s : null, nghi: co ? nghi : {}, ghi_chu: (co && nghi.khac && tl['gc' + c.ca]) || null };
 }
 /* SỐ THIẾT LẬP CỦA MỘT CA ĐÃ HẾT, cho báo cáo ca và báo cáo sản lượng (bcView). Số thiết lập chỉ có một bản, sửa là mất số cũ;

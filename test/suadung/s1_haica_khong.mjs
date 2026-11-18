@@ -1,0 +1,23 @@
+// Tổ hai ca (lịch 3): đêm H đánh dấu "không làm", rồi Sửa ca ngày D (đi làm 8 / tổng 16, không nghỉ) -> báo cáo ca ngày D và sản lượng D
+import { dung, may, toi, advance, vnDay, eq, ok, ket } from './lib.mjs';
+toi(20, 0);
+const { S, U } = await dung([['C', 'tieudoi'], ['CV', 'cvktht']]);
+await S.call('PUT', '/quanso/lich', { ca: 3 }, 'C');
+await S.call('PUT', '/quanso/thietlap', { user: U.C, ts: 0, ca: 3, tong: 16, s1: 8, s2: 8 }, 'CV');
+advance(864e5); toi(19, 0);
+const H = vnDay();
+toi(7, 5); await S.cron();
+const D = vnDay();
+toi(10, 0);
+const M = await may(S, U, 'CV');
+await M.moBc(H, 2);
+M.R('ask = async () => true');
+M.R(`ACTIONS.bcsuaca({ id: '${U.C}' })`); M.R("ACTIONS.bcsuakhong({ v: '1' })"); await M.xong();
+eq('night H: C không làm', M.dong('C'), 'Tổ C: không làm ca đêm');
+await M.moBc(D, 1);
+eq('day D before Sửa', M.dong('C'), 'Tổ C: ca ngày 8/16 cn');
+await M.sua(U.C, { t: '16', l: '8' }, `${D}|1`);
+eq('day D after Sửa 8/16 (night H is "không làm"): no night part', M.dong('C'), 'Tổ C: ca ngày 8/16 cn');
+eq('sản lượng D: C = 8 (night H not worked)', await M.sl(D), [['C', 8]]);
+ok('no js errors', !M.loi.length, M.loi.join('|'));
+ket();

@@ -309,7 +309,7 @@ function netBar() {
    bày dải để người dùng bấm khi tiện. */
 let appTag = null, lastVerCheck = 0;
 // số phiên bản của chính tệp này: PHẢI trùng CACHE trong public/sw.js (test/suaroi.test.mjs kiểm), đổi cả hai cùng lúc
-const BAN = 'kho-thep-v89';
+const BAN = 'kho-thep-v90';
 async function checkVer(cachMs) {
   if (Date.now() - lastVerCheck < (cachMs == null ? 5 * 60e3 : cachMs)) return;
   lastVerCheck = Date.now();
@@ -4157,7 +4157,8 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
     /* Lịch ca chỉ là lịch HIỆN TẠI, không có lịch sử: tổ vừa đổi từ ca đêm sang ca ngày thì xem lại báo cáo ca đêm hôm qua
        (hay sản lượng hôm nay) sẽ tưởng tổ "làm ca kia" và bỏ mất số tổ đã báo. Tổ đã tự báo có người đi làm ở CA NÀY thì
        chắc chắn làm ca này. */
-    if (L === kia && r0 && r0.lam > 0) L = ca;
+    // số người khác đã Sửa cho riêng ca này (kể cả 0 người đi làm, cả tổ nghỉ có lý do) cũng chắc chắn là số của ca này
+    if (L === kia && r0 && (r0.lam > 0 || daSua(r0))) L = ca;
     // bản chép lúc hết ca CA NÀY chỉ có khi lúc đó tổ làm ca này (soTlCa ở src/quanso.js) — cũng chắc chắn như tổ tự báo
     if (L === kia && cp && cp.lam != null) L = ca;
     /* tổng quân số của tổ, cùng nguồn với dòng của tổ: chọn "Chỉ số thiết lập" thì số thiết lập; theo tổ báo thì lần tổ
@@ -4203,7 +4204,8 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
     /* tổ hai ca chưa có số ca liền trước: lấy số "người thuộc ca kia" tổ đã khai khi báo ca này, để dòng vẫn đủ hai ca. Ở báo cáo ca
        ngày D đó là CA ĐÊM D-1 (chốt 2026-11-05): dòng ghi số nào thì sản lượng ngày D cộng đúng số đó (ca ngày D + ca đêm D-1), dù tổ
        đặt lịch hai ca hay chỉ suy ra từ lần báo — sản lượng luôn bằng đúng tab Ca ngày. */
-    if (L === 3 && !p[1] && r.ca_kia > 0) {
+    // ca kia đã đánh dấu "không làm" thì không suy phần ca kia từ số người dư (sản lượng từng cộng thừa ca đêm không làm)
+    if (L === 3 && !p[1] && r.ca_kia > 0 && !((B.khong || {})[kia] || []).includes(u.id)) {
       p.push(`${caKia} ${r.ca_kia}/${r.tong} cn`); k2 = r.ca_kia;
       if (ca === 1) dongSo.dem = { lam: r.ca_kia, tong: r.tong, nguon: 'bao' };
     }
@@ -4223,13 +4225,25 @@ function bcQuanSo(B, nguon = S.bcNguon, chiTen = S.bcChiTen) {
 /* SỬA MỘT CA (chốt 2026-11-08, CVKTHT trở lên, lùi 7 ngày như máy chủ): nút "Sửa" trên dòng mỗi tổ ở mục 3. Sửa SỐ của tổ cho đúng ca đang
    xem (ghi thay: PUT /quanso kèm user — thay cho số tổ báo / số tự chép), hoặc đánh dấu "Tổ không làm ca này" (PUT /quanso/khong): ca đó
    không tự chép số, báo cáo ghi "không làm", sản lượng không tính công ca đó. Mọi lần sửa vào nhật ký. */
-const BC_SUA_CA_NGAY = 7; // = QS_SUA_NGAY ở src/quanso.js
+const BC_SUA_CA_NGAY = 31; // = QS_SUA_NGAY ở src/quanso.js
 const bcSuaDuoc = (B) => isQL() && !!B && B.ngay >= congNgay(S.boot.today, -BC_SUA_CA_NGAY) && caKhoaMay(B) <= caKhoaMay(S.boot.qs && S.boot.qs.ke ? S.boot.qs.ke : B);
 const caKhoaMay = (c) => c.ngay + ':' + c.ca;
 const bcSuaNut = (B, id) => (id && bcSuaDuoc(B) && !(S.bcSuaCa && S.bcSuaCa.id === id) ? `<button class="chip s" style="flex:none;padding:2px 10px" data-a="bcsuaca" data-id="${id}" aria-label="Sửa quân số tổ này ca này">Sửa</button>` : '');
 /* CA CẦN SỬA: ca của báo cáo đang xem, hoặc CA KIA mà dòng của tổ ghi kèm — báo cáo ca ngày D: ca đêm D-1; báo cáo ca đêm D: ca ngày D.
    Trước đây Sửa luôn sửa ca của báo cáo: tổ ca đêm nằm ở dòng "(làm ca đêm)" của báo cáo ca ngày, bấm Sửa gõ số đêm thì số rơi vào CA NGÀY
    (lỗi 18/11, tổ Lê Văn Dũng). Nay form có hai nút chọn ca, tổ làm ca kia thì chọn sẵn ca kia. */
+/* Sửa quân số ca c xong: bỏ chữ sửa tay mục 3 trong NHÁP trên máy này của báo cáo ca c (và báo cáo ca ngày hôm sau khi c là ca đêm) — máy chủ đã
+   bỏ bản đã lưu (boTay ở src/quanso.js). Không thì nháp cũ trên máy này vẫn thắng số vừa sửa ở báo cáo ca và sản lượng. */
+function boTayMay(c) {
+  const ds = [c, c.ca === 2 ? { ngay: congNgay(c.ngay, 1), ca: 1 } : { ngay: c.ngay, ca: 2 }]; // như boTay ở src/quanso.js
+  ds.forEach((x) => {
+    if (S.bcc && S.bcc.ngay === x.ngay && S.bcc.ca === x.ca && S.bcM && typeof S.bcM.s3 === 'string') { delete S.bcM.s3; try { bcNhap(); } catch (e) { /* bỏ qua */ } }
+    try {
+      const k = bcKey(x), n = JSON.parse(localStorage.getItem(k) || 'null');
+      if (n && n.muc && 's3' in n.muc) { delete n.muc.s3; localStorage.setItem(k, JSON.stringify(n)); }
+    } catch (e) { /* bộ nhớ máy lỗi: bỏ qua */ }
+  });
+}
 const bcCaKia = (B) => (B.ca === 1 ? { ngay: congNgay(B.ngay, -1), ca: 2 } : { ngay: B.ngay, ca: 1 });
 // số đang ghi cho tổ ở ca c (để điền sẵn form): ca của báo cáo theo mục 3; ca kia theo báo cáo đó (ca đêm D-1 có sẵn trong B.demTr) / số báo / số thiết lập
 function bcSuaGoc(B, id, c) {
@@ -4549,6 +4563,8 @@ function bcDung(B) {
   /* Nháp cũ hơn bản đã lưu thì bỏ khi bản lưu đó là của CHÍNH MÌNH (đã chép từ máy khác, nháp này là đồ thừa). Bản lưu
      của người khác thì giữ nháp: đó là chữ mình gõ mà chưa chép. */
   const thua = n && B.bao && n.ts < B.bao.ts && (n.v !== 2 || B.bao.by_id === S.me.id);
+  // chữ sửa tay mục 3 trong nháp cũ hơn lần sửa quân số mới nhất của ca này: bỏ, mục 3 theo số mới (xem bcTayCu)
+  if (n && !thua && bcTayCu(B, n)) n = { ...n, muc: { ...n.muc, s3: null } };
   bcGhep(B, n && !thua ? n : null);
   if (thua) { try { localStorage.removeItem(bcKey(B)); } catch (e) { /* bỏ qua */ } }
   S.bcvMo = false;
@@ -4615,9 +4631,18 @@ async function slTai(ngay, giu) {
 }
 /* Phần quyết định QUÂN SỐ của một báo cáo ca B: nguồn số đã chọn và chữ mục 3 đã sửa tay (null = chưa sửa tay). Nháp chưa chép trên máy
    này thắng (người đang soạn sửa xong mở báo cáo khác là thấy ngay, như bcDung ghép nháp), không thì bản đã chép của ca. */
+/* NHÁP CŨ HƠN SỐ VỪA SỬA (máy này soạn dở mục 3 bằng chữ, chưa chép; sau đó có người — trên máy khác — sửa quân số của ca này: Sửa, không làm,
+   tổ báo lại): chữ trong nháp mang số cũ. Bỏ chữ mục 3 của nháp đó để báo cáo ca và sản lượng trên máy này theo số mới, như mọi máy khác
+   (máy chủ đã bỏ bản đã lưu, xem boTay ở src/quanso.js). Mốc: ts của dòng quân số và của dấu "không làm" của ca này. */
+function bcTayCu(B, n) {
+  if (!n || !n.muc || typeof n.muc.s3 !== 'string') return false;
+  const moi = Math.max(0, ...(B.qs || []).filter((q) => q.ca === B.ca).map((q) => q.ts || 0), ...Object.values((B.khongAi || {})[B.ca] || {}).map((k) => k.ts || 0));
+  return moi > (n.ts || 0);
+}
 function bcBan(B) {
   let n = null;
   try { n = JSON.parse(localStorage.getItem(bcKey(B)) || 'null'); } catch (e) { n = null; }
+  if (n && bcTayCu(B, n)) n = { ...n, muc: Object.fromEntries(Object.entries(n.muc).filter(([k]) => k !== 's3')) };
   const thua = n && B.bao && n.ts < B.bao.ts && B.bao.by_id === (S.me && S.me.id);
   const nh = n && n.v === 2 && !thua ? n : null, g = bcMGoc(B).s3;
   const s3 = nh && nh.muc && 's3' in nh.muc ? nh.muc.s3 : g;
@@ -7476,7 +7501,7 @@ const ACTIONS = {
     act(async () => {
       /* MỘT request cho cả bảng (xem qsThietLap ở src/quanso.js), kèm luôn phần tải lại (sauGhi: /bootstrap và /quanso):
          lưu mười tổ cũng chỉ một vòng mạng. Có tổ bị người khác sửa trước thì server từ chối CẢ lần lưu và nói rõ tổ nào. */
-      try { await api('PUT', '/quanso/thietlap', { ds, ...(dem.length ? { dem_truoc: { ngay: dHT.ngay, ds: dem } } : {}) }); }
+      try { await api('PUT', '/quanso/thietlap', { ds, ...(dem.length ? { dem_truoc: { ngay: dHT.ngay, ds: dem } } : {}) }); if (dem.length) boTayMay({ ngay: dHT.ngay, ca: 2 }); if (ds.length && S.boot.qs) boTayMay(S.boot.qs.hien); }
       catch (e) { xoa(); try { await qsTai(); } catch (e2) { /* giữ bản đang có */ } throw e; }
       xoa();
       try { await Promise.all([qsTai(), loadBoot()]); } catch (e) { /* đã lưu */ }
@@ -7565,6 +7590,7 @@ const ACTIONS = {
     if (!tong) { say('Gõ tổng quân số của tổ trước, rồi chạm ca.', true); render(); return gcFocus('qhkt'); }
     act(async () => {
       await api('PUT', '/quanso/lich', { ca, den, tong });
+      if (S.boot.qs) boTayMay(S.boot.qs.hien); // đổi lịch: báo cáo ca đang chạy tính lại, bỏ chữ sửa tay trong nháp trên máy này (như boTay ở máy chủ)
       qhBo();
       try { await loadBoot(); } catch (e) { /* đã lưu; vòng tự làm mới sẽ tải lại */ }
     }, `Đã khai báo: tổ ${tong} người, làm ${CA_LICH[ca].toLowerCase()}${den ? ' đến ' + ngayNgan(den) : ''}.`);
@@ -7928,6 +7954,7 @@ const ACTIONS = {
     const ten = ((bcQuanSo(B).rows.find((r) => r.u.id === F.id) || {}).u || {}).name || '';
     act(async () => {
       await api('PUT', '/quanso', { ngay: F.ngay || B.ngay, ca: F.ca || B.ca, user: F.id, tong, lam, nghi, ghi_chu: gc });
+      boTayMay({ ngay: F.ngay || B.ngay, ca: F.ca || B.ca });
       S.bcSuaCa = null; await bcTai();
     }, `Đã sửa quân số tổ ${ten} ${caGoi(F.ngay ? F : B)}.`);
   },
@@ -7938,6 +7965,7 @@ const ACTIONS = {
     if (khong && !(await ask(`Đánh dấu tổ ${ten} KHÔNG LÀM ${caGoi(C)}?\n\nSố tổ đã báo / số app tự chép của ca này bị bỏ (nhật ký vẫn giữ số cũ). Báo cáo ca ghi "không làm", sản lượng không tính công ca này.`, 'KHÔNG LÀM CA NÀY'))) return render();
     act(async () => {
       await api('PUT', '/quanso/khong', { ngay: C.ngay, ca: C.ca, user: F.id, khong });
+      boTayMay(C);
       S.bcSuaCa = null; await bcTai();
     }, khong ? `Đã đánh dấu tổ ${ten} không làm ${caGoi(C)}.` : `Đã bỏ đánh dấu, tổ ${ten} lại theo lịch ca.`);
   },

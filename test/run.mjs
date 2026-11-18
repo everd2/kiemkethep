@@ -45,6 +45,7 @@ const SUITES = [
   ['Sửa đợt 9 (5 agent chạy tình huống song song): đăng xuất giữa lúc tải không hồi sinh phiên, hàng chờ quân số không gửi nhầm người, bản tải ngầm cũ không đè, bảng dán Excel có ô nhiều dòng, danh mục gia công lạ, tiến độ trống, thu hồi tin, hai người sửa một đơn gia công, đổi lịch ca sau ca đêm, số đêm hôm trước không 409 giả', 'sua9.test.mjs'],
   ['Sửa một ca + lịch ca theo thời điểm: đổi lịch giữa ca áp từ ca sau, CVKTHT sửa số / đánh dấu tổ không làm ca này (lùi 7 ngày), báo cáo ca, sản lượng, thống kê, lượt chép tự động', 'suaca.test.mjs'],
   ['Sửa quân số lúc nào cũng được: 10h sửa ca đêm hôm trước, không làm ca đêm, chuyển ca đêm sang ca ngày; báo cáo ca, sản lượng, thống kê khớp; ghi ai sửa; thẻ cấp chỉ huy', 'suabatky.test.mjs'],
+  ['Số vừa sửa luôn vào báo cáo ca và sản lượng: tổ hai ca không làm một ca, máy cũ bấm Chép, đánh dấu nhầm rồi bỏ, bánh răng / lịch khi mục 3 sửa tay, tổ bị xoá, sửa lùi 20 ngày', 'suadung.test.mjs'],
 ];
 
 const run = (file) =>

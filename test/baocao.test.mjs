@@ -526,7 +526,7 @@ async function main() {
   /* ===== 4. Lưu: kiểm dữ liệu ===== */
   eq('báo cáo trống: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 1, van_ban: '  ' }, CV)).status, 400);
   eq('ca lạ: từ chối', (await S.call('PUT', '/baocao', { ngay: D, ca: 3, van_ban: 'x' }, CV)).status, 400);
-  eq('quá 7 ngày: từ chối', (await S.call('PUT', '/baocao', { ngay: vnDay(Date.now() - 9 * 864e5), ca: 1, van_ban: 'x' }, CV)).status, 400);
+  eq('quá 31 ngày: từ chối', (await S.call('PUT', '/baocao', { ngay: vnDay(Date.now() - 33 * 864e5), ca: 1, van_ban: 'x' }, CV)).status, 400);
   eq('ca chưa tới (ngày kia): từ chối', (await S.call('GET', `/baocao?ngay=${vnDay(Date.now() + 2 * 864e5)}&ca=1`, undefined, CV)).status, 400);
 
   /* ===== 5. Sao lưu / nạp lại ===== */
